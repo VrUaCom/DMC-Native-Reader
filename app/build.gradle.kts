@@ -20,15 +20,11 @@ android {
     }
 
     defaultConfig {
-        // v2/v3 used an older development signer whose private key is no longer
-        // available. Android correctly rejects an in-place update signed by the
-        // current canonical key. v6 therefore moves to the permanent test package
-        // identity below so it can install alongside the legacy test package.
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6.0-install-identity"
+        versionCode = 7
+        versionName = "0.7.0-samsung-path-handler"
 
         externalNativeBuild {
             cmake {
