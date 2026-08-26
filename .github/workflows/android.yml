@@ -1,0 +1,85 @@
+name: DMC Native Reader Android
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.5.0"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Build APK
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify APK payload and routing
+        run: |
+          set -euxo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          unzip -t "$APK"
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libdmcviewer.so'
+
+          AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
+          "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
+          grep -q 'android.intent.action.VIEW' /tmp/manifest-tree.txt
+          grep -q 'android.intent.action.EDIT' /tmp/manifest-tree.txt
+          grep -q 'android.intent.action.SEND' /tmp/manifest-tree.txt
+          grep -q 'android.intent.category.OPENABLE' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.scm' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.mod' /tmp/manifest-tree.txt
+          grep -q 'application/octet-stream' /tmp/manifest-tree.txt
+          grep -q 'audio/x-mod' /tmp/manifest-tree.txt
+          grep -q 'content' /tmp/manifest-tree.txt
+          grep -q 'file' /tmp/manifest-tree.txt
+
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
+          tr -d ': ' < /tmp/signing.txt | grep -qi 'f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac'
+          sha256sum "$APK" | tee /tmp/apk.sha256
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmc-native-reader-v4-samsung-routing
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmc-native-reader-v4-build-evidence
+          path: |
+            /tmp/manifest-tree.txt
+            /tmp/signing.txt
+            /tmp/apk.sha256
+          if-no-files-found: error
