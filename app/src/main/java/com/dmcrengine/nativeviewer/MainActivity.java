@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
+import android.webkit.MimeTypeMap;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -29,12 +30,15 @@ public final class MainActivity extends Activity {
     private Button wireButton;
     private long session;
     private String routingSelfTest = "";
+    private String systemMimeDiag = "";
     private String lastIntentDiag = "";
+    private String lastProviderDiag = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
         routingSelfTest = buildRoutingSelfTest();
+        systemMimeDiag = buildSystemMimeDiag();
         handleIncomingIntent(getIntent());
     }
 
@@ -105,6 +109,9 @@ public final class MainActivity extends Activity {
                 "application/vnd.dmc.scm",
                 "application/vnd.dmc.mod",
                 "application/octet-stream",
+                "application/x-scm",
+                "application/x-mod",
+                "audio/mod",
                 "audio/x-mod",
                 "*/*"
         });
@@ -156,10 +163,11 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Viewer v0.4\n"
+        statusView.setText("DMC Native Reader v0.7\n"
                 + routingSelfTest + "\n"
+                + systemMimeDiag + "\n"
                 + diag + "\n"
-                + "Tap a .scm/.mod file in My Files, or use Open SCM/MOD.");
+                + "Tap .scm/.mod in My Files, or use Open SCM/MOD.");
     }
 
     private String displayName(Uri uri) {
@@ -176,6 +184,16 @@ public final class MainActivity extends Activity {
         return p == null ? "resource.bin" : new File(p).getName();
     }
 
+    private String describeProvider(Uri uri) {
+        String type = null;
+        try {
+            type = getContentResolver().getType(uri);
+        } catch (RuntimeException ignored) {}
+        return "provider authority=" + safe(uri.getAuthority())
+                + " type=" + safe(type)
+                + " path=" + safe(uri.getPath());
+    }
+
     private ParcelFileDescriptor openReadOnlyDescriptor(Uri uri) throws FileNotFoundException {
         if ("file".equals(uri.getScheme()) && uri.getPath() != null) {
             return ParcelFileDescriptor.open(new File(uri.getPath()), ParcelFileDescriptor.MODE_READ_ONLY);
@@ -186,23 +204,27 @@ public final class MainActivity extends Activity {
     private void openUri(Uri uri) {
         closeSession();
         String name = displayName(uri);
+        lastProviderDiag = describeProvider(uri);
         try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
             if (pfd == null) throw new FileNotFoundException("No file descriptor");
             session = NativeBridge.open(pfd.getFd(), name);
         } catch (Exception e) {
             statusView.setText(name + "\nOpen failed: " + e + "\n"
-                    + routingSelfTest + "\n" + lastIntentDiag);
+                    + routingSelfTest + "\n" + systemMimeDiag + "\n"
+                    + lastProviderDiag + "\n" + lastIntentDiag);
             Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
             return;
         }
         if (session == 0) {
             statusView.setText(name + "\nRejected by native decoder\n"
-                    + routingSelfTest + "\n" + lastIntentDiag);
+                    + routingSelfTest + "\n" + systemMimeDiag + "\n"
+                    + lastProviderDiag + "\n" + lastIntentDiag);
             Toast.makeText(this, "SCM/MOD decoder rejected this file", Toast.LENGTH_LONG).show();
             return;
         }
         statusView.setText(name + "\n" + NativeBridge.info(session) + "\n"
-                + routingSelfTest + "\n" + lastIntentDiag);
+                + routingSelfTest + "\n" + systemMimeDiag + "\n"
+                + lastProviderDiag + "\n" + lastIntentDiag);
         renderView.setSession(session);
     }
 
@@ -213,6 +235,7 @@ public final class MainActivity extends Activity {
         return "intent action=" + safe(intent.getAction())
                 + " type=" + safe(intent.getType())
                 + " scheme=" + (data == null ? "null" : safe(data.getScheme()))
+                + " authority=" + (data == null ? "null" : safe(data.getAuthority()))
                 + " categories=" + (categories == null ? "[]" : categories.toString())
                 + " flags=0x" + Integer.toHexString(intent.getFlags());
     }
@@ -221,18 +244,34 @@ public final class MainActivity extends Activity {
         return s == null ? "null" : s;
     }
 
+    private String buildSystemMimeDiag() {
+        MimeTypeMap map = MimeTypeMap.getSingleton();
+        return "system MIME: mod=" + safe(map.getMimeTypeFromExtension("mod"))
+                + " scm=" + safe(map.getMimeTypeFromExtension("scm"));
+    }
+
     private String buildRoutingSelfTest() {
-        Uri content = Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2Fprobe.mod");
-        Intent octet = viewIntent(content, "application/octet-stream");
-        Intent audioMod = viewIntent(content, "audio/x-mod");
-        Intent anyType = viewIntent(content, "application/x-samsung-unknown");
-        Intent untypedContent = viewIntent(content, null);
-        Intent untypedFile = viewIntent(Uri.parse("file:///storage/emulated/0/Download/probe.mod"), null);
-        return "route self-test: octet=" + mark(resolvesToSelf(octet))
-                + " audio/mod=" + mark(resolvesToSelf(audioMod))
-                + " provider=" + mark(resolvesToSelf(anyType))
-                + " content-null=" + mark(resolvesToSelf(untypedContent))
-                + " file-null=" + mark(resolvesToSelf(untypedFile));
+        Uri providerNumeric = Uri.parse("content://media/external/file/1000000849");
+        Uri providerModPath = Uri.parse("content://com.sec.android.app.myfiles.FileProvider/storage/emulated/0/Download/probe.mod");
+        Uri providerScmPath = Uri.parse("content://com.sec.android.app.myfiles.FileProvider/storage/emulated/0/Download/probe.scm");
+        Uri fileModPath = Uri.parse("file://localhost/storage/emulated/0/Download/probe.mod");
+        Uri fileScmPath = Uri.parse("file://localhost/storage/emulated/0/Download/probe.scm");
+
+        Intent octet = viewIntent(providerNumeric, "application/octet-stream");
+        Intent audioMod = viewIntent(providerNumeric, "audio/x-mod");
+        Intent anyType = viewIntent(providerNumeric, "application/x-samsung-unknown");
+        Intent untypedContent = viewIntent(providerNumeric, null);
+        Intent pathContentMod = viewIntent(providerModPath, null);
+        Intent pathContentScm = viewIntent(providerScmPath, null);
+        Intent pathFileMod = viewIntent(fileModPath, null);
+        Intent pathFileScm = viewIntent(fileScmPath, null);
+
+        return "route real-handler: octet=" + mark(resolvesRealHandler(octet))
+                + " audio/mod=" + mark(resolvesRealHandler(audioMod))
+                + " unknown=" + mark(resolvesRealHandler(anyType))
+                + " content-null=" + mark(resolvesRealHandler(untypedContent))
+                + " path-mod=" + mark(resolvesRealHandler(pathContentMod)) + "/" + mark(resolvesRealHandler(pathFileMod))
+                + " path-scm=" + mark(resolvesRealHandler(pathContentScm)) + "/" + mark(resolvesRealHandler(pathFileScm));
     }
 
     private Intent viewIntent(Uri uri, String mime) {
@@ -244,11 +283,14 @@ public final class MainActivity extends Activity {
         return i;
     }
 
-    private boolean resolvesToSelf(Intent intent) {
+    private boolean resolvesRealHandler(Intent intent) {
         PackageManager pm = getPackageManager();
         List<ResolveInfo> results = pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
+        String wanted = DmcOpenActivity.class.getName();
         for (ResolveInfo r : results) {
-            if (r.activityInfo != null && getPackageName().equals(r.activityInfo.packageName)) {
+            if (r.activityInfo != null
+                    && getPackageName().equals(r.activityInfo.packageName)
+                    && wanted.equals(r.activityInfo.name)) {
                 return true;
             }
         }
