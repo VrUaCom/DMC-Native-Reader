@@ -54,12 +54,16 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='6'" /tmp/badging.txt
+          grep -q "versionCode='7'" /tmp/badging.txt
+          grep -q "versionName='0.7.0-samsung-path-handler'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
-          grep -q 'DmcResourceOpenHandler' /tmp/manifest-tree.txt
-          grep -q 'com.dmcrengine.nativeviewer.MainActivity' /tmp/manifest-tree.txt
+          grep -q 'com.dmcrengine.nativeviewer.DmcOpenActivity' /tmp/manifest-tree.txt
+          if grep -q 'DmcResourceOpenHandler' /tmp/manifest-tree.txt; then
+            echo 'legacy activity-alias unexpectedly remains in v7' >&2
+            exit 1
+          fi
           grep -q 'android.intent.action.VIEW' /tmp/manifest-tree.txt
           grep -q 'android.intent.action.EDIT' /tmp/manifest-tree.txt
           grep -q 'android.intent.action.SEND' /tmp/manifest-tree.txt
@@ -68,8 +72,11 @@ jobs:
           grep -q 'application/vnd.dmc.mod' /tmp/manifest-tree.txt
           grep -q 'application/octet-stream' /tmp/manifest-tree.txt
           grep -q 'audio/x-mod' /tmp/manifest-tree.txt
+          grep -q 'video/mpeg' /tmp/manifest-tree.txt
           grep -q 'content' /tmp/manifest-tree.txt
           grep -q 'file' /tmp/manifest-tree.txt
+          grep -q '\\.mod' /tmp/manifest-tree.txt
+          grep -q '\\.scm' /tmp/manifest-tree.txt
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
@@ -79,14 +86,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v6-install-identity
+          name: dmc-native-reader-v7-samsung-path-handler
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v6-build-evidence
+          name: dmc-native-reader-v7-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
