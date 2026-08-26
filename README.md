@@ -105,7 +105,17 @@ Toolchain baseline:
 - Gradle: 9.5.0 in CI
 - ABI: arm64-v8a
 
-Verified v6 CI build (PR #4 / run `33007067465`):
+Verified v8 CI build (run `33017225523`, commit `7dc620f`):
+
+- package identity: PASS (`com.dmcrengine.nativereader`, versionCode `8`)
+- system handler routing: PASS
+- `DmcBrowserActivity` + `MANAGE_EXTERNAL_STORAGE` in compiled manifest: PASS
+- APK Signature Scheme v2: PASS
+- APK Signature Scheme v3: PASS
+- signer SHA-256: `f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
+- APK SHA-256: `3c09e605a07964f609c8ca8cc507670d992e12392f48071480f11664481d6aee`
+
+Previous verified v6 CI build (PR #4 / run `33007067465`):
 
 - package identity: PASS
 - system handler routing: PASS

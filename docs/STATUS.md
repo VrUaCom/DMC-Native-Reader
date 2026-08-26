@@ -54,6 +54,28 @@ Android correctly refuses an in-place update when the package name is the same b
 
 This allows v6 to install alongside a legacy v2/v3 installation without requiring its removal. Future v6+ test APKs must keep both this applicationId and the canonical test signer so upgrades remain compatible.
 
+## Verified v8 CI build
+
+Workflow run `33017225523` on commit `7dc620f` passed the complete build
+acceptance boundary:
+
+- APK build: PASS
+- package: `com.dmcrengine.nativereader`
+- versionCode: `8`
+- versionName: `0.8.0-builtin-browser`
+- launchable activity: `com.dmcrengine.nativeviewer.MainActivity`
+- `DmcOpenActivity`: present in compiled manifest
+- `DmcBrowserActivity`: present in compiled manifest
+- `MANAGE_EXTERNAL_STORAGE`: present in compiled manifest
+- routing actions/categories/MIME/scheme checks: PASS
+- APK Signature Scheme v2: PASS
+- APK Signature Scheme v3: PASS
+- signer SHA-256: `f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
+- APK SHA-256: `3c09e605a07964f609c8ca8cc507670d992e12392f48071480f11664481d6aee`
+
+This is a build-acceptance result only. The v8 device-test boundary below is
+still open.
+
 ## Verified v6 CI build
 
 PR #4 / workflow run `33007067465` passed the complete build acceptance boundary:
