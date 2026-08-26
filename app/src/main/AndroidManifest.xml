@@ -2,11 +2,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:allowBackup="false"
-        android:label="DMC Native Viewer"
+        android:label="DMC Native Reader v6"
         android:theme="@style/AppTheme">
 
+        <!--
+          Java sources remain in the stable com.dmcrengine.nativeviewer namespace,
+          while applicationId moved in v6 to com.dmcrengine.nativereader to escape
+          the legacy v2/v3 signing-key conflict. Use a fully-qualified class name so
+          Android launches the real class regardless of applicationId.
+        -->
         <activity
-            android:name=".MainActivity"
+            android:name="com.dmcrengine.nativeviewer.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:screenOrientation="unspecified">
@@ -16,20 +22,13 @@
             </intent-filter>
         </activity>
 
-        <!--
-          Dedicated exported system-open entry point. Android resolves this alias,
-          then launches MainActivity with the original VIEW / EDIT / SEND intent.
-          Keeping file routing separate from the launcher makes the handler visible
-          as its own package component to OEM file managers such as Samsung My Files.
-        -->
         <activity-alias
             android:name=".DmcResourceOpenHandler"
-            android:targetActivity=".MainActivity"
+            android:targetActivity="com.dmcrengine.nativeviewer.MainActivity"
             android:enabled="true"
             android:exported="true"
-            android:label="DMC Native Viewer">
+            android:label="DMC Native Reader v6">
 
-            <!-- Canonical DMC MIME routes. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -40,7 +39,6 @@
                 <data android:mimeType="application/vnd.dmc.mod" />
             </intent-filter>
 
-            <!-- Known Android/Samsung classifications. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -56,7 +54,6 @@
                 <data android:mimeType="audio/x-mod" />
             </intent-filter>
 
-            <!-- Typed URI catch-all for OEM/provider-specific MIME assignments. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -66,7 +63,6 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
 
-            <!-- Untyped content:// fallback. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -76,7 +72,6 @@
                 <data android:scheme="content" />
             </intent-filter>
 
-            <!-- Untyped file:// fallback. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -86,7 +81,6 @@
                 <data android:scheme="file" />
             </intent-filter>
 
-            <!-- Share-sheet fallback. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
