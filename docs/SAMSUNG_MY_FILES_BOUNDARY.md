@@ -31,6 +31,40 @@ v7 exercises the strongest practical APK-only registration path:
 
 If a physical Samsung still goes directly to the My Files Play Store fallback while all v7 PackageManager probes return OK, do not add more equivalent manifest filters. That result proves the stock My Files application is not consulting the standard resolver for the unsupported extension path on that build.
 
+## v8 decision: stop depending on the file manager
+
+Device feedback after v7 was unchanged: tapping a real `.mod` / `.scm` still
+does not reach the app. Per the v7 rule above, v8 does **not** add further
+equivalent manifest filters. Two things changed instead.
+
+### Routing hardening (bounded)
+
+One genuinely non-equivalent route was added: `android:pathSuffix` (API 31+).
+Unlike `pathPattern`, suffix matching is applied to the decoded path, so it
+still fires for SAF document URIs whose path carries an encoded `:` or `/`
+(`primary%3ADownload%2Ffile.mod`). This is the last APK-level route worth
+adding; anything beyond it is a duplicate of an existing filter.
+
+### Built-in browser (the actual fix)
+
+`DmcBrowserActivity` locates `.scm` / `.mod` without involving a file manager:
+
+- direct filesystem scan under all-files access (`MANAGE_EXTERNAL_STORAGE`),
+  which is the only permission exposing arbitrary non-media files — SCM/MOD are
+  invisible to `MediaStore`, so `READ_MEDIA_*` cannot substitute for it;
+- or a persisted Storage Access Framework tree the user picks once, requiring
+  no permission at all.
+
+Both sources feed the same JNI read-only descriptor path, so the decoder and
+renderer are exercised identically regardless of how the file was reached.
+This converts the My Files behaviour from a blocker into a cosmetic routing
+gap: the user can always open their resources.
+
+Note that the direct-scan mode returns an absolute path rather than a
+`file://` URI. A file URI placed in an Intent triggers StrictMode's
+`FileUriExposedException` on API 24+, even between two activities of the same
+package.
+
 ## System-level/native correction
 
 The original product goal is stronger than an APK association: teach Android itself that DMC SCM/MOD are first-class file types.
@@ -50,14 +84,19 @@ A framework/system-image patch is qualitatively different from an APK intent fil
 
 ## Acceptance ladder
 
-### APK v7
-- install over v6;
+### APK v8
+- install over v6/v7 (same package identity and signer);
 - direct launch succeeds;
 - real-handler path probes all PASS;
 - record `system MIME: mod=... scm=...`;
-- tap real `.mod/.scm` in Samsung My Files;
-- if routed, capture actual incoming Intent and provider diagnostics;
-- confirm decoder + geometry render.
+- **primary:** `Browse DMC files` -> grant access or pick the DMC folder ->
+  the real `.scm`/`.mod` are listed -> tap one -> decoder accepts -> non-empty
+  geometry renders -> rotate / pinch zoom / reset / wireframe work;
+- **secondary:** tap real `.mod/.scm` in Samsung My Files; if routed, capture
+  the actual incoming Intent and provider diagnostics.
+
+A failure of the secondary route alone is no longer a milestone blocker; it is
+recorded as an OEM resolver gap.
 
 ### System integration
 If Samsung bypass persists:

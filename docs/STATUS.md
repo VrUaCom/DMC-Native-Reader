@@ -2,9 +2,23 @@
 
 ## Current milestone
 
-v0.6.0-install-identity
+v0.8.0-builtin-browser
 
 Canonical repository: `VrUaCom/DMC-Native-Reader`.
+
+## v8 file-access correction
+
+Reported symptom: tapping `.scm` / `.mod` in the device file manager does not
+open the app. v7 had already exhausted useful APK-level intent registration,
+so v8 stops treating the OEM file manager as the only way in and adds
+`DmcBrowserActivity`, a built-in browser that locates DMC resources itself
+through either all-files access or a persisted SAF tree.
+
+System routing is retained and gained one non-duplicate route (`pathSuffix`,
+API 31+, which matches decoded paths and therefore survives encoded SAF
+document paths).
+
+See `docs/SAMSUNG_MY_FILES_BOUNDARY.md` for the full reasoning.
 
 ## Proven in source / CI boundary
 
@@ -15,7 +29,8 @@ Canonical repository: `VrUaCom/DMC-Native-Reader`.
 - 300,466 vertices and 192,413 triangles materialized in that corpus pass.
 - CPU 3D rendering, rotate, pinch zoom, reset and wireframe.
 - JNI bridge and read-only Android file-descriptor path.
-- Dedicated exported `DmcResourceOpenHandler` activity alias.
+- Dedicated exported `DmcOpenActivity` system-open entry point.
+- Built-in `DmcBrowserActivity` with filesystem-scan and SAF-tree sources.
 - Samsung-oriented Android routes covering typed/untyped `content://` and `file://`, broad MIME fallback, `OPENABLE`, VIEW/EDIT and SEND fallback.
 - Runtime PackageManager routing self-test and incoming-intent diagnostics.
 - ARM64 APK build configuration.
@@ -72,17 +87,24 @@ PR #4 / workflow run `33007067465` passed the complete build acceptance boundary
 
 The next physical Samsung acceptance pass is:
 
-1. Install v6 while the legacy test package may remain installed.
+1. Install v8 over the existing v6/v7 install.
 2. Confirm installation succeeds.
-3. Launch `DMC Native Reader v6` directly once and capture the route self-test.
-4. Tap a real `.mod` and `.scm` in Samsung My Files.
-5. Confirm Android resolves `DMC Native Reader v6` instead of Play Store search.
-6. Capture the actual incoming Intent diagnostics (`action`, `type`, `scheme`, `categories`, `flags`).
-7. Confirm the native decoder accepts the real file.
-8. Confirm non-empty real geometry renders.
-9. Confirm rotate, pinch zoom, reset and wireframe work.
+3. Launch `DMC Native Reader v8` directly once and capture the route self-test
+   and `system MIME: mod=... scm=...`.
+4. Open `Browse DMC files`, then either grant all-files access or pick the
+   folder holding the DMC resources.
+5. Confirm the real `.scm` / `.mod` files are listed.
+6. Tap one and confirm the native decoder accepts it.
+7. Confirm non-empty real geometry renders.
+8. Confirm rotate, pinch zoom, reset and wireframe work.
+9. Separately, tap a real `.mod` / `.scm` in Samsung My Files and capture the
+   incoming Intent diagnostics (`action`, `type`, `scheme`, `categories`,
+   `flags`) if it routes at all.
 
-A failure at any step must be classified at the exact boundary: package installation, Android resolver, provider/URI access, native probe/decode, or renderer.
+A failure at any step must be classified at the exact boundary: package
+installation, storage access, Android resolver, provider/URI access, native
+probe/decode, or renderer. Steps 4-8 are the milestone acceptance path; step 9
+is diagnostic only.
 
 ## Build acceptance
 

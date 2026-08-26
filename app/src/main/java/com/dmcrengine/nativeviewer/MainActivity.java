@@ -25,6 +25,7 @@ import java.util.Set;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1001;
+    private static final int REQUEST_BROWSE = 1002;
     private DmcRenderView renderView;
     private TextView statusView;
     private Button wireButton;
@@ -72,20 +73,37 @@ public final class MainActivity extends Activity {
         root.addView(renderView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
+        LinearLayout sourceBar = new LinearLayout(this);
+        sourceBar.setOrientation(LinearLayout.HORIZONTAL);
+        sourceBar.setGravity(Gravity.CENTER);
+        sourceBar.setPadding(8, 8, 8, 0);
+
+        // The built-in browser is the source that does not depend on an OEM
+        // file manager agreeing to route .scm/.mod to this package.
+        Button browse = makeButton("Browse DMC files");
+        browse.setOnClickListener(v -> startActivityForResult(
+                new Intent(this, DmcBrowserActivity.class), REQUEST_BROWSE));
+        sourceBar.addView(browse, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button open = makeButton("Open via system");
+        open.setOnClickListener(v -> chooseFile());
+        sourceBar.addView(open, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        root.addView(sourceBar, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER);
-        bar.setPadding(8, 8, 8, 12);
-
-        Button open = makeButton("Open SCM/MOD");
-        open.setOnClickListener(v -> chooseFile());
-        bar.addView(open, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1.25f));
+        bar.setPadding(8, 4, 8, 12);
 
         Button reset = makeButton("Reset");
         reset.setOnClickListener(v -> renderView.resetView());
         bar.addView(reset, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 0.75f));
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         wireButton = makeButton("Wire: off");
         wireButton.setOnClickListener(v -> {
@@ -93,7 +111,7 @@ public final class MainActivity extends Activity {
             wireButton.setText(renderView.isWireframe() ? "Wire: on" : "Wire: off");
         });
         bar.addView(wireButton, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 0.9f));
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         root.addView(bar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -120,6 +138,18 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_BROWSE && resultCode == RESULT_OK && data != null) {
+            lastIntentDiag = describeIntent(data);
+            String path = data.getStringExtra(DmcBrowserActivity.EXTRA_PATH);
+            if (path != null) {
+                // Built locally and never re-inserted into an Intent, so this
+                // stays clear of StrictMode file-URI exposure.
+                openUri(Uri.fromFile(new File(path)));
+            } else if (data.getData() != null) {
+                openUri(data.getData());
+            }
+            return;
+        }
         if (requestCode == REQUEST_OPEN && resultCode == RESULT_OK && data != null && data.getData() != null) {
             Uri uri = data.getData();
             final int flags = data.getFlags() &
@@ -163,11 +193,11 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Reader v0.7\n"
+        statusView.setText("DMC Native Reader v0.8\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
                 + diag + "\n"
-                + "Tap .scm/.mod in My Files, or use Open SCM/MOD.");
+                + "Use Browse DMC files if your file manager refuses to open .scm/.mod.");
     }
 
     private String displayName(Uri uri) {

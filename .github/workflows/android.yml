@@ -54,12 +54,14 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='7'" /tmp/badging.txt
-          grep -q "versionName='0.7.0-samsung-path-handler'" /tmp/badging.txt
+          grep -q "versionCode='8'" /tmp/badging.txt
+          grep -q "versionName='0.8.0-builtin-browser'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
           grep -q 'com.dmcrengine.nativeviewer.DmcOpenActivity' /tmp/manifest-tree.txt
+          grep -q 'com.dmcrengine.nativeviewer.DmcBrowserActivity' /tmp/manifest-tree.txt
+          grep -q 'android.permission.MANAGE_EXTERNAL_STORAGE' /tmp/manifest-tree.txt
           if grep -q 'DmcResourceOpenHandler' /tmp/manifest-tree.txt; then
             echo 'legacy activity-alias unexpectedly remains in v7' >&2
             exit 1
@@ -86,14 +88,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v7-samsung-path-handler
+          name: dmc-native-reader-v8-builtin-browser
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v7-build-evidence
+          name: dmc-native-reader-v8-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt

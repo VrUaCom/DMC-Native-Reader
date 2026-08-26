@@ -23,8 +23,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.7.0-samsung-path-handler"
+        versionCode = 8
+        versionName = "0.8.0-builtin-browser"
 
         externalNativeBuild {
             cmake {
