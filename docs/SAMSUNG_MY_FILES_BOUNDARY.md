@@ -1,5 +1,26 @@
 # Samsung My Files routing boundary
 
+## Resolved on v8
+
+Physical Samsung testing of v8 reports that tapping a real `.mod` / `.scm` in
+Samsung My Files now opens DMC Native Reader. The "Search in Play Store?"
+unsupported-file dialog no longer intercepts the tap.
+
+This falsifies the v7 working hypothesis below, which held that My Files never
+consults the standard resolver for these extensions. It clearly does — the
+earlier failures were a filter-matching gap on this device, not a bypass.
+
+The only routing change between v7 and v8 is the `android:pathSuffix` filter
+(API 31+), so it is the probable cause: unlike `pathPattern`, suffix matching
+is applied to the decoded path and therefore survives SAF document paths whose
+separators arrive percent-encoded (`primary%3ADownload%2Ffile.mod`). This is
+**probable, not proven** — it was not established that v7 itself was installed
+on the device and re-tested immediately before v8, so a v7-vs-v8 A/B on the
+same handset would be needed to attribute the fix conclusively.
+
+The sections below are kept as the historical record of how the boundary was
+narrowed.
+
 ## Device evidence through v6
 
 Physical Samsung testing established the following sequence:
@@ -99,7 +120,14 @@ A failure of the secondary route alone is no longer a milestone blocker; it is
 recorded as an OEM resolver gap.
 
 ### System integration
-If Samsung bypass persists:
+
+Superseded for the routing goal: v8 routes from My Files without touching the
+system image, so this ladder is no longer required to open DMC files. It
+remains the only way to make `.scm` / `.mod` first-class Android file types
+system-wide (correct type name and icon in every file manager), which is a
+separate, optional goal.
+
+If that goal is pursued:
 - patch framework MIME map;
 - build/boot a controlled Android image or equivalent system-level deployment;
 - confirm `MimeTypeMap.getMimeTypeFromExtension("scm") == application/vnd.dmc.scm`;

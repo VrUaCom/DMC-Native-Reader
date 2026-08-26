@@ -138,12 +138,14 @@ Canonical test certificate SHA-256 fingerprint:
 
 Current milestone: **v8 built-in DMC browser + hardened system routing + real SCM/MOD static geometry preview**.
 
-v8 removes the hard dependency on the OEM file manager: if Samsung My Files
-still refuses to route `.scm` / `.mod`, the file is reachable through
-`Browse DMC files` instead, and the decoder/renderer path is identical.
+Samsung My Files routing is confirmed working on v8: tapping a real `.scm` /
+`.mod` opens the app instead of the "Search in Play Store?" dialog that had
+blocked every build since v2. v8 also removes the hard dependency on the OEM
+file manager entirely — `Browse DMC files` reaches the same decoder/renderer
+path without one.
 
-Next verification boundary: physical Samsung install -> direct launch self-test
--> `Browse DMC files` -> native decoder -> real 3D viewer, and separately the
-My Files -> Android intent resolution route.
+Next verification boundary: native decoder acceptance and real geometry render
+for a file opened this way, then rotate / pinch zoom / reset / wireframe, and
+the two built-in browser sources.
 
 See `docs/STATUS.md` for the exact evidence boundary and remaining work.

@@ -54,6 +54,27 @@ Android correctly refuses an in-place update when the package name is the same b
 
 This allows v6 to install alongside a legacy v2/v3 installation without requiring its removal. Future v6+ test APKs must keep both this applicationId and the canonical test signer so upgrades remain compatible.
 
+## v8 device evidence
+
+Physical Samsung test of the v8 APK:
+
+- install over the previous build: PASS
+- tapping a real `.mod` / `.scm` in Samsung My Files opens DMC Native Reader:
+  **PASS**
+- the My Files "Search in Play Store?" unsupported-file dialog no longer
+  intercepts the tap
+
+This closes the routing boundary that had been open since v2. See
+`docs/SAMSUNG_MY_FILES_BOUNDARY.md` for the revised classification and for why
+the `pathSuffix` filter is the probable, but not proven, cause.
+
+Not yet reported back from the device, so still unverified:
+
+- native decoder acceptance of the tapped file;
+- non-empty geometry render;
+- rotate / pinch zoom / reset / wireframe;
+- the built-in browser paths (all-files scan and picked SAF folder).
+
 ## Verified v8 CI build
 
 Workflow run `33017225523` on commit `7dc620f` passed the complete build
