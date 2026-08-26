@@ -11,7 +11,7 @@ Native Android reader/viewer for Devil May Cry resource files, starting with DMC
 - Normalized mesh representation.
 - CPU 3D renderer with rotate, pinch zoom, reset and wireframe.
 - Android intent diagnostics and PackageManager self-test for routing failures.
-- CI build and compiled-manifest/signature verification.
+- Standalone CI build and compiled-manifest/signature verification.
 
 ## Evidence status
 
@@ -47,14 +47,31 @@ Native decoding remains fail-closed, so broad Android routing does not make unre
 
 ## Build
 
-The canonical project is an Android Gradle project with a native C++ module. CI installs the Android SDK/NDK/CMake toolchain, builds the ARM64 APK, verifies the compiled binary manifest and checks the APK signature.
+This repository is the canonical build host. It is a standalone Android Gradle project with a native C++ module. CI installs the Android SDK/NDK/CMake toolchain, builds the ARM64 APK, verifies the compiled binary manifest and checks the APK signature.
 
-## Security
+Toolchain baseline:
 
-Private signing keys are intentionally **not committed** to this repository. Release signing material must be supplied through a protected local/CI secret path.
+- Android compile/target SDK: 36
+- minSdk: 26
+- Android NDK: 28.2.13676358
+- CMake: 3.22.1
+- Gradle: 9.5.0 in CI
+- ABI: arm64-v8a
+
+## Test signing
+
+`keys/dmc-native-reader-test.jks` is intentionally committed as a **disposable development/test key**. It exists only so successive test APKs remain install-compatible with the v4 build already distributed for device testing.
+
+It is not a production credential and must never be used as a production/release signing identity. A future production release must use a separate protected signing key supplied outside Git history.
+
+Current test certificate SHA-256 fingerprint:
+
+`f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
 
 ## Status
 
 Current milestone: v4 Samsung routing + real SCM/MOD static geometry preview.
 
 Next verification boundary: physical-device test from Samsung My Files -> Android intent resolution -> DMC Native Reader -> native decoder -> real 3D viewer.
+
+See `docs/STATUS.md` for the evidence boundary and remaining work.
