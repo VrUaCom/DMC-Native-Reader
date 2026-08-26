@@ -4,17 +4,32 @@
         android:allowBackup="false"
         android:label="DMC Native Viewer"
         android:theme="@style/AppTheme">
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:screenOrientation="unspecified">
-
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
 
+        <!--
+          Dedicated exported system-open entry point. Android resolves this alias,
+          then launches MainActivity with the original VIEW / EDIT / SEND intent.
+          Keeping file routing separate from the launcher makes the handler visible
+          as its own package component to OEM file managers such as Samsung My Files.
+        -->
+        <activity-alias
+            android:name=".DmcResourceOpenHandler"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:label="DMC Native Viewer">
+
+            <!-- Canonical DMC MIME routes. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -25,6 +40,7 @@
                 <data android:mimeType="application/vnd.dmc.mod" />
             </intent-filter>
 
+            <!-- Known Android/Samsung classifications. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -40,6 +56,7 @@
                 <data android:mimeType="audio/x-mod" />
             </intent-filter>
 
+            <!-- Typed URI catch-all for OEM/provider-specific MIME assignments. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -49,6 +66,7 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
 
+            <!-- Untyped content:// fallback. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -58,6 +76,7 @@
                 <data android:scheme="content" />
             </intent-filter>
 
+            <!-- Untyped file:// fallback. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -67,11 +86,12 @@
                 <data android:scheme="file" />
             </intent-filter>
 
+            <!-- Share-sheet fallback. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
-        </activity>
+        </activity-alias>
     </application>
 </manifest>
