@@ -70,8 +70,16 @@ jobs:
             -name '*.app' -path '*Debug-iphonesimulator*' | head -1)
           test -n "$APP"
           PLIST="$APP/Info.plist"
+          # Build settings must have been substituted, not left as literals:
+          # a bundle without a real identifier will not install on a device.
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST" \
             | grep -qx 'com.dmcrengine.nativereader'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST" \
+            | grep -qx 'DMCReader'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" \
+            | grep -qx '0.10.0'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" \
+            | grep -qx '10'
           for uti in scm mod hits index ukn; do
             /usr/libexec/PlistBuddy -c 'Print :UTExportedTypeDeclarations' "$PLIST" \
               | grep -q "com.dmcrengine.$uti"
