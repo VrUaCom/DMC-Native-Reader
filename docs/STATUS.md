@@ -176,6 +176,36 @@ Not claimed:
 - verification against real shipped `HITS` files — only the authority's fixture
   layout has been exercised so far.
 
+## v11 device evidence — viewer and routing confirmed
+
+Physical Samsung, v11:
+
+- system bars: status text sits below the clock, the button rows sit above the
+  navigation bar — the insets fix works;
+- rotate: **PASS** (screenshot shows the mesh at a rotated angle);
+- wireframe: **PASS** (`Wire: on`, triangle edges of `st001.scm` visible);
+- pinch zoom and reset: reported working by the tester, not separately
+  evidenced in a screenshot.
+
+Captured incoming intent, the diagnostic the earlier acceptance ladder asked
+for:
+
+```text
+intent action=android.intent.action.VIEW type= scheme=content
+provider authority=media type=application/octet-stream path=/external/file/7751
+```
+
+This is a real external `ACTION_VIEW` delivery, unlike the earlier capture
+whose `action=null` marked it as a result from the in-app picker. Note the
+intent's own type is **empty**: the match came through the untyped `content://`
+route, not through any MIME filter. That route was added speculatively in the
+v5-v7 passes with no evidence it would ever fire; this is the evidence.
+
+Still not evidenced on device:
+
+- the built-in browser paths (all-files scan and picked SAF folder);
+- HITS, stage `.txt` and `.index` against real shipped files.
+
 ## v11 window insets
 
 Device screenshot showed the status text drawn under the system clock and the

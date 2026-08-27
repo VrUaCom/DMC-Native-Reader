@@ -258,9 +258,12 @@ Decoding and rendering are confirmed on a physical device: a real `st001.scm`
 opened from the file manager decodes to 23,049 vertices / 14,261 triangles and
 renders. See `docs/STATUS.md`.
 
-Next verification boundary: rotate / pinch zoom / reset / wireframe, the two
-built-in browser sources, and real shipped `HITS`, stage `.txt` and `.index`
-files (those decoders are verified against authority-shaped fixtures, not
-against game files).
+Rotate and wireframe are confirmed on device too, and a real external
+`ACTION_VIEW` intent with an empty MIME type has been captured — the untyped
+`content://` route is what carries it.
+
+Next verification boundary: the two built-in browser sources, and real shipped
+`HITS`, stage `.txt` and `.index` files (those decoders are verified against
+authority-shaped fixtures, not against game files).
 
 See `docs/STATUS.md` for the exact evidence boundary and remaining work.
