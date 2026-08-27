@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "dmcresource/binary_reader.h"
+#include "dmcresource/hits_decode.h"
 
 namespace dmcresource {
 namespace {

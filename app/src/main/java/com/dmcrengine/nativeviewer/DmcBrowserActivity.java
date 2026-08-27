@@ -279,11 +279,11 @@ public final class DmcBrowserActivity extends Activity {
             adapter.replace(new ArrayList<>());
             statusView.setText("No storage access yet.\n"
                     + "Grant file access to scan the whole device, "
-                    + "or use Pick folder to choose the folder holding your SCM/MOD files.");
+                    + "or use Pick folder to choose the folder holding your DMC files.");
             return;
         }
 
-        statusView.setText("Scanning for .scm / .mod ...");
+        statusView.setText("Scanning for .scm / .mod / .hits / .ukn ...");
         if (scanThread != null) scanThread.interrupt();
         scanThread = new Thread(() -> {
             final List<Entry> found = new ArrayList<>();
@@ -304,7 +304,7 @@ public final class DmcBrowserActivity extends Activity {
                 if (generation != scanGeneration) return;
                 adapter.replace(found);
                 if (found.isEmpty()) {
-                    statusView.setText("No .scm / .mod files found (" + source + ").\n"
+                    statusView.setText("No DMC resources found (" + source + ").\n"
                             + (direct
                             ? "Copy your DMC files to internal storage, or use Pick folder."
                             : "Pick the folder that actually contains the files."));
@@ -401,9 +401,15 @@ public final class DmcBrowserActivity extends Activity {
         return id == null ? String.valueOf(tree) : id;
     }
 
+    /**
+     * `.ukn` is listed because a HITS collision resource is routinely shipped
+     * under that name; the native probe matches on the four-byte magic, so a
+     * `.ukn` holding anything else is still rejected on open.
+     */
     private static boolean isDmcName(String name) {
         String lower = name.toLowerCase(Locale.US);
-        return lower.endsWith(".scm") || lower.endsWith(".mod");
+        return lower.endsWith(".scm") || lower.endsWith(".mod")
+                || lower.endsWith(".hits") || lower.endsWith(".ukn");
     }
 
     private static String humanSize(long bytes) {

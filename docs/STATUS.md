@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-v0.8.0-builtin-browser
+v0.9.0-hits-collision
 
 Canonical repository: `VrUaCom/DMC-Native-Reader`.
 
@@ -22,9 +22,10 @@ See `docs/SAMSUNG_MY_FILES_BOUNDARY.md` for the full reasoning.
 
 ## Proven in source / CI boundary
 
-- Exact 4-byte DMC resource probes: `SCM ` and `MOD `.
+- Exact 4-byte DMC resource probes: `SCM `, `MOD ` and `HITS`.
 - Bounded read-only native decoding path.
 - SCM/MOD -> normalized static Mesh.
+- HITS -> normalized collision triangle Mesh.
 - Development corpus validation: 74 SCM + 90 MOD = 164/164 decoded.
 - 300,466 vertices and 192,413 triangles materialized in that corpus pass.
 - CPU 3D rendering, rotate, pinch zoom, reset and wireframe.
@@ -53,6 +54,42 @@ Android correctly refuses an in-place update when the package name is the same b
 `com.dmcrengine.nativereader`
 
 This allows v6 to install alongside a legacy v2/v3 installation without requiring its removal. Future v6+ test APKs must keep both this applicationId and the canonical test signer so upgrades remain compatible.
+
+## v9 HITS collision support
+
+Adds DMC3 `HITS` stage collision resources to the reader.
+
+Structural authority: `VrUaCom/dmc-rengine-cpp` — `docs/formats/hits.md` and
+`src/formats/hits.cpp`. The Android decoder ports that parser: four-byte `HITS`
+magic, bounded `0x44` header, relative offsets based at `+0x08`, 3-D spatial
+grid with `-1` terminated per-cell lists, `0x38` triangle/plane records.
+
+Proven in source / CI:
+
+- 30 host checks over the authority's fixture layout, run in CI before the APK
+  build, compiled with `-Wall -Wextra -Wpedantic -Werror`:
+  exact vertex values; rejection of foreign magic (including the superseded
+  five-byte `HITS$`), truncated headers, zero grid dimensions, non-positive
+  cell sizes, triangle arrays past end of file, zero declared triangles,
+  non-finite geometry and empty input; reporting of grid overflow, end-offset
+  mismatch and unterminated cell lists.
+- `.hits` and `.ukn` routing present in the compiled manifest.
+- `application/vnd.dmc.hits` route present in the compiled manifest.
+
+Deliberate deviations from the authority, both because this is a viewer:
+
+- cell-table defects are reported in the status line rather than treated as
+  fatal, since the magic, header and full triangle array have already validated
+  by the time the grid is walked;
+- the cell count is built with an explicit overflow guard and the cell walk
+  carries a work budget, because this parser runs on a phone against files of
+  unknown provenance.
+
+Not claimed:
+
+- `raw_flags` bit-level semantics (evidence-gated upstream);
+- verification against real shipped `HITS` files — only the authority's fixture
+  layout has been exercised so far.
 
 ## v8 device evidence
 
@@ -130,13 +167,13 @@ PR #4 / workflow run `33007067465` passed the complete build acceptance boundary
 
 The next physical Samsung acceptance pass is:
 
-1. Install v8 over the existing v6/v7 install.
+1. Install v9 over the existing install.
 2. Confirm installation succeeds.
-3. Launch `DMC Native Reader v8` directly once and capture the route self-test
+3. Launch `DMC Native Reader v9` directly once and capture the route self-test
    and `system MIME: mod=... scm=...`.
 4. Open `Browse DMC files`, then either grant all-files access or pick the
    folder holding the DMC resources.
-5. Confirm the real `.scm` / `.mod` files are listed.
+5. Confirm the real `.scm` / `.mod` / `.hits` / `.ukn` files are listed.
 6. Tap one and confirm the native decoder accepts it.
 7. Confirm non-empty real geometry renders.
 8. Confirm rotate, pinch zoom, reset and wireframe work.

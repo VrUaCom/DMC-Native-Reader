@@ -126,6 +126,7 @@ public final class MainActivity extends Activity {
         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
                 "application/vnd.dmc.scm",
                 "application/vnd.dmc.mod",
+                "application/vnd.dmc.hits",
                 "application/octet-stream",
                 "application/x-scm",
                 "application/x-mod",
@@ -193,11 +194,11 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Reader v0.8\n"
+        statusView.setText("DMC Native Reader v0.9 (SCM / MOD / HITS)\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
                 + diag + "\n"
-                + "Use Browse DMC files if your file manager refuses to open .scm/.mod.");
+                + "Use Browse DMC files if your file manager refuses to open these types.");
     }
 
     private String displayName(Uri uri) {

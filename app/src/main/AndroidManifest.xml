@@ -23,7 +23,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="DMC Native Reader v8"
+        android:label="DMC Native Reader v9"
         android:theme="@style/AppTheme">
 
         <activity
@@ -56,7 +56,7 @@
             android:name="com.dmcrengine.nativeviewer.DmcOpenActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="DMC Native Reader v8">
+            android:label="DMC Native Reader v9">
 
             <!-- Canonical DMC MIME types. -->
             <intent-filter android:priority="100">
@@ -67,6 +67,7 @@
                 <category android:name="android.intent.category.OPENABLE" />
                 <data android:mimeType="application/vnd.dmc.scm" />
                 <data android:mimeType="application/vnd.dmc.mod" />
+                <data android:mimeType="application/vnd.dmc.hits" />
             </intent-filter>
 
             <!-- MIME values observed/commonly associated with unknown SCM/MOD files. -->
@@ -146,6 +147,10 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\..*\\.scm" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\..*\\..*\\.scm" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.SCM" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.hits" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.HITS" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ukn" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.UKN" />
             </intent-filter>
 
             <intent-filter android:priority="100">
@@ -162,6 +167,10 @@
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\.scm" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\..*\\.scm" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.SCM" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.hits" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.HITS" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ukn" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.UKN" />
             </intent-filter>
 
             <!--
@@ -179,10 +188,18 @@
                 <data android:scheme="content" android:host="*" android:pathSuffix=".MOD" />
                 <data android:scheme="content" android:host="*" android:pathSuffix=".scm" />
                 <data android:scheme="content" android:host="*" android:pathSuffix=".SCM" />
+                <data android:scheme="content" android:host="*" android:pathSuffix=".hits" />
+                <data android:scheme="content" android:host="*" android:pathSuffix=".HITS" />
+                <data android:scheme="content" android:host="*" android:pathSuffix=".ukn" />
+                <data android:scheme="content" android:host="*" android:pathSuffix=".UKN" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".mod" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".MOD" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".scm" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".SCM" />
+                <data android:scheme="file" android:host="*" android:pathSuffix=".hits" />
+                <data android:scheme="file" android:host="*" android:pathSuffix=".HITS" />
+                <data android:scheme="file" android:host="*" android:pathSuffix=".ukn" />
+                <data android:scheme="file" android:host="*" android:pathSuffix=".UKN" />
             </intent-filter>
 
             <intent-filter android:priority="100">

@@ -1,13 +1,14 @@
 # DMC Native Reader
 
-Native Android reader/viewer for Devil May Cry resource files, starting with DMC3 `SCM` and `MOD`.
+Native Android reader/viewer for Devil May Cry resource files: DMC3 `SCM`, `MOD` and `HITS`.
 
 ## Current scope
 
-- Built-in DMC file browser that finds `.scm` / `.mod` without any file manager.
+- Built-in DMC file browser that finds `.scm` / `.mod` / `.hits` / `.ukn` without any file manager.
 - Android file routing for `.scm` / `.mod`, including Samsung My Files compatibility paths.
 - Dedicated exported `DmcOpenActivity` system-open entry point.
-- Exact magic probing (`SCM ` / `MOD `) with fail-closed rejection of unrelated files.
+- Exact magic probing (`SCM ` / `MOD ` / `HITS`) with fail-closed rejection of unrelated files.
+- HITS collision decoding: bounded 0x44 header, 3-D spatial grid, 0x38 triangle/plane records.
 - Native C++ bounded binary reader and corpus-backed SCM/MOD mesh decoder.
 - JNI bridge using read-only file descriptors.
 - Normalized mesh representation.
@@ -35,12 +36,12 @@ this app's control.
 
 ### 1. Built-in browser (always available)
 
-`Browse DMC files` on the main screen scans for `.scm` / `.mod` itself and
-opens the tapped result directly. It needs no file manager cooperation, and it
+`Browse DMC files` on the main screen scans for `.scm` / `.mod` / `.hits` /
+`.ukn` itself and opens the tapped result directly. It needs no file manager cooperation, and it
 offers two access modes:
 
 - **Grant file access** — Android's *All files access* (`MANAGE_EXTERNAL_STORAGE`).
-  SCM/MOD are ordinary non-media files, so `MediaStore` cannot see them and
+  DMC resources are ordinary non-media files, so `MediaStore` cannot see them and
   `READ_MEDIA_*` does not apply; all-files access is the only permission that
   allows a direct scan of storage for them. On API 29 and below the legacy
   `READ_EXTERNAL_STORAGE` permission is requested instead.
@@ -75,6 +76,36 @@ The current system-open path is designed for Samsung/Android providers that may 
 
 Native decoding remains fail-closed, so broad Android routing does not make unrelated files parse as DMC resources.
 
+## HITS collision resources
+
+v9 adds DMC3 `HITS` — the stage collision resource: a bounded `0x44` header, a
+3-D spatial acceleration grid, and fixed `0x38` triangle/plane records.
+
+Structural authority is `VrUaCom/dmc-rengine-cpp` (`docs/formats/hits.md`,
+`src/formats/hits.cpp`). The Android decoder is a port of that parser, checked
+against the same fixture layout the authority is tested with.
+
+Two deliberate differences from the authority, both because this is a viewer
+rather than a validator:
+
+- **Cell-table defects are reported, not fatal.** By the time the grid walk
+  runs, the magic, the bounded header and the whole triangle array have already
+  validated, so a defect there is surfaced in the status line instead of hiding
+  geometry that decoded cleanly. The authority treats the same defect as a hard
+  error.
+- **Two extra bounds.** The grid cell count is built with an explicit overflow
+  guard (three `u32` dimensions can exceed 64 bits), and the cell walk carries a
+  work budget, since this parser runs on a phone against files of unknown
+  provenance.
+
+`raw_flags` is decoded but not interpreted: its bit-level semantics remain
+evidence-gated upstream.
+
+`.ukn` is recognised because a HITS resource is routinely shipped under that
+name. Recognition is by the four-byte `HITS` magic, never by extension — the
+superseded five-byte `HITS$` reading is not accepted, and a `.ukn` holding
+anything else is still rejected.
+
 ## v6 package identity
 
 Physical-device testing exposed a signer mismatch between early v2/v3 test APKs and the canonical v4+ signer. Android correctly rejects an update when the same package name is signed by a different certificate.
@@ -87,8 +118,8 @@ It can install alongside the legacy test package, so the user does not need to r
 
 Current milestone:
 
-- versionCode: `8`
-- versionName: `0.8.0-builtin-browser`
+- versionCode: `9`
+- versionName: `0.9.0-hits-collision`
 - applicationId: `com.dmcrengine.nativereader`
 - launchable Java activity: `com.dmcrengine.nativeviewer.MainActivity`
 
@@ -136,7 +167,7 @@ Canonical test certificate SHA-256 fingerprint:
 
 ## Status
 
-Current milestone: **v8 built-in DMC browser + hardened system routing + real SCM/MOD static geometry preview**.
+Current milestone: **v9 HITS collision decoding + built-in DMC browser + confirmed Samsung routing**.
 
 Samsung My Files routing is confirmed working on v8: tapping a real `.scm` /
 `.mod` opens the app instead of the "Search in Play Store?" dialog that had
@@ -145,7 +176,9 @@ file manager entirely — `Browse DMC files` reaches the same decoder/renderer
 path without one.
 
 Next verification boundary: native decoder acceptance and real geometry render
-for a file opened this way, then rotate / pinch zoom / reset / wireframe, and
-the two built-in browser sources.
+for a file opened this way, then rotate / pinch zoom / reset / wireframe, the
+two built-in browser sources, and a real `HITS` resource from the game corpus
+(the decoder is currently verified against the authority's fixture layout, not
+against shipped game files).
 
 See `docs/STATUS.md` for the exact evidence boundary and remaining work.

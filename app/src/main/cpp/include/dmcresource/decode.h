@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 #include "dmcresource/dmc_resource.h"
@@ -22,6 +23,10 @@ struct DecodeResult {
     Format format{Format::Unknown};
     Mesh mesh;
     const char* detail{"unknown format"};
+    // Format-specific structural summary, empty when the format has none.
+    // The default member initializer keeps the existing four-element aggregate
+    // initializers in the SCM/MOD decoder valid and warning-free.
+    std::string info{};
 };
 
 DecodeResult decode_resource(std::string_view filename,

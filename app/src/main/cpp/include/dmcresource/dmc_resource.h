@@ -10,6 +10,7 @@ enum class Format : std::uint8_t {
     Unknown = 0,
     Scm,
     Mod,
+    Hits,
 };
 
 struct ProbeResult {

@@ -37,6 +37,11 @@ ProbeResult probe(std::string_view filename,
     if (has_magic(prefix, prefix_size, 'M', 'O', 'D', ' ')) {
         return {Format::Mod, true, "application/vnd.dmc.mod"};
     }
+    // Four-byte magic, not the superseded five-byte `HITS$`. Validated bytes
+    // outrank the extension here: a HITS resource is routinely named `.ukn`.
+    if (has_magic(prefix, prefix_size, 'H', 'I', 'T', 'S')) {
+        return {Format::Hits, true, "application/vnd.dmc.hits"};
+    }
 
     const auto ext = lower_extension(filename);
     if (ext == "scm") {
@@ -44,6 +49,9 @@ ProbeResult probe(std::string_view filename,
     }
     if (ext == "mod") {
         return {Format::Unknown, false, "application/vnd.dmc.mod"};
+    }
+    if (ext == "hits") {
+        return {Format::Unknown, false, "application/vnd.dmc.hits"};
     }
 
     return {};
@@ -53,6 +61,7 @@ const char* format_name(Format format) noexcept {
     switch (format) {
         case Format::Scm: return "SCM";
         case Format::Mod: return "MOD";
+        case Format::Hits: return "HITS";
         default: return "UNKNOWN";
     }
 }

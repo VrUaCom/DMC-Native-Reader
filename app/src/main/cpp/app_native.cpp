@@ -68,6 +68,7 @@ struct Session {
     dmcresource::Format format{dmcresource::Format::Unknown};
     dmcresource::Mesh mesh;
     std::string detail;
+    std::string info;
 };
 
 Session* from_handle(jlong handle) noexcept {
@@ -119,6 +120,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     session->format = decoded.format;
     session->mesh = std::move(decoded.mesh);
     session->detail = decoded.detail != nullptr ? decoded.detail : "decoded";
+    session->info = std::move(decoded.info);
     return to_handle(session.release());
 }
 
@@ -138,6 +140,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         << " | vertices=" << session->mesh.vertices.size()
         << " | triangles=" << (session->mesh.indices.size() / 3u)
         << " | " << session->detail;
+    if (!session->info.empty()) out << " | " << session->info;
     return env->NewStringUTF(out.str().c_str());
 }
 
