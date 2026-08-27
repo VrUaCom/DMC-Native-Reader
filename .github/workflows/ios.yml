@@ -60,15 +60,15 @@ jobs:
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim \
             CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Verify bundle identity and declared document types
         run: |
           set -euxo pipefail
-          APP=$(find ~/Library/Developer/Xcode/DerivedData -type d \
-            -name '*.app' -path '*Debug-iphonesimulator*' | head -1)
-          test -n "$APP"
+          APP="build-sim/Build/Products/Debug-iphonesimulator/DMCReader.app"
+          test -d "$APP"
           PLIST="$APP/Info.plist"
           # Build settings must have been substituted, not left as literals:
           # a bundle without a real identifier will not install on a device.
@@ -94,9 +94,58 @@ jobs:
             exit 1
           fi
 
+      # A device-architecture build with signing switched off. The result is a
+      # real installable payload for every sideloading tool that signs with the
+      # user's own Apple ID (AltStore, SideStore, Sideloadly); it is NOT
+      # installable by tapping it, because nothing here holds an Apple
+      # Developer identity to sign with.
+      - name: Build unsigned device app
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project ios/DMCReader.xcodeproj \
+            -scheme DMCReader \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euxo pipefail
+          APP="build-device/Build/Products/Release-iphoneos/DMCReader.app"
+          test -d "$APP"
+          # An IPA is a zip whose payload lives under Payload/<Name>.app —
+          # exactly the layout the sideloading tools expect to re-sign.
+          rm -rf payload-staging
+          mkdir -p payload-staging/Payload
+          cp -R "$APP" payload-staging/Payload/
+          (cd payload-staging && zip -qry ../DMCReader-unsigned.ipa Payload)
+          unzip -l DMCReader-unsigned.ipa | grep -q 'Payload/DMCReader.app/DMCReader'
+          # Confirm it really is a device build and really is unsigned, so the
+          # artifact is never mistaken for something tappable.
+          file "$APP/DMCReader" | grep -q 'arm64'
+          if codesign -dv "$APP" 2>&1 | grep -q 'Signature=adhoc\|Authority='; then
+            echo 'unexpected signature on the unsigned build' >&2
+            exit 1
+          fi
+          ls -la DMCReader-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmc-reader-ios-unsigned-ipa
+          path: DMCReader-unsigned.ipa
+          if-no-files-found: error
+
       - name: Upload simulator app
         uses: actions/upload-artifact@v4
         with:
           name: dmc-reader-ios-simulator
-          path: ~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug-iphonesimulator/*.app
+          path: build-sim/Build/Products/Debug-iphonesimulator/DMCReader.app
           if-no-files-found: error
