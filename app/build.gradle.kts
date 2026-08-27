@@ -23,8 +23,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.10.0-text-resources"
+        versionCode = 11
+        versionName = "0.10.1-window-insets"
 
         externalNativeBuild {
             cmake {

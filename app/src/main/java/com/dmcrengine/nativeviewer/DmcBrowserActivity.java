@@ -164,6 +164,7 @@ public final class DmcBrowserActivity extends Activity {
         root.addView(bar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
+        SystemInsets.applyAsPadding(root);
         setContentView(root);
     }
 

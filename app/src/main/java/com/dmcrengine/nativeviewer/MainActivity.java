@@ -70,11 +70,16 @@ public final class MainActivity extends Activity {
 
         statusView = new TextView(this);
         statusView.setTextColor(Color.WHITE);
-        statusView.setTextSize(13f);
-        statusView.setPadding(24, 20, 24, 14);
-        root.addView(statusView, new LinearLayout.LayoutParams(
+        statusView.setTextSize(12f);
+        statusView.setPadding(24, 12, 24, 12);
+        // The diagnostics block runs to seven lines. Capping it and letting it
+        // scroll keeps the viewer itself the largest thing on screen.
+        ScrollView statusScroll = new ScrollView(this);
+        statusScroll.addView(statusView);
+        statusScroll.setVerticalScrollBarEnabled(true);
+        root.addView(statusScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+                (int) (getResources().getDisplayMetrics().density * 132f)));
 
         // The two content modes share one slot: geometry formats render, text
         // families (stage .txt, .index manifests) show their content instead.
@@ -144,6 +149,7 @@ public final class MainActivity extends Activity {
         root.addView(bar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
+        SystemInsets.applyAsPadding(root);
         setContentView(root);
     }
 
@@ -222,7 +228,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Reader v0.9 (SCM / MOD / HITS)\n"
+        statusView.setText("DMC Native Reader v0.10 (SCM / MOD / HITS / TXT / INDEX)\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
                 + diag + "\n"

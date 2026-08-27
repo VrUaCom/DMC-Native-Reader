@@ -70,8 +70,8 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='10'" /tmp/badging.txt
-          grep -q "versionName='0.10.0-text-resources'" /tmp/badging.txt
+          grep -q "versionCode='11'" /tmp/badging.txt
+          grep -q "versionName='0.10.1-window-insets'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -115,14 +115,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v10-text-resources
+          name: dmc-native-reader-v11-window-insets
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v10-build-evidence
+          name: dmc-native-reader-v11-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt

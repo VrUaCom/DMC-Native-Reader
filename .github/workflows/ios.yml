@@ -77,9 +77,9 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST" \
             | grep -qx 'DMCReader'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" \
-            | grep -qx '0.10.0'
+            | grep -qx '0.10.1'
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" \
-            | grep -qx '10'
+            | grep -qx '11'
           for uti in scm mod hits index ukn; do
             /usr/libexec/PlistBuddy -c 'Print :UTExportedTypeDeclarations' "$PLIST" \
               | grep -q "com.dmcrengine.$uti"

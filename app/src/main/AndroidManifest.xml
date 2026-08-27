@@ -23,7 +23,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="DMC Native Reader v10"
+        android:label="DMC Native Reader v11"
         android:theme="@style/AppTheme">
 
         <activity
@@ -56,7 +56,7 @@
             android:name="com.dmcrengine.nativeviewer.DmcOpenActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="DMC Native Reader v10">
+            android:label="DMC Native Reader v11">
 
             <!-- Canonical DMC MIME types. -->
             <intent-filter android:priority="100">

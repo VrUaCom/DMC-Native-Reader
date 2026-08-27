@@ -197,8 +197,8 @@ It can install alongside the legacy test package, so the user does not need to r
 
 Current milestone:
 
-- versionCode: `10`
-- versionName: `0.10.0-text-resources`
+- versionCode: `11`
+- versionName: `0.10.1-window-insets`
 - applicationId: `com.dmcrengine.nativereader`
 - launchable Java activity: `com.dmcrengine.nativeviewer.MainActivity`
 
@@ -254,10 +254,13 @@ blocked every build since v2. v8 also removes the hard dependency on the OEM
 file manager entirely — `Browse DMC files` reaches the same decoder/renderer
 path without one.
 
-Next verification boundary: native decoder acceptance and real geometry render
-for a file opened this way, then rotate / pinch zoom / reset / wireframe, the
-two built-in browser sources, and a real `HITS` resource from the game corpus
-(the decoder is currently verified against the authority's fixture layout, not
-against shipped game files).
+Decoding and rendering are confirmed on a physical device: a real `st001.scm`
+opened from the file manager decodes to 23,049 vertices / 14,261 triangles and
+renders. See `docs/STATUS.md`.
+
+Next verification boundary: rotate / pinch zoom / reset / wireframe, the two
+built-in browser sources, and real shipped `HITS`, stage `.txt` and `.index`
+files (those decoders are verified against authority-shaped fixtures, not
+against game files).
 
 See `docs/STATUS.md` for the exact evidence boundary and remaining work.

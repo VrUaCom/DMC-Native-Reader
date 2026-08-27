@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-v0.10.0-text-resources
+v0.10.1-window-insets
 
 Canonical repository: `VrUaCom/DMC-Native-Reader`.
 
@@ -66,8 +66,8 @@ Proven in CI (`macos-latest`, run `33057431477`):
 
 - shared decoder tests pass under Apple clang with `-Werror`;
 - the app compiles and links for the iOS Simulator;
-- compiled bundle identity `com.dmcrengine.nativereader`, version `0.10.0` /
-  `10`, and exported UTIs for scm/mod/hits/index/ukn are present;
+- compiled bundle identity `com.dmcrengine.nativereader`, version `0.10.1` /
+  `11`, and exported UTIs for scm/mod/hits/index/ukn are present;
 - `public.plain-text` is absent from the document types — asserted, not assumed.
 
 Defect caught by that CI on the first run: the generated bundle had no
@@ -77,9 +77,16 @@ maps the standard keys onto build settings; a project generated from
 such a bundle does not install on a device. The keys are now declared
 explicitly and CI asserts the substitutions happened.
 
+CI also publishes an **unsigned** `.ipa` (`dmc-reader-ios-unsigned-ipa`): a
+device-arch Release build packaged as `Payload/DMCReader.app`. The packaging
+step asserts the binary is arm64 and carries no signature, so the artifact is
+never mistaken for a tappable installer. It is installable only through a
+sideloading tool that re-signs it with the user's own Apple ID (AltStore,
+SideStore, Sideloadly).
+
 Not claimed:
 
-- no `.ipa`, and no device install: signing requires an Apple Developer
+- no signed `.ipa` and no direct install: signing requires an Apple Developer
   identity this environment does not have;
 - the app has never been run — CI builds for the simulator but does not launch
   it, so the SwiftUI screen, the gestures and the UIImage conversion are
@@ -168,6 +175,46 @@ Not claimed:
 - `raw_flags` bit-level semantics (evidence-gated upstream);
 - verification against real shipped `HITS` files — only the authority's fixture
   layout has been exercised so far.
+
+## v11 window insets
+
+Device screenshot showed the status text drawn under the system clock and the
+Reset / Wire buttons drawn under the navigation buttons.
+
+Cause: `targetSdk = 36`. From Android 15 edge-to-edge is enforced — the window
+is laid out behind the system bars whether the app opts in or not — and this
+app never consumed the insets. `SystemInsets.applyAsPadding` now pads the root
+view of both activities by the system-bar and display-cutout insets, using the
+API 30+ `WindowInsets.getInsets` path and the legacy
+`getSystemWindowInset*` accessors on API 26-29.
+
+The diagnostics block is also capped at 132dp and scrolls, so the seven lines
+of routing/provider/intent output no longer take a third of the screen.
+
+Verified in the compiled dex: `SystemInsets.applyAsPadding` is invoked from
+both activities, and both inset API branches are present.
+
+## v10 device evidence — decoder and renderer confirmed
+
+Physical Samsung, v10, real game file `st001.scm` opened through
+`com.android.providers.downloads.documents`:
+
+- native decoder accepted the file: **PASS**
+- `SCM | vertices=23049 | triangles=14261 | SCM corpus-backed mesh decode`
+- non-empty real geometry rendered on screen: **PASS**
+- all six runtime route probes report OK
+
+This closes the decode-and-render half of the device boundary that had been
+open since v2. Note the incoming intent carried
+`type=application/vnd.lotus-screencam` for a `.scm` file — a reminder that
+provider-supplied MIME is not evidence of format, and that magic-based
+fail-closed probing is what makes the broad routing safe.
+
+Still not reported from the device:
+
+- rotate / pinch zoom / reset / wireframe;
+- the built-in browser paths (all-files scan and picked SAF folder);
+- HITS, stage `.txt` and `.index` against real shipped files.
 
 ## v8 device evidence
 
