@@ -11,7 +11,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write is needed to publish the unsigned IPA as a release asset, which gives
+  # it a stable link instead of an Actions artifact that expires in 90 days.
+  contents: write
 
 jobs:
   build-ios:
@@ -142,6 +144,43 @@ jobs:
           name: dmc-reader-ios-unsigned-ipa
           path: DMCReader-unsigned.ipa
           if-no-files-found: error
+
+      # Republished under a fixed tag on every build, so the download link never
+      # changes and does not expire the way an Actions artifact does.
+      - name: Publish unsigned IPA as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          cat > /tmp/notes.md <<'NOTES'
+          Unsigned iOS build of DMC Native Reader.
+
+          **This will not install by tapping it.** It carries no code signature,
+          because the build environment holds no Apple Developer identity. To
+          get it onto an iPhone, use a tool that re-signs it with your own
+          Apple ID:
+
+          - **AltStore** or **SideStore** — installs from the phone itself and
+            renews the signature automatically.
+          - **Sideloadly** — from a Windows or Mac over a cable.
+
+          With a free Apple ID the signature lasts 7 days and must be renewed.
+          A paid Apple Developer account extends that to a year.
+
+          Alternatively, build and run it directly from Xcode on a Mac:
+          `brew install xcodegen && cd ios && xcodegen generate`, then open
+          `DMCReader.xcodeproj`, choose your team under Signing & Capabilities
+          and press Run.
+
+          Opens DMC3 `SCM`, `MOD`, `HITS`, stage `.txt` and `.index`, using the
+          same C++ decoder as the Android build.
+          NOTES
+          gh release delete ios-unsigned-latest --yes --cleanup-tag || true
+          gh release create ios-unsigned-latest DMCReader-unsigned.ipa \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "DMC Reader for iOS — unsigned build" \
+            --notes-file /tmp/notes.md
 
       - name: Upload simulator app
         uses: actions/upload-artifact@v4
