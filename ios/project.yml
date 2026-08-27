@@ -1,0 +1,40 @@
+name: DMCReader
+
+options:
+  bundleIdPrefix: com.dmcrengine
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  DMCReader:
+    type: application
+    platform: iOS
+
+    # The decoder, probe and CPU renderer are shared verbatim with the Android
+    # app. Only app_native.cpp is platform-specific (JNI), so it is not listed
+    # here; the iOS entry point is DmcBridge.mm instead. The decode_part*.inc
+    # files are pulled in by decode_fixed.cpp and must not be compiled directly.
+    sources:
+      - path: DMCReader
+      - path: ../app/src/main/cpp/dmc_resource.cpp
+      - path: ../app/src/main/cpp/decode_fixed.cpp
+      - path: ../app/src/main/cpp/decode_hits.cpp
+      - path: ../app/src/main/cpp/decode_text.cpp
+      - path: ../app/src/main/cpp/view_renderer.cpp
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dmcrengine.nativereader
+        PRODUCT_NAME: DMC Reader
+        INFOPLIST_FILE: DMCReader/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: DMCReader/Bridge/DMCReader-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../app/src/main/cpp/include
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        CLANG_CXX_LIBRARY: libc++
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.10.0"
+        CURRENT_PROJECT_VERSION: "10"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        GENERATE_INFOPLIST_FILE: NO

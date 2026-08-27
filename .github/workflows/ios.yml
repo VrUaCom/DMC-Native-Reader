@@ -1,0 +1,94 @@
+name: DMC Native Reader iOS
+
+on:
+  push:
+    # Feature branches are included: the iOS target cannot be built on the
+    # Linux dev container at all, so a macOS runner is the only place its Swift
+    # and Objective-C++ are ever compiled.
+    branches: ["main", "claude/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The decoder is shared with the Android app, so the same host checks run
+      # here against Apple clang before the app itself is built.
+      - name: Run native decoder tests
+        run: |
+          set -euxo pipefail
+          clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+            -Iapp/src/main/cpp/include \
+            app/src/test/native/hits_decode_test.cpp \
+            app/src/main/cpp/decode_hits.cpp \
+            -o /tmp/hits_decode_test
+          /tmp/hits_decode_test
+          clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+            -Iapp/src/main/cpp/include \
+            app/src/test/native/text_decode_test.cpp \
+            app/src/main/cpp/decode_text.cpp \
+            -o /tmp/text_decode_test
+          /tmp/text_decode_test
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          set -euxo pipefail
+          cd ios
+          xcodegen generate
+          test -d DMCReader.xcodeproj
+
+      # Simulator build needs no signing identity, so this verifies the whole
+      # app compiles and links without an Apple Developer account.
+      - name: Build for iOS Simulator
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project ios/DMCReader.xcodeproj \
+            -scheme DMCReader \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify bundle identity and declared document types
+        run: |
+          set -euxo pipefail
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -type d \
+            -name '*.app' -path '*Debug-iphonesimulator*' | head -1)
+          test -n "$APP"
+          PLIST="$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST" \
+            | grep -qx 'com.dmcrengine.nativereader'
+          for uti in scm mod hits index ukn; do
+            /usr/libexec/PlistBuddy -c 'Print :UTExportedTypeDeclarations' "$PLIST" \
+              | grep -q "com.dmcrengine.$uti"
+          done
+          /usr/libexec/PlistBuddy -c 'Print :LSSupportsOpeningDocumentsInPlace' "$PLIST" \
+            | grep -qi true
+          # public.plain-text must never be claimed: it would put this reader in
+          # the iOS "Open with" sheet for every text file on the device.
+          if /usr/libexec/PlistBuddy -c 'Print :CFBundleDocumentTypes' "$PLIST" \
+              | grep -q 'public.plain-text'; then
+            echo 'unexpected public.plain-text document type' >&2
+            exit 1
+          fi
+
+      - name: Upload simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmc-reader-ios-simulator
+          path: ~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug-iphonesimulator/*.app
+          if-no-files-found: error

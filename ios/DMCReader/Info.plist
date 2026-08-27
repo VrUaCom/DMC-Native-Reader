@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>DMC Reader</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string></string>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!--
+	  Lets the user drop DMC resources into the app's Documents folder from
+	  Finder or the Files app, and open them from their original location
+	  instead of forcing a copy.
+	-->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+
+	<!--
+	  Document types this app offers to open. Deliberately absent:
+	  public.plain-text. Claiming it would put this reader in the iOS "Open
+	  with" sheet for every text file on the device, which is the same trade
+	  the Android build refuses for `.txt`. A stage `.txt` is still opened
+	  through the in-app picker, which is user-initiated.
+	-->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>DMC Resource</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.dmcrengine.scm</string>
+				<string>com.dmcrengine.mod</string>
+				<string>com.dmcrengine.hits</string>
+				<string>com.dmcrengine.index</string>
+				<string>com.dmcrengine.ukn</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dmcrengine.scm</string>
+			<key>UTTypeDescription</key>
+			<string>DMC3 SCM scene mesh</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>scm</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.dmc.scm</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dmcrengine.mod</string>
+			<key>UTTypeDescription</key>
+			<string>DMC3 MOD model</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mod</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.dmc.mod</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dmcrengine.hits</string>
+			<key>UTTypeDescription</key>
+			<string>DMC3 HITS collision resource</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>hits</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.dmc.hits</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dmcrengine.index</string>
+			<key>UTTypeDescription</key>
+			<string>DMC3 index manifest</string>
+			<!--
+			  Conforms to public.text because the manifest genuinely is text,
+			  but it is a distinct type: it is naming/extraction metadata, not
+			  a container and not runtime lookup authority.
+			-->
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.text</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>index</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/vnd.dmc.index</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.dmcrengine.ukn</string>
+			<key>UTTypeDescription</key>
+			<string>DMC3 unidentified resource</string>
+			<!--
+			  Declared for the same reason the Android build routes `.ukn`: a
+			  HITS resource is routinely shipped under that placeholder name.
+			  The native probe matches on magic, so a `.ukn` holding anything
+			  else is still rejected on open.
+			-->
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ukn</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>
