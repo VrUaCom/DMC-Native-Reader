@@ -57,6 +57,34 @@ Android correctly refuses an in-place update when the package name is the same b
 
 This allows v6 to install alongside a legacy v2/v3 installation without requiring its removal. Future v6+ test APKs must keep both this applicationId and the canonical test signer so upgrades remain compatible.
 
+## iOS target
+
+Adds an iPhone/iPad app in `ios/` sharing the decoder, probe and CPU renderer
+with Android verbatim; only the JNI entry point is platform-specific.
+
+Proven in CI (`macos-latest`, run `33057431477`):
+
+- shared decoder tests pass under Apple clang with `-Werror`;
+- the app compiles and links for the iOS Simulator;
+- compiled bundle identity `com.dmcrengine.nativereader`, version `0.10.0` /
+  `10`, and exported UTIs for scm/mod/hits/index/ukn are present;
+- `public.plain-text` is absent from the document types — asserted, not assumed.
+
+Defect caught by that CI on the first run: the generated bundle had no
+`CFBundleIdentifier`. An Xcode-IDE project inherits a template Info.plist that
+maps the standard keys onto build settings; a project generated from
+`project.yml` with `GENERATE_INFOPLIST_FILE` off supplies none of them, and
+such a bundle does not install on a device. The keys are now declared
+explicitly and CI asserts the substitutions happened.
+
+Not claimed:
+
+- no `.ipa`, and no device install: signing requires an Apple Developer
+  identity this environment does not have;
+- the app has never been run — CI builds for the simulator but does not launch
+  it, so the SwiftUI screen, the gestures and the UIImage conversion are
+  compile-verified only.
+
 ## v10 text resources
 
 Adds the two DMC3 text families. Neither is geometry: a decoded text resource

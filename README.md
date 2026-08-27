@@ -146,6 +146,45 @@ through any route, and the built-in browser admits one only after sniffing a
 bounded prefix for DMC3 stage keywords — the extension alone is not evidence.
 `.index` is specific enough to register normally.
 
+## iOS
+
+An iPhone/iPad target lives in `ios/`. It shares the decoder, probe and CPU
+renderer with the Android app **verbatim** — only `app_native.cpp` (JNI) is
+platform-specific, so `ios/DMCReader/Bridge/DmcBridge.mm` replaces it and there
+is exactly one parser for both platforms rather than a fork.
+
+- SwiftUI screen with the same two content modes: mesh rendering with drag and
+  pinch mapped onto the shared yaw/pitch/zoom state, or a scrollable monospace
+  view for stage `.txt` and `.index`.
+- `Info.plist` exports UTIs for `scm`, `mod`, `hits`, `index` and `ukn`, plus
+  `LSSupportsOpeningDocumentsInPlace` and `UIFileSharingEnabled`. This is the
+  iOS counterpart of the Android intent-routing work.
+- `public.plain-text` is deliberately not claimed, matching the Android refusal
+  to register `.txt`: it would put the reader in the "Open with" sheet for
+  every text file on the device. A stage `.txt` still opens through the in-app
+  picker, which is user-initiated. CI asserts its absence.
+- The project is generated from `ios/project.yml` with XcodeGen rather than a
+  checked-in `.pbxproj`.
+
+### Building it
+
+```sh
+brew install xcodegen
+cd ios && xcodegen generate
+open DMCReader.xcodeproj
+```
+
+Then pick a signing team in Signing & Capabilities and run on a device. A free
+Apple ID works; the installed app expires after 7 days and must be reinstalled.
+A paid Apple Developer account extends that to a year.
+
+Verified in CI on `macos-latest`: the shared decoder tests run under Apple
+clang, the app builds for the iOS Simulator (which needs no signing identity),
+and the compiled bundle's identity, version and declared document types are
+checked. **No `.ipa` is produced** — signing requires an Apple Developer
+identity that CI does not hold, so installing on a device means building
+locally on a Mac.
+
 ## v6 package identity
 
 Physical-device testing exposed a signer mismatch between early v2/v3 test APKs and the canonical v4+ signer. Android correctly rejects an update when the same package name is signed by a different certificate.
