@@ -7,14 +7,18 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
+import android.view.View;
 import android.webkit.MimeTypeMap;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -27,6 +31,9 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1001;
     private static final int REQUEST_BROWSE = 1002;
     private DmcRenderView renderView;
+    private FrameLayout contentFrame;
+    private ScrollView textScroll;
+    private TextView textView;
     private TextView statusView;
     private Button wireButton;
     private long session;
@@ -69,8 +76,29 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        // The two content modes share one slot: geometry formats render, text
+        // families (stage .txt, .index manifests) show their content instead.
+        contentFrame = new FrameLayout(this);
+
         renderView = new DmcRenderView(this);
-        root.addView(renderView, new LinearLayout.LayoutParams(
+        contentFrame.addView(renderView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        textView = new TextView(this);
+        textView.setTextColor(0xffd7d7de);
+        textView.setTextSize(12f);
+        textView.setTypeface(Typeface.MONOSPACE);
+        textView.setPadding(24, 16, 24, 16);
+        textView.setTextIsSelectable(true);
+        textScroll = new ScrollView(this);
+        textScroll.addView(textView);
+        textScroll.setVisibility(View.GONE);
+        contentFrame.addView(textScroll, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        root.addView(contentFrame, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         LinearLayout sourceBar = new LinearLayout(this);
@@ -256,7 +284,29 @@ public final class MainActivity extends Activity {
         statusView.setText(name + "\n" + NativeBridge.info(session) + "\n"
                 + routingSelfTest + "\n" + systemMimeDiag + "\n"
                 + lastProviderDiag + "\n" + lastIntentDiag);
-        renderView.setSession(session);
+        showContent(NativeBridge.text(session));
+    }
+
+    /**
+     * Switches the shared content slot between the 3D view and the text view.
+     * A decoded resource carries either a mesh or text, never both.
+     */
+    private void showContent(String text) {
+        final boolean isText = text != null && !text.isEmpty();
+        if (isText) {
+            textView.setText(text);
+            textScroll.scrollTo(0, 0);
+            textScroll.setVisibility(View.VISIBLE);
+            renderView.setVisibility(View.GONE);
+            renderView.setSession(0);
+        } else {
+            textView.setText("");
+            textScroll.setVisibility(View.GONE);
+            renderView.setVisibility(View.VISIBLE);
+            renderView.setSession(session);
+        }
+        // Rotate/zoom/wireframe are meaningless for a text resource.
+        wireButton.setEnabled(!isText);
     }
 
     private String describeIntent(Intent intent) {
@@ -333,6 +383,12 @@ public final class MainActivity extends Activity {
     }
 
     private void closeSession() {
+        // Also drops any text left over from a previous resource, so a failed
+        // open never shows the previous file's content.
+        textView.setText("");
+        textScroll.setVisibility(View.GONE);
+        renderView.setVisibility(View.VISIBLE);
+        wireButton.setEnabled(true);
         renderView.setSession(0);
         if (session != 0) {
             NativeBridge.close(session);

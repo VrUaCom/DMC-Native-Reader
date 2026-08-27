@@ -53,6 +53,16 @@ ProbeResult probe(std::string_view filename,
     if (ext == "hits") {
         return {Format::Unknown, false, "application/vnd.dmc.hits"};
     }
+    // The text families have no binary magic. The structural authority is
+    // explicit that path extension stays the classification authority for
+    // `.index`, precisely so a `PNST`-prefixed text manifest is never promoted
+    // to a binary container. The decoders still validate the payload as text.
+    if (ext == "index") {
+        return {Format::Index, false, "application/vnd.dmc.index"};
+    }
+    if (ext == "txt") {
+        return {Format::StageTxt, false, "text/plain"};
+    }
 
     return {};
 }
@@ -62,6 +72,8 @@ const char* format_name(Format format) noexcept {
         case Format::Scm: return "SCM";
         case Format::Mod: return "MOD";
         case Format::Hits: return "HITS";
+        case Format::StageTxt: return "STAGE-TXT";
+        case Format::Index: return "INDEX";
         default: return "UNKNOWN";
     }
 }

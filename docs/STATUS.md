@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-v0.9.0-hits-collision
+v0.10.0-text-resources
 
 Canonical repository: `VrUaCom/DMC-Native-Reader`.
 
@@ -23,9 +23,11 @@ See `docs/SAMSUNG_MY_FILES_BOUNDARY.md` for the full reasoning.
 ## Proven in source / CI boundary
 
 - Exact 4-byte DMC resource probes: `SCM `, `MOD ` and `HITS`.
+- Extension-classified text families: stage `.txt` and `.index`.
 - Bounded read-only native decoding path.
 - SCM/MOD -> normalized static Mesh.
 - HITS -> normalized collision triangle Mesh.
+- Stage `.txt` / `.index` -> token/entry census plus full text.
 - Development corpus validation: 74 SCM + 90 MOD = 164/164 decoded.
 - 300,466 vertices and 192,413 triangles materialized in that corpus pass.
 - CPU 3D rendering, rotate, pinch zoom, reset and wireframe.
@@ -54,6 +56,54 @@ Android correctly refuses an in-place update when the package name is the same b
 `com.dmcrengine.nativereader`
 
 This allows v6 to install alongside a legacy v2/v3 installation without requiring its removal. Future v6+ test APKs must keep both this applicationId and the canonical test signer so upgrades remain compatible.
+
+## v10 text resources
+
+Adds the two DMC3 text families. Neither is geometry: a decoded text resource
+opens in a scrollable monospace view, and a `DecodeResult` carries either a mesh
+or text, never both.
+
+Structural authority: `VrUaCom/dmc-rengine-cpp` — `src/formats/stage_txt.cpp`
+for the stage lexer, `docs/formats/pnst-readonly-parser.md` and
+`LooseContainerListPolicy` for the manifest grammar.
+
+Proven in source / CI:
+
+- 44 host checks run in CI before the APK build, compiled with
+  `-Wall -Wextra -Wpedantic -Werror`:
+  stage token census (`#SET`, `DOOR`, `BOXIN`, `NEXTROOM`, stage-set values,
+  strings, numbers), case-insensitive keywords, block-comment skipping, and
+  reporting of unterminated comments and strings; rejection of NUL bytes, empty
+  and token-less input; `.index` grammar including the literal `PNST` text line,
+  `#` directives, `/` comments, blank lines, `dummy` sparse slots, LF-only line
+  endings, and rejection of binary and empty payloads.
+- `application/vnd.dmc.index` and `.index` routing present in the compiled
+  manifest.
+- No `.txt` route present in the compiled manifest — asserted, not assumed.
+
+Classification boundary:
+
+- The text families have no binary magic, so path extension is the
+  classification authority, exactly as the upstream classifier requires. The
+  decoders still validate the payload as text, so a binary file under either
+  extension is rejected.
+- A `.index` whose first line is the literal `PNST` is textual metadata. It must
+  never be promoted to a binary PNST container, and it is not runtime lookup
+  authority.
+
+Product decision:
+
+- `.txt` is deliberately not registered as a system route. Claiming it would put
+  this app in the Android chooser for every text file on the device. It still
+  opens through any route that reaches the app, and the built-in browser admits
+  a `.txt` only after sniffing a bounded prefix for DMC3 stage keywords.
+
+Not claimed:
+
+- stage `.txt` grammar above the token level (no parse tree, no semantics);
+- `.index` linkage to the payloads it names;
+- verification against real shipped `.txt` / `.index` files — only authority-
+  shaped fixtures have been exercised so far.
 
 ## v9 HITS collision support
 

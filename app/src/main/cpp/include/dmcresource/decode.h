@@ -27,6 +27,9 @@ struct DecodeResult {
     // The default member initializer keeps the existing four-element aggregate
     // initializers in the SCM/MOD decoder valid and warning-free.
     std::string info{};
+    // Full text for text-family resources; empty for geometry formats. A
+    // result carries either a mesh or text, never both.
+    std::string text{};
 };
 
 DecodeResult decode_resource(std::string_view filename,

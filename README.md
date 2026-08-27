@@ -1,14 +1,15 @@
 # DMC Native Reader
 
-Native Android reader/viewer for Devil May Cry resource files: DMC3 `SCM`, `MOD` and `HITS`.
+Native Android reader/viewer for Devil May Cry resource files: DMC3 `SCM`, `MOD`, `HITS`, stage `.txt` and `.index`.
 
 ## Current scope
 
-- Built-in DMC file browser that finds `.scm` / `.mod` / `.hits` / `.ukn` without any file manager.
+- Built-in DMC file browser that finds `.scm` / `.mod` / `.hits` / `.ukn` / `.index` (and qualifying `.txt`) without any file manager.
 - Android file routing for `.scm` / `.mod`, including Samsung My Files compatibility paths.
 - Dedicated exported `DmcOpenActivity` system-open entry point.
 - Exact magic probing (`SCM ` / `MOD ` / `HITS`) with fail-closed rejection of unrelated files.
 - HITS collision decoding: bounded 0x44 header, 3-D spatial grid, 0x38 triangle/plane records.
+- Text families: DMC3 stage `.txt` lexing and `.index` manifest parsing, shown in a text view.
 - Native C++ bounded binary reader and corpus-backed SCM/MOD mesh decoder.
 - JNI bridge using read-only file descriptors.
 - Normalized mesh representation.
@@ -37,7 +38,7 @@ this app's control.
 ### 1. Built-in browser (always available)
 
 `Browse DMC files` on the main screen scans for `.scm` / `.mod` / `.hits` /
-`.ukn` itself and opens the tapped result directly. It needs no file manager cooperation, and it
+`.ukn` / `.index` itself and opens the tapped result directly. It needs no file manager cooperation, and it
 offers two access modes:
 
 - **Grant file access** — Android's *All files access* (`MANAGE_EXTERNAL_STORAGE`).
@@ -106,6 +107,45 @@ name. Recognition is by the four-byte `HITS` magic, never by extension — the
 superseded five-byte `HITS$` reading is not accepted, and a `.ukn` holding
 anything else is still rejected.
 
+## Text resources
+
+v10 adds the two DMC3 text families. Neither is geometry, so a decoded text
+resource opens in a scrollable monospace view instead of the 3D view; a result
+carries either a mesh or text, never both.
+
+### Stage `.txt`
+
+Structural authority: `src/formats/stage_txt.cpp`. A tokenized configuration
+text with `#SET` directives, `DOOR` / `BOXIN` / `NEXTROOM` keywords, the
+stage-set values (`DUMMY`, `STAY`, `BREAK`, `ORBREAK`, `SEAL`, `SWITCH`,
+`YURE`), `//` and `/* */` comments, quoted strings and numbers. Keywords are
+matched case-insensitively. NUL bytes disqualify the resource as text.
+
+The status line reports the token census: `tokens= set= door= boxin= nextroom=
+stageSet= ident= num= str=`, with any lexical defect in brackets.
+
+### `.index`
+
+Structural authority: `docs/formats/pnst-readonly-parser.md` and
+`LooseContainerListPolicy`. A line-based extraction/naming manifest: `/` opens a
+comment, blank lines are skipped, `dummy` marks a declared sparse slot, and the
+file may open with a magic directive line — the real corpus uses the literal
+line `PNST`.
+
+That leading `PNST` is textual metadata and is never read as binary PNST
+container magic; the authority is explicit that misclassifying it would turn
+text manifests into fake containers. The status line states the boundary:
+`.index` is metadata, not a container and not runtime lookup authority.
+
+### Why `.txt` is not a system route
+
+`.txt` is registered nowhere in the manifest. Claiming it would put this app in
+the Android chooser for every text file on the device, which is not a trade the
+reader should make for one game format. A `.txt` still opens when it arrives
+through any route, and the built-in browser admits one only after sniffing a
+bounded prefix for DMC3 stage keywords — the extension alone is not evidence.
+`.index` is specific enough to register normally.
+
 ## v6 package identity
 
 Physical-device testing exposed a signer mismatch between early v2/v3 test APKs and the canonical v4+ signer. Android correctly rejects an update when the same package name is signed by a different certificate.
@@ -118,8 +158,8 @@ It can install alongside the legacy test package, so the user does not need to r
 
 Current milestone:
 
-- versionCode: `9`
-- versionName: `0.9.0-hits-collision`
+- versionCode: `10`
+- versionName: `0.10.0-text-resources`
 - applicationId: `com.dmcrengine.nativereader`
 - launchable Java activity: `com.dmcrengine.nativeviewer.MainActivity`
 
@@ -167,7 +207,7 @@ Canonical test certificate SHA-256 fingerprint:
 
 ## Status
 
-Current milestone: **v9 HITS collision decoding + built-in DMC browser + confirmed Samsung routing**.
+Current milestone: **v10 text resources + HITS collision decoding + built-in DMC browser + confirmed Samsung routing**.
 
 Samsung My Files routing is confirmed working on v8: tapping a real `.scm` /
 `.mod` opens the app instead of the "Search in Play Store?" dialog that had

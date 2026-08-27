@@ -39,7 +39,7 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-      - name: Run native HITS decoder tests
+      - name: Run native decoder tests
         run: |
           set -euxo pipefail
           g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
@@ -48,6 +48,12 @@ jobs:
             app/src/main/cpp/decode_hits.cpp \
             -o /tmp/hits_decode_test
           /tmp/hits_decode_test
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+            -Iapp/src/main/cpp/include \
+            app/src/test/native/text_decode_test.cpp \
+            app/src/main/cpp/decode_text.cpp \
+            -o /tmp/text_decode_test
+          /tmp/text_decode_test
 
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
@@ -64,8 +70,8 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='9'" /tmp/badging.txt
-          grep -q "versionName='0.9.0-hits-collision'" /tmp/badging.txt
+          grep -q "versionCode='10'" /tmp/badging.txt
+          grep -q "versionName='0.10.0-text-resources'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -85,6 +91,14 @@ jobs:
           grep -q 'application/vnd.dmc.hits' /tmp/manifest-tree.txt
           grep -q '\\.hits' /tmp/manifest-tree.txt
           grep -q '\\.ukn' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.index' /tmp/manifest-tree.txt
+          grep -q '\\.index' /tmp/manifest-tree.txt
+          # .txt must never become a system route: it would put this app in the
+          # Android chooser for every text file on the device.
+          if grep -q '\.txt' /tmp/manifest-tree.txt; then
+            echo 'unexpected .txt route in the compiled manifest' >&2
+            exit 1
+          fi
           grep -q 'application/octet-stream' /tmp/manifest-tree.txt
           grep -q 'audio/x-mod' /tmp/manifest-tree.txt
           grep -q 'video/mpeg' /tmp/manifest-tree.txt
@@ -101,14 +115,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v9-hits-collision
+          name: dmc-native-reader-v10-text-resources
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v9-build-evidence
+          name: dmc-native-reader-v10-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt

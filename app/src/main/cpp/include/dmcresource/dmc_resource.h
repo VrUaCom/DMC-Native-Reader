@@ -11,6 +11,8 @@ enum class Format : std::uint8_t {
     Scm,
     Mod,
     Hits,
+    StageTxt,
+    Index,
 };
 
 struct ProbeResult {

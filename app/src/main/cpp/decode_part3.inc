@@ -134,6 +134,8 @@ DecodeResult decode_resource(std::string_view filename,
         case Format::Scm: return decode_model(Format::Scm, bytes, size);
         case Format::Mod: return decode_model(Format::Mod, bytes, size);
         case Format::Hits: return decode_hits(bytes, size);
+        case Format::StageTxt: return decode_stage_txt(bytes, size);
+        case Format::Index: return decode_index(bytes, size);
         default:
             return {DecodeStatus::UnknownFormat, Format::Unknown, {}, "unknown format"};
     }

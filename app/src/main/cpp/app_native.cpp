@@ -69,6 +69,7 @@ struct Session {
     dmcresource::Mesh mesh;
     std::string detail;
     std::string info;
+    std::string text;
 };
 
 Session* from_handle(jlong handle) noexcept {
@@ -121,6 +122,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     session->mesh = std::move(decoded.mesh);
     session->detail = decoded.detail != nullptr ? decoded.detail : "decoded";
     session->info = std::move(decoded.info);
+    session->text = std::move(decoded.text);
     return to_handle(session.release());
 }
 
@@ -136,12 +138,25 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     const Session* session = from_handle(handle);
     if (session == nullptr) return env->NewStringUTF("no session");
     std::ostringstream out;
-    out << dmcresource::format_name(session->format)
-        << " | vertices=" << session->mesh.vertices.size()
-        << " | triangles=" << (session->mesh.indices.size() / 3u)
-        << " | " << session->detail;
+    out << dmcresource::format_name(session->format);
+    if (session->text.empty()) {
+        out << " | vertices=" << session->mesh.vertices.size()
+            << " | triangles=" << (session->mesh.indices.size() / 3u);
+    } else {
+        out << " | bytes=" << session->text.size();
+    }
+    out << " | " << session->detail;
     if (!session->info.empty()) out << " | " << session->info;
     return env->NewStringUTF(out.str().c_str());
+}
+
+// Returns the decoded text for a text-family resource, or null for geometry.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_text(
+        JNIEnv* env, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr || session->text.empty()) return nullptr;
+    return env->NewStringUTF(session->text.c_str());
 }
 
 extern "C" JNIEXPORT jintArray JNICALL

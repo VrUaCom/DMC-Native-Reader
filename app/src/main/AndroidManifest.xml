@@ -23,7 +23,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="DMC Native Reader v9"
+        android:label="DMC Native Reader v10"
         android:theme="@style/AppTheme">
 
         <activity
@@ -56,7 +56,7 @@
             android:name="com.dmcrengine.nativeviewer.DmcOpenActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="DMC Native Reader v9">
+            android:label="DMC Native Reader v10">
 
             <!-- Canonical DMC MIME types. -->
             <intent-filter android:priority="100">
@@ -68,6 +68,7 @@
                 <data android:mimeType="application/vnd.dmc.scm" />
                 <data android:mimeType="application/vnd.dmc.mod" />
                 <data android:mimeType="application/vnd.dmc.hits" />
+                <data android:mimeType="application/vnd.dmc.index" />
             </intent-filter>
 
             <!-- MIME values observed/commonly associated with unknown SCM/MOD files. -->
@@ -151,6 +152,8 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.HITS" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ukn" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.UKN" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.index" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.INDEX" />
             </intent-filter>
 
             <intent-filter android:priority="100">
@@ -171,6 +174,8 @@
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.HITS" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ukn" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.UKN" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.index" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.INDEX" />
             </intent-filter>
 
             <!--
@@ -192,6 +197,8 @@
                 <data android:scheme="content" android:host="*" android:pathSuffix=".HITS" />
                 <data android:scheme="content" android:host="*" android:pathSuffix=".ukn" />
                 <data android:scheme="content" android:host="*" android:pathSuffix=".UKN" />
+                <data android:scheme="content" android:host="*" android:pathSuffix=".index" />
+                <data android:scheme="content" android:host="*" android:pathSuffix=".INDEX" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".mod" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".MOD" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".scm" />
@@ -200,6 +207,8 @@
                 <data android:scheme="file" android:host="*" android:pathSuffix=".HITS" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".ukn" />
                 <data android:scheme="file" android:host="*" android:pathSuffix=".UKN" />
+                <data android:scheme="file" android:host="*" android:pathSuffix=".index" />
+                <data android:scheme="file" android:host="*" android:pathSuffix=".INDEX" />
             </intent-filter>
 
             <intent-filter android:priority="100">

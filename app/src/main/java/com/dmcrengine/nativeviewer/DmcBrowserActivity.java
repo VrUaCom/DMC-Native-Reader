@@ -25,6 +25,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -345,7 +349,8 @@ public final class DmcBrowserActivity extends Activity {
             if (out.size() >= MAX_RESULTS || Thread.currentThread().isInterrupted()) return;
             if (child.isDirectory()) {
                 scanFiles(child, depth + 1, out);
-            } else if (isDmcName(child.getName())) {
+            } else if (isDmcName(child.getName())
+                    || (isStageTxtName(child.getName()) && sniffStageTxt(child))) {
                 out.add(new Entry(child.getName(), child.getParent(), child.length(),
                         null, child.getAbsolutePath()));
             }
@@ -382,9 +387,13 @@ public final class DmcBrowserActivity extends Activity {
                     long size = c.isNull(3) ? -1 : c.getLong(3);
                     if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
                         pending.add(docId);
-                    } else if (name != null && isDmcName(name)) {
-                        out.add(new Entry(name, treeLabel(tree), size,
-                                DocumentsContract.buildDocumentUriUsingTree(tree, docId), null));
+                    } else if (name != null) {
+                        Uri documentUri =
+                                DocumentsContract.buildDocumentUriUsingTree(tree, docId);
+                        if (isDmcName(name)
+                                || (isStageTxtName(name) && sniffStageTxt(documentUri))) {
+                            out.add(new Entry(name, treeLabel(tree), size, documentUri, null));
+                        }
                     }
                 }
             } catch (RuntimeException ignored) {
@@ -405,11 +414,73 @@ public final class DmcBrowserActivity extends Activity {
      * `.ukn` is listed because a HITS collision resource is routinely shipped
      * under that name; the native probe matches on the four-byte magic, so a
      * `.ukn` holding anything else is still rejected on open.
+     *
+     * `.txt` is excluded here on name alone: it is far too common to list every
+     * one on the device. It is admitted only through {@link #looksLikeStageTxt},
+     * which sniffs for DMC3 stage keywords.
      */
     private static boolean isDmcName(String name) {
         String lower = name.toLowerCase(Locale.US);
         return lower.endsWith(".scm") || lower.endsWith(".mod")
-                || lower.endsWith(".hits") || lower.endsWith(".ukn");
+                || lower.endsWith(".hits") || lower.endsWith(".ukn")
+                || lower.endsWith(".index");
+    }
+
+    private static boolean isStageTxtName(String name) {
+        return name.toLowerCase(Locale.US).endsWith(".txt");
+    }
+
+    /** Bytes sniffed from a `.txt` candidate before it is offered in the list. */
+    private static final int TXT_SNIFF_BYTES = 4096;
+
+    private static final String[] STAGE_TXT_MARKERS = {
+            "#set", "boxin", "nextroom", "door",
+    };
+
+    /**
+     * A DMC3 stage text is an ordinary `.txt`, so the only honest filter is the
+     * content. Reads a bounded prefix and looks for the keywords the stage
+     * lexer recognises; NUL bytes disqualify it as text outright.
+     */
+    private boolean sniffStageTxt(File file) {
+        if (file.length() == 0) return false;
+        try (InputStream in = new FileInputStream(file)) {
+            return sniffStageTxt(in);
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    private boolean sniffStageTxt(Uri documentUri) {
+        try (InputStream in = getContentResolver().openInputStream(documentUri)) {
+            return in != null && sniffStageTxt(in);
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static boolean sniffStageTxt(InputStream in) throws IOException {
+        byte[] prefix = new byte[TXT_SNIFF_BYTES];
+        int filled = 0;
+        while (filled < prefix.length) {
+            int read = in.read(prefix, filled, prefix.length - filled);
+            if (read < 0) break;
+            filled += read;
+        }
+        return looksLikeStageTxt(prefix, filled);
+    }
+
+    private static boolean looksLikeStageTxt(byte[] prefix, int length) {
+        if (prefix == null || length <= 0) return false;
+        for (int i = 0; i < length; ++i) {
+            if (prefix[i] == 0) return false;
+        }
+        String head = new String(prefix, 0, length, StandardCharsets.ISO_8859_1)
+                .toLowerCase(Locale.US);
+        for (String marker : STAGE_TXT_MARKERS) {
+            if (head.contains(marker)) return true;
+        }
+        return false;
     }
 
     private static String humanSize(long bytes) {

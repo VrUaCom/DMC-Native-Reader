@@ -6,6 +6,7 @@ add_library(dmcviewer SHARED
     dmc_resource.cpp
     decode_fixed.cpp
     decode_hits.cpp
+    decode_text.cpp
     view_renderer.cpp
 )
 

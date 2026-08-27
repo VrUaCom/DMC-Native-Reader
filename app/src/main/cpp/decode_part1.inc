@@ -10,6 +10,7 @@
 
 #include "dmcresource/binary_reader.h"
 #include "dmcresource/hits_decode.h"
+#include "dmcresource/text_decode.h"
 
 namespace dmcresource {
 namespace {
