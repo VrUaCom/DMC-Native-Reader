@@ -1,104 +1,120 @@
 # DMC Native Reader
 
-Native Android reader/viewer for Devil May Cry resource files, starting with DMC3 `SCM` and `MOD`.
+Native Android reader/viewer for Devil May Cry resource files. The Android app is a separate product repository, while `VrUaCom/dmc-rengine-cpp` remains the canonical reverse/evidence source for DMC3 HD format semantics.
 
-## Current scope
+## Current milestone — v8
 
-- Android file routing for `.scm` / `.mod`, including Samsung My Files compatibility paths.
-- Dedicated exported `DmcResourceOpenHandler` system-open entry point.
-- Exact magic probing (`SCM ` / `MOD `) with fail-closed rejection of unrelated files.
-- Native C++ bounded binary reader and corpus-backed SCM/MOD mesh decoder.
-- JNI bridge using read-only file descriptors.
-- Normalized mesh representation.
-- CPU 3D renderer with rotate, pinch zoom, reset and wireframe.
-- Android intent diagnostics and PackageManager self-test for routing failures.
-- Standalone CI build plus compiled package/manifest/signature verification.
+- versionCode: `8`
+- versionName: `0.8.0-format-catalog-inspection`
+- applicationId: `com.dmcrengine.nativereader`
+- ABI: `arm64-v8a`
+- Android compile/target SDK: `36`
+- minSdk: `26`
+- NDK: `28.2.13676358`
+- CMake: `3.22.1`
 
-## Evidence status
+The package id and canonical development signer remain unchanged from v6/v7 so v8 is intended to install as an update over the canonical test line.
 
-The decoder was validated against the available project corpus used during development:
+## Architecture
+
+v8 deliberately separates three levels of support:
+
+1. **Recognition** — identify a catalogued DMC resource family from content, filename or extension without inventing a schema.
+2. **Structural inspection** — read bounded fields/records for formats whose structure is already evidenced strongly enough.
+3. **3D preview** — materialize a normalized mesh only where the Native Reader decoder is actually validated.
+
+This prevents a known failure mode in reverse-engineering tools: treating every model-adjacent format as if it shared one mesh layout.
+
+## Proven 3D preview
+
+SCM and MOD remain the only families currently promoted to the native mesh-preview path.
+
+Development corpus evidence from the existing decoder milestone:
 
 - SCM: 74/74 decoded
 - MOD: 90/90 decoded
 - Total: 164/164 decoded
 - 300,466 vertices materialized
 - 192,413 triangles materialized
-- No index out-of-bounds observed in the corpus pass
+- no index out-of-bounds observed in the corpus pass
 
-This does **not** claim that all opaque format semantics are reversed. Full `triCmd` opcode semantics, textures/materials and exact MOD skeletal skinning remain separate reverse-engineering boundaries.
+Full `triCmd` semantics, textures/materials and exact MOD skeletal skinning remain open reverse boundaries.
+
+## v8 format catalog
+
+The native catalog is derived from the current DMC3 HD format-purpose/runtime evidence in `dmc-rengine-cpp` and includes container, geometry/render, texture, animation, camera, collision, lighting, item/stage, audio/video, persistence and legacy UI families.
+
+Representative families include:
+
+- containers/materialization: `NBZ`, `PAC`, `PNST`, `PACK`, `.index`, `.lst`, AFS namespace
+- geometry/render: `SCM`, `MOD`, `EFM`, `MRP`, `SHW`
+- collision/camera/lighting: `HITS`, `DCA`, `CAM`, `LIG`, `LIG2`
+- textures: `DDS`, `PTX`, `TIM2/TM2`, `PTZ`
+- animation/control: `MOT` variants, `MCV`, `HID` variants, `CLT`, `C1D`, `TSC`
+- stage/gameplay: `EVE`, `POS`, `ITM`, `STE`, `EST`, stage `TXT`, `EventTblNN.bin`
+- audio/video: `ADX`, `OGG`, `VAGp`, `PHD`, `TSB`, `BD`, `SPUMAPDT`, `SFD`, `WMV`, media-capability families
+- persistence/UI: `dmc3.sav`, `options.sav`, `FON`, `ICO`, `icon.sys`
+
+Not every catalog entry is claimed to have a recovered binary schema. The app exposes an evidence/support label such as `mesh-preview`, `structural`, `recognized`, `runtime-only`, `research-only`, `capability-only` or `fallback-only`.
+
+## Structural inspection in v8
+
+Current native inspection includes bounded summaries for:
+
+- `PAC` / `PNST`: declared slots, populated/empty slots, alias offsets and offset-boundary validity
+- `HITS`: collision grid dimensions, triangle count and relative section offsets
+- `DCA`: `0x10` header + `0x410` record envelope
+- `LIG2`: `0x20` header + `0x30` record envelope
+- `DDS`: basic dimensions when the DDS content signature is present
+- `NBZ`: filename/extension identity plus ZIP-prefix observation without pretending that this proves a binary AFS container
+
+Additional families can be opened as recognition/inspection sessions without forcing them through the SCM/MOD mesh decoder.
+
+## HITS correction
+
+`HITS$` is **not** a canonical DMC3 format identity and must not be reintroduced.
+
+Current canonical EXE reverse establishes:
+
+- the scoped three-byte registry content probe recognizes `MOD`, `EFM`, `SCM`, `MRP`, `SHW`
+- the four-byte family-mask classifier recognizes `MOD `, `EFM `, `SCM `, `MRP `, `MCV `, `SHW `
+- the bounded canonical EXE sweep found zero ASCII `HITS` occurrences
+
+The project collision parser nevertheless has data/corpus evidence for a real four-byte `HITS` payload identity. v8 therefore labels `HITS` as a structural collision payload identity, **not** as an EXE registry tag. Historical `HITS$` remains rejected.
 
 ## Android routing
 
-The current system-open path is designed for Samsung/Android providers that may supply unknown DMC files with unexpected or null MIME types. The compiled APK is required to contain routes covering:
+The exported concrete `DmcOpenActivity` remains the OEM/Samsung system-open entry point. v8 retains typed/untyped `content://` and `file://` fallbacks and adds extension-specific routes for distinctive DMC resource families.
 
-- `ACTION_VIEW`
-- `ACTION_EDIT`
-- `CATEGORY_DEFAULT`
-- `CATEGORY_BROWSABLE`
-- `CATEGORY_OPENABLE`
-- canonical DMC MIME types
-- `application/octet-stream`
-- legacy MOD audio MIME variants
-- `*/*`
-- `content://`
-- `file://`
-- `ACTION_SEND` fallback
+Generic extensions such as `.bin`, `.txt`, `.sav`, `.mp4` and other common user file types are intentionally not broadly claimed by the extension-specific handler. They remain available through the app picker/generic provider route so Native Reader does not advertise itself as the preferred handler for unrelated files.
 
-Native decoding remains fail-closed, so broad Android routing does not make unrelated files parse as DMC resources.
+## Native safety boundary
 
-## v6 package identity
+- files are opened read-only through Android file descriptors
+- mapped resource size is capped at 512 MiB
+- SCM/MOD decoding remains fail-closed on unsupported/invalid layouts
+- non-mesh resources cannot reuse or display a stale previous mesh frame
+- recognition does not imply complete semantic reverse
 
-Physical-device testing exposed a signer mismatch between early v2/v3 test APKs and the canonical v4+ signer. Android correctly rejects an update when the same package name is signed by a different certificate.
+## Build and CI
 
-v6 therefore establishes the permanent test package identity:
+GitHub Actions builds the ARM64 APK and verifies:
 
-`com.dmcrengine.nativereader`
+- ZIP integrity
+- `classes.dex`
+- `lib/arm64-v8a/libdmcviewer.so`
+- package/version identity
+- compiled manifest routes
+- representative v8 DMC MIME/extension routes
+- absence of rejected `HITS$` routing
+- APK Signature Scheme v2/v3
+- canonical test signer fingerprint
+- APK SHA-256 evidence
 
-It can install alongside the legacy test package, so the user does not need to remove the old installation just to test v6. Future v6+ test builds must preserve this applicationId and the canonical test signer.
-
-Current milestone:
-
-- versionCode: `6`
-- versionName: `0.6.0-install-identity`
-- applicationId: `com.dmcrengine.nativereader`
-- launchable Java activity: `com.dmcrengine.nativeviewer.MainActivity`
-
-## Build
-
-This repository is the canonical build host. CI installs the Android SDK/NDK/CMake toolchain, builds the ARM64 APK, verifies the compiled package identity and binary manifest, then verifies the APK signature.
-
-Toolchain baseline:
-
-- Android compile/target SDK: 36
-- minSdk: 26
-- Android NDK: 28.2.13676358
-- CMake: 3.22.1
-- Gradle: 9.5.0 in CI
-- ABI: arm64-v8a
-
-Verified v6 CI build (PR #4 / run `33007067465`):
-
-- package identity: PASS
-- system handler routing: PASS
-- APK Signature Scheme v2: PASS
-- APK Signature Scheme v3: PASS
-- signer SHA-256: `f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
-- APK SHA-256: `3f093f6f9088423753f32a0690de315f0b9e5ae0cb8c5703763b157bc55673d0`
-
-## Test signing
-
-`keys/dmc-native-reader-test.jks` is intentionally a **disposable development/test key**. It is used so v6+ test APKs remain update-compatible with one another.
-
-It is not a production credential and must never be used as a production/release signing identity. A future production release must use a separate protected signing key supplied outside Git history.
-
-Canonical test certificate SHA-256 fingerprint:
+Canonical development/test certificate SHA-256:
 
 `f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
 
-## Status
+The repository test key is disposable development infrastructure, not a production signing identity.
 
-Current milestone: **v6 install identity + Samsung system handler + real SCM/MOD static geometry preview**.
-
-Next verification boundary: physical Samsung install -> direct launch self-test -> Samsung My Files -> Android intent resolution -> DMC Native Reader -> native decoder -> real 3D viewer.
-
-See `docs/STATUS.md` for the exact evidence boundary and remaining work.
+See `docs/STATUS.md` for the current evidence and device-test boundary.
