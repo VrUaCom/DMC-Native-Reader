@@ -107,6 +107,31 @@ std::string normalize(std::string_view input) {
     return out;
 }
 
+bool has3(const std::uint8_t* bytes, std::size_t size,
+          char a, char b, char c) noexcept {
+    return bytes != nullptr && size >= 3u &&
+           bytes[0] == static_cast<std::uint8_t>(a) &&
+           bytes[1] == static_cast<std::uint8_t>(b) &&
+           bytes[2] == static_cast<std::uint8_t>(c);
+}
+
+bool has4(const std::uint8_t* bytes, std::size_t size,
+          char a, char b, char c, char d) noexcept {
+    return bytes != nullptr && size >= 4u &&
+           bytes[0] == static_cast<std::uint8_t>(a) &&
+           bytes[1] == static_cast<std::uint8_t>(b) &&
+           bytes[2] == static_cast<std::uint8_t>(c) &&
+           bytes[3] == static_cast<std::uint8_t>(d);
+}
+
+ProbeResult runtime_identity(const char* family,
+                             const char* domain,
+                             const char* support,
+                             const char* mime) noexcept {
+    return {Format::Other, true, true, family, domain, support,
+            "EXE_CONFIRMED_IDENTITY", mime};
+}
+
 }  // namespace
 
 ExeFormatEvidence exe_format_evidence(std::string_view family) noexcept {
@@ -117,6 +142,49 @@ ExeFormatEvidence exe_format_evidence(std::string_view family) noexcept {
             return {true, record.strength, record.path, record.detail};
         }
     }
+    return {};
+}
+
+ProbeResult probe_exe_runtime_identity(const std::uint8_t* bytes,
+                                       std::size_t size) noexcept {
+    // Exact PNST recursion identity is four bytes.
+    if (has4(bytes, size, 'P', 'N', 'S', 'T')) {
+        return runtime_identity("PNST", "container", "runtime-identity", "application/vnd.dmc.pnst");
+    }
+
+    // The registry-content probe at 0x1402DB1F0 reads only bytes 0..2.  Keep
+    // that behavior scoped to this evidence path instead of pretending every
+    // DMC classifier uses three-byte identities.
+    if (has3(bytes, size, 'M', 'O', 'D')) {
+        return runtime_identity("MOD", "geometry", "runtime-identity", "application/vnd.dmc.mod");
+    }
+    if (has3(bytes, size, 'E', 'F', 'M')) {
+        return runtime_identity("EFM", "geometry", "runtime-identity", "application/vnd.dmc.efm");
+    }
+    if (has3(bytes, size, 'S', 'C', 'M')) {
+        return runtime_identity("SCM", "geometry", "runtime-identity", "application/vnd.dmc.scm");
+    }
+    if (has3(bytes, size, 'M', 'R', 'P')) {
+        return runtime_identity("MRP", "render", "runtime-identity", "application/vnd.dmc.mrp");
+    }
+    if (has3(bytes, size, 'S', 'H', 'W')) {
+        return runtime_identity("SHW", "render", "runtime-identity", "application/vnd.dmc.shw");
+    }
+
+    // EFE/EFW are explicit three-byte sentinels in the container dispatcher.
+    if (has3(bytes, size, 'E', 'F', 'E')) {
+        return runtime_identity("EFE", "effect", "runtime-identity", "application/vnd.dmc.efe");
+    }
+    if (has3(bytes, size, 'E', 'F', 'W')) {
+        return runtime_identity("EFW", "effect", "runtime-identity", "application/vnd.dmc.efw");
+    }
+
+    // MCV is absent from the three-byte registry probe.  It is proved by the
+    // four-byte family-mask classifier, where the trailing space matters.
+    if (has4(bytes, size, 'M', 'C', 'V', ' ')) {
+        return runtime_identity("MCV", "animation", "runtime-identity", "application/vnd.dmc.mcv");
+    }
+
     return {};
 }
 
