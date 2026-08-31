@@ -18,6 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate canonical EXE runtime identity probe
+        run: |
+          set -euxo pipefail
+          g++ -std=c++17 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            app/src/main/cpp/exe_format_registry.cpp \
+            tests/exe_runtime_probe_test.cpp \
+            -o /tmp/exe-runtime-probe-test
+          /tmp/exe-runtime-probe-test
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -106,6 +116,7 @@ jobs:
           grep -q 'family-mask + auxiliary extension registry' /tmp/native-strings.txt
           grep -q 'container-dispatch sentinel' /tmp/native-strings.txt
           grep -q 'media extension classifier' /tmp/native-strings.txt
+          grep -q 'runtime-identity' /tmp/native-strings.txt
           grep -q 'SPUMAPDT' /tmp/native-strings.txt
           grep -q '%sDMC3-%d.nbz' /tmp/native-strings.txt
           grep -q 'GData.afs/' /tmp/native-strings.txt
