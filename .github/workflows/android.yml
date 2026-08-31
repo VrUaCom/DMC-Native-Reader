@@ -1,4 +1,4 @@
-name: DMC Native Reader Android
+name: DMC Test Reader Android
 
 on:
   push:
@@ -42,7 +42,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify APK payload, identity and modular pipeline
+      - name: Verify standalone Test Reader and modular pipeline
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -53,9 +53,10 @@ jobs:
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
-          grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='9'" /tmp/badging.txt
-          grep -q "versionName='0.9.0-modular-decode-test'" /tmp/badging.txt
+          grep -q "package: name='com.dmcrengine.testreader'" /tmp/badging.txt
+          grep -q "versionCode='1'" /tmp/badging.txt
+          grep -q "versionName='0.1.0-modular-test-reader'" /tmp/badging.txt
+          grep -q "application-label:'DMC Test Reader'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -65,10 +66,11 @@ jobs:
           grep -q 'application/vnd.dmc.efm' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.mrp' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.shw' /tmp/manifest-tree.txt
-          grep -q '\\.mod' /tmp/manifest-tree.txt
-          grep -q '\\.scm' /tmp/manifest-tree.txt
-          grep -q '\\.efm' /tmp/manifest-tree.txt
 
+          if grep -q 'com.dmcrengine.nativereader' /tmp/badging.txt; then
+            echo 'standalone Test Reader unexpectedly uses Native Reader applicationId' >&2
+            exit 1
+          fi
           if grep -q 'HITS\$' /tmp/manifest-tree.txt; then
             echo 'rejected HITS$ identity unexpectedly present in Android routing' >&2
             exit 1
@@ -90,14 +92,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v9-modular-decode-test
+          name: dmc-test-reader-v1-modular
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v9-build-evidence
+          name: dmc-test-reader-v1-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
