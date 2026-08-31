@@ -7,13 +7,17 @@
 
 namespace dmcresource {
 
-// Format controls the native decode path.  Only SCM/MOD currently materialize
-// a Mesh; Other covers catalogued DMC resource families that can be recognized
-// and inspected without pretending they share the SCM/MOD layout.
+// Format controls the modular decode pipeline.  MOD/SCM currently reach a
+// complete static-mesh stage.  EFM/MRP/SHW have explicit adapters so their
+// decode gaps can be closed module-by-module without duplicating the shared
+// binary/model core.  Other covers the wider DMC3 catalog.
 enum class Format : std::uint8_t {
     Unknown = 0,
     Scm,
     Mod,
+    Efm,
+    Mrp,
+    Shw,
     Other,
 };
 
