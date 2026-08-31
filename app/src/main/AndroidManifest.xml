@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:allowBackup="false"
-        android:label="DMC Native Reader v7"
+        android:label="DMC Native Reader v8"
         android:theme="@style/AppTheme">
 
         <activity
@@ -17,18 +17,17 @@
         </activity>
 
         <!--
-          Real exported component for OEM file managers.  Do not replace this
-          with an activity-alias: v7 intentionally tests a concrete Activity
-          because Samsung My Files may apply its own custom-file routing before
-          the stock Android chooser.
+          Real exported component for OEM file managers.  Keep this concrete
+          activity: Samsung My Files may apply custom routing before the stock
+          Android chooser.
         -->
         <activity
             android:name="com.dmcrengine.nativeviewer.DmcOpenActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:label="DMC Native Reader v7">
+            android:label="DMC Native Reader v8">
 
-            <!-- Canonical DMC MIME types. -->
+            <!-- Canonical mesh MIME types plus v8 structural families. -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -37,9 +36,16 @@
                 <category android:name="android.intent.category.OPENABLE" />
                 <data android:mimeType="application/vnd.dmc.scm" />
                 <data android:mimeType="application/vnd.dmc.mod" />
+                <data android:mimeType="application/vnd.dmc.pac" />
+                <data android:mimeType="application/vnd.dmc.pnst" />
+                <data android:mimeType="application/vnd.dmc.hits" />
+                <data android:mimeType="application/vnd.dmc.dca" />
+                <data android:mimeType="application/vnd.dmc.efm" />
+                <data android:mimeType="application/vnd.dmc.mrp" />
+                <data android:mimeType="application/vnd.dmc.shw" />
             </intent-filter>
 
-            <!-- MIME values observed/commonly associated with unknown SCM/MOD files. -->
+            <!-- MIME values observed/commonly associated with unknown DMC files. -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -57,7 +63,7 @@
                 <data android:mimeType="video/x-mod" />
             </intent-filter>
 
-            <!-- Generic typed provider fallback. Native probing remains fail-closed. -->
+            <!-- Generic typed provider fallback. Native probing remains bounded. -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -98,9 +104,10 @@
             </intent-filter>
 
             <!--
-              Extension-specific routes. Android pathPattern is a simple glob,
-              not a regular expression, so several dotted-path forms are listed.
-              The host is required for pathPattern matching.
+              Extension-specific OEM routes.  Only distinctive DMC extensions
+              are listed here; generic .bin/.txt/.sav/media extensions remain
+              available through the picker/generic provider route so v8 does not
+              advertise itself as the handler for unrelated user files.
             -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
@@ -108,14 +115,52 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <category android:name="android.intent.category.OPENABLE" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mod" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\..*\\.mod" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\..*\\..*\\.mod" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.MOD" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.nbz" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pac" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pnst" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pack" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.scm" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\..*\\.scm" />
-                <data android:scheme="content" android:host="*" android:pathPattern=".*\\..*\\..*\\.scm" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mod" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.hits" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.dca" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ptx" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.tm2" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ptz" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.efm" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.shw" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mrp" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.sef" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.efe" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.efw" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.c1d" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.clt" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot2" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot3" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot4" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot5" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot6" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mcv" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.cam" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.hid" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.hid2" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.hid3" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.tsc" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.lig" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.lig2" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.eve" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pos" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.itm" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ste" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.est" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.adx" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.phd" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.tsb" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.sfd" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.fon" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.SCM" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.PAC" />
             </intent-filter>
 
             <intent-filter android:priority="100">
@@ -124,14 +169,52 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <category android:name="android.intent.category.OPENABLE" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mod" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\.mod" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\..*\\.mod" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.MOD" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.nbz" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pac" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pnst" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pack" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.scm" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\.scm" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\..*\\.scm" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mod" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.hits" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.dca" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ptx" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.tm2" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ptz" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.efm" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.shw" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mrp" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.sef" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.efe" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.efw" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.c1d" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.clt" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot2" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot3" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot4" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot5" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot6" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mcv" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.cam" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.hid" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.hid2" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.hid3" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.tsc" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.lig" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.lig2" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.eve" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pos" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.itm" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ste" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.est" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.adx" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.phd" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.tsb" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.sfd" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.fon" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.SCM" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.PAC" />
             </intent-filter>
 
             <intent-filter android:priority="100">
