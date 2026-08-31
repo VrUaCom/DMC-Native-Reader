@@ -47,13 +47,24 @@ int main() {
     expect_none("MCVX", 4);
     expect_none("MCV", 3);
 
+    // Other direct canonical EXE content checks.
+    expect_family("VAGp", 4, "VAGp");
+    const char tm2[] = {'T', 'M', '2', '\0'};
+    expect_family(tm2, 4, "TIM2");
+    expect_family("DDS ", 4, "DDS");
+    expect_none("TM2X", 4);
+    expect_none("VAGx", 4);
+
     // Do not leak data/corpus HITS identity into the EXE runtime registry.
     expect_none("HITS", 4);
     expect_none("HITS$", 5);
     expect_none("PNSX", 4);
 
-    // Reference evidence is deliberately separate from content magic.
+    // Reference/object-tag evidence is deliberately separate from content magic.
     assert(dmcresource::exe_format_evidence("TIM2").present);
+    assert(dmcresource::exe_format_evidence("VAGp").present);
+    assert(dmcresource::exe_format_evidence("DDS").present);
+    assert(dmcresource::exe_format_evidence("LIG2").present);
     assert(dmcresource::exe_format_evidence("AFS namespace").present);
     assert(dmcresource::exe_format_evidence("EventTbl").present);
     assert(!dmcresource::exe_format_evidence("HITS").present);
