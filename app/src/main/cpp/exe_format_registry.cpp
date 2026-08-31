@@ -21,9 +21,9 @@ struct Record {
 //
 // IMPORTANT: this table records identity/reference evidence only.  It does not
 // promote a family to a complete decoder.  Shader-container strings such as
-// RDEF/SPDB/D3DSHDR/SHEX are deliberately excluded because they are embedded
-// compiler metadata, not DMC resource-family identities.
-constexpr std::array<Record, 46> kRecords{{
+// RDEF/SPDB/D3DSHDR/SHEX and DDS compression FourCCs are deliberately not
+// registered as standalone DMC resource families.
+constexpr std::array<Record, 48> kRecords{{
     {"MOD", "EXE_CONFIRMED", "registry-content + container-dispatch + family-mask",
      "3-byte registry @0x1402DB1F0; handler 0x1402FE3B0; 4-byte family mask @0x1402FD650"},
     {"EFM", "EXE_CONFIRMED", "registry-content + container-dispatch + family-mask",
@@ -42,6 +42,8 @@ constexpr std::array<Record, 46> kRecords{{
      "3-byte EFW is explicitly compared by 0x1401B9FA0 and follows no-handler path"},
     {"PNST", "EXE_CONFIRMED", "container-recursion magic",
      "4-byte PNST identity recursively dispatched by 0x1401B9FA0"},
+    {"LIG2", "EXE_CONFIRMED_OBJECT_TAG", "constructor FourCC/tag write",
+     "constructor @0x14023ECB0 writes DWORD LIG2 to object +0x08 at 0x14023ECC9"},
     {"PTX", "EXE_CONFIRMED_IDENTITY", "filename extension classifier",
      ".ptx/.PTX/.Ptx checked by 0x1402DB3C0; assigned local class 4"},
     {"CLT", "EXE_CONFIRMED_IDENTITY", "two filename extension classifiers",
@@ -56,6 +58,13 @@ constexpr std::array<Record, 46> kRecords{{
      ".hid/.HID checks in 0x1402E01A0; local class 3"},
     {"TSC", "EXE_CONFIRMED_IDENTITY", "auxiliary extension registry",
      ".tsc/.TSC checks in 0x1402E01A0; local class 5"},
+
+    {"VAGP", "EXE_CONFIRMED_MAGIC", "direct content check",
+     "0x140032970 compares first DWORD to VAGp before parsing the payload"},
+    {"TM2", "EXE_CONFIRMED_MAGIC", "direct content check + runtime filename corpus",
+     "0x1403365BA compares first DWORD to TM2\\0; multiple .tm2 filenames are embedded"},
+    {"DDS", "EXE_CONFIRMED_MAGIC", "direct content checks + runtime filename string",
+     "0x140049A8E and 0x14004AD9D compare first DWORD to DDS<space>; LOADERICON.dds also present"},
 
     {"PSS", "EXE_CONFIRMED_CAPABILITY", "media extension classifier", ".PSS literal compared near 0x14002A5D1"},
     {"THP", "EXE_CONFIRMED_CAPABILITY", "media extension classifier", ".THP literal compared near 0x14002A604"},
@@ -74,9 +83,7 @@ constexpr std::array<Record, 46> kRecords{{
     {"ADX", "EXE_PATH_CONFIRMED", "runtime filename corpus", "hundreds of .adx filenames embedded in canonical EXE"},
     {"OGG", "EXE_PATH_CONFIRMED", "runtime filename corpus", "hundreds of .ogg filenames embedded in canonical EXE"},
     {"SFD", "EXE_PATH_CONFIRMED", "runtime filename corpus", "mission/cutscene .sfd filenames embedded in canonical EXE"},
-    {"TM2", "EXE_PATH_CONFIRMED", "runtime filename corpus", "multiple .tm2 texture filenames embedded in canonical EXE"},
     {"PTZ", "EXE_PATH_CONFIRMED", "runtime filename string", "basic.ptz embedded in canonical EXE"},
-    {"DDS", "EXE_PATH_CONFIRMED", "runtime filename string", "LOADERICON.dds embedded in canonical EXE"},
     {"FON", "EXE_PATH_CONFIRMED", "runtime filename corpus", "font/*.fon names embedded in canonical EXE"},
     {"ICO", "EXE_PATH_CONFIRMED", "runtime filename corpus", "icon00.ico/icon01.ico/icon02.ico embedded in canonical EXE"},
     {"SYS", "EXE_PATH_CONFIRMED", "runtime filename string", "icon.sys embedded in canonical EXE"},
@@ -100,6 +107,7 @@ std::string normalize(std::string_view input) {
 
     if (out == "AFSNAMESPACE") return "AFS";
     if (out == "TIM2") return "TM2";
+    if (out == "VAGP") return "VAGP";
     if (out == "ICONSYS") return "SYS";
     if (out == "DMC3SAV" || out == "OPTIONSSAV") return "SAV";
     if (out == "EVENTTBL") return "BIN";
@@ -183,6 +191,17 @@ ProbeResult probe_exe_runtime_identity(const std::uint8_t* bytes,
     // four-byte family-mask classifier, where the trailing space matters.
     if (has4(bytes, size, 'M', 'C', 'V', ' ')) {
         return runtime_identity("MCV", "animation", "runtime-identity", "application/vnd.dmc.mcv");
+    }
+
+    // Additional direct content checks found in the canonical executable.
+    if (has4(bytes, size, 'V', 'A', 'G', 'p')) {
+        return runtime_identity("VAGp", "audio", "runtime-identity", "audio/x-vag");
+    }
+    if (has4(bytes, size, 'T', 'M', '2', '\0')) {
+        return runtime_identity("TIM2", "texture", "runtime-identity", "application/vnd.dmc.tm2");
+    }
+    if (has4(bytes, size, 'D', 'D', 'S', ' ')) {
+        return runtime_identity("DDS", "texture", "runtime-identity", "image/vnd-ms.dds");
     }
 
     return {};
