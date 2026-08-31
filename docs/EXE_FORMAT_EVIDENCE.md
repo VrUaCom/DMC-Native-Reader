@@ -21,7 +21,7 @@ Canonical artifact:
 - `MRP` -> 3
 - `SHW` -> 7
 
-The fourth byte is not checked on this path.
+The fourth byte is not checked on this path. Native Reader mirrors that identity behavior but only promotes canonical `MOD ` and `SCM ` payloads to the validated mesh decoder. A payload such as `MODX` remains runtime-recognized but non-renderable.
 
 ### Container dispatcher — `0x1401B9FA0`
 
@@ -52,6 +52,26 @@ This path requires the trailing ASCII space:
 - `SHW ` -> `0x60000000`
 
 `MCV` is therefore EXE-confirmed as a runtime family identity even though it is absent from the three-byte registry probe.
+
+## Additional direct content checks
+
+A whole-`.text` immediate-comparison census exposed three more bounded content identities:
+
+- `VAGp` — `0x140032970` compares the first DWORD directly to `VAGp` before the payload path continues;
+- `DDS ` — `0x140049A8E` and `0x14004AD9D` compare the first DWORD to the DDS magic;
+- `TM2\0` — `0x1403365BA` compares the first DWORD to `TM2\0` before continuing into the texture path.
+
+This corrects an important Native Reader boundary: canonical DMC3 TM2 content is recognized from `TM2\0`; the previous `TIM2`-only content probe is not used as EXE authority. A legacy/data `TIM2` identity may still be recognized by the general catalog, but it is separate from this canonical EXE proof.
+
+The same immediate-value census found DDS pixel-format FourCCs (`DXT1/2/3/4/5`, `ATI1/2`, `BC4U/BC4S`, `BC5U/BC5S`, `RGBG`, `GRGB`, `YUY2`, `DX10`). Those are DDS subformats, not standalone DMC resource families, and are not registered as separate formats.
+
+## LIG2 object tag
+
+`LIG2` is stronger than a loose printable occurrence. The constructor beginning at `0x14023ECB0` executes at `0x14023ECC9`:
+
+`mov DWORD PTR [rcx+0x8], 0x3247494c`
+
+which writes ASCII `LIG2` into object offset `+0x08`. Native Reader records this as `EXE_CONFIRMED_OBJECT_TAG`. This proves an executable-side LIG2 type/tag identity, but it still does not by itself prove that every `.lig`/`.lig2` field has been semantically recovered.
 
 ## Extension classifiers
 
@@ -85,15 +105,16 @@ These are reference/path identities, not automatically complete format schemas.
 
 - `HITS` has data/corpus structural evidence, but the canonical EXE bounded sweep has zero ASCII `HITS` occurrences. It must not be promoted to an EXE runtime tag.
 - `HITS$` is rejected and must not be reintroduced.
-- `LIG2` has an ASCII occurrence in the EXE, but a single occurrence alone is not enough to claim a runtime format-dispatch identity.
 - Embedded shader compiler metadata such as `RDEF`, `SPDB`, `D3DSHDR`, `SHEX` and input-signature blobs are not DMC resource families and are intentionally excluded.
-- Random printable fragments from machine code are not format evidence unless they are connected to a bounded classifier, handler, path, or other runtime evidence.
+- DDS compression FourCCs are texture subformats, not standalone DMC resource formats.
+- Random printable fragments from machine code are not format evidence unless they are connected to a bounded classifier, handler, content check, constructor tag, path, or other runtime evidence.
 
 ## Native Reader policy
 
 Native Reader uses this evidence registry to show where a format identity comes from while keeping decoding fail-closed:
 
-- `SCM` / `MOD`: validated mesh preview;
+- `SCM` / `MOD`: validated mesh preview only for canonical mesh magic/layouts;
 - structurally understood formats: bounded inspection;
 - EXE-recognized but not structurally closed formats: recognition/inspection only;
+- direct EXE content identities (`VAGp`, `TM2\0`, `DDS `) may be recognized without relying on filename extension;
 - no guessed mesh decoder for `MRP`, `MCV`, `EFE`, `EFW`, or other unresolved families.
