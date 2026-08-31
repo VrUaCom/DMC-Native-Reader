@@ -13,6 +13,7 @@
 
 #include "dmcresource/decode.h"
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/exe_format_registry.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -159,6 +160,10 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         out << " | vertices=" << session->mesh.vertices.size()
             << " | triangles=" << (session->mesh.indices.size() / 3u);
     }
+
+    const std::string exeEvidence =
+            dmcresource::describe_exe_format_evidence(session->probe.family);
+    if (!exeEvidence.empty()) out << "\n" << exeEvidence;
     if (!session->detail.empty()) out << "\n" << session->detail;
     return env->NewStringUTF(out.str().c_str());
 }
