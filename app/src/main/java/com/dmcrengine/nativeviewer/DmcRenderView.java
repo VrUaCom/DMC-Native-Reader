@@ -38,11 +38,11 @@ public final class DmcRenderView extends View {
 
     public void setSession(long newSession) {
         session = newSession;
-        if (session == 0) {
-            bitmap = null;
-            invalidate();
-            return;
-        }
+        // A structural/non-mesh session intentionally renders no bitmap.  Clear
+        // any previous SCM/MOD frame before asking native code for a new one.
+        bitmap = null;
+        invalidate();
+        if (session == 0) return;
         resetView();
     }
 
@@ -83,7 +83,11 @@ public final class DmcRenderView extends View {
         int rw = renderWidth();
         int rh = renderHeight();
         int[] pixels = NativeBridge.render(session, rw, rh, yaw, pitch, zoom, wireframe);
-        if (pixels == null || pixels.length != rw * rh) return;
+        if (pixels == null || pixels.length != rw * rh) {
+            bitmap = null;
+            invalidate();
+            return;
+        }
         bitmap = Bitmap.createBitmap(pixels, rw, rh, Bitmap.Config.ARGB_8888);
         lastRenderMs = SystemClock.uptimeMillis();
         invalidate();
