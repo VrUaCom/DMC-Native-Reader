@@ -11,8 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "dmcresource/decode.h"
-#include "dmcresource/dmc_resource.h"
+#include "dmcresource/decode_pipeline.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -69,6 +68,7 @@ struct Session {
     dmcresource::ProbeResult probe;
     dmcresource::Mesh mesh;
     std::string detail;
+    std::string trace;
     bool renderable{};
 };
 
@@ -114,25 +114,15 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     if (!mapped.valid()) return 0;
 
     const auto name = to_utf8(env, filename);
-    const auto resource_probe = dmcresource::probe(name, mapped.data(), mapped.size());
-    if (!resource_probe.recognized) return 0;
+    auto pipeline = dmcresource::run_decode_pipeline(name, mapped.data(), mapped.size());
+    if (!pipeline.accepted) return 0;
 
     auto session = std::make_unique<Session>();
-    session->probe = resource_probe;
-
-    if (resource_probe.format == dmcresource::Format::Scm ||
-        resource_probe.format == dmcresource::Format::Mod) {
-        auto decoded = dmcresource::decode_resource(name, mapped.data(), mapped.size());
-        if (decoded.status != dmcresource::DecodeStatus::Ok) return 0;
-        session->mesh = std::move(decoded.mesh);
-        session->detail = decoded.detail != nullptr ? decoded.detail : "decoded";
-        session->renderable = true;
-    } else {
-        session->detail = dmcresource::describe_resource(
-            name, mapped.data(), mapped.size(), resource_probe);
-        session->renderable = false;
-    }
-
+    session->probe = pipeline.probe;
+    session->mesh = std::move(pipeline.mesh);
+    session->detail = std::move(pipeline.detail);
+    session->trace = dmcresource::pipeline_trace(pipeline);
+    session->renderable = pipeline.renderable;
     return to_handle(session.release());
 }
 
@@ -158,8 +148,11 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     if (session->renderable) {
         out << " | vertices=" << session->mesh.vertices.size()
             << " | triangles=" << (session->mesh.indices.size() / 3u);
+    } else {
+        out << " | preview=inspection";
     }
     if (!session->detail.empty()) out << "\n" << session->detail;
+    if (!session->trace.empty()) out << "\n" << session->trace;
     return env->NewStringUTF(out.str().c_str());
 }
 
