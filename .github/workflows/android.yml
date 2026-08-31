@@ -54,14 +54,14 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='7'" /tmp/badging.txt
-          grep -q "versionName='0.7.0-samsung-path-handler'" /tmp/badging.txt
+          grep -q "versionCode='8'" /tmp/badging.txt
+          grep -q "versionName='0.8.0-format-catalog-inspection'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
           grep -q 'com.dmcrengine.nativeviewer.DmcOpenActivity' /tmp/manifest-tree.txt
           if grep -q 'DmcResourceOpenHandler' /tmp/manifest-tree.txt; then
-            echo 'legacy activity-alias unexpectedly remains in v7' >&2
+            echo 'legacy activity-alias unexpectedly remains in v8' >&2
             exit 1
           fi
           grep -q 'android.intent.action.VIEW' /tmp/manifest-tree.txt
@@ -70,6 +70,13 @@ jobs:
           grep -q 'android.intent.category.OPENABLE' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.scm' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.mod' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.pac' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.pnst' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.hits' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.dca' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.efm' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.mrp' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.shw' /tmp/manifest-tree.txt
           grep -q 'application/octet-stream' /tmp/manifest-tree.txt
           grep -q 'audio/x-mod' /tmp/manifest-tree.txt
           grep -q 'video/mpeg' /tmp/manifest-tree.txt
@@ -77,6 +84,17 @@ jobs:
           grep -q 'file' /tmp/manifest-tree.txt
           grep -q '\\.mod' /tmp/manifest-tree.txt
           grep -q '\\.scm' /tmp/manifest-tree.txt
+          grep -q '\\.pac' /tmp/manifest-tree.txt
+          grep -q '\\.pnst' /tmp/manifest-tree.txt
+          grep -q '\\.efm' /tmp/manifest-tree.txt
+          grep -q '\\.hits' /tmp/manifest-tree.txt
+          grep -q '\\.itm' /tmp/manifest-tree.txt
+          grep -q '\\.mot' /tmp/manifest-tree.txt
+
+          if grep -q 'HITS\$' /tmp/manifest-tree.txt; then
+            echo 'rejected HITS$ identity unexpectedly present in Android routing' >&2
+            exit 1
+          fi
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
@@ -86,14 +104,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v7-samsung-path-handler
+          name: dmc-native-reader-v8-format-catalog-inspection
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v7-build-evidence
+          name: dmc-native-reader-v8-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
