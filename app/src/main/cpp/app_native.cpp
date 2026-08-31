@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "dmcresource/decode.h"
+#include "dmcresource/dmc_resource.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -65,9 +66,10 @@ private:
 };
 
 struct Session {
-    dmcresource::Format format{dmcresource::Format::Unknown};
+    dmcresource::ProbeResult probe;
     dmcresource::Mesh mesh;
     std::string detail;
+    bool renderable{};
 };
 
 Session* from_handle(jlong handle) noexcept {
@@ -112,13 +114,25 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     if (!mapped.valid()) return 0;
 
     const auto name = to_utf8(env, filename);
-    auto decoded = dmcresource::decode_resource(name, mapped.data(), mapped.size());
-    if (decoded.status != dmcresource::DecodeStatus::Ok) return 0;
+    const auto resource_probe = dmcresource::probe(name, mapped.data(), mapped.size());
+    if (!resource_probe.recognized) return 0;
 
     auto session = std::make_unique<Session>();
-    session->format = decoded.format;
-    session->mesh = std::move(decoded.mesh);
-    session->detail = decoded.detail != nullptr ? decoded.detail : "decoded";
+    session->probe = resource_probe;
+
+    if (resource_probe.format == dmcresource::Format::Scm ||
+        resource_probe.format == dmcresource::Format::Mod) {
+        auto decoded = dmcresource::decode_resource(name, mapped.data(), mapped.size());
+        if (decoded.status != dmcresource::DecodeStatus::Ok) return 0;
+        session->mesh = std::move(decoded.mesh);
+        session->detail = decoded.detail != nullptr ? decoded.detail : "decoded";
+        session->renderable = true;
+    } else {
+        session->detail = dmcresource::describe_resource(
+            name, mapped.data(), mapped.size(), resource_probe);
+        session->renderable = false;
+    }
+
     return to_handle(session.release());
 }
 
@@ -133,11 +147,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         JNIEnv* env, jclass, jlong handle) {
     const Session* session = from_handle(handle);
     if (session == nullptr) return env->NewStringUTF("no session");
+
     std::ostringstream out;
-    out << dmcresource::format_name(session->format)
-        << " | vertices=" << session->mesh.vertices.size()
-        << " | triangles=" << (session->mesh.indices.size() / 3u)
-        << " | " << session->detail;
+    out << session->probe.family
+        << " | domain=" << session->probe.domain
+        << " | support=" << session->probe.support
+        << " | evidence=" << session->probe.evidence
+        << " | identity="
+        << (session->probe.content_confirmed ? "content-confirmed" : "extension/name-only");
+    if (session->renderable) {
+        out << " | vertices=" << session->mesh.vertices.size()
+            << " | triangles=" << (session->mesh.indices.size() / 3u);
+    }
+    if (!session->detail.empty()) out << "\n" << session->detail;
     return env->NewStringUTF(out.str().c_str());
 }
 
@@ -147,7 +169,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jboolean wireframe) {
     const Session* session = from_handle(handle);
-    if (session == nullptr) return nullptr;
+    if (session == nullptr || !session->renderable) return nullptr;
 
     dmcresource::ViewState view;
     view.yaw_radians = static_cast<float>(yaw);
