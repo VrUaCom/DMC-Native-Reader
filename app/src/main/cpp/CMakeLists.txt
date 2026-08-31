@@ -5,6 +5,7 @@ add_library(dmcviewer SHARED
     app_native.cpp
     dmc_resource.cpp
     decode_fixed.cpp
+    decode_pipeline.cpp
     view_renderer.cpp
 )
 
