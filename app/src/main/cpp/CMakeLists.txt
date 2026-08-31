@@ -4,6 +4,7 @@ project(dmcviewer LANGUAGES CXX)
 add_library(dmcviewer SHARED
     app_native.cpp
     dmc_resource.cpp
+    exe_format_registry.cpp
     decode_fixed.cpp
     view_renderer.cpp
 )
