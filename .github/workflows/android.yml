@@ -42,7 +42,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify APK payload, identity and routing
+      - name: Verify APK payload, identity, routing and EXE evidence
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -96,6 +96,25 @@ jobs:
             exit 1
           fi
 
+          unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
+          strings /tmp/libdmcviewer.so > /tmp/native-strings.txt
+
+          # The native binary must physically contain the canonical EXE evidence
+          # registry and the newly promoted identity paths.
+          grep -q 'registry-content + container-dispatch + family-mask' /tmp/native-strings.txt
+          grep -q 'EXE_CONFIRMED_IDENTITY' /tmp/native-strings.txt
+          grep -q 'family-mask + auxiliary extension registry' /tmp/native-strings.txt
+          grep -q 'container-dispatch sentinel' /tmp/native-strings.txt
+          grep -q 'media extension classifier' /tmp/native-strings.txt
+          grep -q 'SPUMAPDT' /tmp/native-strings.txt
+          grep -q '%sDMC3-%d.nbz' /tmp/native-strings.txt
+          grep -q 'GData.afs/' /tmp/native-strings.txt
+
+          if grep -q 'HITS\$' /tmp/native-strings.txt; then
+            echo 'rejected HITS$ identity unexpectedly compiled into native reader' >&2
+            exit 1
+          fi
+
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
           tr -d ': ' < /tmp/signing.txt | grep -qi 'f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac'
@@ -104,17 +123,18 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v8-format-catalog-inspection
+          name: dmc-native-reader-v8-exe-format-evidence
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v8-build-evidence
+          name: dmc-native-reader-v8-exe-evidence-build
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
+            /tmp/native-strings.txt
             /tmp/signing.txt
             /tmp/apk.sha256
           if-no-files-found: error
