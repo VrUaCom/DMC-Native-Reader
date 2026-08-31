@@ -115,7 +115,16 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     if (!mapped.valid()) return 0;
 
     const auto name = to_utf8(env, filename);
-    const auto resource_probe = dmcresource::probe(name, mapped.data(), mapped.size());
+    auto resource_probe = dmcresource::probe(name, mapped.data(), mapped.size());
+    const auto exe_probe = dmcresource::probe_exe_runtime_identity(mapped.data(), mapped.size());
+
+    // Content identity outranks extension/name identity.  This is especially
+    // important for the canonical EXE's 3-byte MOD/SCM probe: MODX/SCMX are
+    // runtime-recognized identities, but they are deliberately Format::Other
+    // here so only validated MOD<space>/SCM<space> payloads enter mesh decode.
+    if (exe_probe.recognized && (!resource_probe.recognized || !resource_probe.content_confirmed)) {
+        resource_probe = exe_probe;
+    }
     if (!resource_probe.recognized) return 0;
 
     auto session = std::make_unique<Session>();
