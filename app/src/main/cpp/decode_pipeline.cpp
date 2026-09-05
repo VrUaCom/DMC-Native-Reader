@@ -50,7 +50,17 @@ PipelineResult run_decode_pipeline(std::string_view filename,
         rejected.detail = "recognized resource has no registered native module";
         return rejected;
     }
-    return module->run(filename, bytes, size, rejected.probe);
+
+    // The catalog owns recognition/evidence metadata; once a family has a
+    // promoted module, the module registry owns its concrete Native Reader
+    // format identity. This avoids keeping a second central Format switch in
+    // the catalog while still allowing generic recognized families to remain
+    // Format::Other.
+    auto authoritative_probe = rejected.probe;
+    if (module->format != Format::Unknown) {
+        authoritative_probe.format = module->format;
+    }
+    return module->run(filename, bytes, size, authoritative_probe);
 }
 
 std::string pipeline_trace(const PipelineResult& result) {
