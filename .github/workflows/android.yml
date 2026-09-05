@@ -84,6 +84,8 @@ jobs:
           grep -q 'application/vnd.dmc.mod' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.hits' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.dca' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.ptx' /tmp/manifest-tree.txt
+          grep -q 'image/vnd-ms.dds' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.efm' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.mrp' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.shw' /tmp/manifest-tree.txt
