@@ -17,7 +17,7 @@
         </activity>
 
         <!--
-          Real exported component for OEM file managers.  Keep this concrete
+          Real exported component for OEM file managers. Keep this concrete
           activity: Samsung My Files may apply custom routing before the stock
           Android chooser.
         -->
@@ -27,7 +27,7 @@
             android:excludeFromRecents="true"
             android:label="DMC Native Reader v8">
 
-            <!-- Canonical mesh MIME types plus v8 structural families. -->
+            <!-- Canonical mesh/texture MIME types plus structural families. -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -40,6 +40,8 @@
                 <data android:mimeType="application/vnd.dmc.pnst" />
                 <data android:mimeType="application/vnd.dmc.hits" />
                 <data android:mimeType="application/vnd.dmc.dca" />
+                <data android:mimeType="application/vnd.dmc.ptx" />
+                <data android:mimeType="image/vnd-ms.dds" />
                 <data android:mimeType="application/vnd.dmc.efm" />
                 <data android:mimeType="application/vnd.dmc.mrp" />
                 <data android:mimeType="application/vnd.dmc.shw" />
@@ -104,10 +106,10 @@
             </intent-filter>
 
             <!--
-              Extension-specific OEM routes.  Only distinctive DMC extensions
+              Extension-specific OEM routes. Only distinctive DMC extensions
               are listed here; generic .bin/.txt/.sav/media extensions remain
-              available through the picker/generic provider route so v8 does not
-              advertise itself as the handler for unrelated user files.
+              available through the picker/generic provider route so Native
+              Reader does not advertise itself for unrelated user files.
             -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
@@ -123,6 +125,7 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mod" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.hits" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.dca" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.dds" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ptx" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.tm2" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ptz" />
@@ -161,6 +164,8 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.SCM" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.PAC" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.DDS" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.PTX" />
             </intent-filter>
 
             <intent-filter android:priority="100">
@@ -177,6 +182,7 @@
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mod" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.hits" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.dca" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.dds" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ptx" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.tm2" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ptz" />
@@ -215,6 +221,8 @@
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.SCM" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.PAC" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.DDS" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.PTX" />
             </intent-filter>
 
             <intent-filter android:priority="100">
