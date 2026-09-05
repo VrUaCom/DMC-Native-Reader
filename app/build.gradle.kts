@@ -23,8 +23,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.8.0-modular-native-reader"
+        versionCode = 9
+        versionName = "0.9.0-explicit-family-modules"
 
         externalNativeBuild {
             cmake {
