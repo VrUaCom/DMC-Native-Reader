@@ -33,7 +33,6 @@ NativeModule recognition(const char* id, const char* family) noexcept {
 
 std::vector<NativeModule> catalog_recognition_modules() {
     return {
-        recognition("formats.pe.recognition", "PE"),
         recognition("formats.pack.recognition", "PACK"),
         recognition("formats.lst.recognition", ".lst"),
         recognition("formats.afs-namespace.recognition", "AFS namespace"),
