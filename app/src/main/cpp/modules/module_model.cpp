@@ -3,19 +3,6 @@
 #include <string_view>
 
 namespace dmcresource {
-
-// Transitional wrappers around the already corpus-backed shared SCM/MOD mesh
-// core. Product dispatch no longer enters decode_resource directly; the only
-// remaining switch is private to the shared model core and will disappear when
-// SCM/MOD binary adapters are split into their own translation units.
-DecodeResult decode_scm(const std::uint8_t* bytes, std::size_t size) noexcept {
-    return decode_resource("resource.scm", bytes, size);
-}
-
-DecodeResult decode_mod(const std::uint8_t* bytes, std::size_t size) noexcept {
-    return decode_resource("resource.mod", bytes, size);
-}
-
 namespace {
 
 PipelineResult run_scm(std::string_view,
