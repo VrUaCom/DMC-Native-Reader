@@ -16,8 +16,8 @@ PipelineResult run_hits(std::string_view,
 }  // namespace
 
 NativeModule hits_module() noexcept {
-    return {"formats.hits.collision-reader", "HITS", ModuleKind::Mesh, true,
-            run_hits};
+    return {"formats.hits.collision-reader", "HITS", Format::Hits,
+            ModuleKind::Mesh, true, run_hits};
 }
 
 }  // namespace dmcresource
