@@ -28,6 +28,7 @@ using ModuleRun = PipelineResult (*)(std::string_view filename,
 struct NativeModule final {
     const char* id;
     const char* family;
+    Format format;
     ModuleKind kind;
     bool renderable;
     ModuleRun run;
