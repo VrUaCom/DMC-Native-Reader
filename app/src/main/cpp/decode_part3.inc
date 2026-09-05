@@ -139,26 +139,6 @@ DecodeResult decode_mod(const std::uint8_t* bytes, std::size_t size) noexcept {
     return decode_model_checked(Format::Mod, bytes, size);
 }
 
-DecodeResult decode_resource(std::string_view filename,
-                             const std::uint8_t* bytes,
-                             std::size_t size) noexcept {
-    if (size > kMaxResourceBytes) {
-        return {DecodeStatus::TooLarge, Format::Unknown, {}, "resource exceeds decoder cap"};
-    }
-    if (size != 0 && bytes == nullptr) {
-        return {DecodeStatus::InvalidData, Format::Unknown, {}, "null byte span"};
-    }
-
-    const auto prefix_size = size < 64 ? size : 64;
-    const auto p = probe(filename, bytes, prefix_size);
-    switch (p.format) {
-        case Format::Scm: return decode_scm(bytes, size);
-        case Format::Mod: return decode_mod(bytes, size);
-        default:
-            return {DecodeStatus::UnknownFormat, Format::Unknown, {}, "unknown format"};
-    }
-}
-
 const char* decode_status_name(DecodeStatus status) noexcept {
     switch (status) {
         case DecodeStatus::Ok: return "OK";
