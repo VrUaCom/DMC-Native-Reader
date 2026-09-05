@@ -172,8 +172,8 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Reader v0.8\n"
-                + "SCM/MOD: corpus-backed 3D preview. Other catalogued DMC3 formats: native recognition/inspection.\n"
+        statusView.setText("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
+                + "71 explicit DMC family modules. Promoted readers decode/inspect; recognition-only modules stay evidence-gated.\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
                 + diag + "\n"
