@@ -85,19 +85,24 @@ PipelineResult run_shw(std::string_view filename,
 }  // namespace
 
 NativeModule scm_module() noexcept {
-    return {"formats.scm.mesh-reader", "SCM", ModuleKind::Mesh, true, run_scm};
+    return {"formats.scm.mesh-reader", "SCM", Format::Scm,
+            ModuleKind::Mesh, true, run_scm};
 }
 NativeModule mod_module() noexcept {
-    return {"formats.mod.mesh-reader", "MOD", ModuleKind::Mesh, true, run_mod};
+    return {"formats.mod.mesh-reader", "MOD", Format::Mod,
+            ModuleKind::Mesh, true, run_mod};
 }
 NativeModule efm_module() noexcept {
-    return {"formats.efm.family-adapter", "EFM", ModuleKind::Partial, false, run_efm};
+    return {"formats.efm.family-adapter", "EFM", Format::Efm,
+            ModuleKind::Partial, false, run_efm};
 }
 NativeModule mrp_module() noexcept {
-    return {"formats.mrp.family-adapter", "MRP", ModuleKind::Partial, false, run_mrp};
+    return {"formats.mrp.family-adapter", "MRP", Format::Mrp,
+            ModuleKind::Partial, false, run_mrp};
 }
 NativeModule shw_module() noexcept {
-    return {"formats.shw.family-adapter", "SHW", ModuleKind::Partial, false, run_shw};
+    return {"formats.shw.family-adapter", "SHW", Format::Shw,
+            ModuleKind::Partial, false, run_shw};
 }
 
 }  // namespace dmcresource
