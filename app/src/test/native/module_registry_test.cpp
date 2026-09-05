@@ -1,6 +1,7 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/native_module.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +21,6 @@ void put_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
 }
 
 std::vector<std::uint8_t> make_dds() {
-    // 4x4 DXT1 full mip chain: 4x4, 2x2, 1x1 = 3 blocks = 24 bytes.
     std::vector<std::uint8_t> bytes(128u + 24u, 0u);
     bytes[0] = 'D'; bytes[1] = 'D'; bytes[2] = 'S'; bytes[3] = ' ';
     put_u32(bytes, 4u, 124u);
@@ -35,8 +35,8 @@ std::vector<std::uint8_t> make_dds() {
 std::vector<std::uint8_t> make_ptx() {
     const auto dds = make_dds();
     std::vector<std::uint8_t> bytes(0x800u + 0x70u + dds.size(), 0u);
-    put_u32(bytes, 0u, 1u);      // texture count
-    put_u32(bytes, 4u, 0u);      // final zero span reaches exact EOF
+    put_u32(bytes, 0u, 1u);
+    put_u32(bytes, 4u, 0u);
     put_u32(bytes, 0x800u + 0x38u, 24u);
     put_u32(bytes, 0x800u + 0x64u, static_cast<std::uint32_t>(dds.size()));
     std::memcpy(bytes.data() + 0x800u + 0x70u, dds.data(), dds.size());
@@ -48,6 +48,15 @@ void require_module(std::string_view family, dmcresource::Format format) {
     assert(module != nullptr);
     assert(module->run != nullptr);
     assert(module->format == format);
+}
+
+void require_recognition(std::string_view family) {
+    const auto* module = dmcresource::NativeModuleRegistry::find(family);
+    assert(module != nullptr);
+    assert(module->run != nullptr);
+    assert(module->format == dmcresource::Format::Other);
+    assert(module->kind == dmcresource::ModuleKind::Recognition);
+    assert(!module->renderable);
 }
 
 }  // namespace
@@ -72,7 +81,21 @@ int main() {
     require_module("EFM", Format::Efm);
     require_module("MRP", Format::Mrp);
     require_module("SHW", Format::Shw);
-    require_module("UNMAPPED-FAMILY", Format::Other); // generic fallback
+
+    constexpr std::array<std::string_view, 55> recognition_families{
+        "PE", "PACK", ".lst", "AFS namespace", ".ukn", ".bin",
+        "TIM2", "PTZ", "SEF", "EFE", "EFW", "C1D", "CLT",
+        "MOT", "MOT2", "MOT3", "MOT4", "MOT5", "MOT6", "MCV",
+        "CAM", "HID", "HID2", "HID3", "TSC", "EVE", "POS", "ITM",
+        "STE", "EST", "ADX", "OGG", "VAGp", "PHD", "TSB", "BD",
+        "SPUMAPDT", "SFD", "WMV", "PSS", "THP", "PAM", "XMV", "PMF",
+        "AVI", "MPG", "BIK", "MP4", "SAV", "FON", "ICO", "icon.sys",
+        "EventTbl", "options.sav", "dmc3.sav",
+    };
+    for (const auto family : recognition_families) require_recognition(family);
+
+    assert(dmcresource::NativeModuleRegistry::modules().size() == 71u);
+    assert(dmcresource::NativeModuleRegistry::find("UNMAPPED-FAMILY") == nullptr);
 
     const auto dds = make_dds();
     const auto dds_result = run_decode_pipeline("sample.dds", dds.data(), dds.size());
@@ -124,6 +147,19 @@ int main() {
     const auto nbz_result = run_decode_pipeline("DMC3-0.nbz", nbz, sizeof(nbz));
     assert(nbz_result.accepted);
     assert(nbz_result.probe.format == Format::Nbz);
+
+    const std::uint8_t unknown_payload[] = {1u, 2u, 3u, 4u};
+    const auto mot_result = run_decode_pipeline(
+        "sample.mot", unknown_payload, sizeof(unknown_payload));
+    assert(mot_result.accepted);
+    assert(mot_result.probe.format == Format::Other);
+    assert(!mot_result.modules.empty());
+    assert(std::string_view{mot_result.modules.back().name} == "formats.mot.recognition");
+    assert(!mot_result.modules.back().complete);
+
+    const auto unknown_result = run_decode_pipeline(
+        "sample.unrecognized", unknown_payload, sizeof(unknown_payload));
+    assert(!unknown_result.accepted);
 
     return 0;
 }

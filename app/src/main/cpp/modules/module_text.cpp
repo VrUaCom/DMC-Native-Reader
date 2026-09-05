@@ -5,20 +5,22 @@
 namespace dmcresource {
 namespace {
 
-PipelineResult run_stage_txt(std::string_view,
+PipelineResult run_stage_txt(const NativeModule& module,
+                             std::string_view,
                              const std::uint8_t* bytes,
                              std::size_t size,
                              const ProbeResult& probe) noexcept {
     return pipeline_from_decode(probe, decode_stage_txt(bytes, size),
-                                "formats.stage-txt.lexer", false);
+                                module.id, module.renderable);
 }
 
-PipelineResult run_index(std::string_view,
+PipelineResult run_index(const NativeModule& module,
+                         std::string_view,
                          const std::uint8_t* bytes,
                          std::size_t size,
                          const ProbeResult& probe) noexcept {
     return pipeline_from_decode(probe, decode_index(bytes, size),
-                                "formats.index.manifest-reader", false);
+                                module.id, module.renderable);
 }
 
 }  // namespace

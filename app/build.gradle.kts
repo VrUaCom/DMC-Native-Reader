@@ -7,6 +7,10 @@ android {
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     signingConfigs {
         create("stableDebug") {
             storeFile = file("../keys/dmc-native-reader-test.jks")
@@ -23,8 +27,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.8.0-modular-native-reader"
+        versionCode = 9
+        versionName = "0.9.0-explicit-family-modules"
 
         externalNativeBuild {
             cmake {

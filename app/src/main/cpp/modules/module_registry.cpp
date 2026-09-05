@@ -7,25 +7,29 @@
 namespace dmcresource {
 
 const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
-    static const std::vector<NativeModule> registry{
-        scm_module(),
-        mod_module(),
-        hits_module(),
-        stage_txt_module(),
-        index_module(),
-        dds_module(),
-        ptx_module(),
-        dca_module(),
-        lig_module(),
-        lig2_module(),
-        pac_module(),
-        pnst_module(),
-        nbz_module(),
-        efm_module(),
-        mrp_module(),
-        shw_module(),
-        generic_module(),
-    };
+    static const std::vector<NativeModule> registry = [] {
+        std::vector<NativeModule> out{
+            scm_module(),
+            mod_module(),
+            hits_module(),
+            stage_txt_module(),
+            index_module(),
+            dds_module(),
+            ptx_module(),
+            dca_module(),
+            lig_module(),
+            lig2_module(),
+            pac_module(),
+            pnst_module(),
+            nbz_module(),
+            efm_module(),
+            mrp_module(),
+            shw_module(),
+        };
+        auto recognition = catalog_recognition_modules();
+        out.insert(out.end(), recognition.begin(), recognition.end());
+        return out;
+    }();
     return registry;
 }
 
@@ -35,13 +39,7 @@ const NativeModule* NativeModuleRegistry::find(std::string_view family) noexcept
                                  [family](const NativeModule& module) {
                                      return std::string_view{module.family} == family;
                                  });
-    if (it != registry.end()) return &*it;
-
-    const auto fallback = std::find_if(registry.begin(), registry.end(),
-                                       [](const NativeModule& module) {
-                                           return std::string_view{module.family} == "*";
-                                       });
-    return fallback == registry.end() ? nullptr : &*fallback;
+    return it == registry.end() ? nullptr : &*it;
 }
 
 PipelineResult pipeline_from_decode(const ProbeResult& probe,

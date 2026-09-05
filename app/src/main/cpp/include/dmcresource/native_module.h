@@ -18,9 +18,13 @@ enum class ModuleKind : std::uint8_t {
     Structural,
     Container,
     Partial,
+    Recognition,
 };
 
-using ModuleRun = PipelineResult (*)(std::string_view filename,
+struct NativeModule;
+
+using ModuleRun = PipelineResult (*)(const NativeModule& module,
+                                     std::string_view filename,
                                      const std::uint8_t* bytes,
                                      std::size_t size,
                                      const ProbeResult& probe) noexcept;
@@ -49,8 +53,7 @@ public:
                                                  const char* module_id,
                                                  std::string detail) noexcept;
 
-// Module factories. Keeping one factory per translation unit makes the registry
-// composable and prevents a central format switch from accumulating again.
+// Promoted module factories.
 [[nodiscard]] NativeModule scm_module() noexcept;
 [[nodiscard]] NativeModule mod_module() noexcept;
 [[nodiscard]] NativeModule hits_module() noexcept;
@@ -67,6 +70,9 @@ public:
 [[nodiscard]] NativeModule efm_module() noexcept;
 [[nodiscard]] NativeModule mrp_module() noexcept;
 [[nodiscard]] NativeModule shw_module() noexcept;
-[[nodiscard]] NativeModule generic_module() noexcept;
+
+// Explicit evidence-gated contracts for every catalogued family that does not
+// yet own a promoted semantic/structural decoder. No wildcard fallback exists.
+[[nodiscard]] std::vector<NativeModule> catalog_recognition_modules();
 
 }  // namespace dmcresource

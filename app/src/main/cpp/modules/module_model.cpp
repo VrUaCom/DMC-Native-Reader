@@ -5,12 +5,13 @@
 namespace dmcresource {
 namespace {
 
-PipelineResult run_scm(std::string_view,
+PipelineResult run_scm(const NativeModule& module,
+                       std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
     auto out = pipeline_from_decode(probe, decode_scm(bytes, size),
-                                    "formats.scm.mesh-reader", true);
+                                    module.id, module.renderable);
     if (out.accepted) {
         out.modules.insert(out.modules.begin() + 2,
                            {"model-family.mesh-core", true});
@@ -20,12 +21,13 @@ PipelineResult run_scm(std::string_view,
     return out;
 }
 
-PipelineResult run_mod(std::string_view,
+PipelineResult run_mod(const NativeModule& module,
+                       std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
     auto out = pipeline_from_decode(probe, decode_mod(bytes, size),
-                                    "formats.mod.mesh-reader", true);
+                                    module.id, module.renderable);
     if (out.accepted) {
         out.modules.insert(out.modules.begin() + 2,
                            {"model-family.mesh-core", true});
@@ -35,15 +37,15 @@ PipelineResult run_mod(std::string_view,
     return out;
 }
 
-PipelineResult run_partial(std::string_view filename,
+PipelineResult run_partial(const NativeModule& module,
+                           std::string_view filename,
                            const std::uint8_t* bytes,
                            std::size_t size,
                            const ProbeResult& probe,
-                           const char* module_id,
                            const char* pending_a,
                            const char* pending_b) noexcept {
     auto out = structural_pipeline(
-        probe, module_id,
+        probe, module.id,
         describe_resource(filename, bytes, size, probe));
     out.modules.insert(out.modules.begin() + 2,
                        {"model-family.shared-envelope", true});
@@ -52,32 +54,32 @@ PipelineResult run_partial(std::string_view filename,
     return out;
 }
 
-PipelineResult run_efm(std::string_view filename,
+PipelineResult run_efm(const NativeModule& module,
+                       std::string_view filename,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
-    return run_partial(filename, bytes, size, probe,
-                       "formats.efm.family-adapter",
+    return run_partial(module, filename, bytes, size, probe,
                        "efm.vertex-stream-binding",
                        "efm.material-topology-binding");
 }
 
-PipelineResult run_mrp(std::string_view filename,
+PipelineResult run_mrp(const NativeModule& module,
+                       std::string_view filename,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
-    return run_partial(filename, bytes, size, probe,
-                       "formats.mrp.family-adapter",
+    return run_partial(module, filename, bytes, size, probe,
                        "mrp.record-schema",
                        "mrp.downstream-owner-binding");
 }
 
-PipelineResult run_shw(std::string_view filename,
+PipelineResult run_shw(const NativeModule& module,
+                       std::string_view filename,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
-    return run_partial(filename, bytes, size, probe,
-                       "formats.shw.family-adapter",
+    return run_partial(module, filename, bytes, size, probe,
                        "shw.triangle-index-binding",
                        "shw.external-spatial-pool-binding");
 }

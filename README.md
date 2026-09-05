@@ -1,11 +1,11 @@
 # DMC Native Reader
 
-Native Android reader/viewer for Devil May Cry resource files. This repository is the Android product. `VrUaCom/dmc-rengine-cpp` remains the canonical reverse/evidence source for DMC3 HD format semantics, while format delivery in this app is performed through independent native modules.
+Native Android reader/viewer for Devil May Cry resource files. This repository is the Android product. `VrUaCom/dmc-rengine-cpp` remains the canonical reverse/evidence source for DMC3 HD format semantics.
 
-## Current milestone — v8 modular Native Reader
+## Current milestone — v9 explicit family modules
 
-- versionCode: `8`
-- versionName: `0.8.0-modular-native-reader`
+- versionCode: `9`
+- versionName: `0.9.0-explicit-family-modules`
 - applicationId: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
 - Android compile/target SDK: `36`
@@ -13,159 +13,94 @@ Native Android reader/viewer for Devil May Cry resource files. This repository i
 - NDK: `28.2.13676358`
 - CMake: `3.22.1`
 
-The package id and canonical development signer remain unchanged from v6/v7, so v8 is intended to install as an update over the canonical Native Reader test line.
+The package id and canonical development signer remain unchanged, so v9 is intended to install as an update over v8.
 
-## Modular architecture
+## Architecture
 
-The product path is now:
+The production native path is:
 
-`resource -> bounded probe -> NativeModuleRegistry -> per-format module -> inspection/mesh session -> Android UI`
+`probe -> NativeModuleRegistry -> explicit NativeModule -> format runner`
 
-`decode_pipeline.cpp` no longer contains a growing format `if/else` dispatcher. Recognition and decoding remain deliberately separate: recognizing a format never authorizes invented semantics.
+There is no central family `if/else` decode dispatcher and no wildcard structural fallback.
 
-The registry currently owns independent modules for:
+`NativeModule` owns:
 
-- `SCM` — mesh reader + scene-transform adapter
-- `MOD` — mesh reader + skin/topology adapter
-- `HITS` — collision mesh reader
-- stage `TXT` — bounded lexer
-- `.index` — extraction/naming manifest reader
-- `DDS` — DXT1/DXT5 structural reader with complete mip-chain validation
-- `PTX` — texture-bundle reader with bounded DDS-child validation
-- `DCA` — `0x10` header / `0x410` record reader
-- `LIG` / `LIG2` — `0x20` header / `0x30` record readers
-- `PAC` / `PNST` — relative-slot structural readers
-- `NBZ` — container inspection module
-- `EFM`, `MRP`, `SHW` — explicit evidence-gated family adapters
-- a generic structural module for recognized catalog families whose exact standalone schema is not yet promoted
+- stable module id;
+- resource family;
+- Native Reader `Format` authority;
+- module kind;
+- renderability;
+- runner contract.
 
-SCM and MOD share a model-family mesh core, while their format-specific scene/skin/topology adapters remain separate. The legacy `decode_resource()` entry point remains only as compatibility API; the product route dispatches through the module registry.
+The runner receives its owning module contract, which lets multiple families share safe implementation helpers without losing family-specific identity or traceability.
 
-## Support levels
+## Registry completeness
 
-The reader separates four practical levels:
+The current catalog contains **71 unique recognized families** and the registry contains **71 explicit module contracts**.
 
-1. **Recognition** — identify a catalogued DMC resource family from content, filename or extension.
-2. **Structural inspection** — validate bounded headers, records, offsets or payload framing.
-3. **Native semantic decode** — materialize recovered format-specific data such as text tokens, texture framing or collision geometry.
-4. **3D preview** — materialize a normalized mesh only where the decoder has sufficient evidence.
+### Promoted readers
 
-Incomplete reverse work is visible as a partial/evidence-gated module rather than being silently routed through another format's parser.
+These families have dedicated semantic/structural readers:
 
-## Native 3D preview
+- SCM — corpus-backed mesh reader + scene transform adapter;
+- MOD — corpus-backed mesh reader + model adapter;
+- HITS — collision mesh reader;
+- TXT — stage text lexer;
+- `.index` — textual manifest reader;
+- DDS — bounded DXT1/DXT5 full-mip validation;
+- PTX — bundle reader with bounded DDS child validation;
+- DCA — `0x10` header + `0x410` record envelope;
+- LIG / LIG2 — bounded lighting record envelopes;
+- PAC / PNST — relative-slot container inspection;
+- NBZ — top-level volume inspection boundary;
+- EFM / MRP / SHW — explicit evidence-gated partial family adapters.
 
-Current renderable native modules are:
+### Recognition-only modules
 
-- `SCM` — stage/scene geometry
-- `MOD` — actor/object geometry
-- `HITS` — collision geometry
+The remaining 55 known families have explicit `Recognition` modules rather than falling through a wildcard. They open as inspection sessions, preserve the catalog evidence/support metadata, and expose the semantic decoder as `[TODO]` instead of fabricating a schema.
 
-Development corpus evidence retained from the model decoder milestone:
+Representative families include PACK, AFS namespace, TIM2, PTZ, SEF/EFE/EFW, MOT variants, MCV, CAM, HID variants, TSC, stage placement families, audio/bank families, media-capability families, saves, legacy UI resources, EventTbl and SPUMAPDT.
 
-- SCM: 74/74 decoded
-- MOD: 90/90 decoded
-- Total model corpus: 164/164 decoded
-- 300,466 vertices materialized
-- 192,413 triangles materialized
-- no index out-of-bounds observed in that corpus pass
+Unknown/unmapped families have no module and are rejected.
 
-The Model Family path remains fail-closed on unsupported versions, invalid tables and out-of-bounds streams.
+## Evidence policy
 
-## Texture modules
+Recognition does not imply a recovered binary schema. Native Reader preserves the distinction between:
 
-### DDS
+- content-confirmed identity;
+- filename/extension identity;
+- structural decoding;
+- mesh decoding;
+- partial/evidence-gated support;
+- recognition-only support.
 
-The DDS module validates the DMC3-HD reader subset rather than accepting arbitrary DDS bytes:
+Incomplete families must not reuse SCM/MOD layouts or invent geometry, offsets, names or semantics.
 
-- exact `DDS ` magic
-- 128-byte serialized DDS envelope (`dwSize = 124`, pixel-format size `32`)
-- non-zero dimensions
-- complete mip chain down to `1x1`
-- DXT1 or DXT5 FourCC
-- exact block-compressed payload size
-- exact EOF at the end of the mip payload
+## Android behavior
 
-### PTX
+- read-only file descriptors;
+- 512 MiB native mapping cap;
+- concrete exported `DmcOpenActivity` for OEM/Samsung routing;
+- typed/untyped `content://` and `file://` fallbacks;
+- distinctive DMC extension routes;
+- explicit DDS/PTX routing;
+- non-renderable sessions never display a stale previous mesh.
 
-The PTX module validates the recovered texture-bundle framing:
+## CI gates
 
-- `0x800` bundle header
-- bounded texture count / sector-span table
-- `0x70` per-texture descriptors
-- `0x800` sector framing
-- descriptor DDS-size and payload-size agreement
-- bounded DXT1/DXT5 DDS child resources
-- final zero-span exact-EOF behavior
-- zero alignment padding for sector-bounded entries
+GitHub Actions verifies:
 
-PTX validation therefore composes the DDS reader instead of treating texture children as opaque bytes.
+1. host C++ registry regression;
+2. exactly 71 explicit registry entries;
+3. no module for an unknown family;
+4. promoted synthetic valid/invalid cases;
+5. representative recognition-only module traces;
+6. Android NDK/ARM64 build;
+7. APK ZIP/classes/native-library integrity;
+8. application id and versionCode/versionName;
+9. compiled explicit module ids in `libdmcviewer.so`;
+10. absence of `formats.generic.structural-inspector`;
+11. canonical development signer;
+12. APK SHA-256 evidence.
 
-## Text and metadata
-
-Stage `TXT` and `.index` are independent modules. `.index` is extraction/naming metadata, not a runtime container authority.
-
-A canonical `.index` file may begin with the literal text line `PNST` or `PAC`. The modular pipeline explicitly preserves `.index` filename identity in that case so the text prefix cannot be misclassified as binary PNST/PAC magic.
-
-## Wider format catalog
-
-The native catalog still covers the broader DMC3 HD resource namespace, including:
-
-- containers/materialization: `NBZ`, `PAC`, `PNST`, `PACK`, `.index`, `.lst`, AFS namespace
-- geometry/render: `SCM`, `MOD`, `EFM`, `MRP`, `SHW`
-- collision/camera/lighting: `HITS`, `DCA`, `CAM`, `LIG`, `LIG2`
-- textures: `DDS`, `PTX`, `TIM2/TM2`, `PTZ`
-- animation/control: `MOT` variants, `MCV`, `HID` variants, `CLT`, `C1D`, `TSC`
-- stage/gameplay: `EVE`, `POS`, `ITM`, `STE`, `EST`, stage `TXT`, `EventTblNN.bin`
-- audio/video: `ADX`, `OGG`, `VAGp`, `PHD`, `TSB`, `BD`, `SPUMAPDT`, `SFD`, `WMV`, media-capability families
-- persistence/UI: `dmc3.sav`, `options.sav`, `FON`, `ICO`, `icon.sys`
-
-Catalog presence is not a claim of full reverse. Families without a promoted decoder enter the generic/partial inspection path and remain non-renderable.
-
-## HITS correction
-
-`HITS$` is **not** a canonical DMC3 format identity and must not be reintroduced.
-
-Current canonical EXE reverse establishes that the model-family registries cover `MOD`, `EFM`, `SCM`, `MRP`, `MCV`, `SHW`, while a separate data/corpus parser establishes a real four-byte `HITS` collision payload identity. Native Reader therefore treats `HITS` as a collision data format, not as an EXE registry tag.
-
-## Android routing
-
-The exported concrete `DmcOpenActivity` is the Samsung/OEM system-open entry point. The app retains typed/untyped `content://` and `file://` fallbacks plus extension-specific routes for distinctive DMC formats.
-
-Generic extensions such as `.bin`, `.txt`, `.sav` and common media are intentionally not broadly claimed by the extension-specific handler. They remain available through the picker/generic provider route.
-
-## Native safety boundary
-
-- resources are opened read-only through Android file descriptors
-- mapped resource size is capped at 512 MiB
-- all modules use bounded reads before structural interpretation
-- SCM/MOD decoding is fail-closed on unsupported/invalid layouts
-- non-renderable modules cannot reuse/display a stale previous mesh frame
-- recognition never implies complete semantic reverse
-- EFM/MRP/SHW remain explicit partial modules rather than aliases of SCM/MOD
-
-## Build and CI
-
-CI now has two native gates before an APK is accepted:
-
-1. **host modular-reader regression** — compiles the complete registry and exercises representative DDS -> PTX composition, DCA, LIG2, TXT, `.index`, PAC and NBZ cases, including malformed rejection;
-2. **Android arm64 build** — compiles the same module translation units into `libdmcviewer.so`.
-
-The APK verification then checks:
-
-- ZIP integrity
-- `classes.dex`
-- `lib/arm64-v8a/libdmcviewer.so`
-- production package/version identity
-- compiled `DmcOpenActivity` routes
-- presence of every promoted module ID in the native `.so`
-- APK Signature Scheme verification
-- canonical development signer fingerprint
-- APK SHA-256 evidence
-
-Canonical development/test certificate SHA-256:
-
-`f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
-
-The repository test key is disposable development infrastructure, not a production signing identity.
-
-See `docs/STATUS.md` for the current evidence and physical-device test boundary.
+See `docs/STATUS.md` for the current evidence boundary and remaining reverse work.

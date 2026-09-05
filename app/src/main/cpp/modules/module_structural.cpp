@@ -33,24 +33,23 @@ bool magic4(const BinaryReader& reader, char a, char b, char c, char d) noexcept
 PipelineResult run_dca(std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
-                       const ProbeResult& probe) noexcept {
+                       const ProbeResult& probe,
+                       const char* id) noexcept {
     constexpr std::size_t header = 0x10u;
     constexpr std::size_t record = 0x410u;
     const BinaryReader reader(bytes, size);
     if (size < header || !magic4(reader, 'D', 'C', 'A', '\0') ||
         (size - header) % record != 0u) {
-        return reject(probe, "formats.dca.record-reader",
+        return reject(probe, id,
                       "DCA rejected: expected DCA\\0 + 0x10 header + integral 0x410 records");
     }
     std::ostringstream out;
     out << "DCA structural records=" << ((size - header) / record)
         << " stride=0x410";
-    return structural_pipeline(probe, "formats.dca.record-reader", out.str());
+    return structural_pipeline(probe, id, out.str());
 }
 
-PipelineResult run_lighting(std::string_view,
-                            const std::uint8_t*,
-                            std::size_t size,
+PipelineResult run_lighting(std::size_t size,
                             const ProbeResult& probe,
                             const char* id) noexcept {
     constexpr std::size_t header = 0x20u;
@@ -63,22 +62,6 @@ PipelineResult run_lighting(std::string_view,
     out << probe.family << " structural records=" << ((size - header) / record)
         << " stride=0x30";
     return structural_pipeline(probe, id, out.str());
-}
-
-PipelineResult run_lig(std::string_view filename,
-                       const std::uint8_t* bytes,
-                       std::size_t size,
-                       const ProbeResult& probe) noexcept {
-    (void)filename;
-    return run_lighting({}, bytes, size, probe, "formats.lig.record-reader");
-}
-
-PipelineResult run_lig2(std::string_view filename,
-                        const std::uint8_t* bytes,
-                        std::size_t size,
-                        const ProbeResult& probe) noexcept {
-    (void)filename;
-    return run_lighting({}, bytes, size, probe, "formats.lig2.record-reader");
 }
 
 PipelineResult run_slot_container(std::string_view filename,
@@ -96,73 +79,86 @@ PipelineResult run_slot_container(std::string_view filename,
                                describe_resource(filename, bytes, size, probe));
 }
 
-PipelineResult run_pac(std::string_view filename,
-                       const std::uint8_t* bytes,
-                       std::size_t size,
-                       const ProbeResult& probe) noexcept {
-    return run_slot_container(filename, bytes, size, probe,
-                              "formats.pac.relative-slot-reader");
+PipelineResult run_dca_module(const NativeModule& module,
+                              std::string_view filename,
+                              const std::uint8_t* bytes,
+                              std::size_t size,
+                              const ProbeResult& probe) noexcept {
+    return run_dca(filename, bytes, size, probe, module.id);
 }
 
-PipelineResult run_pnst(std::string_view filename,
-                        const std::uint8_t* bytes,
-                        std::size_t size,
-                        const ProbeResult& probe) noexcept {
-    return run_slot_container(filename, bytes, size, probe,
-                              "formats.pnst.relative-slot-reader");
+PipelineResult run_lig_module(const NativeModule& module,
+                              std::string_view,
+                              const std::uint8_t*,
+                              std::size_t size,
+                              const ProbeResult& probe) noexcept {
+    return run_lighting(size, probe, module.id);
 }
 
-PipelineResult run_nbz(std::string_view filename,
-                       const std::uint8_t* bytes,
-                       std::size_t size,
-                       const ProbeResult& probe) noexcept {
+PipelineResult run_lig2_module(const NativeModule& module,
+                               std::string_view,
+                               const std::uint8_t*,
+                               std::size_t size,
+                               const ProbeResult& probe) noexcept {
+    return run_lighting(size, probe, module.id);
+}
+
+PipelineResult run_pac_module(const NativeModule& module,
+                              std::string_view filename,
+                              const std::uint8_t* bytes,
+                              std::size_t size,
+                              const ProbeResult& probe) noexcept {
+    return run_slot_container(filename, bytes, size, probe, module.id);
+}
+
+PipelineResult run_pnst_module(const NativeModule& module,
+                               std::string_view filename,
+                               const std::uint8_t* bytes,
+                               std::size_t size,
+                               const ProbeResult& probe) noexcept {
+    return run_slot_container(filename, bytes, size, probe, module.id);
+}
+
+PipelineResult run_nbz_module(const NativeModule& module,
+                              std::string_view filename,
+                              const std::uint8_t* bytes,
+                              std::size_t size,
+                              const ProbeResult& probe) noexcept {
     if (size < 4u || bytes == nullptr) {
-        return reject(probe, "formats.nbz.container-reader",
+        return reject(probe, module.id,
                       "NBZ rejected: resource is empty/truncated");
     }
-    auto out = structural_pipeline(probe, "formats.nbz.container-reader",
+    auto out = structural_pipeline(probe, module.id,
                                    describe_resource(filename, bytes, size, probe));
     out.modules.push_back({"nbz.child-materialization", false});
     return out;
-}
-
-PipelineResult run_generic(std::string_view filename,
-                           const std::uint8_t* bytes,
-                           std::size_t size,
-                           const ProbeResult& probe) noexcept {
-    return structural_pipeline(probe, "formats.generic.structural-inspector",
-                               describe_resource(filename, bytes, size, probe));
 }
 
 }  // namespace
 
 NativeModule dca_module() noexcept {
     return {"formats.dca.record-reader", "DCA", Format::Dca,
-            ModuleKind::Structural, false, run_dca};
+            ModuleKind::Structural, false, run_dca_module};
 }
 NativeModule lig_module() noexcept {
     return {"formats.lig.record-reader", "LIG", Format::Lig,
-            ModuleKind::Structural, false, run_lig};
+            ModuleKind::Structural, false, run_lig_module};
 }
 NativeModule lig2_module() noexcept {
     return {"formats.lig2.record-reader", "LIG2", Format::Lig2,
-            ModuleKind::Structural, false, run_lig2};
+            ModuleKind::Structural, false, run_lig2_module};
 }
 NativeModule pac_module() noexcept {
     return {"formats.pac.relative-slot-reader", "PAC", Format::Pac,
-            ModuleKind::Container, false, run_pac};
+            ModuleKind::Container, false, run_pac_module};
 }
 NativeModule pnst_module() noexcept {
     return {"formats.pnst.relative-slot-reader", "PNST", Format::Pnst,
-            ModuleKind::Container, false, run_pnst};
+            ModuleKind::Container, false, run_pnst_module};
 }
 NativeModule nbz_module() noexcept {
     return {"formats.nbz.container-reader", "NBZ", Format::Nbz,
-            ModuleKind::Container, false, run_nbz};
-}
-NativeModule generic_module() noexcept {
-    return {"formats.generic.structural-inspector", "*", Format::Other,
-            ModuleKind::Structural, false, run_generic};
+            ModuleKind::Container, false, run_nbz_module};
 }
 
 }  // namespace dmcresource
