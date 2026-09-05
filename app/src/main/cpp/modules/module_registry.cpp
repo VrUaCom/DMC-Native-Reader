@@ -9,6 +9,7 @@ namespace dmcresource {
 const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
     static const std::vector<NativeModule> registry = [] {
         std::vector<NativeModule> out{
+            pe_module(),
             scm_module(),
             mod_module(),
             hits_module(),
