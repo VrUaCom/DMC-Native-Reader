@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <string_view>
 
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/mesh.h"
@@ -29,11 +28,7 @@ struct DecodeResult {
     std::string text{};
 };
 
-// Compatibility entry point. New product code dispatches through
-// NativeModuleRegistry; these format-specific functions are the module backends.
-DecodeResult decode_resource(std::string_view filename,
-                             const std::uint8_t* bytes,
-                             std::size_t size) noexcept;
+// Format-specific backends are invoked only by their registered modules.
 DecodeResult decode_scm(const std::uint8_t* bytes, std::size_t size) noexcept;
 DecodeResult decode_mod(const std::uint8_t* bytes, std::size_t size) noexcept;
 
