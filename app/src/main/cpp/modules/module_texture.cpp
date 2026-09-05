@@ -135,17 +135,18 @@ PipelineResult rejected(const ProbeResult& probe, const char* module_id,
 PipelineResult run_dds(std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
-                       const ProbeResult& probe) noexcept {
+                       const ProbeResult& probe,
+                       const char* module_id) noexcept {
     const BinaryReader reader(bytes, size);
     const auto dds = inspect_dds(reader, 0u, size);
     if (!dds.ok || kDdsHeaderBytes + dds.payload != size) {
-        return rejected(probe, "formats.dds.dmc3-reader",
+        return rejected(probe, module_id,
                         "DDS rejected: expected a bounded complete DXT1/DXT5 full mip chain");
     }
     std::ostringstream detail;
     detail << "DDS " << dds.fourcc << " " << dds.width << "x" << dds.height
            << " mips=" << dds.mips << " payload=" << dds.payload;
-    return structural_pipeline(probe, "formats.dds.dmc3-reader", detail.str());
+    return structural_pipeline(probe, module_id, detail.str());
 }
 
 bool zero_range(const BinaryReader& reader, std::size_t begin,
@@ -162,16 +163,17 @@ bool zero_range(const BinaryReader& reader, std::size_t begin,
 PipelineResult run_ptx(std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
-                       const ProbeResult& probe) noexcept {
+                       const ProbeResult& probe,
+                       const char* module_id) noexcept {
     const BinaryReader reader(bytes, size);
     if (!reader.range(0u, kPtxHeaderBytes)) {
-        return rejected(probe, "formats.ptx.bundle-reader",
+        return rejected(probe, module_id,
                         "PTX rejected: resource is shorter than the 0x800-byte bundle header");
     }
     std::uint32_t count = 0u;
     if (!reader.read_le(0u, &count) || count == 0u || count > kMaxTextureCount ||
         count > (kPtxHeaderBytes - 4u) / 4u) {
-        return rejected(probe, "formats.ptx.bundle-reader",
+        return rejected(probe, module_id,
                         "PTX rejected: texture count is invalid");
     }
 
@@ -182,35 +184,35 @@ PipelineResult run_ptx(std::string_view,
     for (std::uint32_t index = 0u; index < count; ++index) {
         std::uint32_t sector_span = 0u;
         if (!reader.read_le(4u + static_cast<std::size_t>(index) * 4u, &sector_span)) {
-            return rejected(probe, "formats.ptx.bundle-reader",
+            return rejected(probe, module_id,
                             "PTX rejected: sector-span table is truncated");
         }
         const bool final = index + 1u == count;
         std::size_t bounded_end = size;
         if (!final || sector_span != 0u) {
             if (sector_span == 0u || sector_span > std::numeric_limits<std::size_t>::max() / kSectorBytes) {
-                return rejected(probe, "formats.ptx.bundle-reader",
+                return rejected(probe, module_id,
                                 "PTX rejected: invalid sector span");
             }
             const auto span_bytes = static_cast<std::size_t>(sector_span) * kSectorBytes;
             if (descriptor > size || span_bytes > size - descriptor) {
-                return rejected(probe, "formats.ptx.bundle-reader",
+                return rejected(probe, module_id,
                                 "PTX rejected: sector span leaves resource bounds");
             }
             bounded_end = descriptor + span_bytes;
             if (final && bounded_end != size) {
-                return rejected(probe, "formats.ptx.bundle-reader",
+                return rejected(probe, module_id,
                                 "PTX rejected: final sector span does not terminate at EOF");
             }
         }
         if (!reader.range(descriptor, kPtxDescriptorBytes)) {
-            return rejected(probe, "formats.ptx.bundle-reader",
+            return rejected(probe, module_id,
                             "PTX rejected: descriptor is truncated");
         }
         const std::size_t dds_offset = descriptor + kPtxDescriptorBytes;
         const auto dds = inspect_dds(reader, dds_offset, bounded_end);
         if (!dds.ok) {
-            return rejected(probe, "formats.ptx.bundle-reader",
+            return rejected(probe, module_id,
                             "PTX rejected: descriptor is not followed by a valid DXT1/DXT5 DDS");
         }
         std::uint32_t descriptor_payload = 0u;
@@ -219,21 +221,21 @@ PipelineResult run_ptx(std::string_view,
             !reader.read_le(descriptor + 0x64u, &descriptor_dds_size) ||
             descriptor_payload != dds.payload ||
             descriptor_dds_size != kDdsHeaderBytes + dds.payload) {
-            return rejected(probe, "formats.ptx.bundle-reader",
+            return rejected(probe, module_id,
                             "PTX rejected: descriptor DDS sizes disagree with mip payload");
         }
         const std::size_t dds_end = dds_offset + descriptor_dds_size;
         if (dds_end > bounded_end) {
-            return rejected(probe, "formats.ptx.bundle-reader",
+            return rejected(probe, module_id,
                             "PTX rejected: DDS escapes its descriptor span");
         }
         if (final && sector_span == 0u) {
             if (dds_end != size) {
-                return rejected(probe, "formats.ptx.bundle-reader",
+                return rejected(probe, module_id,
                                 "PTX rejected: zero-span final DDS does not end at EOF");
             }
         } else if (!zero_range(reader, dds_end, bounded_end)) {
-            return rejected(probe, "formats.ptx.bundle-reader",
+            return rejected(probe, module_id,
                             "PTX rejected: alignment padding contains non-zero data");
         }
         total_dds_bytes += descriptor_dds_size;
@@ -245,22 +247,38 @@ PipelineResult run_ptx(std::string_view,
     detail << "PTX texture bundle | textures=" << count
            << " dxt1=" << dxt1 << " dxt5=" << dxt5
            << " ddsBytes=" << total_dds_bytes;
-    auto out = structural_pipeline(probe, "formats.ptx.bundle-reader", detail.str());
+    auto out = structural_pipeline(probe, module_id, detail.str());
     out.modules.insert(out.modules.begin() + 3,
                        {"formats.dds.child-validation", true});
     return out;
+}
+
+PipelineResult run_dds_module(const NativeModule& module,
+                              std::string_view filename,
+                              const std::uint8_t* bytes,
+                              std::size_t size,
+                              const ProbeResult& probe) noexcept {
+    return run_dds(filename, bytes, size, probe, module.id);
+}
+
+PipelineResult run_ptx_module(const NativeModule& module,
+                              std::string_view filename,
+                              const std::uint8_t* bytes,
+                              std::size_t size,
+                              const ProbeResult& probe) noexcept {
+    return run_ptx(filename, bytes, size, probe, module.id);
 }
 
 }  // namespace
 
 NativeModule dds_module() noexcept {
     return {"formats.dds.dmc3-reader", "DDS", Format::Dds,
-            ModuleKind::Structural, false, run_dds};
+            ModuleKind::Structural, false, run_dds_module};
 }
 
 NativeModule ptx_module() noexcept {
     return {"formats.ptx.bundle-reader", "PTX", Format::Ptx,
-            ModuleKind::Structural, false, run_ptx};
+            ModuleKind::Structural, false, run_ptx_module};
 }
 
 }  // namespace dmcresource
