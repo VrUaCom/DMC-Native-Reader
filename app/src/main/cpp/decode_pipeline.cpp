@@ -52,15 +52,13 @@ PipelineResult run_decode_pipeline(std::string_view filename,
     }
 
     // The catalog owns recognition/evidence metadata; once a family has a
-    // promoted module, the module registry owns its concrete Native Reader
-    // format identity. This avoids keeping a second central Format switch in
-    // the catalog while still allowing generic recognized families to remain
-    // Format::Other.
+    // registered module contract, the registry owns its Native Reader format
+    // identity and execution policy. There is no wildcard/fallback dispatcher.
     auto authoritative_probe = rejected.probe;
     if (module->format != Format::Unknown) {
         authoritative_probe.format = module->format;
     }
-    return module->run(filename, bytes, size, authoritative_probe);
+    return module->run(*module, filename, bytes, size, authoritative_probe);
 }
 
 std::string pipeline_trace(const PipelineResult& result) {
