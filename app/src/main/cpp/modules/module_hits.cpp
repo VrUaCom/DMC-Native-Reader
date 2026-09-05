@@ -5,12 +5,13 @@
 namespace dmcresource {
 namespace {
 
-PipelineResult run_hits(std::string_view,
+PipelineResult run_hits(const NativeModule& module,
+                        std::string_view,
                         const std::uint8_t* bytes,
                         std::size_t size,
                         const ProbeResult& probe) noexcept {
     return pipeline_from_decode(probe, decode_hits(bytes, size),
-                                "formats.hits.collision-reader", true);
+                                module.id, module.renderable);
 }
 
 }  // namespace
