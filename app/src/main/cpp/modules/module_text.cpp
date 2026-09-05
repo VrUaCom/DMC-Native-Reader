@@ -24,13 +24,13 @@ PipelineResult run_index(std::string_view,
 }  // namespace
 
 NativeModule stage_txt_module() noexcept {
-    return {"formats.stage-txt.lexer", "TXT", ModuleKind::Text, false,
-            run_stage_txt};
+    return {"formats.stage-txt.lexer", "TXT", Format::StageTxt,
+            ModuleKind::Text, false, run_stage_txt};
 }
 
 NativeModule index_module() noexcept {
-    return {"formats.index.manifest-reader", ".index", ModuleKind::Text, false,
-            run_index};
+    return {"formats.index.manifest-reader", ".index", Format::Index,
+            ModuleKind::Text, false, run_index};
 }
 
 }  // namespace dmcresource
