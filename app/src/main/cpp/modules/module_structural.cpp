@@ -137,32 +137,32 @@ PipelineResult run_generic(std::string_view filename,
 }  // namespace
 
 NativeModule dca_module() noexcept {
-    return {"formats.dca.record-reader", "DCA", ModuleKind::Structural, false,
-            run_dca};
+    return {"formats.dca.record-reader", "DCA", Format::Dca,
+            ModuleKind::Structural, false, run_dca};
 }
 NativeModule lig_module() noexcept {
-    return {"formats.lig.record-reader", "LIG", ModuleKind::Structural, false,
-            run_lig};
+    return {"formats.lig.record-reader", "LIG", Format::Lig,
+            ModuleKind::Structural, false, run_lig};
 }
 NativeModule lig2_module() noexcept {
-    return {"formats.lig2.record-reader", "LIG2", ModuleKind::Structural, false,
-            run_lig2};
+    return {"formats.lig2.record-reader", "LIG2", Format::Lig2,
+            ModuleKind::Structural, false, run_lig2};
 }
 NativeModule pac_module() noexcept {
-    return {"formats.pac.relative-slot-reader", "PAC", ModuleKind::Container,
-            false, run_pac};
+    return {"formats.pac.relative-slot-reader", "PAC", Format::Pac,
+            ModuleKind::Container, false, run_pac};
 }
 NativeModule pnst_module() noexcept {
-    return {"formats.pnst.relative-slot-reader", "PNST", ModuleKind::Container,
-            false, run_pnst};
+    return {"formats.pnst.relative-slot-reader", "PNST", Format::Pnst,
+            ModuleKind::Container, false, run_pnst};
 }
 NativeModule nbz_module() noexcept {
-    return {"formats.nbz.container-reader", "NBZ", ModuleKind::Container,
-            false, run_nbz};
+    return {"formats.nbz.container-reader", "NBZ", Format::Nbz,
+            ModuleKind::Container, false, run_nbz};
 }
 NativeModule generic_module() noexcept {
-    return {"formats.generic.structural-inspector", "*", ModuleKind::Structural,
-            false, run_generic};
+    return {"formats.generic.structural-inspector", "*", Format::Other,
+            ModuleKind::Structural, false, run_generic};
 }
 
 }  // namespace dmcresource
