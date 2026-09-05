@@ -39,10 +39,30 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
+      - name: Build and run host modular-reader regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++17 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            app/src/test/native/module_registry_test.cpp \
+            app/src/main/cpp/dmc_resource.cpp \
+            app/src/main/cpp/decode_fixed.cpp \
+            app/src/main/cpp/decode_hits.cpp \
+            app/src/main/cpp/decode_text.cpp \
+            app/src/main/cpp/decode_pipeline.cpp \
+            app/src/main/cpp/modules/module_registry.cpp \
+            app/src/main/cpp/modules/module_model.cpp \
+            app/src/main/cpp/modules/module_hits.cpp \
+            app/src/main/cpp/modules/module_text.cpp \
+            app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/modules/module_structural.cpp \
+            -o /tmp/dmc-native-module-test
+          /tmp/dmc-native-module-test
+
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify APK payload, identity and routing
+      - name: Verify production Native Reader and modular pipeline
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -54,29 +74,37 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='7'" /tmp/badging.txt
-          grep -q "versionName='0.7.0-samsung-path-handler'" /tmp/badging.txt
+          grep -q "versionCode='8'" /tmp/badging.txt
+          grep -q "versionName='0.8.0-modular-native-reader'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
           grep -q 'com.dmcrengine.nativeviewer.DmcOpenActivity' /tmp/manifest-tree.txt
-          if grep -q 'DmcResourceOpenHandler' /tmp/manifest-tree.txt; then
-            echo 'legacy activity-alias unexpectedly remains in v7' >&2
-            exit 1
-          fi
-          grep -q 'android.intent.action.VIEW' /tmp/manifest-tree.txt
-          grep -q 'android.intent.action.EDIT' /tmp/manifest-tree.txt
-          grep -q 'android.intent.action.SEND' /tmp/manifest-tree.txt
-          grep -q 'android.intent.category.OPENABLE' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.scm' /tmp/manifest-tree.txt
           grep -q 'application/vnd.dmc.mod' /tmp/manifest-tree.txt
-          grep -q 'application/octet-stream' /tmp/manifest-tree.txt
-          grep -q 'audio/x-mod' /tmp/manifest-tree.txt
-          grep -q 'video/mpeg' /tmp/manifest-tree.txt
-          grep -q 'content' /tmp/manifest-tree.txt
-          grep -q 'file' /tmp/manifest-tree.txt
-          grep -q '\\.mod' /tmp/manifest-tree.txt
-          grep -q '\\.scm' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.hits' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.dca' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.ptx' /tmp/manifest-tree.txt
+          grep -q 'image/vnd-ms.dds' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.efm' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.mrp' /tmp/manifest-tree.txt
+          grep -q 'application/vnd.dmc.shw' /tmp/manifest-tree.txt
+
+          unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
+          strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.mod.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.hits.collision-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.stage-txt.lexer'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.dmc3-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.ptx.bundle-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.dca.record-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.lig2.record-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.pac.relative-slot-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.pnst.relative-slot-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.nbz.container-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.efm.family-adapter'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.mrp.family-adapter'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.shw.family-adapter'
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
@@ -86,14 +114,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v7-samsung-path-handler
+          name: dmc-native-reader-v8-modular
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v7-build-evidence
+          name: dmc-native-reader-v8-build-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt

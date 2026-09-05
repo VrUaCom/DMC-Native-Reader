@@ -2,97 +2,167 @@
 
 ## Current milestone
 
-v0.6.0-install-identity
+`v0.8.0-modular-native-reader`
 
-Canonical repository: `VrUaCom/DMC-Native-Reader`.
+Canonical product repository: `VrUaCom/DMC-Native-Reader`.
+Canonical DMC3 reverse/evidence source: `VrUaCom/dmc-rengine-cpp`.
 
-## Proven in source / CI boundary
+## Current architecture
 
-- Exact 4-byte DMC resource probes: `SCM ` and `MOD `.
-- Bounded read-only native decoding path.
-- SCM/MOD -> normalized static Mesh.
-- Development corpus validation: 74 SCM + 90 MOD = 164/164 decoded.
-- 300,466 vertices and 192,413 triangles materialized in that corpus pass.
-- CPU 3D rendering, rotate, pinch zoom, reset and wireframe.
-- JNI bridge and read-only Android file-descriptor path.
-- Dedicated exported `DmcResourceOpenHandler` activity alias.
-- Samsung-oriented Android routes covering typed/untyped `content://` and `file://`, broad MIME fallback, `OPENABLE`, VIEW/EDIT and SEND fallback.
-- Runtime PackageManager routing self-test and incoming-intent diagnostics.
-- ARM64 APK build configuration.
-- Standalone GitHub Actions build in this repository.
-- Compiled package identity verification with `aapt2 dump badging`.
-- Compiled binary manifest routing verification with `aapt2 dump xmltree`.
-- APK Signature Scheme v2 + v3 verification.
+Native Reader now uses a registry-driven product path:
 
-## v6 install-identity correction
+`probe -> NativeModuleRegistry -> per-format module -> inspection/mesh session -> Android UI`
 
-Physical-device testing exposed an installation failure before app launch. The installation boundary was classified as an APK identity/signing conflict, not a decoder or Samsung routing failure.
+The central family `if/else` dispatcher has been removed from `decode_pipeline.cpp`. New format support is registered as a module instead of adding another branch to a monolithic dispatcher.
 
-Verified signer fingerprints:
+SCM/MOD share a recovered Model Family mesh core while retaining separate SCM scene and MOD skin/topology adapters. The old `decode_resource()` function remains only as compatibility API; the production pipeline does not dispatch through it.
 
-- legacy v2/v3 test APK: `e909ea08a78e1dcdf9909bd2dd0ac68291fe05d8217035b8f33dd8516b2aa733`
-- canonical v4+ test signer: `f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
+## Registered modules
 
-Android correctly refuses an in-place update when the package name is the same but the signing identity differs. The canonical repository does not contain the legacy signer private key, so v6 establishes a new permanent test application identity:
+Promoted modules currently include:
 
-`com.dmcrengine.nativereader`
+- SCM — `formats.scm.mesh-reader`
+- MOD — `formats.mod.mesh-reader`
+- HITS — `formats.hits.collision-reader`
+- stage TXT — `formats.stage-txt.lexer`
+- `.index` — `formats.index.manifest-reader`
+- DDS — `formats.dds.dmc3-reader`
+- PTX — `formats.ptx.bundle-reader`
+- DCA — `formats.dca.record-reader`
+- LIG — `formats.lig.record-reader`
+- LIG2 — `formats.lig2.record-reader`
+- PAC — `formats.pac.relative-slot-reader`
+- PNST — `formats.pnst.relative-slot-reader`
+- NBZ — `formats.nbz.container-reader`
+- EFM — `formats.efm.family-adapter`
+- MRP — `formats.mrp.family-adapter`
+- SHW — `formats.shw.family-adapter`
+- generic recognized-family structural inspector
 
-This allows v6 to install alongside a legacy v2/v3 installation without requiring its removal. Future v6+ test APKs must keep both this applicationId and the canonical test signer so upgrades remain compatible.
+EFM/MRP/SHW remain explicitly partial and non-renderable where exact semantics are still unresolved.
 
-## Verified v6 CI build
+## Proven model-reader baseline
 
-PR #4 / workflow run `33007067465` passed the complete build acceptance boundary:
+Retained development corpus evidence:
 
-- APK build: PASS
-- ZIP integrity: PASS
-- `classes.dex`: present
-- `lib/arm64-v8a/libdmcviewer.so`: present
-- package: `com.dmcrengine.nativereader`
-- versionCode: `6`
-- versionName: `0.6.0-install-identity`
-- launchable activity: `com.dmcrengine.nativeviewer.MainActivity`
-- `DmcResourceOpenHandler`: present in compiled manifest
-- canonical DMC MIME routes: present
-- `application/octet-stream`: present
-- `audio/x-mod`: present
-- typed/untyped `content://` and `file://` routes: present
-- APK Signature Scheme v2: PASS
-- APK Signature Scheme v3: PASS
-- signer SHA-256: `f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac`
-- APK SHA-256: `3f093f6f9088423753f32a0690de315f0b9e5ae0cb8c5703763b157bc55673d0`
+- SCM: 74/74 decoded
+- MOD: 90/90 decoded
+- total model corpus: 164/164 decoded
+- 300,466 vertices materialized
+- 192,413 triangles materialized
+- no index out-of-bounds observed in that corpus pass
 
-## Not yet claimed as fully reversed
+SCM/MOD remain fail-closed on unsupported versions, invalid tables and out-of-bounds streams.
 
-- Full SCM `triCmd` opcode semantics.
-- Full textures/material system.
-- Exact MOD skeletal skinning semantics.
-- Generality beyond the observed SCM/MOD corpus/version families.
+## Additional semantic/structural readers
 
-## Current device-test boundary
+### HITS
 
-The next physical Samsung acceptance pass is:
+HITS is a data/corpus-confirmed collision payload identity and is decoded by an independent collision module. Historical `HITS$` remains rejected and must not be described as a canonical EXE registry tag.
 
-1. Install v6 while the legacy test package may remain installed.
-2. Confirm installation succeeds.
-3. Launch `DMC Native Reader v6` directly once and capture the route self-test.
-4. Tap a real `.mod` and `.scm` in Samsung My Files.
-5. Confirm Android resolves `DMC Native Reader v6` instead of Play Store search.
-6. Capture the actual incoming Intent diagnostics (`action`, `type`, `scheme`, `categories`, `flags`).
-7. Confirm the native decoder accepts the real file.
-8. Confirm non-empty real geometry renders.
-9. Confirm rotate, pinch zoom, reset and wireframe work.
+### TXT / .index
 
-A failure at any step must be classified at the exact boundary: package installation, Android resolver, provider/URI access, native probe/decode, or renderer.
+Stage TXT has a bounded lexer. `.index` has a dedicated extraction/naming manifest reader.
 
-## Build acceptance
+A `.index` manifest may legitimately begin with the literal text line `PNST` or `PAC`. The product pipeline therefore preserves `.index` filename identity over a content-like four-byte prefix so textual metadata cannot be misclassified as a binary PNST/PAC container.
 
-A CI build is accepted only if all of these pass:
+### DDS
 
-- APK exists and ZIP integrity passes.
-- `classes.dex` exists.
-- `lib/arm64-v8a/libdmcviewer.so` exists.
-- compiled package identity and version match the intended milestone.
-- launchable activity is the real Java activity class.
-- compiled binary manifest contains the dedicated handler and required routing actions/categories/MIME/schemes.
-- APK signature verifies and matches the canonical test certificate fingerprint.
-- APK SHA-256 is emitted as build evidence.
+DDS structural acceptance currently requires:
+
+- exact `DDS ` magic
+- serialized 128-byte DDS envelope
+- header size 124 and pixel-format size 32
+- non-zero dimensions
+- full mip chain down to `1x1`
+- DXT1 or DXT5
+- exact block-compressed payload extent and EOF
+
+### PTX
+
+PTX structural acceptance currently validates:
+
+- `0x800` bundle header
+- bounded texture count / sector-span table
+- `0x70` descriptors
+- `0x800` sector framing
+- descriptor payload/DDS-size agreement
+- bounded DXT1/DXT5 DDS children
+- final zero-span exact EOF
+- zero alignment padding where sector spans are present
+
+### DCA / LIG / LIG2
+
+- DCA: `DCA\0`, `0x10` header, integral `0x410` records
+- LIG/LIG2: `0x20` header plus integral `0x30` records at the current evidence level
+
+### PAC / PNST / NBZ
+
+PAC and PNST use separate relative-slot modules and remain distinct resource families. NBZ has its own container module; broad child materialization/repack semantics are not claimed merely from recognition.
+
+## Runtime/model-family boundary
+
+- SCM — mesh-bearing stage/scene model
+- MOD — mesh-bearing actor/object model
+- EFM — effect-model family; exact real-payload stream/material binding remains open
+- MRP — render-side companion; standalone mesh ownership is not proven
+- SHW — shadow geometry/topology companion; external spatial ownership remains incomplete
+
+Incomplete family evidence is surfaced as partial modules, never by reusing the SCM/MOD parser as a shortcut.
+
+## Android identity and routing
+
+- applicationId: `com.dmcrengine.nativereader`
+- versionCode: `8`
+- versionName: `0.8.0-modular-native-reader`
+- ABI: `arm64-v8a`
+- exported concrete Samsung/OEM entry point: `DmcOpenActivity`
+- resources are opened read-only through Android file descriptors
+- mapped resource cap: 512 MiB
+
+Distinctive DMC extensions use OEM-oriented routes. Generic extensions such as `.bin`, `.txt`, `.sav` and common media remain available through generic provider/picker paths rather than being globally claimed by Native Reader.
+
+## CI acceptance boundary
+
+A promotion is accepted only if:
+
+1. host C++ modular-registry regression compiles and passes;
+2. Android NDK compiles all promoted modules for arm64-v8a;
+3. APK contains `classes.dex` and `lib/arm64-v8a/libdmcviewer.so`;
+4. compiled package is `com.dmcrengine.nativereader` versionCode `8`;
+5. compiled versionName is `0.8.0-modular-native-reader`;
+6. `DmcOpenActivity` remains the concrete exported system-open component;
+7. representative DMC MIME/extension routes are present;
+8. promoted module IDs are physically present in the built native `.so`;
+9. APK signature matches the canonical development signer;
+10. physical Samsung testing verifies update/install and real resource-open behavior.
+
+The host regression currently covers registry presence plus representative DDS -> PTX composition, DCA, LIG2, TXT, `.index`, PAC and NBZ paths, including malformed rejection. It also guards the `.index`/`PNST` identity-precedence case found during v11 integration.
+
+## Still not claimed as fully reversed
+
+- complete SCM topology/`triCmd` semantics beyond the recovered preview path
+- full material/texture binding for model rendering
+- final MOD skeletal authoring semantics
+- EFM exact real-payload stream-to-shader binding
+- MRP exact fields/downstream owner
+- SHW exact ownership/linkage of external spatial pool
+- MCV exact field semantics
+- CLT/C1D exact schemas
+- HID/TSC exact schemas
+- several stage/effect/audio-bank research-only families
+- Capcom-equivalent writers/repackers for formats where only read/inspection support is promoted
+
+## Physical-device test boundary
+
+After final CI/merge, test on the Samsung device:
+
+1. install v8 over the existing canonical Native Reader line;
+2. launch directly and confirm the v8 modular version identity;
+3. open known real SCM and MOD and verify non-empty 3D geometry;
+4. open a real HITS and verify collision preview;
+5. open DDS and PTX and verify structural information instead of rejection;
+6. open representative DCA/LIG2/PAC/PNST/NBZ/TXT/.index resources;
+7. confirm the displayed family/support/evidence line and module trace;
+8. confirm non-renderable resources never display a stale previous mesh;
+9. record Samsung My Files routing/provider diagnostics for any extension that still bypasses `DmcOpenActivity`.

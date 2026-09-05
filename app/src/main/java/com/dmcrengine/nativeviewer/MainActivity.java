@@ -77,7 +77,7 @@ public final class MainActivity extends Activity {
         bar.setGravity(Gravity.CENTER);
         bar.setPadding(8, 8, 8, 12);
 
-        Button open = makeButton("Open SCM/MOD");
+        Button open = makeButton("Open DMC resource");
         open.setOnClickListener(v -> chooseFile());
         bar.addView(open, new LinearLayout.LayoutParams(0,
                 LinearLayout.LayoutParams.WRAP_CONTENT, 1.25f));
@@ -108,11 +108,20 @@ public final class MainActivity extends Activity {
         i.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
                 "application/vnd.dmc.scm",
                 "application/vnd.dmc.mod",
+                "application/vnd.dmc.pac",
+                "application/vnd.dmc.pnst",
+                "application/vnd.dmc.hits",
+                "application/vnd.dmc.dca",
+                "application/vnd.dmc.efm",
+                "application/vnd.dmc.mrp",
+                "application/vnd.dmc.shw",
+                "image/vnd-ms.dds",
                 "application/octet-stream",
-                "application/x-scm",
-                "application/x-mod",
                 "audio/mod",
                 "audio/x-mod",
+                "audio/ogg",
+                "video/mp4",
+                "video/x-ms-wmv",
                 "*/*"
         });
         startActivityForResult(i, REQUEST_OPEN);
@@ -163,11 +172,12 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Reader v0.7\n"
+        statusView.setText("DMC Native Reader v0.8\n"
+                + "SCM/MOD: corpus-backed 3D preview. Other catalogued DMC3 formats: native recognition/inspection.\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
                 + diag + "\n"
-                + "Tap .scm/.mod in My Files, or use Open SCM/MOD.");
+                + "Tap a DMC resource in My Files, or use Open DMC resource.");
     }
 
     private String displayName(Uri uri) {
@@ -216,10 +226,10 @@ public final class MainActivity extends Activity {
             return;
         }
         if (session == 0) {
-            statusView.setText(name + "\nRejected by native decoder\n"
+            statusView.setText(name + "\nRejected by native reader\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
-            Toast.makeText(this, "SCM/MOD decoder rejected this file", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Native DMC reader rejected this file", Toast.LENGTH_LONG).show();
             return;
         }
         statusView.setText(name + "\n" + NativeBridge.info(session) + "\n"
@@ -246,8 +256,9 @@ public final class MainActivity extends Activity {
 
     private String buildSystemMimeDiag() {
         MimeTypeMap map = MimeTypeMap.getSingleton();
-        return "system MIME: mod=" + safe(map.getMimeTypeFromExtension("mod"))
-                + " scm=" + safe(map.getMimeTypeFromExtension("scm"));
+        return "system MIME samples: mod=" + safe(map.getMimeTypeFromExtension("mod"))
+                + " scm=" + safe(map.getMimeTypeFromExtension("scm"))
+                + " dds=" + safe(map.getMimeTypeFromExtension("dds"));
     }
 
     private String buildRoutingSelfTest() {
