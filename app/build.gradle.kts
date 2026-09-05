@@ -7,6 +7,10 @@ android {
     compileSdk = 36
     ndkVersion = "28.2.13676358"
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     signingConfigs {
         create("stableDebug") {
             storeFile = file("../keys/dmc-native-reader-test.jks")
