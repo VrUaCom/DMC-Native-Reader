@@ -12,6 +12,7 @@ namespace dmcresource {
 // module remains structural/inspection-only.
 enum class Format : std::uint8_t {
     Unknown = 0,
+    Pe,
     Scm,
     Mod,
     Efm,
