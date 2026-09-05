@@ -5,7 +5,15 @@ add_library(dmcviewer SHARED
     app_native.cpp
     dmc_resource.cpp
     decode_fixed.cpp
+    decode_hits.cpp
+    decode_text.cpp
     decode_pipeline.cpp
+    modules/module_registry.cpp
+    modules/module_model.cpp
+    modules/module_hits.cpp
+    modules/module_text.cpp
+    modules/module_texture.cpp
+    modules/module_structural.cpp
     view_renderer.cpp
 )
 
