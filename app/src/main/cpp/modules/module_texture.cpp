@@ -254,13 +254,13 @@ PipelineResult run_ptx(std::string_view,
 }  // namespace
 
 NativeModule dds_module() noexcept {
-    return {"formats.dds.dmc3-reader", "DDS", ModuleKind::Structural, false,
-            run_dds};
+    return {"formats.dds.dmc3-reader", "DDS", Format::Dds,
+            ModuleKind::Structural, false, run_dds};
 }
 
 NativeModule ptx_module() noexcept {
-    return {"formats.ptx.bundle-reader", "PTX", ModuleKind::Structural, false,
-            run_ptx};
+    return {"formats.ptx.bundle-reader", "PTX", Format::Ptx,
+            ModuleKind::Structural, false, run_ptx};
 }
 
 }  // namespace dmcresource
