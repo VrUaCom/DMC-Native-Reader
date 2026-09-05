@@ -20,13 +20,11 @@ android {
     }
 
     defaultConfig {
-        // Deliberately separate from com.dmcrengine.nativereader so the test
-        // application installs alongside Native Reader instead of updating it.
-        applicationId = "com.dmcrengine.testreader"
+        applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-modular-test-reader"
+        versionCode = 8
+        versionName = "0.8.0-modular-native-reader"
 
         externalNativeBuild {
             cmake {
