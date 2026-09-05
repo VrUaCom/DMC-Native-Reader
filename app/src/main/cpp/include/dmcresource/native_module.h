@@ -44,7 +44,6 @@ public:
     [[nodiscard]] static const std::vector<NativeModule>& modules() noexcept;
 };
 
-// Shared helpers used by independent module translation units.
 [[nodiscard]] PipelineResult pipeline_from_decode(const ProbeResult& probe,
                                                   DecodeResult decoded,
                                                   const char* module_id,
@@ -54,6 +53,7 @@ public:
                                                  std::string detail) noexcept;
 
 // Promoted module factories.
+[[nodiscard]] NativeModule pe_module() noexcept;
 [[nodiscard]] NativeModule scm_module() noexcept;
 [[nodiscard]] NativeModule mod_module() noexcept;
 [[nodiscard]] NativeModule hits_module() noexcept;
