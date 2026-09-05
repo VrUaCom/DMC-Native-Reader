@@ -75,8 +75,8 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='8'" /tmp/badging.txt
-          grep -q "versionName='0.8.0-modular-native-reader'" /tmp/badging.txt
+          grep -q "versionCode='9'" /tmp/badging.txt
+          grep -q "versionName='0.9.0-explicit-family-modules'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -122,14 +122,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v8-explicit-modules
+          name: dmc-native-reader-v9-explicit-modules
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v8-explicit-module-evidence
+          name: dmc-native-reader-v9-explicit-module-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
