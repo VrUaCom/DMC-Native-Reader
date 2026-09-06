@@ -9,6 +9,7 @@
 #include "dmcresource/decode.h"
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/resource_capabilities.h"
 
 namespace dmcresource {
 
@@ -36,6 +37,10 @@ struct NativeModule final {
     ModuleKind kind;
     bool renderable;
     ModuleRun run;
+
+    // v2 reusable presentation/inspection contract. Existing modules that do
+    // not declare capabilities remain valid and are migrated incrementally.
+    ResourceCapabilities capabilities{};
 };
 
 class NativeModuleRegistry final {
