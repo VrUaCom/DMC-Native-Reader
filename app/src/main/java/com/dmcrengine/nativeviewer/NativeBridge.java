@@ -19,6 +19,5 @@ public final class NativeBridge {
 
     public static native int[] render(long handle, int width, int height,
                                       float yaw, float pitch, float zoom,
-                                      boolean wireframe,
-                                      boolean showHierarchy);
+                                      int renderFlags);
 }
