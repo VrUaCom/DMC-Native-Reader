@@ -93,6 +93,54 @@ int main() {
     assert(near(rotated_mesh.vertices[0].y, 7.0F));
     assert(near(rotated_mesh.vertices[0].z, 7.0F));
 
+    // Spatial hierarchy is a separate reusable projection. A translated root
+    // is enough to make an overlay useful even without parent-child edges.
+    HierarchyOverlay hierarchy;
+    assert(materialize_hierarchy_overlay(scene, &hierarchy));
+    assert(hierarchy.available());
+    assert(hierarchy.points.size() == 1U);
+    assert(hierarchy.edges.empty());
+    assert(near(hierarchy.points[0].x, 10.0F));
+    assert(near(hierarchy.points[0].y, 20.0F));
+    assert(near(hierarchy.points[0].z, 30.0F));
+
+    RenderScene tree;
+    RenderNode root;
+    root.world.values[12] = 1.0F;
+    tree.nodes.push_back(root);
+    RenderNode child;
+    child.parent = 0;
+    child.world.values[12] = 4.0F;
+    child.world.values[13] = 2.0F;
+    tree.nodes.push_back(child);
+    HierarchyOverlay tree_overlay;
+    assert(materialize_hierarchy_overlay(tree, &tree_overlay));
+    assert(tree_overlay.available());
+    assert(tree_overlay.points.size() == 2U);
+    assert(tree_overlay.edges.size() == 1U);
+    assert(tree_overlay.edges[0].parent == 0U);
+    assert(tree_overlay.edges[0].child == 1U);
+
+    // Hierarchy metadata without decoded spatial transforms is accepted but is
+    // not advertised to the UI as a 3D overlay. This is the current safe MOD
+    // behavior until canonical MOD transform records are promoted.
+    RenderScene non_spatial;
+    RenderNode identity_root;
+    identity_root.kind = RenderNodeKind::Bone;
+    non_spatial.nodes.push_back(identity_root);
+    RenderNode identity_child;
+    identity_child.kind = RenderNodeKind::Bone;
+    identity_child.parent = 0;
+    non_spatial.nodes.push_back(identity_child);
+    HierarchyOverlay non_spatial_overlay;
+    assert(materialize_hierarchy_overlay(non_spatial, &non_spatial_overlay));
+    assert(!non_spatial_overlay.available());
+
+    RenderScene malformed_hierarchy = tree;
+    malformed_hierarchy.nodes[1].parent = 99;
+    HierarchyOverlay rejected_hierarchy;
+    assert(!materialize_hierarchy_overlay(malformed_hierarchy, &rejected_hierarchy));
+
     RenderScene invalid = scene;
     invalid.meshes[0].node_index = 99;
     Mesh rejected;
@@ -105,6 +153,12 @@ int main() {
     assert(image.width == 64);
     assert(image.height == 64);
     assert(image.pixels.size() == 64U * 64U * 4U);
+
+    const auto overlay_image = render_view(materialized, 64, 64, ViewState{}, &hierarchy);
+    assert(overlay_image.width == 64);
+    assert(overlay_image.height == 64);
+    assert(overlay_image.pixels.size() == image.pixels.size());
+    assert(overlay_image.pixels != image.pixels);
 
     return 0;
 }
