@@ -26,13 +26,17 @@ PipelineResult run_index(const NativeModule& module,
 }  // namespace
 
 NativeModule stage_txt_module() noexcept {
+    const auto caps = capability(ResourceCapability::Inspection) |
+        ResourceCapability::Text;
     return {"formats.stage-txt.lexer", "TXT", Format::StageTxt,
-            ModuleKind::Text, false, run_stage_txt};
+            ModuleKind::Text, false, run_stage_txt, caps};
 }
 
 NativeModule index_module() noexcept {
+    const auto caps = capability(ResourceCapability::Inspection) |
+        ResourceCapability::Text;
     return {"formats.index.manifest-reader", ".index", Format::Index,
-            ModuleKind::Text, false, run_index};
+            ModuleKind::Text, false, run_index, caps};
 }
 
 }  // namespace dmcresource
