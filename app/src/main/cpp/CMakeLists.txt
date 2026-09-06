@@ -25,6 +25,7 @@ add_library(dmcviewer SHARED
     vendor/dmc-rengine-cpp/src/binary/reader.cpp
     vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
     vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+    vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
     vendor/dmc-rengine-cpp/src/formats/mod.cpp
     vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
     vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp

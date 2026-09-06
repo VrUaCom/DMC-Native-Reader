@@ -2,36 +2,51 @@
 
 Source repository: `VrUaCom/dmc-rengine-cpp`
 
-Pinned upstream commit:
+Current canonical MOD pin (`main`, after PR #305 consolidation):
+
+`84d80b98103a2b0bd365c5b911209763edd17204`
+
+Previous Native Reader base pin:
 
 `3a3db646c6bf3faf1871efbed31c4e9f4fb32cbe`
 
-Previous content-equivalent MOD pin:
-
-`c72b7b056517039c815ee4322119f9eb40589601`
-
-The intervening canonical commit documents PR hygiene only; the imported MOD reader blobs are unchanged. The newer pin records the actual canonical `main` used for the Native Reader integration slices.
+PR #305 consolidated the previously separate MOD spatial-hierarchy promotion into canonical `main`. The Native Reader MOD read-side slice below is now content-identical to files reachable from that single canonical main commit. Vendored files remain unmodified; Android-specific projection belongs outside this vendor tree.
 
 Policy:
 
-- files under this directory are copied byte/text-identically from the pinned canonical reverse/evidence source;
+- files under this directory are copied byte/text-identically from the named canonical reverse/evidence source;
 - do not patch vendored format code locally to make Android behavior diverge;
 - product-specific conversion belongs in Native Reader adapters outside this vendor tree;
 - updates must name the upstream commit and re-run host + Android regression gates;
 - reader slices deliberately exclude canonical writer/authoring modules unless a Native Reader feature requires them.
 
-## MOD reader slice
+## MOD reader slice — `main@84d80b98103a2b0bd365c5b911209763edd17204`
 
 - `include/dmc_rengine/binary/reader.hpp` — `43d721a9dd83d171184ecfabac6ca5d758ac2130`
 - `src/binary/reader.cpp` — `63ff1b0eb6a05375eda16757425df9bcf41eff9e`
 - `include/dmc_rengine/formats/diagnostic.hpp` — `2c66b7b38462bea096046404e39e1146a8c0d187`
 - `include/dmc_rengine/formats/model_mesh_core.hpp` — `805bda2d8dc80d4ce3b9b04fbe587930a834eeaa`
+- `include/dmc_rengine/formats/model_node_domain_core.hpp` — `cecae752b294913bca74631dd59df5baf68972f3`
 - `include/dmc_rengine/formats/mod_skin.hpp` — `d4ba6cb33ff7cd3d8da067fe0263f5f56c74ca46`
 - `src/formats/mod_skin.cpp` — `69d711a9f09465861a08a50252b9c00436943b21`
-- `include/dmc_rengine/formats/mod/transform_domain.hpp` — `be43b3c69d8f9144e0db10f86d86af414727d7a0`
-- `src/formats/mod/transform_domain.cpp` — `e2a7ddc0f52835c3f8acc3839d44e981d2f6bf30`
+- `include/dmc_rengine/formats/mod/transform_domain.hpp` — `9555c23d3caed786ae7837941d50e5a0d0d8dc3f`
+- `src/formats/mod/transform_domain.cpp` — `8d7be95f41d1694045d28d6b9cfdcae5f08f543b`
+- `include/dmc_rengine/formats/mod/world_transform.hpp` — `35c222143536e48349b56fc1f3d6aec1fd0d5c5d`
+- `src/formats/mod/world_transform.cpp` — `fabb723bb7b4d8c1ee5795a6c51f32c5f1fa7ad3`
 - `include/dmc_rengine/formats/mod.hpp` — `839a87727eee7c1493eaad8bdf579d25354b6be1`
 - `src/formats/mod.cpp` — `596e2b01cd03eeeafe4111282c204473860cf296`
+
+Evidence boundary for the MOD spatial slice:
+
+- `parentByOrderPosition` / `nodeAtOrderPosition`: EXE_CONFIRMED;
+- serialized 0x20 local transforms: EXE_AND_CORPUS_CONFIRMED;
+- model-space world propagation: EXE_CONFIRMED;
+- node position authority: world matrix row 3 XYZ when `supports_spatial_hierarchy()` passes;
+- adapter-domain `+0x08`: PRESERVED_UNDECODED;
+- transform writer/mutation safety: not promoted;
+- game-world placement beyond identity/model-space root: not inferred.
+
+The shared `MeshCoreAbi` at this canonical pin also confirms MOD/EFM/SCM texture slot `+0x02` and legacy GS CLAMP fields `+0x04..+0x0A`. Those fields are not yet present in typed `mod::InnerMesh`; Native Reader must not re-read them locally until the canonical MOD typed promotion lands upstream.
 
 ## SCM reader slice
 

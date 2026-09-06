@@ -28,6 +28,12 @@ struct RenderNode final {
     std::string name;
     RenderNodeKind kind{RenderNodeKind::Scene};
     std::int32_t parent{-1};
+
+    // True only when local/world matrices are backed by the canonical format
+    // authority for this concrete document. Identity matrices alone must never
+    // be interpreted as decoded spatial transforms.
+    bool spatial_authority{false};
+
     Matrix4 local;
     Matrix4 world;
 };
