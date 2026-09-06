@@ -9,8 +9,10 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "dmc_rengine/formats/mod.hpp"
+#include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/module_support.h"
 
 namespace dmcresource::adapters {
@@ -23,6 +25,7 @@ constexpr std::size_t kMaxIndices = 12U * 1024U * 1024U;
 using CanonicalParseResult = dmc::rengine::formats::mod::ParseResult;
 using CanonicalMesh = dmc::rengine::formats::mod::InnerMesh;
 using ParseSeverity = dmc::rengine::formats::ParseSeverity;
+namespace CanonicalWorld = dmc::rengine::formats::mod::world_transform;
 
 [[nodiscard]] Vec3 add(Vec3 a, Vec3 b) noexcept {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
@@ -146,39 +149,128 @@ InspectionNode make_diagnostic_node(
     return node;
 }
 
-void project_hierarchy(const dmc::rengine::formats::mod::Document& document,
-                       RenderScene* scene,
-                       InspectionNode* root) {
-    if (scene == nullptr || root == nullptr) return;
+[[nodiscard]] Matrix4 to_render_matrix(
+    const CanonicalWorld::Matrix4f& source) noexcept {
+    Matrix4 result;
+    result.values = source.values;
+    return result;
+}
+
+[[nodiscard]] std::string vec3_text(float x, float y, float z) {
+    std::ostringstream out;
+    out << x << ", " << y << ", " << z;
+    return out.str();
+}
+
+[[nodiscard]] bool project_hierarchy(
+    const dmc::rengine::formats::mod::Document& document,
+    RenderScene* scene,
+    InspectionNode* root) {
+    if (scene == nullptr || root == nullptr) return false;
+
+    const auto& domain = document.transform_domain;
+    const std::size_t count = document.header.transform_domain_count;
+
+    bool hierarchy_mapping_valid =
+        domain.permutation_is_complete &&
+        domain.hierarchy_is_topological &&
+        domain.node_at_order_position.size() == count &&
+        domain.parent_by_order_position.size() == count;
+
+    std::vector<std::int32_t> parent_by_node(count, -1);
+    std::vector<std::size_t> order_position_by_node(count, count);
+    if (hierarchy_mapping_valid) {
+        for (std::size_t order_position = 0U;
+             order_position < count;
+             ++order_position) {
+            const auto node = static_cast<std::size_t>(
+                domain.node_at_order_position[order_position]);
+            if (node >= count || order_position_by_node[node] != count) {
+                hierarchy_mapping_valid = false;
+                break;
+            }
+            const auto parent = domain.parent_by_order_position[order_position];
+            if (parent >= 0 && static_cast<std::size_t>(parent) >= count) {
+                hierarchy_mapping_valid = false;
+                break;
+            }
+            parent_by_node[node] =
+                parent >= 0 ? static_cast<std::int32_t>(parent) : -1;
+            order_position_by_node[node] = order_position;
+        }
+    }
+    if (!hierarchy_mapping_valid) {
+        std::fill(parent_by_node.begin(), parent_by_node.end(), -1);
+        std::fill(order_position_by_node.begin(), order_position_by_node.end(), count);
+    }
+
+    const bool spatial_gate = CanonicalWorld::supports_spatial_hierarchy(domain);
+    const auto world_matrices = spatial_gate
+        ? CanonicalWorld::build_model_space_world_matrices(domain)
+        : std::nullopt;
+    const bool spatial_authorized =
+        spatial_gate && world_matrices.has_value() &&
+        world_matrices->size() == count &&
+        domain.local_transform_records_by_node_index.size() == count;
 
     InspectionNode hierarchy;
     hierarchy.id = "transform-domain";
-    hierarchy.title = "Transform / skin domain";
+    hierarchy.title = "Skeleton / hierarchy";
     hierarchy.kind = InspectionKind::Collection;
+    hierarchy.source_span = SourceSpan{domain.document_offset, 0U};
     hierarchy.properties.push_back({
-        "NodeCount", std::to_string(document.header.transform_domain_count),
+        "NodeCount", std::to_string(count),
         EvidenceLevel::StructuralConfirmed,
     });
     hierarchy.properties.push_back({
         "PermutationComplete",
-        document.transform_domain.permutation_is_complete ? "true" : "false",
-        EvidenceLevel::StructuralConfirmed,
+        domain.permutation_is_complete ? "true" : "false",
+        EvidenceLevel::ExeConfirmed,
     });
     hierarchy.properties.push_back({
-        "HierarchyAcyclic",
-        document.transform_domain.hierarchy_candidate_is_acyclic ? "true" : "false",
-        EvidenceLevel::StructuralConfirmed,
+        "HierarchyTopological",
+        domain.hierarchy_is_topological ? "true" : "false",
+        EvidenceLevel::ExeConfirmed,
+    });
+    hierarchy.properties.push_back({
+        "LocalTransformsComplete",
+        domain.transform_records_complete ? "true" : "false",
+        EvidenceLevel::ExeAndCorpusConfirmed,
+    });
+    hierarchy.properties.push_back({
+        "LocalTransformsFinite",
+        domain.transform_records_finite ? "true" : "false",
+        EvidenceLevel::DataConfirmed,
+    });
+    hierarchy.properties.push_back({
+        "SpatialHierarchy",
+        spatial_authorized ? "true" : "false",
+        EvidenceLevel::DataConfirmed,
+    });
+    hierarchy.properties.push_back({
+        "WorldComposition",
+        spatial_authorized
+            ? "model-space: world[root]=local[root], world[node]=local[node]*world[parent]"
+            : "unavailable for this document",
+        EvidenceLevel::ExeConfirmed,
+    });
+    hierarchy.properties.push_back({
+        "AdapterDomain+0x08", "preserved / semantics unresolved",
+        EvidenceLevel::PreservedUndecoded,
     });
 
-    const std::size_t count = document.header.transform_domain_count;
     scene->nodes.reserve(scene->nodes.size() + count);
     for (std::size_t index = 0U; index < count; ++index) {
         RenderNode render_node;
         render_node.name = "Bone " + std::to_string(index);
         render_node.kind = RenderNodeKind::Bone;
-        if (index < document.transform_domain.derived_hierarchy_candidate.size()) {
-            const auto parent = document.transform_domain.derived_hierarchy_candidate[index];
-            render_node.parent = parent >= 0 ? static_cast<std::int32_t>(parent) : -1;
+        render_node.parent = hierarchy_mapping_valid ? parent_by_node[index] : -1;
+
+        if (spatial_authorized) {
+            const auto canonical_local = CanonicalWorld::build_local_matrix(
+                domain.local_transform_records_by_node_index[index]);
+            render_node.local = to_render_matrix(canonical_local);
+            render_node.world = to_render_matrix((*world_matrices)[index]);
         }
         scene->nodes.push_back(std::move(render_node));
 
@@ -189,11 +281,49 @@ void project_hierarchy(const dmc::rengine::formats::mod::Document& document,
         bone.properties.push_back({
             "Parent",
             std::to_string(scene->nodes.back().parent),
-            EvidenceLevel::StructuralConfirmed,
+            EvidenceLevel::ExeConfirmed,
         });
+        if (hierarchy_mapping_valid && order_position_by_node[index] < count) {
+            bone.properties.push_back({
+                "EvaluationOrder",
+                std::to_string(order_position_by_node[index]),
+                EvidenceLevel::ExeConfirmed,
+            });
+        }
+        if (spatial_authorized) {
+            const auto& local =
+                domain.local_transform_records_by_node_index[index];
+            const auto position =
+                CanonicalWorld::world_position((*world_matrices)[index]);
+            bone.properties.push_back({
+                "LocalTranslation",
+                vec3_text(local.translation.x,
+                          local.translation.y,
+                          local.translation.z),
+                EvidenceLevel::ExeAndCorpusConfirmed,
+            });
+            bone.properties.push_back({
+                "LocalRotationXYZRadians",
+                vec3_text(local.rotation_xyz_radians.x,
+                          local.rotation_xyz_radians.y,
+                          local.rotation_xyz_radians.z),
+                EvidenceLevel::ExeAndCorpusConfirmed,
+            });
+            bone.properties.push_back({
+                "ModelSpacePosition",
+                vec3_text(position.x, position.y, position.z),
+                EvidenceLevel::ExeAndCorpusConfirmed,
+            });
+        } else {
+            bone.properties.push_back({
+                "ModelSpacePosition", "unavailable",
+                EvidenceLevel::Unknown,
+            });
+        }
         hierarchy.children.push_back(std::move(bone));
     }
     root->children.push_back(std::move(hierarchy));
+    return spatial_authorized;
 }
 
 void project_skin(const CanonicalMesh& source,
@@ -375,7 +505,11 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
         }
 
         out.inspection.root.children.push_back(std::move(models));
-        project_hierarchy(parsed.document, &out.scene, &out.inspection.root);
+        const bool spatial_hierarchy =
+            project_hierarchy(parsed.document, &out.scene, &out.inspection.root);
+        if (spatial_hierarchy) {
+            out.modules.push_back({"canonical.mod.spatial-hierarchy", true});
+        }
 
         if (!parsed.diagnostics.empty()) {
             InspectionNode diagnostics;
@@ -397,6 +531,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                << " vertices=" << total_vertices
                << " triangles=" << total_triangles
                << " nodes=" << out.scene.nodes.size()
+               << " spatialHierarchy=" << (spatial_hierarchy ? "yes" : "no")
                << " skinFailures=" << total_skin_failures
                << " diagnostics=" << parsed.diagnostics.size();
         out.detail = detail.str();
