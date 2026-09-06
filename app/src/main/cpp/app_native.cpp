@@ -75,8 +75,9 @@ struct Session {
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
 
-    // v1 compatibility projection retained until ViewRenderer consumes
-    // RenderScene directly.
+    // Fallback geometry for promoted modules that have not yet migrated to
+    // RenderScene. SCM/MOD rendering now consumes scene directly; HITS still
+    // uses this compatibility path until its own IR migration.
     dmcresource::Mesh mesh;
 
     std::string detail;
@@ -161,8 +162,18 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         << " | identity="
         << (session->probe.content_confirmed ? "content-confirmed" : "extension/name-only");
     if (session->renderable) {
-        out << " | vertices=" << session->mesh.vertices.size()
-            << " | triangles=" << (session->mesh.indices.size() / 3u);
+        std::size_t vertices = session->mesh.vertices.size();
+        std::size_t triangles = session->mesh.indices.size() / 3u;
+        if (session->scene.has_geometry()) {
+            vertices = 0U;
+            triangles = 0U;
+            for (const auto& primitive : session->scene.meshes) {
+                vertices += primitive.mesh.vertices.size();
+                triangles += primitive.mesh.indices.size() / 3U;
+            }
+        }
+        out << " | vertices=" << vertices
+            << " | triangles=" << triangles;
     } else {
         out << " | preview=inspection";
     }
@@ -204,6 +215,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
-    const auto image = dmcresource::render_view(session->mesh, width, height, view);
+    const auto image = session->scene.has_geometry()
+        ? dmcresource::render_view(session->scene, width, height, view)
+        : dmcresource::render_view(session->mesh, width, height, view);
     return image_to_argb(env, image);
 }
