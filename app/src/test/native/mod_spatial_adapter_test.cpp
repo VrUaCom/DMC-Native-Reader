@@ -89,6 +89,11 @@ std::vector<std::uint8_t> make_spatial_mod() {
     put_u64(bytes, 0x48U, 0x80U);
 
     put_u16(bytes, 0x80U, 3U);
+    put_u16(bytes, 0x82U, 9U);
+    put_u16(bytes, 0x84U, 1U);
+    put_u16(bytes, 0x86U, 2U);
+    put_u16(bytes, 0x88U, 3U);
+    put_u16(bytes, 0x8AU, 4U);
     put_u64(bytes, 0x90U, 0xD0U);
     put_u64(bytes, 0x98U, 0x100U);
     put_u64(bytes, 0xA0U, 0x130U);
@@ -197,6 +202,9 @@ int main() {
     assert(spatial.scene.nodes[0].parent == -1);
     assert(spatial.scene.nodes[2].parent == 0);
     assert(spatial.scene.nodes[1].parent == 2);
+    for (const auto& node : spatial.scene.nodes) {
+        assert(node.spatial_authority);
+    }
 
     // Canonical model-space world propagation:
     // node0=(10,0,0), node2=(10,5,0), node1=(10,5,2).
@@ -211,7 +219,11 @@ int main() {
     assert(near(spatial.scene.nodes[1].world.values[14], 2.0F));
     assert(near(spatial.scene.nodes[1].local.values[14], 2.0F));
     assert(module_present(spatial, "canonical.mod.spatial-hierarchy"));
+    assert(module_present(spatial, "canonical.mod.texture-state"));
+    assert(spatial.scene.textures.size() == 1U);
+    assert(spatial.scene.textures[0].texture_slot == 9U);
     assert(spatial.detail.find("spatialHierarchy=yes") != std::string::npos);
+    assert(spatial.detail.find("textures=1") != std::string::npos);
 
     // Concrete-document gate: a non-finite local transform keeps the MOD
     // inspectable/renderable but must not publish fabricated spatial matrices.
@@ -227,7 +239,13 @@ int main() {
     assert(non_spatial.scene.nodes.size() == 3U);
     assert(non_spatial.scene.nodes[2].parent == 0);
     assert(non_spatial.scene.nodes[1].parent == 2);
+    for (const auto& node : non_spatial.scene.nodes) {
+        assert(!node.spatial_authority);
+    }
     assert(!module_present(non_spatial, "canonical.mod.spatial-hierarchy"));
+    assert(module_present(non_spatial, "canonical.mod.texture-state"));
+    assert(non_spatial.scene.textures.size() == 1U);
+    assert(non_spatial.scene.textures[0].texture_slot == 9U);
     assert(non_spatial.detail.find("spatialHierarchy=no") != std::string::npos);
     assert(near(non_spatial.scene.nodes[0].world.values[12], 0.0F));
     assert(near(non_spatial.scene.nodes[2].world.values[13], 0.0F));
