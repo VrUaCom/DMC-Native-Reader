@@ -8,6 +8,8 @@ add_library(dmcviewer SHARED
     decode_hits.cpp
     decode_text.cpp
     decode_pipeline.cpp
+    inspection_format.cpp
+    formats/dds.cpp
     modules/module_registry.cpp
     modules/module_catalog.cpp
     modules/module_model.cpp
@@ -19,5 +21,5 @@ add_library(dmcviewer SHARED
 )
 
 target_include_directories(dmcviewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_features(dmcviewer PRIVATE cxx_std_17)
+target_compile_features(dmcviewer PRIVATE cxx_std_20)
 target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)

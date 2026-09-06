@@ -17,8 +17,12 @@ PipelineResult run_hits(const NativeModule& module,
 }  // namespace
 
 NativeModule hits_module() noexcept {
+    const auto caps = capability(ResourceCapability::Inspection) |
+        ResourceCapability::Geometry |
+        ResourceCapability::Wireframe |
+        ResourceCapability::Collision;
     return {"formats.hits.collision-reader", "HITS", Format::Hits,
-            ModuleKind::Mesh, true, run_hits};
+            ModuleKind::Mesh, true, run_hits, caps};
 }
 
 }  // namespace dmcresource

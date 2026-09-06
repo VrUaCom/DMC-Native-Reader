@@ -42,7 +42,7 @@ jobs:
       - name: Build and run host modular-reader regression
         run: |
           set -euxo pipefail
-          g++ -std=c++17 -Wall -Wextra -Wpedantic \
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
             -Iapp/src/main/cpp/include \
             app/src/test/native/module_registry_test.cpp \
             app/src/main/cpp/dmc_resource.cpp \
@@ -50,6 +50,8 @@ jobs:
             app/src/main/cpp/decode_hits.cpp \
             app/src/main/cpp/decode_text.cpp \
             app/src/main/cpp/decode_pipeline.cpp \
+            app/src/main/cpp/inspection_format.cpp \
+            app/src/main/cpp/formats/dds.cpp \
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_catalog.cpp \
             app/src/main/cpp/modules/module_model.cpp \

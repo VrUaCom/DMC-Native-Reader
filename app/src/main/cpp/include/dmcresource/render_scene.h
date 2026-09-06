@@ -1,0 +1,78 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "dmcresource/mesh.h"
+
+namespace dmcresource {
+
+struct Matrix4 final {
+    std::array<float, 16> values{
+        1.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F,
+    };
+};
+
+enum class RenderNodeKind : std::uint8_t {
+    Scene,
+    Bone,
+    TransformSelector,
+};
+
+struct RenderNode final {
+    std::string name;
+    RenderNodeKind kind{RenderNodeKind::Scene};
+    std::int32_t parent{-1};
+    Matrix4 local;
+    Matrix4 world;
+};
+
+struct MeshPrimitive final {
+    std::string name;
+    Mesh mesh;
+    std::uint32_t object_index{};
+    std::uint32_t mesh_index{};
+};
+
+struct JointWeight final {
+    std::uint32_t node_index{};
+    float weight{};
+};
+
+struct VertexSkinBinding final {
+    std::vector<JointWeight> influences;
+};
+
+struct SkinBinding final {
+    std::uint32_t mesh_primitive{};
+    std::vector<VertexSkinBinding> vertices;
+};
+
+struct TextureBinding final {
+    std::uint32_t mesh_primitive{};
+    std::uint32_t texture_slot{};
+    std::string external_source;
+};
+
+struct RenderScene final {
+    std::vector<MeshPrimitive> meshes;
+    std::vector<RenderNode> nodes;
+    std::vector<SkinBinding> skins;
+    std::vector<TextureBinding> textures;
+
+    [[nodiscard]] bool has_geometry() const noexcept {
+        for (const auto& primitive : meshes) {
+            if (!primitive.mesh.vertices.empty() && !primitive.mesh.indices.empty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+}  // namespace dmcresource

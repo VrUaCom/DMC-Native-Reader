@@ -9,9 +9,11 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/inspection_format.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -66,7 +68,17 @@ private:
 
 struct Session {
     dmcresource::ProbeResult probe;
+
+    // v2 reusable session state. These projections are produced by the native
+    // module pipeline once and retained for inspector/render/JNI consumers.
+    dmcresource::ResourceCapabilities capabilities{};
+    dmcresource::InspectionDocument inspection;
+    dmcresource::RenderScene scene;
+
+    // v1 compatibility projection retained until ViewRenderer consumes
+    // RenderScene directly.
     dmcresource::Mesh mesh;
+
     std::string detail;
     std::string trace;
     bool renderable{};
@@ -119,6 +131,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
 
     auto session = std::make_unique<Session>();
     session->probe = pipeline.probe;
+    session->capabilities = pipeline.capabilities;
+    session->inspection = std::move(pipeline.inspection);
+    session->scene = std::move(pipeline.scene);
     session->mesh = std::move(pipeline.mesh);
     session->detail = std::move(pipeline.detail);
     session->trace = dmcresource::pipeline_trace(pipeline);
@@ -154,6 +169,23 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     if (!session->detail.empty()) out << "\n" << session->detail;
     if (!session->trace.empty()) out << "\n" << session->trace;
     return env->NewStringUTF(out.str().c_str());
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_capabilities(
+        JNIEnv*, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return 0;
+    return static_cast<jlong>(session->capabilities);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_inspection(
+        JNIEnv* env, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return env->NewStringUTF("");
+    const auto text = dmcresource::format_inspection_tree(session->inspection);
+    return env->NewStringUTF(text.c_str());
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
