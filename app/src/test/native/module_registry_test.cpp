@@ -4,11 +4,13 @@
 #include "dmcresource/resource_capabilities.h"
 
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -17,6 +19,19 @@ static_assert(__cplusplus >= 202002L,
 
 namespace {
 
+void put_u8(std::vector<std::uint8_t>& bytes, std::size_t offset,
+            std::uint8_t value) {
+    assert(offset < bytes.size());
+    bytes[offset] = value;
+}
+
+void put_u16(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             std::uint16_t value) {
+    assert(offset + 2u <= bytes.size());
+    put_u8(bytes, offset + 0u, static_cast<std::uint8_t>(value & 0xffu));
+    put_u8(bytes, offset + 1u, static_cast<std::uint8_t>((value >> 8u) & 0xffu));
+}
+
 void put_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
              std::uint32_t value) {
     assert(offset + 4u <= bytes.size());
@@ -24,6 +39,20 @@ void put_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
     bytes[offset + 1u] = static_cast<std::uint8_t>((value >> 8u) & 0xffu);
     bytes[offset + 2u] = static_cast<std::uint8_t>((value >> 16u) & 0xffu);
     bytes[offset + 3u] = static_cast<std::uint8_t>((value >> 24u) & 0xffu);
+}
+
+void put_u64(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             std::uint64_t value) {
+    assert(offset + 8u <= bytes.size());
+    for (std::size_t i = 0u; i < 8u; ++i) {
+        put_u8(bytes, offset + i,
+               static_cast<std::uint8_t>((value >> (i * 8u)) & 0xffu));
+    }
+}
+
+void put_f32(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             float value) {
+    put_u32(bytes, offset, std::bit_cast<std::uint32_t>(value));
 }
 
 std::vector<std::uint8_t> make_dds() {
@@ -49,6 +78,61 @@ std::vector<std::uint8_t> make_ptx() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_mod() {
+    std::vector<std::uint8_t> bytes(0x240u, 0u);
+    bytes[0] = 'M'; bytes[1] = 'O'; bytes[2] = 'D'; bytes[3] = ' ';
+    put_f32(bytes, 0x04u, 1.01f);
+    put_u8(bytes, 0x10u, 1u);  // one object / outer model
+    put_u8(bytes, 0x11u, 1u);  // one transform/skin-domain node
+    put_u64(bytes, 0x20u, 0x200u);
+
+    put_u8(bytes, 0x40u, 1u);  // one inner mesh
+    put_u16(bytes, 0x42u, 3u); // aggregate vertices
+    put_u64(bytes, 0x48u, 0x80u);
+
+    put_u16(bytes, 0x80u, 3u);
+    put_u64(bytes, 0x90u, 0xD0u);  // positions
+    put_u64(bytes, 0x98u, 0x100u); // normals
+    put_u64(bytes, 0xA0u, 0x130u); // UV
+    put_u64(bytes, 0xA8u, 0x140u); // blend indices
+    put_u64(bytes, 0xB0u, 0x150u); // packed weights/topology
+    put_u64(bytes, 0xB8u, 0u);
+    put_u64(bytes, 0xC0u, 0xE0u);  // record-relative -> 0x160 workspace
+    put_u32(bytes, 0xC8u, 0u);
+    put_u32(bytes, 0xCCu, 0u);
+
+    // Triangle: (0,0,0), (1,0,0), (0,1,0).
+    put_f32(bytes, 0xD0u, 0.0f); put_f32(bytes, 0xD4u, 0.0f); put_f32(bytes, 0xD8u, 0.0f);
+    put_f32(bytes, 0xDCu, 1.0f); put_f32(bytes, 0xE0u, 0.0f); put_f32(bytes, 0xE4u, 0.0f);
+    put_f32(bytes, 0xE8u, 0.0f); put_f32(bytes, 0xECu, 1.0f); put_f32(bytes, 0xF0u, 0.0f);
+
+    for (std::size_t i = 0u; i < 3u; ++i) {
+        const auto n = 0x100u + i * 12u;
+        put_f32(bytes, n + 0u, 0.0f);
+        put_f32(bytes, n + 4u, 0.0f);
+        put_f32(bytes, n + 8u, 1.0f);
+    }
+
+    put_u16(bytes, 0x130u, 0u);    put_u16(bytes, 0x132u, 0u);
+    put_u16(bytes, 0x134u, 4096u); put_u16(bytes, 0x136u, 0u);
+    put_u16(bytes, 0x138u, 0u);    put_u16(bytes, 0x13Au, 4096u);
+
+    // Blend-index lanes remain zero: active matrix row 0 -> bone 0.
+    // Each control word carries a single 31/31 influence and no topology break.
+    put_u16(bytes, 0x150u, 0x001Fu);
+    put_u16(bytes, 0x152u, 0x001Fu);
+    put_u16(bytes, 0x154u, 0x001Fu);
+
+    // Transform-domain tables, offsets relative to 0x200.
+    put_u32(bytes, 0x200u, 0x10u);
+    put_u32(bytes, 0x204u, 0x20u);
+    put_u32(bytes, 0x208u, 0x30u);
+    put_u8(bytes, 0x210u, 0xFFu); // root
+    put_u8(bytes, 0x220u, 0u);    // complete permutation
+    put_u8(bytes, 0x230u, 0u);    // preserved third table
+    return bytes;
+}
+
 const dmcresource::NativeModule& require_module(std::string_view family,
                                                 dmcresource::Format format) {
     const auto* module = dmcresource::NativeModuleRegistry::find(family);
@@ -65,6 +149,16 @@ void require_recognition(std::string_view family) {
     assert(module->format == dmcresource::Format::Other);
     assert(module->kind == dmcresource::ModuleKind::Recognition);
     assert(!module->renderable);
+}
+
+bool module_trace_contains(const dmcresource::PipelineResult& result,
+                           std::string_view id) {
+    for (const auto& module : result.modules) {
+        if (module.name != nullptr && std::string_view{module.name} == id && module.complete) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -103,7 +197,7 @@ int main() {
     assert(has_capability(mod_module.capabilities, ResourceCapability::NodeHierarchy));
     assert(has_capability(mod_module.capabilities, ResourceCapability::SkeletalSkinning));
     assert(has_capability(mod_module.capabilities, ResourceCapability::SkinWeights));
-    assert(has_capability(mod_module.capabilities, ResourceCapability::TextureBinding));
+    assert(!has_capability(mod_module.capabilities, ResourceCapability::TextureBinding));
 
     assert(has_capability(hits_module.capabilities, ResourceCapability::Collision));
     assert(has_capability(hits_module.capabilities, ResourceCapability::Geometry));
@@ -126,6 +220,34 @@ int main() {
 
     assert(dmcresource::NativeModuleRegistry::modules().size() == 71u);
     assert(dmcresource::NativeModuleRegistry::find("UNMAPPED-FAMILY") == nullptr);
+
+    const auto mod = make_mod();
+    const auto mod_result = run_decode_pipeline("sample.mod", mod.data(), mod.size());
+    assert(mod_result.accepted);
+    assert(mod_result.renderable);
+    assert(mod_result.probe.format == Format::Mod);
+    assert(mod_result.detail.find("MOD canonical C++20 reader") != std::string::npos);
+    assert(module_trace_contains(mod_result, "canonical.mod.structural-parser"));
+    assert(mod_result.mesh.vertices.size() == 3u);
+    assert(mod_result.mesh.indices.size() == 3u);
+    assert(mod_result.mesh.indices[0] == 0u);
+    assert(mod_result.mesh.indices[1] == 1u);
+    assert(mod_result.mesh.indices[2] == 2u);
+    assert(mod_result.scene.meshes.size() == 1u);
+    assert(mod_result.scene.nodes.size() == 1u);
+    assert(mod_result.scene.nodes[0].parent == -1);
+    assert(mod_result.scene.skins.size() == 1u);
+    assert(mod_result.scene.skins[0].vertices.size() == 3u);
+    for (const auto& vertex : mod_result.scene.skins[0].vertices) {
+        assert(vertex.influences.size() == 1u);
+        assert(vertex.influences[0].node_index == 0u);
+        assert(vertex.influences[0].weight > 0.999f);
+    }
+    assert(!mod_result.inspection.empty());
+    assert(mod_result.inspection.format == "MOD");
+    assert(mod_result.inspection.root.children.size() >= 2u);
+    assert(has_capability(mod_result.capabilities, ResourceCapability::SkinWeights));
+    assert(!has_capability(mod_result.capabilities, ResourceCapability::TextureBinding));
 
     const auto dds = make_dds();
     const auto raw_dds = dmcresource::formats::dds::parse(
