@@ -9,6 +9,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dmcresource/decode_pipeline.h"
@@ -66,7 +67,17 @@ private:
 
 struct Session {
     dmcresource::ProbeResult probe;
+
+    // v2 reusable session state. These projections are produced by the native
+    // module pipeline once and retained for inspector/render/JNI consumers.
+    dmcresource::ResourceCapabilities capabilities{};
+    dmcresource::InspectionDocument inspection;
+    dmcresource::RenderScene scene;
+
+    // v1 compatibility projection retained until ViewRenderer consumes
+    // RenderScene directly.
     dmcresource::Mesh mesh;
+
     std::string detail;
     std::string trace;
     bool renderable{};
@@ -119,6 +130,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
 
     auto session = std::make_unique<Session>();
     session->probe = pipeline.probe;
+    session->capabilities = pipeline.capabilities;
+    session->inspection = std::move(pipeline.inspection);
+    session->scene = std::move(pipeline.scene);
     session->mesh = std::move(pipeline.mesh);
     session->detail = std::move(pipeline.detail);
     session->trace = dmcresource::pipeline_trace(pipeline);
