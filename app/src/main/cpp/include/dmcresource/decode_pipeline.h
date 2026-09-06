@@ -8,7 +8,6 @@
 
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/inspection_document.h"
-#include "dmcresource/mesh.h"
 #include "dmcresource/render_scene.h"
 #include "dmcresource/resource_capabilities.h"
 
@@ -24,12 +23,9 @@ struct PipelineResult {
     bool renderable{false};
     ProbeResult probe;
 
-    // v1 compatibility projection. Format adapters are migrated toward
-    // RenderScene incrementally; Android rendering remains stable meanwhile.
-    Mesh mesh;
-
-    // v2 reusable contracts. Parsers stay format-specific; adapters publish
-    // generic inspection/render projections without reparsing the source.
+    // Architecture v2 reusable contracts. Format-specific parsers/adapters may
+    // use temporary local Mesh values internally, but geometry leaves a module
+    // only through RenderScene. This prevents parallel downstream authorities.
     ResourceCapabilities capabilities{};
     InspectionDocument inspection;
     RenderScene scene;
