@@ -54,6 +54,7 @@ jobs:
             app/src/main/cpp/inspection_format.cpp \
             app/src/main/cpp/formats/dds.cpp \
             app/src/main/cpp/adapters/mod_adapter.cpp \
+            app/src/main/cpp/adapters/scm_adapter.cpp \
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_catalog.cpp \
             app/src/main/cpp/modules/module_model.cpp \
@@ -65,6 +66,12 @@ jobs:
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
             -o /tmp/dmc-native-module-test
           /tmp/dmc-native-module-test
 
@@ -101,6 +108,8 @@ jobs:
 
           unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.structural-parser'
+          strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.scene-hierarchy'
           strings /tmp/libdmcviewer.so | grep -q 'formats.mod.mesh-reader'
           strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.structural-parser'
           strings /tmp/libdmcviewer.so | grep -q 'formats.hits.collision-reader'
