@@ -26,6 +26,7 @@ This checklist separates **opening the source repository** from publishing an **
 - [x] Security policy added.
 - [x] Bug / real-file debug issue templates added.
 - [x] Development signing-key boundary documented.
+- [x] Public roadmap and changelog added.
 
 ## Manual gates before switching repository visibility to Public
 
@@ -54,7 +55,34 @@ Recommended topics:
 
 `devil-may-cry` `dmc3` `reverse-engineering` `modding` `android` `cpp` `file-format` `binary-analysis` `dds` `game-modding`
 
-### 3. Development signer
+### 3. Review old branches before visibility change
+
+**OPEN — owner/admin cleanup decision required.**
+
+GitHub repository visibility applies to more than the current `main` branch. The repository currently also contains historical development branches such as:
+
+- `ci/standalone-actions-probe`;
+- `claude/mod-scm-file-opening-t93oeh`;
+- `feature/*`;
+- `fix/*`;
+- `integrate/*`;
+- `test/*`;
+- `release/native-reader-v1-debug-baseline`;
+- `public/opening-v1`.
+
+Before making the repository public, decide which historical branches are intentionally part of the public development record and prune branches that should not be public.
+
+Do not assume that a clean `main` hides content reachable from another branch/ref.
+
+### 4. Review commit metadata / personal-email exposure
+
+**OPEN — privacy review recommended.**
+
+Historical Git commits may contain author/committer email metadata. Before public visibility, review whether the existing history exposes a personal email address that should instead use a GitHub `noreply` identity.
+
+If privacy cleanup is required, rewrite/sanitize history before opening the repository. Changing the account's future commit-email setting does not retroactively rewrite existing commits.
+
+### 5. Development signer
 
 The committed `keys/dmc-native-reader-test.jks` is intentionally a **disposable development-only key** used for update compatibility across internal/debug APKs.
 
@@ -70,12 +98,14 @@ Before publishing a production APK:
 
 Opening the source repository and publishing a production-signed APK are therefore two separate milestones.
 
-### 4. Visibility change
+### 6. Visibility change
 
 Keep the repository private until the owner has reviewed:
 
 - README wording;
 - license choice;
+- old branches/history;
+- commit metadata/privacy;
 - public issue policy;
 - public contribution policy;
 - development-vs-production signing distinction.
