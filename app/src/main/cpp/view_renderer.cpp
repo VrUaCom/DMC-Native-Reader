@@ -2,11 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <new>
 #include <vector>
 
 namespace dmcresource {
 namespace {
+
+constexpr std::size_t kMaxSceneVertices = 2U * 1024U * 1024U;
+constexpr std::size_t kMaxSceneIndices = 12U * 1024U * 1024U;
 
 struct P3 { float x, y, z; };
 struct P2 { float x, y, z; };
@@ -21,6 +27,27 @@ P3 rotate(const Vec3& v, float yaw, float pitch) {
     const float x1 = cy * v.x + sy * v.z;
     const float z1 = -sy * v.x + cy * v.z;
     return {x1, cp * v.y - sp * z1, sp * v.y + cp * z1};
+}
+
+[[nodiscard]] bool transform_point_row_vector(const Vec3& source,
+                                              const Matrix4& matrix,
+                                              Vec3* out) noexcept {
+    if (out == nullptr) return false;
+    const auto& m = matrix.values;
+    const float x = source.x * m[0] + source.y * m[4] +
+                    source.z * m[8] + m[12];
+    const float y = source.x * m[1] + source.y * m[5] +
+                    source.z * m[9] + m[13];
+    const float z = source.x * m[2] + source.y * m[6] +
+                    source.z * m[10] + m[14];
+    const float w = source.x * m[3] + source.y * m[7] +
+                    source.z * m[11] + m[15];
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+        !std::isfinite(w) || std::fabs(w - 1.0F) > 0.0001F) {
+        return false;
+    }
+    *out = {x, y, z};
+    return true;
 }
 
 void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
@@ -50,6 +77,64 @@ void line(RgbaImage& image, P2 a, P2 b) {
 }
 
 }  // namespace
+
+bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
+    if (out == nullptr) return false;
+    try {
+        Mesh materialized;
+        std::size_t total_vertices = 0U;
+        std::size_t total_indices = 0U;
+        for (const auto& primitive : scene.meshes) {
+            if (primitive.mesh.vertices.size() > kMaxSceneVertices - total_vertices ||
+                primitive.mesh.indices.size() > kMaxSceneIndices - total_indices) {
+                return false;
+            }
+            total_vertices += primitive.mesh.vertices.size();
+            total_indices += primitive.mesh.indices.size();
+        }
+        materialized.vertices.reserve(total_vertices);
+        materialized.indices.reserve(total_indices);
+
+        for (const auto& primitive : scene.meshes) {
+            const Matrix4* world = nullptr;
+            if (primitive.node_index >= 0) {
+                const auto node_index = static_cast<std::size_t>(primitive.node_index);
+                if (node_index >= scene.nodes.size()) return false;
+                world = &scene.nodes[node_index].world;
+            }
+
+            const std::size_t base = materialized.vertices.size();
+            for (const auto& vertex : primitive.mesh.vertices) {
+                Vec3 projected = vertex;
+                if (world != nullptr &&
+                    !transform_point_row_vector(vertex, *world, &projected)) {
+                    return false;
+                }
+                materialized.vertices.push_back(projected);
+            }
+
+            if (base > static_cast<std::size_t>(
+                           std::numeric_limits<std::uint32_t>::max())) {
+                return false;
+            }
+            const auto base32 = static_cast<std::uint32_t>(base);
+            for (const auto index : primitive.mesh.indices) {
+                if (index >= primitive.mesh.vertices.size() ||
+                    index > std::numeric_limits<std::uint32_t>::max() - base32) {
+                    return false;
+                }
+                materialized.indices.push_back(base32 + index);
+            }
+        }
+
+        *out = std::move(materialized);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
 
 RgbaImage render_view(const Mesh& mesh, int width, int height, const ViewState& view) {
     RgbaImage image;
@@ -125,6 +210,15 @@ RgbaImage render_view(const Mesh& mesh, int width, int height, const ViewState& 
         }
     }
     return image;
+}
+
+RgbaImage render_view(const RenderScene& scene, int width, int height,
+                      const ViewState& view) {
+    Mesh materialized;
+    if (!materialize_render_scene(scene, &materialized)) {
+        return render_view(Mesh{}, width, height, view);
+    }
+    return render_view(materialized, width, height, view);
 }
 
 }  // namespace dmcresource
