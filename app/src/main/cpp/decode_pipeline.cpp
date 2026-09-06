@@ -38,6 +38,23 @@ void project_legacy_mesh_once(PipelineResult& result) {
     result.scene.meshes.push_back(std::move(primitive));
 }
 
+void enforce_render_scene_contract(PipelineResult& result) {
+    if (!result.renderable) return;
+
+    const bool complete = result.scene.has_geometry();
+    result.modules.push_back({"render-scene-contract", complete});
+    if (complete) return;
+
+    // From Architecture v2 onward, JNI/render consumers have exactly one
+    // geometry contract. A module may still internally produce the v1 Mesh,
+    // but the pipeline must project it into RenderScene before advertising a
+    // usable preview. Never revive a second rendering path as a fallback.
+    result.renderable = false;
+    if (!result.detail.empty()) result.detail += "\n";
+    result.detail +=
+        "render contract rejected: renderable module did not publish RenderScene geometry";
+}
+
 void ensure_minimal_inspection(PipelineResult& result) {
     if (!result.inspection.empty()) return;
 
@@ -97,10 +114,11 @@ PipelineResult run_decode_pipeline(std::string_view filename,
     auto result = module->run(*module, filename, bytes, size, authoritative_probe);
     result.capabilities = module->capabilities;
 
-    // Transitional v2 adapter: existing renderable modules still publish the
-    // v1 flattened Mesh. Project it exactly once into the reusable RenderScene
-    // so UI/render modules can migrate without reparsing format bytes.
+    // Transitional v2 adapter: existing renderable modules may still publish
+    // the v1 flattened Mesh internally. Project it exactly once into the
+    // reusable RenderScene; all downstream rendering authority is scene-based.
     project_legacy_mesh_once(result);
+    enforce_render_scene_contract(result);
 
     // Every accepted module can be inspected immediately. Format-specific
     // adapters replace this minimal root with a typed tree as they migrate.

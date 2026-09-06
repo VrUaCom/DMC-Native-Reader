@@ -69,15 +69,18 @@ private:
 struct Session {
     dmcresource::ProbeResult probe;
 
-    // v2 reusable session state. These projections are produced by the native
-    // module pipeline once and retained for inspector/render/JNI consumers.
+    // v2 reusable session state. Inspection and typed scene data are produced
+    // once by the native module pipeline and retained for all JNI consumers.
     dmcresource::ResourceCapabilities capabilities{};
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
 
-    // v1 compatibility projection retained until ViewRenderer consumes
-    // RenderScene directly.
-    dmcresource::Mesh mesh;
+    // Static viewer render cache. Every renderable pipeline result is required
+    // to publish RenderScene geometry: canonical SCM/MOD do so directly, while
+    // legacy geometry modules are projected into an unbound scene primitive by
+    // decode_pipeline. World-space projection is therefore performed once at
+    // open(), never once per touch/rotation frame.
+    dmcresource::Mesh render_mesh;
 
     std::string detail;
     std::string trace;
@@ -134,10 +137,21 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     session->capabilities = pipeline.capabilities;
     session->inspection = std::move(pipeline.inspection);
     session->scene = std::move(pipeline.scene);
-    session->mesh = std::move(pipeline.mesh);
     session->detail = std::move(pipeline.detail);
     session->trace = dmcresource::pipeline_trace(pipeline);
     session->renderable = pipeline.renderable;
+
+    if (session->renderable) {
+        if (!session->scene.has_geometry() ||
+            !dmcresource::materialize_render_scene(session->scene,
+                                                   &session->render_mesh)) {
+            session->renderable = false;
+            if (!session->detail.empty()) session->detail += "\n";
+            session->detail +=
+                "RenderScene projection rejected malformed or missing geometry";
+        }
+    }
+
     return to_handle(session.release());
 }
 
@@ -161,8 +175,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         << " | identity="
         << (session->probe.content_confirmed ? "content-confirmed" : "extension/name-only");
     if (session->renderable) {
-        out << " | vertices=" << session->mesh.vertices.size()
-            << " | triangles=" << (session->mesh.indices.size() / 3u);
+        out << " | vertices=" << session->render_mesh.vertices.size()
+            << " | triangles=" << (session->render_mesh.indices.size() / 3u);
     } else {
         out << " | preview=inspection";
     }
@@ -204,6 +218,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
-    const auto image = dmcresource::render_view(session->mesh, width, height, view);
+    const auto image = dmcresource::render_view(session->render_mesh,
+                                                width, height, view);
     return image_to_argb(env, image);
 }
