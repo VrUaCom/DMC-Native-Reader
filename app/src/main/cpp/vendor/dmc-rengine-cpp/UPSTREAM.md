@@ -4,7 +4,13 @@ Source repository: `VrUaCom/dmc-rengine-cpp`
 
 Pinned upstream commit:
 
+`3a3db646c6bf3faf1871efbed31c4e9f4fb32cbe`
+
+Previous content-equivalent MOD pin:
+
 `c72b7b056517039c815ee4322119f9eb40589601`
+
+The intervening canonical commit documents PR hygiene only; the imported MOD reader blobs are unchanged. The newer pin records the actual canonical `main` used for this Native Reader integration slice.
 
 Policy:
 
@@ -14,7 +20,7 @@ Policy:
 - updates must name the new upstream commit and re-run host + Android regression gates;
 - the first imported slice is the bounded MOD structural reader and its minimal dependencies.
 
-Initial upstream blobs:
+Pinned upstream blobs:
 
 - `include/dmc_rengine/binary/reader.hpp` — `43d721a9dd83d171184ecfabac6ca5d758ac2130`
 - `src/binary/reader.cpp` — `63ff1b0eb6a05375eda16757425df9bcf41eff9e`
