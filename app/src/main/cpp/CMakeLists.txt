@@ -8,6 +8,7 @@ add_library(dmcviewer SHARED
     decode_hits.cpp
     decode_text.cpp
     decode_pipeline.cpp
+    inspection_format.cpp
     formats/dds.cpp
     modules/module_registry.cpp
     modules/module_catalog.cpp
