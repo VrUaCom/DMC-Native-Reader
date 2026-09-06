@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "dmcresource/adapters/mod_adapter.h"
+#include "dmcresource/adapters/scm_adapter.h"
 
 namespace dmcresource {
 namespace {
@@ -12,15 +13,7 @@ PipelineResult run_scm(const NativeModule& module,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
-    auto out = pipeline_from_decode(probe, decode_scm(bytes, size),
-                                    module.id, module.renderable);
-    if (out.accepted) {
-        out.modules.insert(out.modules.begin() + 2,
-                           {"model-family.mesh-core", true});
-        out.modules.insert(out.modules.begin() + 3,
-                           {"scm.scene-transform-adapter", true});
-    }
-    return out;
+    return adapters::run_scm_adapter(probe, bytes, size, module.id);
 }
 
 PipelineResult run_mod(const NativeModule& module,

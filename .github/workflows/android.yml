@@ -39,6 +39,31 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
+      - name: Verify canonical vendor provenance
+        run: |
+          set -euxo pipefail
+          check_blob() {
+            expected="$1"
+            path="$2"
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected"
+          }
+
+          check_blob 9ae5b8575b66080f0a8925c59a615bf8c96c5219 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm.hpp
+          check_blob 0c497ded59816a16f7d8d2240ef595995904637c app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_render.hpp
+          check_blob f9bde16aa3275d48d7d31d7a57b6244c259e6077 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_resource_code.hpp
+          check_blob e9f8fffde0e6805b24e62b32e7d3480a7f040cd2 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_layout.hpp
+          check_blob bd373d9e63cdb35cec1f976f3a0a748c51e3bcb7 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_topology.hpp
+          check_blob e4bfb52f23439cfcce5c58b3631b381c6e4a5187 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_transform.hpp
+          check_blob 2c0e9dd43a9b110cf26ab99bef29432802fefe52 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_hierarchy.hpp
+          check_blob 46d936dd60166c45c90be9089c574cc9de9b069c app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_internal.hpp
+          check_blob 03563d931136bb8a5436c2d9a53c75fb20f73f87 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
+          check_blob 26e910488ee7a4b8f40572ad3e7be03ad20d8212 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
+          check_blob aef01676cab6151c43066871fc3ca3ed2044e917 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
+          check_blob 3b0bff72137a0b5cca924f3e0767eb840d361d4a app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
+          check_blob 9cd38e59ed95d63baf7bbd912d73c7ca9cb4c969 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
+          check_blob ed0aec2ac8c4648baa517bc439885b628b854e69 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp
+
       - name: Build and run host modular-reader regression
         run: |
           set -euxo pipefail
@@ -54,6 +79,7 @@ jobs:
             app/src/main/cpp/inspection_format.cpp \
             app/src/main/cpp/formats/dds.cpp \
             app/src/main/cpp/adapters/mod_adapter.cpp \
+            app/src/main/cpp/adapters/scm_adapter.cpp \
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_catalog.cpp \
             app/src/main/cpp/modules/module_model.cpp \
@@ -65,6 +91,12 @@ jobs:
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
             -o /tmp/dmc-native-module-test
           /tmp/dmc-native-module-test
 
@@ -101,6 +133,8 @@ jobs:
 
           unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.structural-parser'
+          strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.scene-hierarchy'
           strings /tmp/libdmcviewer.so | grep -q 'formats.mod.mesh-reader'
           strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.structural-parser'
           strings /tmp/libdmcviewer.so | grep -q 'formats.hits.collision-reader'
