@@ -100,6 +100,16 @@ jobs:
             -o /tmp/dmc-native-module-test
           /tmp/dmc-native-module-test
 
+      - name: Build and run RenderScene projection regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            app/src/test/native/render_scene_test.cpp \
+            app/src/main/cpp/view_renderer.cpp \
+            -o /tmp/dmc-render-scene-test
+          /tmp/dmc-render-scene-test
+
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
