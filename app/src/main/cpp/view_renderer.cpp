@@ -194,6 +194,21 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
             }
         }
 
+        // Parent indices may all be in range while still forming a cycle.
+        // Bound every ancestry walk by node count so malformed resources fail
+        // closed without recursion or unbounded temporary storage.
+        for (std::size_t start = 0U; start < scene.nodes.size(); ++start) {
+            std::size_t current = start;
+            std::size_t hops = 0U;
+            while (scene.nodes[current].parent >= 0) {
+                const auto parent = static_cast<std::size_t>(scene.nodes[current].parent);
+                if (parent >= scene.nodes.size()) return false;
+                ++hops;
+                if (hops > scene.nodes.size()) return false;
+                current = parent;
+            }
+        }
+
         for (const auto& edge_value : overlay.edges) {
             if (edge_value.parent >= overlay.points.size() ||
                 edge_value.child >= overlay.points.size()) {
