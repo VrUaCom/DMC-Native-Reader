@@ -100,6 +100,17 @@ jobs:
             -o /tmp/dmc-native-module-test
           /tmp/dmc-native-module-test
 
+      - name: Build and run capability UI policy regression
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/dmc-ui-policy-test
+          mkdir -p /tmp/dmc-ui-policy-test
+          javac -d /tmp/dmc-ui-policy-test \
+            app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
+            app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java
+          java -cp /tmp/dmc-ui-policy-test \
+            com.dmcrengine.nativeviewer.ResourceUiStateTest
+
       - name: Build and run RenderScene projection regression
         run: |
           set -euxo pipefail
