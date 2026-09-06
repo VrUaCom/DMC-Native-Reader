@@ -37,6 +37,11 @@ struct MeshPrimitive final {
     Mesh mesh;
     std::uint32_t object_index{};
     std::uint32_t mesh_index{};
+
+    // Optional scene-node binding. SCM has an EXE/corpus-confirmed mapping from
+    // scene node -> geometry object; MOD does not yet publish an equivalent
+    // typed binding in the canonical reader and therefore leaves this at -1.
+    std::int32_t node_index{-1};
 };
 
 struct JointWeight final {
