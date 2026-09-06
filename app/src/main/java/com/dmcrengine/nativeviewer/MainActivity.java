@@ -37,9 +37,13 @@ public final class MainActivity extends Activity {
 
     private DmcRenderView renderView;
     private TextView titleView;
+    private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
+    private Button infoButton;
     private long session;
+    private ResourceUiState uiState = ResourceUiState.empty();
+    private boolean spatialHierarchyAvailable;
     private String infoText = "";
     private String routingSelfTest = "";
     private String systemMimeDiag = "";
@@ -90,6 +94,34 @@ public final class MainActivity extends Activity {
     private void setToolAvailable(Button button, boolean available) {
         button.setEnabled(available);
         button.setAlpha(available ? 1.0f : 0.35f);
+    }
+
+    private void syncToggleButton(Button button, boolean available, boolean active) {
+        button.setEnabled(available);
+        button.setActivated(available && active);
+        button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
+    }
+
+    private void applyResourceUiState() {
+        final boolean hasSession = session != 0;
+        setToolAvailable(resetButton, hasSession && uiState.canRender);
+        syncToggleButton(wireButton,
+                hasSession && uiState.canWireframe,
+                renderView.isWireframe());
+
+        final boolean hierarchyAvailable = hasSession
+                && uiState.canShowHierarchy
+                && spatialHierarchyAvailable;
+        renderView.setHierarchyAvailable(hierarchyAvailable);
+        syncToggleButton(hierarchyButton,
+                hierarchyAvailable,
+                renderView.isHierarchyVisible());
+
+        // When there is no accepted resource, keep Info available for routing or
+        // rejection diagnostics. For accepted resources the policy comes from
+        // the native Inspection capability.
+        setToolAvailable(infoButton,
+                hasSession ? uiState.canInspect : !infoText.isEmpty());
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -147,35 +179,33 @@ public final class MainActivity extends Activity {
         open.setOnClickListener(v -> chooseFile());
         addToolButton(bar, open);
 
-        Button reset = makeSquareButton("🔄", "Reset model view", 20f);
-        reset.setOnClickListener(v -> renderView.resetView());
-        addToolButton(bar, reset);
+        resetButton = makeSquareButton("🔄", "Reset view", 20f);
+        resetButton.setOnClickListener(v -> renderView.resetView());
+        addToolButton(bar, resetButton);
 
-        wireButton = makeSquareButton("W", "Toggle wireframe", 18f);
+        wireButton = makeSquareButton("W", "Wireframe", 18f);
         wireButton.setOnClickListener(v -> {
             renderView.toggleWireframe();
-            wireButton.setActivated(renderView.isWireframe());
-            wireButton.setAlpha(renderView.isWireframe() ? 1.0f : 0.78f);
+            applyResourceUiState();
         });
         addToolButton(bar, wireButton);
 
-        hierarchyButton = makeSquareButton("🦴", "Toggle bones or scene hierarchy", 20f);
+        hierarchyButton = makeSquareButton("🦴", "Bones / hierarchy", 20f);
         hierarchyButton.setOnClickListener(v -> {
             renderView.toggleHierarchy();
-            hierarchyButton.setActivated(renderView.isHierarchyVisible());
-            hierarchyButton.setAlpha(renderView.isHierarchyVisible() ? 1.0f : 0.78f);
+            applyResourceUiState();
         });
-        setToolAvailable(hierarchyButton, false);
         addToolButton(bar, hierarchyButton);
 
-        Button info = makeSquareButton("\u2139", "Resource information", 22f);
-        info.setOnClickListener(v -> showInfoDialog());
-        addToolButton(bar, info);
+        infoButton = makeSquareButton("\u2139", "Resource information", 22f);
+        infoButton.setOnClickListener(v -> showInfoDialog());
+        addToolButton(bar, infoButton);
 
         root.addView(bar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
+        applyResourceUiState();
     }
 
     private void setInfo(String text) {
@@ -276,7 +306,8 @@ public final class MainActivity extends Activity {
 
     private void showIdleStatus(String diag) {
         titleView.setText("DMC Native Reader");
-        setToolAvailable(hierarchyButton, false);
+        uiState = ResourceUiState.empty();
+        spatialHierarchyAvailable = false;
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2: module registry → InspectionDocument / RenderScene → JNI / UI.\n"
                 + "71 explicit DMC family modules. Promoted readers decode/inspect; recognition-only modules stay evidence-gated.\n\n"
@@ -285,6 +316,7 @@ public final class MainActivity extends Activity {
                 + systemMimeDiag + "\n"
                 + diag + "\n\n"
                 + "Tap a DMC resource in My Files, or use ↑.");
+        applyResourceUiState();
     }
 
     private String displayName(Uri uri) {
@@ -331,6 +363,7 @@ public final class MainActivity extends Activity {
                     + "ANDROID ROUTING DIAGNOSTICS\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
+            applyResourceUiState();
             Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
             return;
         }
@@ -339,15 +372,18 @@ public final class MainActivity extends Activity {
                     + "ANDROID ROUTING DIAGNOSTICS\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
+            applyResourceUiState();
             Toast.makeText(this, "Native DMC reader rejected this file", Toast.LENGTH_LONG).show();
             return;
         }
 
+        renderView.setSession(session);
+        uiState = ResourceUiState.fromCapabilities(NativeBridge.capabilities(session));
+        spatialHierarchyAvailable = NativeBridge.hierarchyAvailable(session);
+        applyResourceUiState();
+
         final String inspection = NativeBridge.inspection(session);
         final String nativeInfo = NativeBridge.info(session);
-        final boolean hierarchyAvailable = NativeBridge.hierarchyAvailable(session);
-        setToolAvailable(hierarchyButton, hierarchyAvailable);
-        hierarchyButton.setActivated(false);
 
         StringBuilder details = new StringBuilder();
         details.append(name).append("\n\n");
@@ -362,8 +398,7 @@ public final class MainActivity extends Activity {
                 .append(lastProviderDiag).append("\n")
                 .append(lastIntentDiag);
         setInfo(details.toString());
-
-        renderView.setSession(session);
+        applyResourceUiState();
     }
 
     private String describeIntent(Intent intent) {
@@ -442,7 +477,9 @@ public final class MainActivity extends Activity {
 
     private void closeSession() {
         renderView.setSession(0);
-        setToolAvailable(hierarchyButton, false);
+        uiState = ResourceUiState.empty();
+        spatialHierarchyAvailable = false;
+        applyResourceUiState();
         if (session != 0) {
             NativeBridge.close(session);
             session = 0;
