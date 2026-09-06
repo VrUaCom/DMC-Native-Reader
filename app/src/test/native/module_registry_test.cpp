@@ -92,6 +92,11 @@ std::vector<std::uint8_t> make_mod() {
     put_u64(bytes, 0x48u, 0x80u);
 
     put_u16(bytes, 0x80u, 3u);
+    put_u16(bytes, 0x82u, 5u);
+    put_u16(bytes, 0x84u, 1u);
+    put_u16(bytes, 0x86u, 2u);
+    put_u16(bytes, 0x88u, 3u);
+    put_u16(bytes, 0x8Au, 4u);
     put_u64(bytes, 0x90u, 0xD0u);
     put_u64(bytes, 0x98u, 0x100u);
     put_u64(bytes, 0xA0u, 0x130u);
@@ -131,9 +136,6 @@ std::vector<std::uint8_t> make_mod() {
 }
 
 std::vector<std::uint8_t> make_scm() {
-    // Canonical layout for one object, one 3-vertex mesh and one scene node:
-    // header 0x00, object 0x40, mesh 0x80, streams 0xD0..0x14F,
-    // scene 0x150..0x19F, index workspace 0x1A0..0x1AF.
     std::vector<std::uint8_t> bytes(0x1B0u, 0u);
     bytes[0] = 'S'; bytes[1] = 'C'; bytes[2] = 'M'; bytes[3] = ' ';
     put_f32(bytes, 0x04u, 1.01f);
@@ -181,7 +183,6 @@ std::vector<std::uint8_t> make_scm() {
     put_u16(bytes, 0x134u, 4096u); put_u16(bytes, 0x136u, 0u);
     put_u16(bytes, 0x138u, 0u);    put_u16(bytes, 0x13Au, 4096u);
 
-    // RGB + topology flags. No 0x02 break => one triangle.
     bytes[0x140u] = 255u; bytes[0x141u] = 0u;   bytes[0x142u] = 0u;   bytes[0x143u] = 0u;
     bytes[0x144u] = 0u;   bytes[0x145u] = 255u; bytes[0x146u] = 0u;   bytes[0x147u] = 0u;
     bytes[0x148u] = 0u;   bytes[0x149u] = 0u;   bytes[0x14Au] = 255u; bytes[0x14Bu] = 0u;
@@ -271,7 +272,7 @@ int main() {
     assert(has_capability(mod_module.capabilities, ResourceCapability::NodeHierarchy));
     assert(has_capability(mod_module.capabilities, ResourceCapability::SkeletalSkinning));
     assert(has_capability(mod_module.capabilities, ResourceCapability::SkinWeights));
-    assert(!has_capability(mod_module.capabilities, ResourceCapability::TextureBinding));
+    assert(has_capability(mod_module.capabilities, ResourceCapability::TextureBinding));
 
     assert(has_capability(hits_module.capabilities, ResourceCapability::Collision));
     assert(has_capability(hits_module.capabilities, ResourceCapability::Geometry));
@@ -331,6 +332,7 @@ int main() {
     assert(mod_result.probe.format == Format::Mod);
     assert(mod_result.detail.find("MOD canonical C++20 reader") != std::string::npos);
     assert(module_trace_contains(mod_result, "canonical.mod.structural-parser"));
+    assert(module_trace_contains(mod_result, "canonical.mod.texture-state"));
     assert(module_trace_contains(mod_result, "render-scene-contract"));
     assert(mod_result.scene.meshes.size() == 1u);
     assert(mod_result.scene.meshes[0].mesh.vertices.size() == 3u);
@@ -347,11 +349,15 @@ int main() {
         assert(vertex.influences[0].node_index == 0u);
         assert(vertex.influences[0].weight > 0.999f);
     }
+    assert(mod_result.scene.textures.size() == 1u);
+    assert(mod_result.scene.textures[0].mesh_primitive == 0u);
+    assert(mod_result.scene.textures[0].texture_slot == 5u);
+    assert(!mod_result.scene.textures[0].external_source.empty());
     assert(!mod_result.inspection.empty());
     assert(mod_result.inspection.format == "MOD");
     assert(mod_result.inspection.root.children.size() >= 2u);
     assert(has_capability(mod_result.capabilities, ResourceCapability::SkinWeights));
-    assert(!has_capability(mod_result.capabilities, ResourceCapability::TextureBinding));
+    assert(has_capability(mod_result.capabilities, ResourceCapability::TextureBinding));
 
     const auto dds = make_dds();
     const auto raw_dds = dmcresource::formats::dds::parse(
