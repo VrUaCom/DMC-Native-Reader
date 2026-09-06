@@ -40,9 +40,15 @@ jobs:
       - name: Guard signing boundary
         run: |
           set -euxo pipefail
-          ! grep -q 'stableDebug' app/build.gradle.kts
-          ! grep -q 'dmc-native-reader-test.jks' app/build.gradle.kts
-          ! grep -q 'signingConfig' app/build.gradle.kts
+          grep -q 'stableDebug' app/build.gradle.kts
+          grep -q 'dmc-native-reader-test.jks' app/build.gradle.kts
+          python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('app/build.gradle.kts').read_text()
+          match = re.search(r'\brelease\s*\{([^}]]*)\}', text, re.S)
+          assert match is not None, 'release buildType missing'
+          assert 'signingConfig' not in match.group(1), 'release must not use the debug/test signer'
+          PY
 
       - name: Build debug and unsigned release APKs
         run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
@@ -76,7 +82,8 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
-          "$APKSIGNER" verify --verbose "$DEBUG_APK" | tee /tmp/debug-signing.txt
+          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
+          tr -d ': ' < /tmp/debug-signing.txt | grep -qi 'f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac'
           if "$APKSIGNER" verify "$RELEASE_APK"; then
             echo 'release APK unexpectedly has a signing authority'
             exit 1
