@@ -13,6 +13,7 @@ add_library(dmcviewer SHARED
     inspection_format.cpp
     formats/dds.cpp
     adapters/mod_adapter.cpp
+    adapters/scm_adapter.cpp
     modules/module_registry.cpp
     modules/module_catalog.cpp
     modules/module_model.cpp
@@ -25,6 +26,12 @@ add_library(dmcviewer SHARED
     vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
     vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
     vendor/dmc-rengine-cpp/src/formats/mod.cpp
+    vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
+    vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
+    vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
+    vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
+    vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
+    vendor/dmc-rengine-cpp/src/formats/scm.cpp
 )
 
 target_include_directories(dmcviewer PRIVATE
