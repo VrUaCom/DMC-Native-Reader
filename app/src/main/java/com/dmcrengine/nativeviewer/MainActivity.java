@@ -1,20 +1,26 @@
 package com.dmcrengine.nativeviewer;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
+import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.WindowInsets;
 import android.webkit.MimeTypeMap;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -26,9 +32,10 @@ import java.util.Set;
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1001;
     private DmcRenderView renderView;
-    private TextView statusView;
+    private TextView titleView;
     private Button wireButton;
     private long session;
+    private String infoText = "";
     private String routingSelfTest = "";
     private String systemMimeDiag = "";
     private String lastIntentDiag = "";
@@ -48,6 +55,10 @@ public final class MainActivity extends Activity {
         handleIncomingIntent(intent);
     }
 
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     private Button makeButton(String text) {
         Button b = new Button(this);
         b.setText(text);
@@ -55,16 +66,45 @@ public final class MainActivity extends Activity {
         return b;
     }
 
+    private void applySystemBarInsets(LinearLayout root) {
+        root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            int left;
+            int top;
+            int right;
+            int bottom;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets safe = windowInsets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                left = safe.left;
+                top = safe.top;
+                right = safe.right;
+                bottom = safe.bottom;
+            } else {
+                left = windowInsets.getSystemWindowInsetLeft();
+                top = windowInsets.getSystemWindowInsetTop();
+                right = windowInsets.getSystemWindowInsetRight();
+                bottom = windowInsets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(left, top, right, bottom);
+            return windowInsets;
+        });
+        root.requestApplyInsets();
+    }
+
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xff0b0b0e);
+        applySystemBarInsets(root);
 
-        statusView = new TextView(this);
-        statusView.setTextColor(Color.WHITE);
-        statusView.setTextSize(13f);
-        statusView.setPadding(24, 20, 24, 14);
-        root.addView(statusView, new LinearLayout.LayoutParams(
+        titleView = new TextView(this);
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(15f);
+        titleView.setSingleLine(true);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
+        titleView.setPadding(dp(16), dp(8), dp(16), dp(6));
+        titleView.setText("DMC Native Reader");
+        root.addView(titleView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -74,8 +114,8 @@ public final class MainActivity extends Activity {
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER);
-        bar.setPadding(8, 8, 8, 12);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(8), dp(6), dp(8), dp(8));
 
         Button open = makeButton("Open DMC resource");
         open.setOnClickListener(v -> chooseFile());
@@ -85,7 +125,7 @@ public final class MainActivity extends Activity {
         Button reset = makeButton("Reset");
         reset.setOnClickListener(v -> renderView.resetView());
         bar.addView(reset, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 0.75f));
+                LinearLayout.LayoutParams.WRAP_CONTENT, 0.70f));
 
         wireButton = makeButton("Wire: off");
         wireButton.setOnClickListener(v -> {
@@ -93,12 +133,48 @@ public final class MainActivity extends Activity {
             wireButton.setText(renderView.isWireframe() ? "Wire: on" : "Wire: off");
         });
         bar.addView(wireButton, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 0.9f));
+                LinearLayout.LayoutParams.WRAP_CONTENT, 0.85f));
+
+        Button info = makeButton("\u2139");
+        info.setTextSize(22f);
+        info.setMinWidth(0);
+        info.setMinimumWidth(0);
+        info.setPadding(0, 0, 0, 0);
+        info.setContentDescription("Resource information");
+        info.setOnClickListener(v -> showInfoDialog());
+        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        infoParams.setMarginStart(dp(4));
+        bar.addView(info, infoParams);
 
         root.addView(bar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
+    }
+
+    private void setInfo(String text) {
+        infoText = text == null ? "" : text;
+    }
+
+    private void showInfoDialog() {
+        TextView details = new TextView(this);
+        details.setText(infoText.isEmpty() ? "No resource information yet." : infoText);
+        details.setTextColor(Color.WHITE);
+        details.setTextSize(13f);
+        details.setTextIsSelectable(true);
+        details.setPadding(dp(16), dp(12), dp(16), dp(20));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(0xff141418);
+        scroll.addView(details, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT));
+
+        new AlertDialog.Builder(this)
+                .setTitle("Resource information")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
+                .show();
     }
 
     private void chooseFile() {
@@ -172,7 +248,8 @@ public final class MainActivity extends Activity {
     }
 
     private void showIdleStatus(String diag) {
-        statusView.setText("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
+        titleView.setText("DMC Native Reader");
+        setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "71 explicit DMC family modules. Promoted readers decode/inspect; recognition-only modules stay evidence-gated.\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
@@ -214,25 +291,26 @@ public final class MainActivity extends Activity {
     private void openUri(Uri uri) {
         closeSession();
         String name = displayName(uri);
+        titleView.setText(name);
         lastProviderDiag = describeProvider(uri);
         try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
             if (pfd == null) throw new FileNotFoundException("No file descriptor");
             session = NativeBridge.open(pfd.getFd(), name);
         } catch (Exception e) {
-            statusView.setText(name + "\nOpen failed: " + e + "\n"
+            setInfo(name + "\nOpen failed: " + e + "\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
             Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
             return;
         }
         if (session == 0) {
-            statusView.setText(name + "\nRejected by native reader\n"
+            setInfo(name + "\nRejected by native reader\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
             Toast.makeText(this, "Native DMC reader rejected this file", Toast.LENGTH_LONG).show();
             return;
         }
-        statusView.setText(name + "\n" + NativeBridge.info(session) + "\n"
+        setInfo(name + "\n" + NativeBridge.info(session) + "\n"
                 + routingSelfTest + "\n" + systemMimeDiag + "\n"
                 + lastProviderDiag + "\n" + lastIntentDiag);
         renderView.setSession(session);
