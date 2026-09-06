@@ -2,15 +2,15 @@
 
 Source repository: `VrUaCom/dmc-rengine-cpp`
 
-Current canonical MOD pin (`main`, after PR #305 consolidation):
+Current canonical MOD pin (`main`, after PR #307 typed material-state promotion):
+
+`3a203b016bcd651fba4a8ca11b4939d663f98468`
+
+Previous Native Reader MOD pin:
 
 `84d80b98103a2b0bd365c5b911209763edd17204`
 
-Previous Native Reader base pin:
-
-`3a3db646c6bf3faf1871efbed31c4e9f4fb32cbe`
-
-PR #305 consolidated the previously separate MOD spatial-hierarchy promotion into canonical `main`. The Native Reader MOD read-side slice below is now content-identical to files reachable from that single canonical main commit. Vendored files remain unmodified; Android-specific projection belongs outside this vendor tree.
+PR #305 consolidated MOD spatial hierarchy into canonical `main`. PR #307 then promoted the already EXE-confirmed MOD texture-slot and legacy GS CLAMP/REGION_REPEAT payload into typed `mod::InnerMesh`. The Native Reader MOD read-side slice below is content-identical to files reachable from the single canonical main commit above. Vendored files remain unmodified; Android-specific projection belongs outside this vendor tree.
 
 Policy:
 
@@ -20,7 +20,7 @@ Policy:
 - updates must name the upstream commit and re-run host + Android regression gates;
 - reader slices deliberately exclude canonical writer/authoring modules unless a Native Reader feature requires them.
 
-## MOD reader slice — `main@84d80b98103a2b0bd365c5b911209763edd17204`
+## MOD reader slice — `main@3a203b016bcd651fba4a8ca11b4939d663f98468`
 
 - `include/dmc_rengine/binary/reader.hpp` — `43d721a9dd83d171184ecfabac6ca5d758ac2130`
 - `src/binary/reader.cpp` — `63ff1b0eb6a05375eda16757425df9bcf41eff9e`
@@ -33,8 +33,8 @@ Policy:
 - `src/formats/mod/transform_domain.cpp` — `8d7be95f41d1694045d28d6b9cfdcae5f08f543b`
 - `include/dmc_rengine/formats/mod/world_transform.hpp` — `35c222143536e48349b56fc1f3d6aec1fd0d5c5d`
 - `src/formats/mod/world_transform.cpp` — `fabb723bb7b4d8c1ee5795a6c51f32c5f1fa7ad3`
-- `include/dmc_rengine/formats/mod.hpp` — `839a87727eee7c1493eaad8bdf579d25354b6be1`
-- `src/formats/mod.cpp` — `596e2b01cd03eeeafe4111282c204473860cf296`
+- `include/dmc_rengine/formats/mod.hpp` — `f708f05a04682250692ab0effa3759ba0875e1dc`
+- `src/formats/mod.cpp` — `3a4862b1b7c23c9ad70253e1923f1419899ea6b6`
 
 Evidence boundary for the MOD spatial slice:
 
@@ -46,7 +46,14 @@ Evidence boundary for the MOD spatial slice:
 - transform writer/mutation safety: not promoted;
 - game-world placement beyond identity/model-space root: not inferred.
 
-The shared `MeshCoreAbi` at this canonical pin also confirms MOD/EFM/SCM texture slot `+0x02` and legacy GS CLAMP fields `+0x04..+0x0A`. Those fields are not yet present in typed `mod::InnerMesh`; Native Reader must not re-read them locally until the canonical MOD typed promotion lands upstream.
+Evidence boundary for the MOD material-state slice:
+
+- texture slot `+0x02`: EXE_CONFIRMED through the shared MOD/EFM/SCM material helper `0x1402F9890`;
+- legacy GS CLAMP REGION_REPEAT fields `+0x04/+0x06/+0x08/+0x0A`: EXE_CONFIRMED through the same helper;
+- typed fields are parsed during the existing single MOD parser pass;
+- values outside the 10-bit GS register domain are preserved as raw u16 with diagnostics and are not masked;
+- mapping from the MOD runtime texture slot to an actual bitmap/companion payload remains unresolved in this slice;
+- no modern material names, filter semantics, shader semantics, or writer behavior are inferred.
 
 ## SCM reader slice
 
