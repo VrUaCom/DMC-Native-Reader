@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
-#include <limits>
 #include <new>
 #include <sstream>
 #include <span>
@@ -50,8 +49,6 @@ constexpr std::size_t kMaxIndices = 12U * 1024U * 1024U;
 
 [[nodiscard]] Vec3 normalize(Vec3 value) noexcept {
     const float len2 = dot(value, value);
-    // Exact v1 preview threshold. Keeping this compatibility projection stable
-    // avoids changing winding for near-degenerate triangles during migration.
     if (!(len2 > 1.0e-12F) || !std::isfinite(len2)) return {};
     const float inv = 1.0F / std::sqrt(len2);
     return {value.x * inv, value.y * inv, value.z * inv};
@@ -111,12 +108,11 @@ InspectionNode make_diagnostic_node(
     return node;
 }
 
-// Convert the already-parsed SCM streams into the current triangle-list Mesh
-// contract. This intentionally preserves the v1 Native Reader winding logic;
-// only the source of truth changes from raw byte reads to canonical typed data.
-[[nodiscard]] bool append_compatibility_mesh(const scm::Mesh& source,
-                                             Vec3 translation,
-                                             Mesh* output) {
+// Convert already-parsed canonical SCM streams into the generic local-space
+// triangle-list mesh carried by a RenderScene primitive. Winding remains the
+// established Native Reader projection, but no second flattened scene mesh is
+// produced: world placement belongs exclusively to RenderScene node bindings.
+[[nodiscard]] bool append_local_mesh(const scm::Mesh& source, Mesh* output) {
     if (output == nullptr) return false;
     const std::size_t vertex_count = source.positions.size();
     if (vertex_count != source.normals.size() ||
@@ -132,8 +128,7 @@ InspectionNode make_diagnostic_node(
     const std::size_t base_vertex = output->vertices.size();
     output->vertices.reserve(base_vertex + vertex_count);
     for (const auto& position : source.positions) {
-        output->vertices.push_back(add(
-            Vec3{position.x, position.y, position.z}, translation));
+        output->vertices.push_back({position.x, position.y, position.z});
     }
 
     if (vertex_count < 3U) return true;
@@ -194,7 +189,6 @@ InspectionNode make_diagnostic_node(
 
 struct SceneProjection final {
     std::vector<std::int32_t> object_node;
-    std::vector<Vec3> compatibility_object_translation;
 };
 
 [[nodiscard]] bool project_scene(const scm::Document& document,
@@ -206,8 +200,6 @@ struct SceneProjection final {
     const auto& source = document.scene_nodes;
     const std::size_t count = document.header.scene_node_count;
     projection->object_node.assign(document.objects.size(), -1);
-    projection->compatibility_object_translation.assign(
-        document.objects.size(), Vec3{});
 
     InspectionNode hierarchy;
     hierarchy.id = "scene-hierarchy";
@@ -233,25 +225,13 @@ struct SceneProjection final {
     if (!world.has_value() || world->size() != count) return false;
 
     std::vector<std::int32_t> parent_by_node(count, -1);
-    std::vector<Vec3> compatibility_world(count, Vec3{});
-
     for (std::size_t order_position = 0U;
          order_position < count;
          ++order_position) {
         const auto node = static_cast<std::size_t>(
             source.node_at_order_position[order_position]);
         if (node >= count) return false;
-        const auto parent = source.parent_by_order_position[order_position];
-        parent_by_node[node] = parent;
-
-        const auto& local = source.transform_by_node_index[node].translation;
-        Vec3 compatibility{local.x, local.y, local.z};
-        if (parent >= 0) {
-            const auto parent_node = static_cast<std::size_t>(parent);
-            if (parent_node >= count) return false;
-            compatibility = add(compatibility, compatibility_world[parent_node]);
-        }
-        compatibility_world[node] = compatibility;
+        parent_by_node[node] = source.parent_by_order_position[order_position];
 
         const auto binding = source.object_binding_by_node_index[node];
         if (binding >= 0) {
@@ -259,8 +239,6 @@ struct SceneProjection final {
             if (object_index >= document.objects.size()) return false;
             projection->object_node[object_index] =
                 static_cast<std::int32_t>(node);
-            projection->compatibility_object_translation[object_index] =
-                compatibility;
         }
     }
 
@@ -348,7 +326,6 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
         out.modules.push_back({"bounded-read-guard", true});
         out.modules.push_back({"canonical.scm.structural-parser", true});
         out.modules.push_back({"canonical.scm.scene-hierarchy", true});
-        out.modules.push_back({"scm.compatibility-preview-projection", true});
         out.modules.push_back({module_id, true});
 
         out.inspection.format = "SCM";
@@ -472,7 +449,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                 primitive.object_index = static_cast<std::uint32_t>(object_index);
                 primitive.mesh_index = static_cast<std::uint32_t>(mesh_index);
                 primitive.node_index = scene_projection.object_node[object_index];
-                if (!append_compatibility_mesh(source, Vec3{}, &primitive.mesh)) {
+                if (!append_local_mesh(source, &primitive.mesh)) {
                     return module_support::reject(
                         probe, module_id,
                         "SCM canonical local-mesh projection exceeded topology/size limits");
@@ -486,15 +463,6 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                     source.texture_index,
                     "SCM external texture companion",
                 });
-
-                if (!append_compatibility_mesh(
-                        source,
-                        scene_projection.compatibility_object_translation[object_index],
-                        &out.mesh)) {
-                    return module_support::reject(
-                        probe, module_id,
-                        "SCM compatibility preview projection exceeded topology/size limits");
-                }
 
                 InspectionNode mesh_node;
                 mesh_node.id = object_node.id + "-mesh-" +
@@ -580,7 +548,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
             out.inspection.root.children.push_back(std::move(diagnostics));
         }
 
-        out.renderable = !out.mesh.vertices.empty() && !out.mesh.indices.empty();
+        out.renderable = out.scene.has_geometry();
         std::ostringstream detail;
         detail << "SCM canonical C++20 reader"
                << " | objects=" << parsed.document.objects.size()
