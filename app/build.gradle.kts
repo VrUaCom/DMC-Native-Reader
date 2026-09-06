@@ -11,6 +11,20 @@ android {
         buildConfig = true
     }
 
+    // Public repository test signer used only to keep debug/device-test APKs
+    // upgrade-compatible across CI runs. It is not a production authority.
+    signingConfigs {
+        create("stableDebug") {
+            storeFile = file("../keys/dmc-native-reader-test.jks")
+            storePassword = "android"
+            keyAlias = "dmc-native-reader-test"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     defaultConfig {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
@@ -31,12 +45,12 @@ android {
     buildTypes {
         debug {
             isJniDebuggable = true
-            // Use the Android debug signer only for development/device tests.
+            signingConfig = signingConfigs.getByName("stableDebug")
         }
         release {
             isMinifyEnabled = false
-            // Intentionally unsigned here. Production v1.0 signing belongs to
-            // a dedicated release pipeline with an external protected key.
+            // Intentionally no signingConfig here. Production v1.0 signing
+            // belongs to a dedicated release pipeline with an external key.
         }
     }
 
