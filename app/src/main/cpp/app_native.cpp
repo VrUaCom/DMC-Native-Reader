@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/inspection_format.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -168,6 +169,23 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     if (!session->detail.empty()) out << "\n" << session->detail;
     if (!session->trace.empty()) out << "\n" << session->trace;
     return env->NewStringUTF(out.str().c_str());
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_capabilities(
+        JNIEnv*, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return 0;
+    return static_cast<jlong>(session->capabilities);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_inspection(
+        JNIEnv* env, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return env->NewStringUTF("");
+    const auto text = dmcresource::format_inspection_tree(session->inspection);
+    return env->NewStringUTF(text.c_str());
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
