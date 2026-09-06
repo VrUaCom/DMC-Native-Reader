@@ -72,7 +72,7 @@ jobs:
             -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
             app/src/test/native/module_registry_test.cpp \
             app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_fixed.cpp \
+            app/src/main/cpp/decode_status.cpp \
             app/src/main/cpp/decode_hits.cpp \
             app/src/main/cpp/decode_text.cpp \
             app/src/main/cpp/decode_pipeline.cpp \
@@ -154,6 +154,14 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -q 'formats.spumapdt.recognition'
           if strings /tmp/libdmcviewer.so | grep -q 'formats.generic.structural-inspector'; then
             echo 'legacy wildcard module is present'
+            exit 1
+          fi
+          if strings /tmp/libdmcviewer.so | grep -q 'SCM corpus-backed mesh decode'; then
+            echo 'retired legacy SCM decoder is still linked'
+            exit 1
+          fi
+          if strings /tmp/libdmcviewer.so | grep -q 'MOD corpus-backed mesh decode'; then
+            echo 'retired legacy MOD decoder is still linked'
             exit 1
           fi
 
