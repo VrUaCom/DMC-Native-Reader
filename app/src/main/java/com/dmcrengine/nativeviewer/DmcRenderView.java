@@ -75,8 +75,9 @@ public final class DmcRenderView extends View {
     }
 
     public void setHierarchyAvailable(boolean available) {
+        final boolean hierarchyWasRequested = (renderFlags & RENDER_HIERARCHY) != 0;
         hierarchyAvailable = available;
-        if (!available && isHierarchyVisible()) {
+        if (!available && hierarchyWasRequested) {
             renderFlags &= ~RENDER_HIERARCHY;
             renderNow();
         }
