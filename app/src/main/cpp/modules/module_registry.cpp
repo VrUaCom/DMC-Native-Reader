@@ -1,6 +1,7 @@
 #include "dmcresource/native_module.h"
 
 #include <algorithm>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -49,10 +50,19 @@ PipelineResult pipeline_from_decode(const ProbeResult& probe,
     PipelineResult out;
     out.probe = probe;
     out.accepted = decoded.status == DecodeStatus::Ok;
-    out.renderable = out.accepted && renderable &&
-                     !decoded.mesh.vertices.empty() &&
-                     !decoded.mesh.indices.empty();
-    out.mesh = std::move(decoded.mesh);
+
+    const bool has_geometry =
+        !decoded.mesh.vertices.empty() && !decoded.mesh.indices.empty();
+    out.renderable = out.accepted && renderable && has_geometry;
+    if (out.renderable) {
+        MeshPrimitive primitive;
+        primitive.name = probe.family != nullptr
+            ? std::string{probe.family}
+            : std::string{"resource"};
+        primitive.mesh = std::move(decoded.mesh);
+        out.scene.meshes.push_back(std::move(primitive));
+    }
+
     out.modules.push_back({"identity-probe", true});
     out.modules.push_back({"bounded-read-guard", true});
     out.modules.push_back({module_id, out.accepted});

@@ -24,20 +24,6 @@ namespace {
     return true;
 }
 
-void project_legacy_mesh_once(PipelineResult& result) {
-    if (!result.renderable || !result.scene.meshes.empty() ||
-        result.mesh.vertices.empty() || result.mesh.indices.empty()) {
-        return;
-    }
-
-    MeshPrimitive primitive;
-    primitive.name = result.probe.family != nullptr
-        ? std::string{result.probe.family}
-        : std::string{"resource"};
-    primitive.mesh = result.mesh;
-    result.scene.meshes.push_back(std::move(primitive));
-}
-
 void enforce_render_scene_contract(PipelineResult& result) {
     if (!result.renderable) return;
 
@@ -45,10 +31,9 @@ void enforce_render_scene_contract(PipelineResult& result) {
     result.modules.push_back({"render-scene-contract", complete});
     if (complete) return;
 
-    // From Architecture v2 onward, JNI/render consumers have exactly one
-    // geometry contract. A module may still internally produce the v1 Mesh,
-    // but the pipeline must project it into RenderScene before advertising a
-    // usable preview. Never revive a second rendering path as a fallback.
+    // Architecture v2 has exactly one downstream geometry authority. A
+    // renderable module must publish RenderScene before leaving its module
+    // boundary; the pipeline never reconstructs a second representation.
     result.renderable = false;
     if (!result.detail.empty()) result.detail += "\n";
     result.detail +=
@@ -113,11 +98,6 @@ PipelineResult run_decode_pipeline(std::string_view filename,
 
     auto result = module->run(*module, filename, bytes, size, authoritative_probe);
     result.capabilities = module->capabilities;
-
-    // Transitional v2 adapter: existing renderable modules may still publish
-    // the v1 flattened Mesh internally. Project it exactly once into the
-    // reusable RenderScene; all downstream rendering authority is scene-based.
-    project_legacy_mesh_once(result);
     enforce_render_scene_contract(result);
 
     // Every accepted module can be inspected immediately. Format-specific
