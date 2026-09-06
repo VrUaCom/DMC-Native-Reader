@@ -19,5 +19,5 @@ add_library(dmcviewer SHARED
 )
 
 target_include_directories(dmcviewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_features(dmcviewer PRIVATE cxx_std_17)
+target_compile_features(dmcviewer PRIVATE cxx_std_20)
 target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)
