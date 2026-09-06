@@ -45,7 +45,7 @@ jobs:
           python3 - <<'PY'
           import pathlib, re
           text = pathlib.Path('app/build.gradle.kts').read_text()
-          match = re.search(r'\brelease\s*\{([^}]]*)\}', text, re.S)
+          match = re.search(r'\brelease\s*\{([^}]*)\}', text, re.S)
           assert match is not None, 'release buildType missing'
           assert 'signingConfig' not in match.group(1), 'release must not use the debug/test signer'
           PY
