@@ -10,6 +10,9 @@ import android.view.ScaleGestureDetector;
 import android.view.View;
 
 public final class DmcRenderView extends View {
+    private static final int RENDER_WIREFRAME = 1 << 0;
+    private static final int RENDER_HIERARCHY = 1 << 1;
+
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final ScaleGestureDetector scaleDetector;
     private Bitmap bitmap;
@@ -17,8 +20,8 @@ public final class DmcRenderView extends View {
     private float yaw = 0.65f;
     private float pitch = -0.45f;
     private float zoom = 1.0f;
-    private boolean wireframe;
-    private boolean hierarchy;
+    private int renderFlags;
+    private boolean hierarchyAvailable;
     private float lastX;
     private float lastY;
     private long lastRenderMs;
@@ -39,7 +42,8 @@ public final class DmcRenderView extends View {
 
     public void setSession(long newSession) {
         session = newSession;
-        hierarchy = false;
+        renderFlags = 0;
+        hierarchyAvailable = false;
         // A structural/non-mesh session intentionally renders no bitmap. Clear
         // any previous frame before asking native code for a new one.
         bitmap = null;
@@ -56,23 +60,31 @@ public final class DmcRenderView extends View {
     }
 
     public void toggleWireframe() {
-        wireframe = !wireframe;
+        renderFlags ^= RENDER_WIREFRAME;
         renderNow();
     }
 
-    public boolean isWireframe() { return wireframe; }
+    public boolean isWireframe() {
+        return (renderFlags & RENDER_WIREFRAME) != 0;
+    }
 
     public void toggleHierarchy() {
-        hierarchy = !hierarchy;
+        if (!hierarchyAvailable) return;
+        renderFlags ^= RENDER_HIERARCHY;
         renderNow();
     }
 
-    public void setHierarchyVisible(boolean visible) {
-        hierarchy = visible;
-        renderNow();
+    public void setHierarchyAvailable(boolean available) {
+        hierarchyAvailable = available;
+        if (!available && isHierarchyVisible()) {
+            renderFlags &= ~RENDER_HIERARCHY;
+            renderNow();
+        }
     }
 
-    public boolean isHierarchyVisible() { return hierarchy; }
+    public boolean isHierarchyVisible() {
+        return hierarchyAvailable && (renderFlags & RENDER_HIERARCHY) != 0;
+    }
 
     private int renderWidth() {
         int w = Math.max(64, getWidth());
@@ -97,7 +109,7 @@ public final class DmcRenderView extends View {
         int rw = renderWidth();
         int rh = renderHeight();
         int[] pixels = NativeBridge.render(session, rw, rh, yaw, pitch, zoom,
-                wireframe, hierarchy);
+                renderFlags);
         if (pixels == null || pixels.length != rw * rh) {
             bitmap = null;
             invalidate();
