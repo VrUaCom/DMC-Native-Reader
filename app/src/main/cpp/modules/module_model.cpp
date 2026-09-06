@@ -2,6 +2,8 @@
 
 #include <string_view>
 
+#include "dmcresource/adapters/mod_adapter.h"
+
 namespace dmcresource {
 namespace {
 
@@ -26,15 +28,7 @@ PipelineResult run_mod(const NativeModule& module,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe) noexcept {
-    auto out = pipeline_from_decode(probe, decode_mod(bytes, size),
-                                    module.id, module.renderable);
-    if (out.accepted) {
-        out.modules.insert(out.modules.begin() + 2,
-                           {"model-family.mesh-core", true});
-        out.modules.insert(out.modules.begin() + 3,
-                           {"mod.skin-topology-adapter", true});
-    }
-    return out;
+    return adapters::run_mod_adapter(probe, bytes, size, module.id);
 }
 
 PipelineResult run_partial(const NativeModule& module,
@@ -96,13 +90,16 @@ NativeModule scm_module() noexcept {
             ModuleKind::Mesh, true, run_scm, caps};
 }
 NativeModule mod_module() noexcept {
+    // TextureBinding is intentionally not advertised yet: the pinned canonical
+    // MOD Document exposes geometry/UV/skin/hierarchy but does not currently
+    // publish the shared +0x02 texture-slot field. The adapter never reparses
+    // source bytes to manufacture missing semantics.
     const auto caps = capability(ResourceCapability::Inspection) |
         ResourceCapability::Geometry |
         ResourceCapability::Wireframe |
         ResourceCapability::NodeHierarchy |
         ResourceCapability::SkeletalSkinning |
-        ResourceCapability::SkinWeights |
-        ResourceCapability::TextureBinding;
+        ResourceCapability::SkinWeights;
     return {"formats.mod.mesh-reader", "MOD", Format::Mod,
             ModuleKind::Mesh, true, run_mod, caps};
 }

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(dmcviewer LANGUAGES CXX)
 
+set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
+
 add_library(dmcviewer SHARED
     app_native.cpp
     dmc_resource.cpp
@@ -10,6 +12,7 @@ add_library(dmcviewer SHARED
     decode_pipeline.cpp
     inspection_format.cpp
     formats/dds.cpp
+    adapters/mod_adapter.cpp
     modules/module_registry.cpp
     modules/module_catalog.cpp
     modules/module_model.cpp
@@ -18,8 +21,15 @@ add_library(dmcviewer SHARED
     modules/module_texture.cpp
     modules/module_structural.cpp
     view_renderer.cpp
+    vendor/dmc-rengine-cpp/src/binary/reader.cpp
+    vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
+    vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+    vendor/dmc-rengine-cpp/src/formats/mod.cpp
 )
 
-target_include_directories(dmcviewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(dmcviewer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${DMC_RENGINE_VENDOR}/include
+)
 target_compile_features(dmcviewer PRIVATE cxx_std_20)
 target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)
