@@ -6,7 +6,7 @@ set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 add_library(dmcviewer SHARED
     app_native.cpp
     dmc_resource.cpp
-    decode_fixed.cpp
+    decode_status.cpp
     decode_hits.cpp
     decode_text.cpp
     decode_pipeline.cpp
