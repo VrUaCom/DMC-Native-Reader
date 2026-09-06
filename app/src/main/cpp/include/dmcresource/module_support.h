@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 #include "dmcresource/binary_reader.h"
 #include "dmcresource/decode_pipeline.h"
