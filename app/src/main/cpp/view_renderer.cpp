@@ -13,6 +13,7 @@ namespace {
 
 constexpr std::size_t kMaxSceneVertices = 2U * 1024U * 1024U;
 constexpr std::size_t kMaxSceneIndices = 12U * 1024U * 1024U;
+constexpr float kSpatialEpsilon2 = 1.0e-10F;
 
 struct P3 { float x, y, z; };
 struct P2 { float x, y, z; };
@@ -50,6 +51,25 @@ P3 rotate(const Vec3& v, float yaw, float pitch) {
     return true;
 }
 
+[[nodiscard]] bool finite_matrix_translation(const Matrix4& matrix,
+                                             Vec3* out) noexcept {
+    if (out == nullptr) return false;
+    const auto& m = matrix.values;
+    for (const float value : m) {
+        if (!std::isfinite(value)) return false;
+    }
+    if (std::fabs(m[15] - 1.0F) > 0.0001F) return false;
+    *out = {m[12], m[13], m[14]};
+    return true;
+}
+
+[[nodiscard]] float distance2(Vec3 a, Vec3 b) noexcept {
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    const float dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
+}
+
 void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
     if (x < 0 || y < 0 || x >= image.width || y >= image.height) return;
     const auto o = static_cast<std::size_t>(y * image.width + x) * 4;
@@ -59,7 +79,7 @@ void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
     image.pixels[o + 3] = 255;
 }
 
-void line(RgbaImage& image, P2 a, P2 b) {
+void line(RgbaImage& image, P2 a, P2 b, std::uint8_t shade = 235) {
     int x0 = static_cast<int>(std::lround(a.x));
     int y0 = static_cast<int>(std::lround(a.y));
     const int x1 = static_cast<int>(std::lround(b.x));
@@ -68,11 +88,20 @@ void line(RgbaImage& image, P2 a, P2 b) {
     const int dy = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
     for (;;) {
-        put_pixel(image, x0, y0, 235);
+        put_pixel(image, x0, y0, shade);
         if (x0 == x1 && y0 == y1) break;
         const int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
         if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
+    const int x = static_cast<int>(std::lround(point.x));
+    const int y = static_cast<int>(std::lround(point.y));
+    for (int d = -2; d <= 2; ++d) {
+        put_pixel(image, x + d, y, shade);
+        put_pixel(image, x, y + d, shade);
     }
 }
 
@@ -136,8 +165,73 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
     }
 }
 
+bool materialize_hierarchy_overlay(const RenderScene& scene,
+                                   HierarchyOverlay* out) noexcept {
+    if (out == nullptr) return false;
+    try {
+        HierarchyOverlay overlay;
+        overlay.points.reserve(scene.nodes.size());
+        overlay.kinds.reserve(scene.nodes.size());
+        overlay.edges.reserve(scene.nodes.size());
+
+        for (std::size_t index = 0U; index < scene.nodes.size(); ++index) {
+            const auto& node = scene.nodes[index];
+            Vec3 point;
+            if (!finite_matrix_translation(node.world, &point)) return false;
+            overlay.points.push_back(point);
+            overlay.kinds.push_back(node.kind);
+
+            if (point.x * point.x + point.y * point.y + point.z * point.z >
+                kSpatialEpsilon2) {
+                overlay.spatial = true;
+            }
+
+            if (node.parent >= 0) {
+                const auto parent = static_cast<std::size_t>(node.parent);
+                if (parent >= scene.nodes.size() || parent == index) return false;
+                overlay.edges.push_back({static_cast<std::uint32_t>(parent),
+                                         static_cast<std::uint32_t>(index)});
+            }
+        }
+
+        // Parent indices may all be in range while still forming a cycle.
+        // Bound every ancestry walk by node count so malformed resources fail
+        // closed without recursion or unbounded temporary storage.
+        for (std::size_t start = 0U; start < scene.nodes.size(); ++start) {
+            std::size_t current = start;
+            std::size_t hops = 0U;
+            while (scene.nodes[current].parent >= 0) {
+                const auto parent = static_cast<std::size_t>(scene.nodes[current].parent);
+                if (parent >= scene.nodes.size()) return false;
+                ++hops;
+                if (hops > scene.nodes.size()) return false;
+                current = parent;
+            }
+        }
+
+        for (const auto& edge_value : overlay.edges) {
+            if (edge_value.parent >= overlay.points.size() ||
+                edge_value.child >= overlay.points.size()) {
+                return false;
+            }
+            if (distance2(overlay.points[edge_value.parent],
+                          overlay.points[edge_value.child]) > kSpatialEpsilon2) {
+                overlay.spatial = true;
+            }
+        }
+
+        *out = std::move(overlay);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 RgbaImage render_view(const Mesh& mesh, int width, int height,
-                      const ViewState& view) {
+                      const ViewState& view,
+                      const HierarchyOverlay* hierarchy) {
     RgbaImage image;
     image.width = std::clamp(width, 1, 2048);
     image.height = std::clamp(height, 1, 2048);
@@ -210,6 +304,24 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             }
         }
     }
+
+    if (hierarchy != nullptr && hierarchy->available()) {
+        std::vector<P2> hp;
+        hp.reserve(hierarchy->points.size());
+        for (const auto& point : hierarchy->points) {
+            const Vec3 local{point.x - center.x, point.y - center.y, point.z - center.z};
+            const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
+            hp.push_back({image.width * 0.5f + r.x * scale,
+                          image.height * 0.5f - r.y * scale,
+                          r.z});
+        }
+        for (const auto& edge_value : hierarchy->edges) {
+            if (edge_value.parent >= hp.size() || edge_value.child >= hp.size()) continue;
+            line(image, hp[edge_value.parent], hp[edge_value.child], 255);
+        }
+        for (const auto& point : hp) marker(image, point, 255);
+    }
+
     return image;
 }
 

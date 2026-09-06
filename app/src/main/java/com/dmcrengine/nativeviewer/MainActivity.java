@@ -9,6 +9,7 @@ import android.content.pm.ResolveInfo;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -31,10 +32,18 @@ import java.util.Set;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1001;
+    private static final int TOOL_SIZE_DP = 48;
+    private static final int TOOL_GAP_DP = 4;
+
     private DmcRenderView renderView;
     private TextView titleView;
+    private Button resetButton;
     private Button wireButton;
+    private Button hierarchyButton;
+    private Button infoButton;
     private long session;
+    private ResourceUiState uiState = ResourceUiState.empty();
+    private boolean spatialHierarchyAvailable;
     private String infoText = "";
     private String routingSelfTest = "";
     private String systemMimeDiag = "";
@@ -59,11 +68,60 @@ public final class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private Button makeButton(String text) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        return b;
+    private Button makeSquareButton(String text, String description, float textSize) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextSize(textSize);
+        button.setAllCaps(false);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setGravity(Gravity.CENTER);
+        button.setContentDescription(description);
+        return button;
+    }
+
+    private void addToolButton(LinearLayout bar, Button button) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
+        params.setMarginStart(dp(TOOL_GAP_DP));
+        params.setMarginEnd(dp(TOOL_GAP_DP));
+        bar.addView(button, params);
+    }
+
+    private void setToolAvailable(Button button, boolean available) {
+        button.setEnabled(available);
+        button.setAlpha(available ? 1.0f : 0.35f);
+    }
+
+    private void syncToggleButton(Button button, boolean available, boolean active) {
+        button.setEnabled(available);
+        button.setActivated(available && active);
+        button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
+    }
+
+    private void applyResourceUiState() {
+        final boolean hasSession = session != 0;
+        setToolAvailable(resetButton, hasSession && uiState.canRender);
+        syncToggleButton(wireButton,
+                hasSession && uiState.canWireframe,
+                renderView.isWireframe());
+
+        final boolean hierarchyAvailable = hasSession
+                && uiState.canShowHierarchy
+                && spatialHierarchyAvailable;
+        renderView.setHierarchyAvailable(hierarchyAvailable);
+        syncToggleButton(hierarchyButton,
+                hierarchyAvailable,
+                renderView.isHierarchyVisible());
+
+        // When there is no accepted resource, keep Info available for routing or
+        // rejection diagnostics. For accepted resources the policy comes from
+        // the native Inspection capability.
+        setToolAvailable(infoButton,
+                hasSession ? uiState.canInspect : !infoText.isEmpty());
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -114,42 +172,40 @@ public final class MainActivity extends Activity {
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setGravity(Gravity.CENTER);
         bar.setPadding(dp(8), dp(6), dp(8), dp(8));
 
-        Button open = makeButton("Open DMC resource");
+        Button open = makeSquareButton("↑", "Open DMC resource", 28f);
         open.setOnClickListener(v -> chooseFile());
-        bar.addView(open, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1.25f));
+        addToolButton(bar, open);
 
-        Button reset = makeButton("Reset");
-        reset.setOnClickListener(v -> renderView.resetView());
-        bar.addView(reset, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 0.70f));
+        resetButton = makeSquareButton("🔄", "Reset view", 20f);
+        resetButton.setOnClickListener(v -> renderView.resetView());
+        addToolButton(bar, resetButton);
 
-        wireButton = makeButton("Wire: off");
+        wireButton = makeSquareButton("W", "Wireframe", 18f);
         wireButton.setOnClickListener(v -> {
             renderView.toggleWireframe();
-            wireButton.setText(renderView.isWireframe() ? "Wire: on" : "Wire: off");
+            applyResourceUiState();
         });
-        bar.addView(wireButton, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 0.85f));
+        addToolButton(bar, wireButton);
 
-        Button info = makeButton("\u2139");
-        info.setTextSize(22f);
-        info.setMinWidth(0);
-        info.setMinimumWidth(0);
-        info.setPadding(0, 0, 0, 0);
-        info.setContentDescription("Resource information");
-        info.setOnClickListener(v -> showInfoDialog());
-        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(dp(48), dp(48));
-        infoParams.setMarginStart(dp(4));
-        bar.addView(info, infoParams);
+        hierarchyButton = makeSquareButton("🦴", "Bones / hierarchy", 20f);
+        hierarchyButton.setOnClickListener(v -> {
+            renderView.toggleHierarchy();
+            applyResourceUiState();
+        });
+        addToolButton(bar, hierarchyButton);
+
+        infoButton = makeSquareButton("\u2139", "Resource information", 22f);
+        infoButton.setOnClickListener(v -> showInfoDialog());
+        addToolButton(bar, infoButton);
 
         root.addView(bar, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
+        applyResourceUiState();
     }
 
     private void setInfo(String text) {
@@ -161,6 +217,7 @@ public final class MainActivity extends Activity {
         details.setText(infoText.isEmpty() ? "No resource information yet." : infoText);
         details.setTextColor(Color.WHITE);
         details.setTextSize(13f);
+        details.setTypeface(Typeface.MONOSPACE);
         details.setTextIsSelectable(true);
         details.setPadding(dp(16), dp(12), dp(16), dp(20));
 
@@ -171,7 +228,7 @@ public final class MainActivity extends Activity {
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
         new AlertDialog.Builder(this)
-                .setTitle("Resource information")
+                .setTitle(titleView.getText())
                 .setView(scroll)
                 .setPositiveButton("Close", null)
                 .show();
@@ -249,12 +306,17 @@ public final class MainActivity extends Activity {
 
     private void showIdleStatus(String diag) {
         titleView.setText("DMC Native Reader");
+        uiState = ResourceUiState.empty();
+        spatialHierarchyAvailable = false;
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
-                + "71 explicit DMC family modules. Promoted readers decode/inspect; recognition-only modules stay evidence-gated.\n"
+                + "Architecture v2: module registry → InspectionDocument / RenderScene → JNI / UI.\n"
+                + "71 explicit DMC family modules. Promoted readers decode/inspect; recognition-only modules stay evidence-gated.\n\n"
+                + "ANDROID ROUTING DIAGNOSTICS\n"
                 + routingSelfTest + "\n"
                 + systemMimeDiag + "\n"
-                + diag + "\n"
-                + "Tap a DMC resource in My Files, or use Open DMC resource.");
+                + diag + "\n\n"
+                + "Tap a DMC resource in My Files, or use ↑.");
+        applyResourceUiState();
     }
 
     private String displayName(Uri uri) {
@@ -297,23 +359,46 @@ public final class MainActivity extends Activity {
             if (pfd == null) throw new FileNotFoundException("No file descriptor");
             session = NativeBridge.open(pfd.getFd(), name);
         } catch (Exception e) {
-            setInfo(name + "\nOpen failed: " + e + "\n"
+            setInfo(name + "\nOpen failed: " + e + "\n\n"
+                    + "ANDROID ROUTING DIAGNOSTICS\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
+            applyResourceUiState();
             Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
             return;
         }
         if (session == 0) {
-            setInfo(name + "\nRejected by native reader\n"
+            setInfo(name + "\nRejected by native reader\n\n"
+                    + "ANDROID ROUTING DIAGNOSTICS\n"
                     + routingSelfTest + "\n" + systemMimeDiag + "\n"
                     + lastProviderDiag + "\n" + lastIntentDiag);
+            applyResourceUiState();
             Toast.makeText(this, "Native DMC reader rejected this file", Toast.LENGTH_LONG).show();
             return;
         }
-        setInfo(name + "\n" + NativeBridge.info(session) + "\n"
-                + routingSelfTest + "\n" + systemMimeDiag + "\n"
-                + lastProviderDiag + "\n" + lastIntentDiag);
+
         renderView.setSession(session);
+        uiState = ResourceUiState.fromCapabilities(NativeBridge.capabilities(session));
+        spatialHierarchyAvailable = NativeBridge.hierarchyAvailable(session);
+        applyResourceUiState();
+
+        final String inspection = NativeBridge.inspection(session);
+        final String nativeInfo = NativeBridge.info(session);
+
+        StringBuilder details = new StringBuilder();
+        details.append(name).append("\n\n");
+        details.append("STRUCTURE\n");
+        details.append(inspection == null || inspection.isEmpty()
+                ? "No typed inspection document.\n"
+                : inspection);
+        details.append("\nSESSION / EVIDENCE\n").append(nativeInfo).append("\n");
+        details.append("\nANDROID ROUTING DIAGNOSTICS\n")
+                .append(routingSelfTest).append("\n")
+                .append(systemMimeDiag).append("\n")
+                .append(lastProviderDiag).append("\n")
+                .append(lastIntentDiag);
+        setInfo(details.toString());
+        applyResourceUiState();
     }
 
     private String describeIntent(Intent intent) {
@@ -392,6 +477,9 @@ public final class MainActivity extends Activity {
 
     private void closeSession() {
         renderView.setSession(0);
+        uiState = ResourceUiState.empty();
+        spatialHierarchyAvailable = false;
+        applyResourceUiState();
         if (session != 0) {
             NativeBridge.close(session);
             session = 0;

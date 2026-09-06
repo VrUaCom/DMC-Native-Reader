@@ -75,12 +75,10 @@ struct Session {
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
 
-    // Static viewer render cache. Every renderable pipeline result is required
-    // to publish RenderScene geometry: canonical SCM/MOD do so directly, while
-    // legacy geometry modules are projected into an unbound scene primitive by
-    // decode_pipeline. World-space projection is therefore performed once at
-    // open(), never once per touch/rotation frame.
+    // Static viewer caches. World-space geometry and hierarchy positions are
+    // materialized once at open(), never once per touch/rotation frame.
     dmcresource::Mesh render_mesh;
+    dmcresource::HierarchyOverlay hierarchy_overlay;
 
     std::string detail;
     std::string trace;
@@ -141,6 +139,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     session->trace = dmcresource::pipeline_trace(pipeline);
     session->renderable = pipeline.renderable;
 
+    if (!dmcresource::materialize_hierarchy_overlay(
+            session->scene, &session->hierarchy_overlay)) {
+        session->hierarchy_overlay = {};
+        if (!session->detail.empty()) session->detail += "\n";
+        session->detail += "Hierarchy overlay rejected malformed node/matrix data";
+    }
+
     if (session->renderable) {
         if (!session->scene.has_geometry() ||
             !dmcresource::materialize_render_scene(session->scene,
@@ -180,6 +185,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     } else {
         out << " | preview=inspection";
     }
+    out << " | spatialHierarchy="
+        << (session->hierarchy_overlay.available() ? "yes" : "no");
     if (!session->detail.empty()) out << "\n" << session->detail;
     if (!session->trace.empty()) out << "\n" << session->trace;
     return env->NewStringUTF(out.str().c_str());
@@ -191,6 +198,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_capabilities(
     const Session* session = from_handle(handle);
     if (session == nullptr) return 0;
     return static_cast<jlong>(session->capabilities);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hierarchyAvailable(
+        JNIEnv*, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return JNI_FALSE;
+    return session->hierarchy_overlay.available() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -206,19 +221,28 @@ extern "C" JNIEXPORT jintArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_render(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
-        jboolean wireframe) {
+        jint render_flags) {
     const Session* session = from_handle(handle);
     if (session == nullptr || !session->renderable) return nullptr;
+
+    const auto flags = static_cast<dmcresource::RenderFlags>(
+        static_cast<std::uint32_t>(render_flags));
 
     dmcresource::ViewState view;
     view.yaw_radians = static_cast<float>(yaw);
     view.pitch_radians = std::clamp(static_cast<float>(pitch), -1.55f, 1.55f);
     view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
-    view.wireframe = wireframe == JNI_TRUE;
+    view.wireframe = dmcresource::has_render_flag(
+        flags, dmcresource::RenderFlag::Wireframe);
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
+    const auto* hierarchy =
+        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
+        session->hierarchy_overlay.available()
+            ? &session->hierarchy_overlay
+            : nullptr;
     const auto image = dmcresource::render_view(session->render_mesh,
-                                                width, height, view);
+                                                width, height, view, hierarchy);
     return image_to_argb(env, image);
 }
