@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <new>
 #include <sstream>
 #include <span>
@@ -297,6 +296,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
 
         std::size_t total_meshes = 0U;
         std::size_t total_vertices = 0U;
+        std::size_t total_triangles = 0U;
         std::size_t total_skin_failures = 0U;
 
         for (std::size_t object_index = 0U;
@@ -335,6 +335,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                         probe, module_id,
                         "MOD canonical projection rejected mesh topology/size limits");
                 }
+                total_triangles += primitive.mesh.indices.size() / 3U;
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());
@@ -368,25 +369,6 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
 
                 project_skin(source, primitive_index, &out.scene, &mesh_node);
                 object_node.children.push_back(std::move(mesh_node));
-
-                if (out.mesh.vertices.size() > kMaxVertices - primitive.mesh.vertices.size() ||
-                    out.mesh.indices.size() > kMaxIndices - primitive.mesh.indices.size()) {
-                    return module_support::reject(
-                        probe, module_id,
-                        "MOD canonical projection exceeds compatibility mesh limits");
-                }
-                const auto base = static_cast<std::uint32_t>(out.mesh.vertices.size());
-                out.mesh.vertices.insert(out.mesh.vertices.end(),
-                                         primitive.mesh.vertices.begin(),
-                                         primitive.mesh.vertices.end());
-                for (const auto index : primitive.mesh.indices) {
-                    if (index > std::numeric_limits<std::uint32_t>::max() - base) {
-                        return module_support::reject(
-                            probe, module_id,
-                            "MOD compatibility index overflow");
-                    }
-                    out.mesh.indices.push_back(base + index);
-                }
                 out.scene.meshes.push_back(std::move(primitive));
             }
             models.children.push_back(std::move(object_node));
@@ -407,13 +389,13 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
             out.inspection.root.children.push_back(std::move(diagnostics));
         }
 
-        out.renderable = !out.mesh.vertices.empty() && !out.mesh.indices.empty();
+        out.renderable = out.scene.has_geometry();
         std::ostringstream detail;
         detail << "MOD canonical C++20 reader"
                << " | objects=" << parsed.document.outer_models.size()
                << " meshes=" << total_meshes
                << " vertices=" << total_vertices
-               << " triangles=" << (out.mesh.indices.size() / 3U)
+               << " triangles=" << total_triangles
                << " nodes=" << out.scene.nodes.size()
                << " skinFailures=" << total_skin_failures
                << " diagnostics=" << parsed.diagnostics.size();
