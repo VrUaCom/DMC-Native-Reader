@@ -10,6 +10,7 @@
 
 #include "dmcresource/binary_reader.h"
 #include "dmcresource/formats/dds.h"
+#include "dmcresource/module_support.h"
 
 namespace dmcresource {
 namespace {
@@ -18,30 +19,6 @@ constexpr std::size_t kPtxHeaderBytes = 0x800U;
 constexpr std::size_t kPtxDescriptorBytes = 0x70U;
 constexpr std::size_t kSectorBytes = 0x800U;
 constexpr std::uint32_t kMaxTextureCount = 4096U;
-
-PipelineResult rejected(const ProbeResult& probe, const char* module_id,
-                        const char* reason) noexcept {
-    PipelineResult out;
-    out.probe = probe;
-    out.accepted = false;
-    out.renderable = false;
-    out.detail = reason;
-    out.modules.push_back({"identity-probe", true});
-    out.modules.push_back({"bounded-read-guard", true});
-    out.modules.push_back({module_id, false});
-    return out;
-}
-
-bool zero_range(const BinaryReader& reader, std::size_t begin,
-                std::size_t end) noexcept {
-    if (begin > end || end > reader.size()) return false;
-    const auto* p = reader.ptr(begin, end - begin);
-    if (p == nullptr && begin != end) return false;
-    for (std::size_t i = 0; i < end - begin; ++i) {
-        if (p[i] != 0U) return false;
-    }
-    return true;
-}
 
 InspectionNode dds_inspection_node(const formats::dds::Document& dds,
                                    std::string id,
@@ -72,14 +49,15 @@ PipelineResult run_dds(std::string_view,
                        const ProbeResult& probe,
                        const char* module_id) noexcept {
     if (bytes == nullptr) {
-        return rejected(probe, module_id, "DDS rejected: null input");
+        return module_support::reject(probe, module_id, "DDS rejected: null input");
     }
 
     const auto parsed = formats::dds::parse(
         std::span<const std::uint8_t>{bytes, size});
     if (!parsed.ok || parsed.document.total_size != size) {
-        return rejected(probe, module_id,
-                        "DDS rejected: expected a bounded complete DXT1/DXT5 full mip chain");
+        return module_support::reject(
+            probe, module_id,
+            "DDS rejected: expected a bounded complete DXT1/DXT5 full mip chain");
     }
 
     std::ostringstream detail;
@@ -101,15 +79,16 @@ PipelineResult run_ptx(std::string_view,
                        const char* module_id) noexcept {
     const BinaryReader reader(bytes, size);
     if (!reader.range(0U, kPtxHeaderBytes)) {
-        return rejected(probe, module_id,
-                        "PTX rejected: resource is shorter than the 0x800-byte bundle header");
+        return module_support::reject(
+            probe, module_id,
+            "PTX rejected: resource is shorter than the 0x800-byte bundle header");
     }
 
     std::uint32_t count = 0U;
     if (!reader.read_le(0U, &count) || count == 0U || count > kMaxTextureCount ||
         count > (kPtxHeaderBytes - 4U) / 4U) {
-        return rejected(probe, module_id,
-                        "PTX rejected: texture count is invalid");
+        return module_support::reject(probe, module_id,
+                                      "PTX rejected: texture count is invalid");
     }
 
     InspectionNode textures;
@@ -125,8 +104,8 @@ PipelineResult run_ptx(std::string_view,
     for (std::uint32_t index = 0U; index < count; ++index) {
         std::uint32_t sector_span = 0U;
         if (!reader.read_le(4U + static_cast<std::size_t>(index) * 4U, &sector_span)) {
-            return rejected(probe, module_id,
-                            "PTX rejected: sector-span table is truncated");
+            return module_support::reject(
+                probe, module_id, "PTX rejected: sector-span table is truncated");
         }
 
         const bool final = index + 1U == count;
@@ -134,37 +113,40 @@ PipelineResult run_ptx(std::string_view,
         if (!final || sector_span != 0U) {
             if (sector_span == 0U ||
                 sector_span > std::numeric_limits<std::size_t>::max() / kSectorBytes) {
-                return rejected(probe, module_id,
-                                "PTX rejected: invalid sector span");
+                return module_support::reject(probe, module_id,
+                                              "PTX rejected: invalid sector span");
             }
             const auto span_bytes = static_cast<std::size_t>(sector_span) * kSectorBytes;
             if (descriptor > size || span_bytes > size - descriptor) {
-                return rejected(probe, module_id,
-                                "PTX rejected: sector span leaves resource bounds");
+                return module_support::reject(
+                    probe, module_id, "PTX rejected: sector span leaves resource bounds");
             }
             bounded_end = descriptor + span_bytes;
             if (final && bounded_end != size) {
-                return rejected(probe, module_id,
-                                "PTX rejected: final sector span does not terminate at EOF");
+                return module_support::reject(
+                    probe, module_id,
+                    "PTX rejected: final sector span does not terminate at EOF");
             }
         }
 
         if (!reader.range(descriptor, kPtxDescriptorBytes)) {
-            return rejected(probe, module_id,
-                            "PTX rejected: descriptor is truncated");
+            return module_support::reject(probe, module_id,
+                                          "PTX rejected: descriptor is truncated");
         }
 
         const std::size_t dds_offset = descriptor + kPtxDescriptorBytes;
         if (dds_offset > bounded_end) {
-            return rejected(probe, module_id,
-                            "PTX rejected: descriptor DDS offset leaves bounded span");
+            return module_support::reject(
+                probe, module_id,
+                "PTX rejected: descriptor DDS offset leaves bounded span");
         }
 
         const auto dds = formats::dds::parse(std::span<const std::uint8_t>{
             bytes + dds_offset, bounded_end - dds_offset});
         if (!dds.ok) {
-            return rejected(probe, module_id,
-                            "PTX rejected: descriptor is not followed by a valid DXT1/DXT5 DDS");
+            return module_support::reject(
+                probe, module_id,
+                "PTX rejected: descriptor is not followed by a valid DXT1/DXT5 DDS");
         }
 
         std::uint32_t descriptor_payload = 0U;
@@ -173,23 +155,26 @@ PipelineResult run_ptx(std::string_view,
             !reader.read_le(descriptor + 0x64U, &descriptor_dds_size) ||
             descriptor_payload != dds.document.payload_size ||
             descriptor_dds_size != dds.document.total_size) {
-            return rejected(probe, module_id,
-                            "PTX rejected: descriptor DDS sizes disagree with mip payload");
+            return module_support::reject(
+                probe, module_id,
+                "PTX rejected: descriptor DDS sizes disagree with mip payload");
         }
 
         const std::size_t dds_end = dds_offset + dds.document.total_size;
         if (dds_end > bounded_end) {
-            return rejected(probe, module_id,
-                            "PTX rejected: DDS escapes its descriptor span");
+            return module_support::reject(probe, module_id,
+                                          "PTX rejected: DDS escapes its descriptor span");
         }
         if (final && sector_span == 0U) {
             if (dds_end != size) {
-                return rejected(probe, module_id,
-                                "PTX rejected: zero-span final DDS does not end at EOF");
+                return module_support::reject(
+                    probe, module_id,
+                    "PTX rejected: zero-span final DDS does not end at EOF");
             }
-        } else if (!zero_range(reader, dds_end, bounded_end)) {
-            return rejected(probe, module_id,
-                            "PTX rejected: alignment padding contains non-zero data");
+        } else if (!module_support::zero_range(reader, dds_end, bounded_end)) {
+            return module_support::reject(
+                probe, module_id,
+                "PTX rejected: alignment padding contains non-zero data");
         }
 
         total_dds_bytes += dds.document.total_size;
