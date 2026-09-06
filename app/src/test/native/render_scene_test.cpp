@@ -58,7 +58,7 @@ int main() {
     assert(near(materialized.vertices[1].x, 11.0F));
     assert(near(materialized.vertices[1].y, 20.0F));
 
-    // Unbound MOD-style primitive stays in local/model space.
+    // Unbound compatibility primitives stay in local/model space.
     assert(near(materialized.vertices[3].x, 0.0F));
     assert(near(materialized.vertices[3].y, 0.0F));
     assert(near(materialized.vertices[3].z, 2.0F));
@@ -98,7 +98,10 @@ int main() {
     Mesh rejected;
     assert(!materialize_render_scene(invalid, &rejected));
 
-    const auto image = render_view(scene, 64, 64, ViewState{});
+    // Rasterization consumes the cached materialized mesh. Scene projection is
+    // intentionally not hidden in render_view(), so touch frames do not repeat
+    // all world transforms and allocations.
+    const auto image = render_view(materialized, 64, 64, ViewState{});
     assert(image.width == 64);
     assert(image.height == 64);
     assert(image.pixels.size() == 64U * 64U * 4U);
