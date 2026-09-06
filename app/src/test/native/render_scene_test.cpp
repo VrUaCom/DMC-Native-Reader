@@ -27,6 +27,17 @@ dmcresource::Mesh triangle(float z = 0.0F) {
 int main() {
     using namespace dmcresource;
 
+    static_assert(render_flag(RenderFlag::Wireframe) == (1U << 0U));
+    static_assert(render_flag(RenderFlag::Hierarchy) == (1U << 1U));
+    static_assert(render_flag(RenderFlag::Bounds) == (1U << 2U));
+    static_assert(render_flag(RenderFlag::SkinDebug) == (1U << 3U));
+    static_assert(render_flag(RenderFlag::Normals) == (1U << 4U));
+    const RenderFlags combined_flags = render_flag(RenderFlag::Wireframe) |
+                                       render_flag(RenderFlag::Hierarchy);
+    assert(has_render_flag(combined_flags, RenderFlag::Wireframe));
+    assert(has_render_flag(combined_flags, RenderFlag::Hierarchy));
+    assert(!has_render_flag(combined_flags, RenderFlag::Bounds));
+
     RenderScene scene;
     RenderNode node;
     node.name = "translated";
