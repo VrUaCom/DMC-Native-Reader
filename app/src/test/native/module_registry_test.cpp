@@ -1,4 +1,5 @@
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/formats/dds.h"
 #include "dmcresource/native_module.h"
 #include "dmcresource/resource_capabilities.h"
 
@@ -7,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -78,8 +80,8 @@ int main() {
     const auto& hits_module = require_module("HITS", Format::Hits);
     const auto& txt_module = require_module("TXT", Format::StageTxt);
     require_module(".index", Format::Index);
-    require_module("DDS", Format::Dds);
-    require_module("PTX", Format::Ptx);
+    const auto& dds_module = require_module("DDS", Format::Dds);
+    const auto& ptx_module = require_module("PTX", Format::Ptx);
     require_module("DCA", Format::Dca);
     require_module("LIG", Format::Lig);
     require_module("LIG2", Format::Lig2);
@@ -106,6 +108,9 @@ int main() {
     assert(has_capability(hits_module.capabilities, ResourceCapability::Collision));
     assert(has_capability(hits_module.capabilities, ResourceCapability::Geometry));
     assert(has_capability(txt_module.capabilities, ResourceCapability::Text));
+    assert(has_capability(dds_module.capabilities, ResourceCapability::Inspection));
+    assert(has_capability(ptx_module.capabilities, ResourceCapability::Inspection));
+    assert(has_capability(ptx_module.capabilities, ResourceCapability::ChildResources));
 
     constexpr std::array<std::string_view, 55> recognition_families{
         "PE", "PACK", ".lst", "AFS namespace", ".ukn", ".bin",
@@ -123,20 +128,32 @@ int main() {
     assert(dmcresource::NativeModuleRegistry::find("UNMAPPED-FAMILY") == nullptr);
 
     const auto dds = make_dds();
+    const auto raw_dds = dmcresource::formats::dds::parse(
+        std::span<const std::uint8_t>{dds.data(), dds.size()});
+    assert(raw_dds.ok);
+    assert(raw_dds.document.width == 4u);
+    assert(raw_dds.document.height == 4u);
+    assert(raw_dds.document.mip_count == 3u);
+    assert(raw_dds.document.total_size == dds.size());
+
     const auto dds_result = run_decode_pipeline("sample.dds", dds.data(), dds.size());
     assert(dds_result.accepted);
     assert(!dds_result.renderable);
     assert(dds_result.probe.format == Format::Dds);
+    assert(has_capability(dds_result.capabilities, ResourceCapability::Inspection));
     assert(!dds_result.inspection.empty());
     assert(dds_result.inspection.format == "DDS");
-    assert(!dds_result.inspection.root.properties.empty());
+    assert(dds_result.inspection.root.properties.size() >= 5u);
 
     const auto ptx = make_ptx();
     const auto ptx_result = run_decode_pipeline("sample.ptx", ptx.data(), ptx.size());
     assert(ptx_result.accepted);
     assert(ptx_result.probe.format == Format::Ptx);
     assert(ptx_result.detail.find("textures=1") != std::string::npos);
+    assert(has_capability(ptx_result.capabilities, ResourceCapability::ChildResources));
     assert(!ptx_result.inspection.empty());
+    assert(ptx_result.inspection.root.children.size() == 1u);
+    assert(ptx_result.inspection.root.children[0].children.size() == 1u);
 
     std::vector<std::uint8_t> dca(0x10u + 0x410u, 0u);
     dca[0] = 'D'; dca[1] = 'C'; dca[2] = 'A'; dca[3] = 0;
