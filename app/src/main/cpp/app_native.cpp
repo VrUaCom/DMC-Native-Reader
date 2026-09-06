@@ -221,20 +221,25 @@ extern "C" JNIEXPORT jintArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_render(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
-        jboolean wireframe, jboolean show_hierarchy) {
+        jint render_flags) {
     const Session* session = from_handle(handle);
     if (session == nullptr || !session->renderable) return nullptr;
+
+    const auto flags = static_cast<dmcresource::RenderFlags>(
+        static_cast<std::uint32_t>(render_flags));
 
     dmcresource::ViewState view;
     view.yaw_radians = static_cast<float>(yaw);
     view.pitch_radians = std::clamp(static_cast<float>(pitch), -1.55f, 1.55f);
     view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
-    view.wireframe = wireframe == JNI_TRUE;
+    view.wireframe = dmcresource::has_render_flag(
+        flags, dmcresource::RenderFlag::Wireframe);
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
     const auto* hierarchy =
-        show_hierarchy == JNI_TRUE && session->hierarchy_overlay.available()
+        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
+        session->hierarchy_overlay.available()
             ? &session->hierarchy_overlay
             : nullptr;
     const auto image = dmcresource::render_view(session->render_mesh,
