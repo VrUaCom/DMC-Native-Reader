@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "feature/ui2-model-inspector"]
   workflow_dispatch:
 
 permissions:
@@ -49,6 +49,24 @@ jobs:
             test "$actual" = "$expected"
           }
 
+          # MOD structural base slice.
+          check_blob 43d721a9dd83d171184ecfabac6ca5d758ac2130 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/binary/reader.hpp
+          check_blob 63ff1b0eb6a05375eda16757425df9bcf41eff9e app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp
+          check_blob 2c66b7b38462bea096046404e39e1146a8c0d187 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/diagnostic.hpp
+          check_blob 805bda2d8dc80d4ce3b9b04fbe587930a834eeaa app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/model_mesh_core.hpp
+          check_blob d4ba6cb33ff7cd3d8da067fe0263f5f56c74ca46 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod_skin.hpp
+          check_blob 69d711a9f09465861a08a50252b9c00436943b21 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
+          check_blob 839a87727eee7c1493eaad8bdf579d25354b6be1 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod.hpp
+          check_blob 596e2b01cd03eeeafe4111282c204473860cf296 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp
+
+          # MOD spatial hierarchy slice from mod-skin-reverse@cb30171e.
+          check_blob cecae752b294913bca74631dd59df5baf68972f3 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/model_node_domain_core.hpp
+          check_blob 9555c23d3caed786ae7837941d50e5a0d0d8dc3f app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod/transform_domain.hpp
+          check_blob 8d7be95f41d1694045d28d6b9cfdcae5f08f543b app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+          check_blob 35c222143536e48349b56fc1f3d6aec1fd0d5c5d app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod/world_transform.hpp
+          check_blob fabb723bb7b4d8c1ee5795a6c51f32c5f1fa7ad3 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
+
+          # SCM structural/read-side slice.
           check_blob 9ae5b8575b66080f0a8925c59a615bf8c96c5219 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm.hpp
           check_blob 0c497ded59816a16f7d8d2240ef595995904637c app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_render.hpp
           check_blob f9bde16aa3275d48d7d31d7a57b6244c259e6077 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_resource_code.hpp
@@ -90,6 +108,7 @@ jobs:
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
@@ -99,6 +118,22 @@ jobs:
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
             -o /tmp/dmc-native-module-test
           /tmp/dmc-native-module-test
+
+      - name: Build and run MOD spatial adapter regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
+            app/src/test/native/mod_spatial_adapter_test.cpp \
+            app/src/main/cpp/adapters/mod_adapter.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
+            -o /tmp/dmc-mod-spatial-adapter-test
+          /tmp/dmc-mod-spatial-adapter-test
 
       - name: Build and run capability UI policy regression
         run: |
@@ -124,7 +159,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify production Native Reader v1.1.0 UI2 debug build
+      - name: Verify Native Reader v1.1.1 UI2 MOD spatial debug build
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -136,8 +171,8 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='12'" /tmp/badging.txt
-          grep -q "versionName='1.1.0-debug-ui2'" /tmp/badging.txt
+          grep -q "versionCode='13'" /tmp/badging.txt
+          grep -q "versionName='1.1.1-debug-ui2-modspatial'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -158,6 +193,7 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.scene-hierarchy'
           strings /tmp/libdmcviewer.so | grep -q 'formats.mod.mesh-reader'
           strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.structural-parser'
+          strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.spatial-hierarchy'
           strings /tmp/libdmcviewer.so | grep -q 'formats.hits.collision-reader'
           strings /tmp/libdmcviewer.so | grep -q 'formats.stage-txt.lexer'
           strings /tmp/libdmcviewer.so | grep -q 'formats.dds.dmc3-reader'
@@ -195,14 +231,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.0-debug-ui2
+          name: dmc-native-reader-v1.1.1-debug-ui2-modspatial
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.0-debug-ui2-evidence
+          name: dmc-native-reader-v1.1.1-debug-ui2-modspatial-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
