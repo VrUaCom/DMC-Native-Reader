@@ -1,5 +1,6 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/native_module.h"
+#include "dmcresource/resource_capabilities.h"
 
 #include <array>
 #include <cassert>
@@ -8,6 +9,9 @@
 #include <cstring>
 #include <string_view>
 #include <vector>
+
+static_assert(__cplusplus >= 202002L,
+              "Native Reader architecture v2 requires C++20");
 
 namespace {
 
@@ -43,11 +47,13 @@ std::vector<std::uint8_t> make_ptx() {
     return bytes;
 }
 
-void require_module(std::string_view family, dmcresource::Format format) {
+const dmcresource::NativeModule& require_module(std::string_view family,
+                                                dmcresource::Format format) {
     const auto* module = dmcresource::NativeModuleRegistry::find(family);
     assert(module != nullptr);
     assert(module->run != nullptr);
     assert(module->format == format);
+    return *module;
 }
 
 void require_recognition(std::string_view family) {
@@ -63,12 +69,14 @@ void require_recognition(std::string_view family) {
 
 int main() {
     using dmcresource::Format;
+    using dmcresource::ResourceCapability;
+    using dmcresource::has_capability;
     using dmcresource::run_decode_pipeline;
 
-    require_module("SCM", Format::Scm);
-    require_module("MOD", Format::Mod);
-    require_module("HITS", Format::Hits);
-    require_module("TXT", Format::StageTxt);
+    const auto& scm_module = require_module("SCM", Format::Scm);
+    const auto& mod_module = require_module("MOD", Format::Mod);
+    const auto& hits_module = require_module("HITS", Format::Hits);
+    const auto& txt_module = require_module("TXT", Format::StageTxt);
     require_module(".index", Format::Index);
     require_module("DDS", Format::Dds);
     require_module("PTX", Format::Ptx);
@@ -81,6 +89,23 @@ int main() {
     require_module("EFM", Format::Efm);
     require_module("MRP", Format::Mrp);
     require_module("SHW", Format::Shw);
+
+    assert(has_capability(scm_module.capabilities, ResourceCapability::Inspection));
+    assert(has_capability(scm_module.capabilities, ResourceCapability::Geometry));
+    assert(has_capability(scm_module.capabilities, ResourceCapability::NodeHierarchy));
+    assert(has_capability(scm_module.capabilities, ResourceCapability::TextureBinding));
+    assert(!has_capability(scm_module.capabilities, ResourceCapability::SkeletalSkinning));
+
+    assert(has_capability(mod_module.capabilities, ResourceCapability::Inspection));
+    assert(has_capability(mod_module.capabilities, ResourceCapability::Geometry));
+    assert(has_capability(mod_module.capabilities, ResourceCapability::NodeHierarchy));
+    assert(has_capability(mod_module.capabilities, ResourceCapability::SkeletalSkinning));
+    assert(has_capability(mod_module.capabilities, ResourceCapability::SkinWeights));
+    assert(has_capability(mod_module.capabilities, ResourceCapability::TextureBinding));
+
+    assert(has_capability(hits_module.capabilities, ResourceCapability::Collision));
+    assert(has_capability(hits_module.capabilities, ResourceCapability::Geometry));
+    assert(has_capability(txt_module.capabilities, ResourceCapability::Text));
 
     constexpr std::array<std::string_view, 55> recognition_families{
         "PE", "PACK", ".lst", "AFS namespace", ".ukn", ".bin",
@@ -102,12 +127,16 @@ int main() {
     assert(dds_result.accepted);
     assert(!dds_result.renderable);
     assert(dds_result.probe.format == Format::Dds);
+    assert(!dds_result.inspection.empty());
+    assert(dds_result.inspection.format == "DDS");
+    assert(!dds_result.inspection.root.properties.empty());
 
     const auto ptx = make_ptx();
     const auto ptx_result = run_decode_pipeline("sample.ptx", ptx.data(), ptx.size());
     assert(ptx_result.accepted);
     assert(ptx_result.probe.format == Format::Ptx);
     assert(ptx_result.detail.find("textures=1") != std::string::npos);
+    assert(!ptx_result.inspection.empty());
 
     std::vector<std::uint8_t> dca(0x10u + 0x410u, 0u);
     dca[0] = 'D'; dca[1] = 'C'; dca[2] = 'A'; dca[3] = 0;
@@ -128,6 +157,7 @@ int main() {
         sizeof(stage_text) - 1u);
     assert(txt_result.accepted);
     assert(txt_result.probe.format == Format::StageTxt);
+    assert(has_capability(txt_result.capabilities, ResourceCapability::Text));
 
     const char index_text[] = "PNST\nfoo.mod\ndummy\n";
     const auto index_result = run_decode_pipeline(
