@@ -42,6 +42,7 @@ int main() {
     RenderScene scene;
     RenderNode node;
     node.name = "translated";
+    node.spatial_authority = true;
     node.world.values[12] = 10.0F;
     node.world.values[13] = 20.0F;
     node.world.values[14] = 30.0F;
@@ -105,8 +106,8 @@ int main() {
     assert(near(rotated_mesh.vertices[0].y, 7.0F));
     assert(near(rotated_mesh.vertices[0].z, 7.0F));
 
-    // Spatial hierarchy is a separate reusable projection. A translated root
-    // is enough to make an overlay useful even without parent-child edges.
+    // Spatial hierarchy availability is explicit authority, not inferred from
+    // non-zero coordinates. A translated authoritative root is available.
     HierarchyOverlay hierarchy;
     assert(materialize_hierarchy_overlay(scene, &hierarchy));
     assert(hierarchy.available());
@@ -118,9 +119,11 @@ int main() {
 
     RenderScene tree;
     RenderNode root;
+    root.spatial_authority = true;
     root.world.values[12] = 1.0F;
     tree.nodes.push_back(root);
     RenderNode child;
+    child.spatial_authority = true;
     child.parent = 0;
     child.world.values[12] = 4.0F;
     child.world.values[13] = 2.0F;
@@ -133,9 +136,24 @@ int main() {
     assert(tree_overlay.edges[0].parent == 0U);
     assert(tree_overlay.edges[0].child == 1U);
 
+    // A canonical node is still spatially authoritative at the exact origin.
+    // Zero translation must never be treated as evidence that transforms are
+    // unavailable.
+    RenderScene origin_scene;
+    RenderNode origin_root;
+    origin_root.kind = RenderNodeKind::Bone;
+    origin_root.spatial_authority = true;
+    origin_scene.nodes.push_back(origin_root);
+    HierarchyOverlay origin_overlay;
+    assert(materialize_hierarchy_overlay(origin_scene, &origin_overlay));
+    assert(origin_overlay.available());
+    assert(origin_overlay.points.size() == 1U);
+    assert(near(origin_overlay.points[0].x, 0.0F));
+    assert(near(origin_overlay.points[0].y, 0.0F));
+    assert(near(origin_overlay.points[0].z, 0.0F));
+
     // Hierarchy metadata without decoded spatial transforms is accepted but is
-    // not advertised to the UI as a 3D overlay. This is the current safe MOD
-    // behavior until canonical MOD transform records are promoted.
+    // not advertised to the UI as a 3D overlay.
     RenderScene non_spatial;
     RenderNode identity_root;
     identity_root.kind = RenderNodeKind::Bone;
@@ -155,10 +173,12 @@ int main() {
 
     RenderScene cyclic_hierarchy;
     RenderNode cycle_a;
+    cycle_a.spatial_authority = true;
     cycle_a.parent = 1;
     cycle_a.world.values[12] = 1.0F;
     cyclic_hierarchy.nodes.push_back(cycle_a);
     RenderNode cycle_b;
+    cycle_b.spatial_authority = true;
     cycle_b.parent = 0;
     cycle_b.world.values[12] = 2.0F;
     cyclic_hierarchy.nodes.push_back(cycle_b);
