@@ -136,7 +136,8 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
     }
 }
 
-RgbaImage render_view(const Mesh& mesh, int width, int height, const ViewState& view) {
+RgbaImage render_view(const Mesh& mesh, int width, int height,
+                      const ViewState& view) {
     RgbaImage image;
     image.width = std::clamp(width, 1, 2048);
     image.height = std::clamp(height, 1, 2048);
@@ -210,15 +211,6 @@ RgbaImage render_view(const Mesh& mesh, int width, int height, const ViewState& 
         }
     }
     return image;
-}
-
-RgbaImage render_view(const RenderScene& scene, int width, int height,
-                      const ViewState& view) {
-    Mesh materialized;
-    if (!materialize_render_scene(scene, &materialized)) {
-        return render_view(Mesh{}, width, height, view);
-    }
-    return render_view(materialized, width, height, view);
 }
 
 }  // namespace dmcresource
