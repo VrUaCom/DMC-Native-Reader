@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -151,6 +152,24 @@ int main() {
     malformed_hierarchy.nodes[1].parent = 99;
     HierarchyOverlay rejected_hierarchy;
     assert(!materialize_hierarchy_overlay(malformed_hierarchy, &rejected_hierarchy));
+
+    RenderScene cyclic_hierarchy;
+    RenderNode cycle_a;
+    cycle_a.parent = 1;
+    cycle_a.world.values[12] = 1.0F;
+    cyclic_hierarchy.nodes.push_back(cycle_a);
+    RenderNode cycle_b;
+    cycle_b.parent = 0;
+    cycle_b.world.values[12] = 2.0F;
+    cyclic_hierarchy.nodes.push_back(cycle_b);
+    HierarchyOverlay rejected_cycle;
+    assert(!materialize_hierarchy_overlay(cyclic_hierarchy, &rejected_cycle));
+
+    RenderScene nan_hierarchy = tree;
+    nan_hierarchy.nodes[1].world.values[12] =
+        std::numeric_limits<float>::quiet_NaN();
+    HierarchyOverlay rejected_nan;
+    assert(!materialize_hierarchy_overlay(nan_hierarchy, &rejected_nan));
 
     RenderScene invalid = scene;
     invalid.meshes[0].node_index = 99;
