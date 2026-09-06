@@ -47,7 +47,7 @@ using ParseSeverity = dmc::rengine::formats::ParseSeverity;
 
 [[nodiscard]] Vec3 normalize(Vec3 v) noexcept {
     const float len2 = dot(v, v);
-    if (!std::isfinite(len2) || len2 <= 1.0e-20F) return {};
+    if (!std::isfinite(len2) || len2 <= 1.0e-12F) return {};
     const float inv = 1.0F / std::sqrt(len2);
     return {v.x * inv, v.y * inv, v.z * inv};
 }
