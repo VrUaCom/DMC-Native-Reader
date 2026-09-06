@@ -28,10 +28,6 @@ struct DecodeResult {
     std::string text{};
 };
 
-// Format-specific backends are invoked only by their registered modules.
-DecodeResult decode_scm(const std::uint8_t* bytes, std::size_t size) noexcept;
-DecodeResult decode_mod(const std::uint8_t* bytes, std::size_t size) noexcept;
-
 const char* decode_status_name(DecodeStatus status) noexcept;
 
 }  // namespace dmcresource
