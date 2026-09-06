@@ -113,7 +113,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify production Native Reader v1.0.2 UI2 debug build
+      - name: Verify production Native Reader v1.1.0 UI2 debug build
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -126,7 +126,7 @@ jobs:
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
           grep -q "versionCode='12'" /tmp/badging.txt
-          grep -q "versionName='1.0.2-debug-ui2'" /tmp/badging.txt
+          grep -q "versionName='1.1.0-debug-ui2'" /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -184,14 +184,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0.2-debug-ui2
+          name: dmc-native-reader-v1.1.0-debug-ui2
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0.2-debug-ui2-evidence
+          name: dmc-native-reader-v1.1.0-debug-ui2-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
