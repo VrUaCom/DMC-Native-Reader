@@ -50,6 +50,7 @@ jobs:
             app/src/main/cpp/decode_hits.cpp \
             app/src/main/cpp/decode_text.cpp \
             app/src/main/cpp/decode_pipeline.cpp \
+            app/src/main/cpp/inspection_format.cpp \
             app/src/main/cpp/formats/dds.cpp \
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_catalog.cpp \
