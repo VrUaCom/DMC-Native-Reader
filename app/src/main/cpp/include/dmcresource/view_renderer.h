@@ -12,14 +12,15 @@ struct ViewState {
     bool wireframe{false};
 };
 
-// Materialize local-space scene primitives into one world-space mesh using the
-// explicit MeshPrimitive -> RenderNode binding. Unbound primitives remain in
-// local space. Returns false for malformed bindings/matrices or size overflow.
+// Materialize local-space scene primitives into one world-space render mesh
+// using the explicit MeshPrimitive -> RenderNode binding. Unbound primitives
+// remain in local space. Call once when opening a static resource and cache the
+// result; the rasterizer deliberately does not hide scene materialization per
+// frame. Returns false for malformed bindings/matrices or size overflow.
 [[nodiscard]] bool materialize_render_scene(const RenderScene& scene,
                                             Mesh* out) noexcept;
 
-RgbaImage render_view(const Mesh& mesh, int width, int height, const ViewState& view);
-RgbaImage render_view(const RenderScene& scene, int width, int height,
+RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view);
 
 }  // namespace dmcresource
