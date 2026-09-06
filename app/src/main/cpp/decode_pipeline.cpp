@@ -1,7 +1,9 @@
 #include "dmcresource/decode_pipeline.h"
 
 #include <sstream>
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include "dmcresource/native_module.h"
 
@@ -20,6 +22,39 @@ namespace {
         if (value != extension[i]) return false;
     }
     return true;
+}
+
+void project_legacy_mesh_once(PipelineResult& result) {
+    if (!result.renderable || !result.scene.meshes.empty() ||
+        result.mesh.vertices.empty() || result.mesh.indices.empty()) {
+        return;
+    }
+
+    MeshPrimitive primitive;
+    primitive.name = result.probe.family != nullptr
+        ? std::string{result.probe.family}
+        : std::string{"resource"};
+    primitive.mesh = result.mesh;
+    result.scene.meshes.push_back(std::move(primitive));
+}
+
+void ensure_minimal_inspection(PipelineResult& result) {
+    if (!result.inspection.empty()) return;
+
+    const std::string family = result.probe.family != nullptr
+        ? std::string{result.probe.family}
+        : std::string{"Unknown"};
+    result.inspection.format = family;
+    result.inspection.root.id = "resource";
+    result.inspection.root.title = family;
+    result.inspection.root.kind = InspectionKind::Document;
+    if (!result.detail.empty()) {
+        result.inspection.root.properties.push_back({
+            "Summary",
+            result.detail,
+            result.accepted ? EvidenceLevel::Recognized : EvidenceLevel::Unknown,
+        });
+    }
 }
 
 }  // namespace
@@ -58,7 +93,19 @@ PipelineResult run_decode_pipeline(std::string_view filename,
     if (module->format != Format::Unknown) {
         authoritative_probe.format = module->format;
     }
-    return module->run(*module, filename, bytes, size, authoritative_probe);
+
+    auto result = module->run(*module, filename, bytes, size, authoritative_probe);
+    result.capabilities = module->capabilities;
+
+    // Transitional v2 adapter: existing renderable modules still publish the
+    // v1 flattened Mesh. Project it exactly once into the reusable RenderScene
+    // so UI/render modules can migrate without reparsing format bytes.
+    project_legacy_mesh_once(result);
+
+    // Every accepted module can be inspected immediately. Format-specific
+    // adapters replace this minimal root with a typed tree as they migrate.
+    ensure_minimal_inspection(result);
+    return result;
 }
 
 std::string pipeline_trace(const PipelineResult& result) {
