@@ -2,10 +2,10 @@
 
 Native Android reader/viewer for Devil May Cry resource files. This repository is the Android product. `VrUaCom/dmc-rengine-cpp` remains the canonical reverse/evidence source for DMC3 HD format semantics.
 
-## Current milestone — v9 explicit family modules
+## Current milestone — v1 debug baseline
 
-- versionCode: `9`
-- versionName: `0.9.0-explicit-family-modules`
+- versionCode: `10`
+- versionName: `1.0.0-debug-baseline`
 - applicationId: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
 - Android compile/target SDK: `36`
@@ -13,7 +13,9 @@ Native Android reader/viewer for Devil May Cry resource files. This repository i
 - NDK: `28.2.13676358`
 - CMake: `3.22.1`
 
-The package id and canonical development signer remain unchanged, so v9 is intended to install as an update over v8.
+This milestone marks the end of the initial architecture/build-out phase and the start of the device debug and corpus-validation phase. It is intentionally a debug baseline, not a claim that every recognized DMC family is semantically complete.
+
+See `docs/V1_BASELINE.md` for the fixed milestone contract and device-test frontier.
 
 ## Architecture
 
@@ -38,26 +40,30 @@ The runner receives its owning module contract, which lets multiple families sha
 
 The current catalog contains **71 unique recognized families** and the registry contains **71 explicit module contracts**.
 
-### Promoted readers
+### Core v1 modding readers
 
-These families have dedicated semantic/structural readers:
+These are the primary readers that define the v1 architecture milestone:
 
 - SCM — corpus-backed mesh reader + scene transform adapter;
 - MOD — corpus-backed mesh reader + model adapter;
-- HITS — collision mesh reader;
-- TXT — stage text lexer;
-- `.index` — textual manifest reader;
 - DDS — bounded DXT1/DXT5 full-mip validation;
-- PTX — bundle reader with bounded DDS child validation;
-- DCA — `0x10` header + `0x410` record envelope;
-- LIG / LIG2 — bounded lighting record envelopes;
-- PAC / PNST — relative-slot container inspection;
-- NBZ — top-level volume inspection boundary;
-- EFM / MRP / SHW — explicit evidence-gated partial family adapters.
+- PTX — texture bundle reader with bounded DDS child validation;
+- TXT — stage text lexer / bounded structural text reading;
+- `.index` — textual manifest reader.
+
+Additional promoted product readers include HITS, DCA, LIG/LIG2, PAC, PNST and NBZ inspection boundaries.
+
+### Partial/evidence-gated family adapters
+
+- EFM — explicit family adapter; exact vertex/material/topology binding remains open;
+- MRP — explicit family adapter; exact record schema/downstream owner remains open;
+- SHW — explicit family adapter; strong reverse/corpus evidence exists, but the guarded semantic reader is not yet closed in this product baseline.
+
+`SO` is not claimed as a completed Native Reader semantic module in v1 and remains outside the closed reader set until its product parser contract is promoted with sufficient evidence.
 
 ### Recognition-only modules
 
-The remaining 55 known families have explicit `Recognition` modules rather than falling through a wildcard. They open as inspection sessions, preserve the catalog evidence/support metadata, and expose the semantic decoder as `[TODO]` instead of fabricating a schema.
+The remaining known families have explicit `Recognition` modules rather than falling through a wildcard. They open as inspection sessions, preserve the catalog evidence/support metadata, and expose the semantic decoder as `[TODO]` instead of fabricating a schema.
 
 Representative families include PACK, AFS namespace, TIM2, PTZ, SEF/EFE/EFW, MOT variants, MCV, CAM, HID variants, TSC, stage placement families, audio/bank families, media-capability families, saves, legacy UI resources, EventTbl and SPUMAPDT.
 
@@ -97,7 +103,7 @@ GitHub Actions verifies:
 5. representative recognition-only module traces;
 6. Android NDK/ARM64 build;
 7. APK ZIP/classes/native-library integrity;
-8. application id and versionCode/versionName;
+8. application id and v1 versionCode/versionName;
 9. compiled explicit module ids in `libdmcviewer.so`;
 10. absence of `formats.generic.structural-inspector`;
 11. canonical development signer;
