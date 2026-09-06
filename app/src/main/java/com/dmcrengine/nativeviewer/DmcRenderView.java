@@ -18,6 +18,7 @@ public final class DmcRenderView extends View {
     private float pitch = -0.45f;
     private float zoom = 1.0f;
     private boolean wireframe;
+    private boolean hierarchy;
     private float lastX;
     private float lastY;
     private long lastRenderMs;
@@ -38,8 +39,9 @@ public final class DmcRenderView extends View {
 
     public void setSession(long newSession) {
         session = newSession;
-        // A structural/non-mesh session intentionally renders no bitmap.  Clear
-        // any previous SCM/MOD frame before asking native code for a new one.
+        hierarchy = false;
+        // A structural/non-mesh session intentionally renders no bitmap. Clear
+        // any previous frame before asking native code for a new one.
         bitmap = null;
         invalidate();
         if (session == 0) return;
@@ -59,6 +61,18 @@ public final class DmcRenderView extends View {
     }
 
     public boolean isWireframe() { return wireframe; }
+
+    public void toggleHierarchy() {
+        hierarchy = !hierarchy;
+        renderNow();
+    }
+
+    public void setHierarchyVisible(boolean visible) {
+        hierarchy = visible;
+        renderNow();
+    }
+
+    public boolean isHierarchyVisible() { return hierarchy; }
 
     private int renderWidth() {
         int w = Math.max(64, getWidth());
@@ -82,7 +96,8 @@ public final class DmcRenderView extends View {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return;
         int rw = renderWidth();
         int rh = renderHeight();
-        int[] pixels = NativeBridge.render(session, rw, rh, yaw, pitch, zoom, wireframe);
+        int[] pixels = NativeBridge.render(session, rw, rh, yaw, pitch, zoom,
+                wireframe, hierarchy);
         if (pixels == null || pixels.length != rw * rh) {
             bitmap = null;
             invalidate();
