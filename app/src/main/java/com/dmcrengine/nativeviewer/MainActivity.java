@@ -155,9 +155,6 @@ public final class MainActivity extends Activity {
                 hierarchyAvailable,
                 renderView.isHierarchyVisible());
 
-        // When there is no accepted resource, keep Info available for routing or
-        // rejection diagnostics. For accepted resources the policy comes from
-        // the native Inspection capability.
         setToolAvailable(infoButton,
                 hasSession ? uiState.canInspect : !infoText.isEmpty());
     }
