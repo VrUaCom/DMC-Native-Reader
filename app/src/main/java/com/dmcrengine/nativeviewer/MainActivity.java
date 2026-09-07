@@ -51,6 +51,7 @@ public final class MainActivity extends Activity {
     private DmcRenderView renderView;
     private ChildResourceBrowserView childBrowser;
     private TextView titleView;
+    private Button parentButton;
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
@@ -140,6 +141,7 @@ public final class MainActivity extends Activity {
         final boolean hasSession = session != 0;
         applyPrimaryPresentation();
 
+        parentButton.setVisibility(navigation.isEmpty() ? View.GONE : View.VISIBLE);
         setToolAvailable(resetButton, hasSession && uiState.canRender);
         syncToggleButton(wireButton,
                 hasSession && uiState.canWireframe,
@@ -191,14 +193,27 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(0xff0b0b0e);
         applySystemBarInsets(root);
 
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        parentButton = makeSquareButton("←", "Back to parent resource", 28f);
+        parentButton.setVisibility(View.GONE);
+        parentButton.setOnClickListener(v -> navigateToParent());
+        header.addView(parentButton, new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+
         titleView = new TextView(this);
         titleView.setTextColor(Color.WHITE);
         titleView.setTextSize(15f);
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
-        titleView.setPadding(dp(16), dp(8), dp(16), dp(6));
+        titleView.setPadding(dp(12), dp(8), dp(16), dp(6));
         titleView.setText("DMC Native Reader");
-        root.addView(titleView, new LinearLayout.LayoutParams(
+        header.addView(titleView, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        root.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -476,17 +491,21 @@ public final class MainActivity extends Activity {
         activateSession(child, childTitle);
     }
 
-    @Override public void onBackPressed() {
-        if (!navigation.isEmpty()) {
-            final long child = session;
-            renderView.setSession(0);
-            childBrowser.setSession(0);
-            if (child != 0) NativeBridge.close(child);
+    private boolean navigateToParent() {
+        if (navigation.isEmpty()) return false;
 
-            NavigationEntry parent = navigation.pop();
-            activateSession(parent.session, parent.title);
-            return;
-        }
+        final long child = session;
+        renderView.setSession(0);
+        childBrowser.setSession(0);
+        if (child != 0) NativeBridge.close(child);
+
+        NavigationEntry parent = navigation.pop();
+        activateSession(parent.session, parent.title);
+        return true;
+    }
+
+    @Override public void onBackPressed() {
+        if (navigateToParent()) return;
         super.onBackPressed();
     }
 
