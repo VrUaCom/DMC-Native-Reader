@@ -59,7 +59,10 @@ The CI artifact is unsigned by design. A signed/App Store/TestFlight distributio
 The Windows shell lives under `windows/` and is deliberately dependency-light:
 
 - native Win32 application;
-- x64 build via CMake + Visual Studio C++ tools;
+- ordinary x64 build via CMake + MSVC on Windows;
+- CI-capable x86-64 cross-build via MinGW on `ubuntu-latest`;
+- Unicode `wWinMain` entry point with the MinGW `-municode` startup path;
+- self-contained MinGW preview linking where supported;
 - File > Open and drag-and-drop;
 - CPU render output for MOD/SCM;
 - DDS image preview;
@@ -77,13 +80,18 @@ The moving preview release tag is intended to be:
 
 ## Platform CI
 
-`.github/workflows/platform-previews.yml` builds both preview shells independently:
+`.github/workflows/platform-previews.yml` is designed to prove the shells independently:
 
-1. macOS runner -> XcodeGen -> unsigned iOS build -> IPA artifact;
-2. Windows runner -> CMake/MSVC -> x64 EXE -> ZIP artifact;
-3. optional owner-triggered publish stage updates the retained iOS preview release and creates/updates the Windows preview release.
+1. trivial `ubuntu-latest` runner probe;
+2. macOS runner -> XcodeGen -> unsigned iOS build -> IPA artifact;
+3. Ubuntu runner -> MinGW x86-64 -> Windows EXE -> ZIP artifact;
+4. optional owner-triggered publish stage updates the retained iOS preview release and creates/updates the Windows preview release.
 
-Publishing is permitted only after both platform jobs pass. This prevents the historical iOS release from being relabeled without a replacement binary.
+The Ubuntu probe is intentional: if it cannot execute even one `echo`, the failure is outside source compilation and platform build results must not be inferred from the run.
+
+At the time of this public-prep pass, the current Actions attempts fail before any job step executes, including the Ubuntu probe. See [`CI_RUNNER_BLOCKER.md`](CI_RUNNER_BLOCKER.md). Publishing therefore remains disabled until GitHub actually executes the build jobs.
+
+Publishing is permitted only after both platform builds pass. This prevents the historical iOS release from being relabeled without a replacement binary and prevents a Windows release from being created without a real executable.
 
 ## Acceptance before calling a platform stable
 
