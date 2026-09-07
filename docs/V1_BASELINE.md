@@ -1,20 +1,20 @@
-# DMC Native Reader v1 — Clean Baseline
+# DMC Native Reader v1 — Stable Baseline
 
-**Build:** `1.0.0-core-cleanup`  
-**versionCode:** `19`  
+**Release:** `1.0.0`  
+**versionCode:** `20`  
 **Production branch:** `main`  
-**Archive/backlog branch:** `main.2` — до опрацювання
+**Frozen baseline ref:** `baseline/v1.0.0`
 
 ## Baseline decision
 
-The v1 baseline is deliberately narrow. It contains only four promoted format families:
+The v1 production baseline is deliberately narrow. It contains exactly four promoted format families:
 
 - MOD;
 - SCM;
 - DDS;
 - PTX.
 
-This is a structural decision, not a claim that other DMC3 formats do not matter. Other readers were removed from `main` because their current implementation did not meet the same Architecture v2/canonical-authority standard. Their old state is preserved on `main.2`.
+This is an architecture/evidence decision, not a claim that other DMC3 formats are unimportant. Earlier experimental readers are not part of the supported v1 product surface until they meet the same Architecture v2 and canonical-authority standard.
 
 ## Required architecture
 
@@ -28,20 +28,20 @@ resource bytes
   -> capability-driven Android UI
 ```
 
-Forbidden in the v1 main baseline:
+Forbidden in the v1 production baseline:
 
 - wildcard format dispatcher;
-- broad recognition-only registry;
-- Java format parsers;
+- broad recognition-only fallback;
+- Java-owned MOD/SCM format parsers;
 - renderer-owned binary parsers;
-- legacy `DecodeResult -> Mesh -> RenderScene` bridge;
+- legacy `DecodeResult -> Mesh -> RenderScene` compatibility bridge;
 - archived HITS/TXT/DCA/PAC/PNST/etc. module translation units in the main build.
 
 ## Accepted format contracts
 
 ### MOD
 
-Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into geometry, hierarchy, skin/weight and texture-slot presentation contracts.
+Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into geometry, hierarchy/spatial state, skin/weight inspection and texture-slot presentation contracts where supported by canonical authority.
 
 ### SCM
 
@@ -49,38 +49,53 @@ Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into scene hi
 
 ### DDS
 
-Bounded DMC3 DXT1/DXT5 reader with strict mip/payload validation and generic RGBA image preview.
+Bounded DMC3 DXT1/DXT5 reader with strict mip/payload validation and generic image preview.
 
 ### PTX
 
 Bounded texture-bundle reader with descriptor validation and generic DDS child resources. Child previews and parent navigation use the same generic session/UI contracts as top-level resources.
 
-## Completion gate
+## Release acceptance gate
 
-A v1 core candidate is acceptable only when CI proves:
+The accepted v1.0.0 candidate proved:
 
 1. registry size is exactly four;
 2. MOD/SCM/DDS/PTX modules are present;
-3. removed families do not resolve to modules;
-4. MOD and SCM execute end-to-end through the pipeline and publish valid `RenderScene`/inspection state;
+3. retired families do not resolve to modules;
+4. MOD and SCM execute end-to-end through the pipeline and publish valid render/inspection state;
 5. DDS accepts valid DXT1/DXT5 and rejects malformed/overflow cases;
-6. PTX validates children, bounds and padding and publishes a generic DDS child preview;
-7. no archived source path is present in the main build tree;
+6. PTX validates children, bounds and padding and publishes generic DDS child resources;
+7. archived source paths are absent from the production build tree;
 8. Android UI policy remains capability-driven;
 9. ARM64 APK builds and contains the four expected module IDs;
-10. archived module IDs are absent from `libdmcviewer.so`;
+10. retired module IDs are absent from `libdmcviewer.so`;
 11. explicit DMC MIME exposure is limited to MOD, SCM, DDS and PTX;
-12. debug signing remains test-only and release output remains unsigned until production authority is provisioned.
+12. package/version identity is `com.dmcrengine.nativereader` / `1.0.0` / `20`;
+13. the production APK is signed by the dedicated production authority;
+14. release APK SHA-256 and signing evidence are recorded.
+
+## Production trust
+
+Pinned production certificate SHA-256:
+
+`2d82bd3e77b2c1882d3f8143fe8760fc4c834aa65fc5e7b1b12082afcb7718d1`
+
+v1.0.0 APK SHA-256:
+
+`a81ef5555ecc67e0213d2f1f6baa351609a659c5898ba8f71f81d2fc2cefc68c`
+
+Public-source debug builds are intentionally isolated under `com.dmcrengine.nativereader.debug` and do not share the production trust chain.
 
 ## Device regression
 
-After CI is green, the cleanup build receives a short Samsung pass:
+The accepted practical UI target covers:
 
-- MOD render;
-- SCM render;
+- MOD render/inspection;
+- SCM render/inspection;
 - DDS preview;
 - PTX gallery;
 - PTX -> DDS child preview;
-- child `←` parent navigation.
+- child -> parent navigation;
+- malformed/unsupported input fails closed without stale UI state.
 
-This device pass verifies the cleaned routing surface. It is not an invitation to restore removed formats before they are properly promoted.
+Future format work must preserve this baseline rather than reopening the old broad decoder architecture.
