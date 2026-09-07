@@ -40,10 +40,12 @@ struct PreviewResult final {
 // Decodes only mip level 0 into the generic static preview contract. The
 // parser remains the structural authority; this helper never changes DDS
 // acceptance semantics and applies an explicit output-pixel allocation cap.
+// 4 Mi pixels allows a 2048x2048 preview while bounding the native+JNI copy
+// footprint on mobile devices processing untrusted resources.
 [[nodiscard]] PreviewResult decode_preview(
     std::span<const std::uint8_t> bytes,
     const Document& document,
-    std::uint64_t max_pixels = 16ULL * 1024ULL * 1024ULL) noexcept;
+    std::uint64_t max_pixels = 4ULL * 1024ULL * 1024ULL) noexcept;
 
 [[nodiscard]] const char* compression_name(Compression compression) noexcept;
 
