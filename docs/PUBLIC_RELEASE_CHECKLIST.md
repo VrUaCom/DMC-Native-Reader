@@ -50,7 +50,17 @@ Preferred action: manually delete the key-backup artifact in GitHub Actions now.
 
 The production key backup itself must remain private and stored separately from GitHub source history.
 
-### 3. Historical branches and refs
+### 3. Remove the obsolete iOS prerelease
+
+**BLOCKER / public-facing cleanup.**
+
+The repository still has a historical prerelease/tag `ios-unsigned-latest` with asset `DMCReader-unsigned.ipa` and pre-v1 claims that no longer describe the current Android Architecture v2 product surface.
+
+Delete that prerelease and tag before opening the repository so the Releases page does not present an obsolete iOS experiment as a current Native Reader distribution.
+
+If historical iOS work is worth preserving, document it separately as archived research rather than leaving it as the only visible GitHub Release.
+
+### 4. Historical branches and refs
 
 **OPEN — owner/admin cleanup decision required.**
 
@@ -66,7 +76,7 @@ At minimum keep:
 
 Historical branches that are not useful to public contributors should be removed to reduce confusion and accidental exposure.
 
-### 4. Commit metadata privacy
+### 5. Commit metadata privacy
 
 **OPEN — privacy decision required.**
 
@@ -158,12 +168,13 @@ Recorded v1.0.0 APK SHA-256:
 1. Merge the public-prep PR after all CI gates are green.
 2. Choose and commit the source license.
 3. Delete or wait for expiry of the historical production-key backup artifact.
-4. Decide whether to prune/sanitize historical branches and commit metadata.
-5. Configure About text, topics and `main` protection/ruleset.
-6. Enable GitHub security features/private vulnerability reporting.
-7. Configure protected `production` signing secrets/environment.
-8. Create the `v1.0.0` GitHub Release with signed APK and evidence.
-9. Change repository visibility from Private to Public.
-10. Verify the repository as a logged-out visitor: README, CI badges, release asset, issues, license and security links.
+4. Delete the obsolete `ios-unsigned-latest` prerelease/tag.
+5. Decide whether to prune/sanitize historical branches and commit metadata.
+6. Configure About text, topics and `main` protection/ruleset.
+7. Enable GitHub security features/private vulnerability reporting.
+8. Configure protected `production` signing secrets/environment.
+9. Create the `v1.0.0` GitHub Release with signed APK and evidence.
+10. Change repository visibility from Private to Public.
+11. Verify the repository as a logged-out visitor: README, CI badges, release asset, issues, license and security links.
 
 Only after these gates should the repository be announced as public/open source.
