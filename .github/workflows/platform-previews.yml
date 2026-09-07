@@ -145,7 +145,11 @@ jobs:
           OUT="dist/DMC-Native-Reader-Windows-v1.0.0-preview"
           mkdir -p "$OUT"
           test -f build/windows/DMC-Native-Reader.exe
+          test -f windows/Register-OpenWith.ps1
+          test -f windows/Unregister-OpenWith.ps1
           cp build/windows/DMC-Native-Reader.exe "$OUT/DMC-Native-Reader.exe"
+          cp windows/Register-OpenWith.ps1 "$OUT/Register-OpenWith.ps1"
+          cp windows/Unregister-OpenWith.ps1 "$OUT/Unregister-OpenWith.ps1"
           cp LICENSE "$OUT/LICENSE.txt"
           cp THIRD_PARTY_NOTICES.md "$OUT/THIRD_PARTY_NOTICES.md"
           (cd "$OUT" && zip -9 -r "../DMC-Native-Reader-Windows-v1.0.0-preview.zip" .)
