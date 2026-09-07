@@ -12,6 +12,7 @@ jobs:
   hardening:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,24 +37,36 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-      - name: Guard signing boundary
+      - name: Guard repository signing boundary
+        shell: bash
         run: |
           set -euxo pipefail
-          grep -q 'stableDebug' app/build.gradle.kts
-          grep -q 'dmc-native-reader-test.jks' app/build.gradle.kts
+
+          # No private-key material may be tracked in the public tree.
+          if git ls-files | grep -Ei '\.(jks|keystore|p12|pfx|pem|key)$'; then
+            echo 'tracked signing/private-key material is forbidden'
+            exit 1
+          fi
+
+          test ! -d keys
+          grep -Fq 'applicationIdSuffix = ".debug"' app/build.gradle.kts
+          ! grep -Fq 'stableDebug' app/build.gradle.kts
+          ! grep -Fq 'dmc-native-reader-test.jks' app/build.gradle.kts
+
           python3 - <<'PY'
           import pathlib, re
           text = pathlib.Path('app/build.gradle.kts').read_text()
-          match = re.search(r'\brelease\s*\{([^}]*)\}', text, re.S)
-          assert match is not None, 'release buildType missing'
-          assert re.search(r'\bsigningConfig\s*=', match.group(1)) is None, \
-              'release must not use the debug/test signer'
+          release = re.search(r'\brelease\s*\{([^}]*)\}', text, re.S)
+          assert release is not None, 'release buildType missing'
+          assert re.search(r'\bsigningConfig\s*=', release.group(1)) is None, \
+              'release must not embed a repository signingConfig'
           PY
 
       - name: Build debug and unsigned release APKs
         run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
 
-      - name: Verify v1.0.0 artifacts
+      - name: Verify package and signing separation
+        shell: bash
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -64,14 +77,26 @@ jobs:
           unzip -t "$RELEASE_APK"
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+
           "$AAPT2" dump badging "$DEBUG_APK" | tee /tmp/debug-badging.txt
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
-          for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
-            grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='20'" "$BADGING"
-            grep -q "versionName='1.0.0'" "$BADGING"
-            grep -q "application-label:'DMC Native Reader'" "$BADGING"
-          done
+
+          grep -q "package: name='com.dmcrengine.nativereader.debug'" /tmp/debug-badging.txt
+          grep -q "versionCode='20'" /tmp/debug-badging.txt
+          grep -q "versionName='1.0.0-debug'" /tmp/debug-badging.txt
+          grep -q "application-label:'DMC Native Reader'" /tmp/debug-badging.txt
+
+          grep -q "package: name='com.dmcrengine.nativereader'" /tmp/release-badging.txt
+          grep -q "versionCode='20'" /tmp/release-badging.txt
+          grep -q "versionName='1.0.0'" /tmp/release-badging.txt
+          grep -q "application-label:'DMC Native Reader'" /tmp/release-badging.txt
+
+          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
+          if "$APKSIGNER" verify "$RELEASE_APK"; then
+            echo 'Gradle release APK unexpectedly contains a signing authority'
+            exit 1
+          fi
 
           unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
@@ -79,28 +104,22 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.dds.dmc3-reader'
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.ptx.bundle-reader'
 
-          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
-          "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
-          tr -d ': ' < /tmp/debug-signing.txt | grep -qi 'f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac'
-          if "$APKSIGNER" verify "$RELEASE_APK"; then
-            echo 'release APK unexpectedly has a signing authority'
-            exit 1
-          fi
-
           sha256sum "$DEBUG_APK" | tee /tmp/debug-apk.sha256
           sha256sum "$RELEASE_APK" | tee /tmp/release-apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0.0-debug
+          name: dmc-native-reader-v1.0.0-public-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
           name: dmc-native-reader-v1.0.0-unsigned-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:
@@ -112,3 +131,4 @@ jobs:
             /tmp/debug-apk.sha256
             /tmp/release-apk.sha256
           if-no-files-found: error
+          retention-days: 14
