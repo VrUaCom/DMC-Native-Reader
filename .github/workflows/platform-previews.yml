@@ -20,6 +20,16 @@ permissions:
   contents: read
 
 jobs:
+  runner_probe:
+    name: Ubuntu runner probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm Actions runner execution
+        run: |
+          echo "runner=ubuntu"
+          echo "sha=${GITHUB_SHA}"
+
   ios:
     name: iOS unsigned preview
     runs-on: macos-latest
@@ -63,24 +73,36 @@ jobs:
           retention-days: 90
 
   windows:
-    name: Windows x64 preview
-    runs-on: windows-latest
+    name: Windows x64 preview (MinGW)
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
-        run: cmake -S windows -B build/windows -A x64
-      - name: Build
-        run: cmake --build build/windows --config Release --parallel
-      - name: Package
-        shell: pwsh
+      - name: Install MinGW cross compiler
         run: |
-          $out = "dist/DMC-Native-Reader-Windows-v1.0.0-preview"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item "build/windows/Release/DMC-Native-Reader.exe" "$out/DMC-Native-Reader.exe"
-          Copy-Item "LICENSE" "$out/LICENSE.txt"
-          Copy-Item "THIRD_PARTY_NOTICES.md" "$out/THIRD_PARTY_NOTICES.md"
-          Compress-Archive -Path "$out/*" -DestinationPath "dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip" -Force
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 zip
+      - name: Configure Windows x64 cross build
+        run: |
+          cmake -S windows -B build/windows \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build Windows executable
+        run: cmake --build build/windows --parallel
+      - name: Package Windows preview
+        run: |
+          set -euo pipefail
+          OUT="dist/DMC-Native-Reader-Windows-v1.0.0-preview"
+          mkdir -p "$OUT"
+          test -f build/windows/DMC-Native-Reader.exe
+          cp build/windows/DMC-Native-Reader.exe "$OUT/DMC-Native-Reader.exe"
+          cp LICENSE "$OUT/LICENSE.txt"
+          cp THIRD_PARTY_NOTICES.md "$OUT/THIRD_PARTY_NOTICES.md"
+          (cd "$OUT" && zip -9 -r "../DMC-Native-Reader-Windows-v1.0.0-preview.zip" .)
+          test -f dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip
       - uses: actions/upload-artifact@v4
         with:
           name: DMC-Native-Reader-Windows-v1.0.0-preview
