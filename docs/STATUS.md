@@ -4,11 +4,13 @@
 
 **Mission:** Make DMC resources feel like ordinary files.
 
-Native Reader is the viewing/accessibility layer of the DMC tooling ecosystem. Its purpose is to open, recognize, inspect, visualize, navigate and explain promoted resources without requiring ordinary users to understand their binary formats.
+DMC Native Reader is the viewing/accessibility layer of the DMC tooling ecosystem. Its purpose is to open, recognize, inspect, visualize, navigate and explain promoted resources without requiring ordinary users to understand their binary formats.
 
 The current stable implementation is Android. The architecture is intended to preserve the same C++20 semantic truth across future Android, iOS and Windows shells.
 
-Native Reader is not the primary archive-management, editing or repacking workspace. Those responsibilities belong to authoring/resource-management tooling such as Pocket GDS and to canonical writer layers in DMC Rengine.
+**DMC Rengine is the central decompilation/reimplementation engine and modding foundation.** Native Reader is one specialized product built on top of its capabilities. Pocket GDS is another specialized tool in the same ecosystem, focused on resource work and authoring workflows.
+
+Native Reader is not the primary archive-management, editing or repacking workspace. Those responsibilities belong to DMC Rengine-backed authoring/resource-management tooling such as Pocket GDS and to the central writer/resource architecture exposed by DMC Rengine.
 
 See [`PRODUCT_VISION.md`](PRODUCT_VISION.md).
 
@@ -17,13 +19,13 @@ See [`PRODUCT_VISION.md`](PRODUCT_VISION.md).
 `1.0.0` / versionCode `20`
 
 Repository: `VrUaCom/DMC-Native-Reader`  
-Canonical reverse/evidence repository: `VrUaCom/dmc-rengine-cpp`  
+Central engine/modding repository: `VrUaCom/dmc-rengine-cpp`  
 Frozen stable ref: `baseline/v1.0.0`
 
 ## Production architecture
 
 ```text
-probe
+DMC Rengine capability / resource authority
   -> NativeModuleRegistry
       -> MOD | SCM | DDS | PTX
           -> Architecture v2 projection
@@ -118,9 +120,25 @@ The accepted Samsung/OEM behavior remains the practical UI target:
 - parent navigation returns to the PTX session;
 - malformed/unsupported inputs fail closed without stale geometry.
 
+## Ecosystem boundary
+
+```text
+                         DMC Rengine
+                 central engine + modding core
+                              |
+             +----------------+----------------+
+             |                                 |
+       Native Reader                       Pocket GDS
+  view / inspect / visualize       manage / edit / author / repack
+             |
+      Android / iOS / Windows
+```
+
+Native Reader should consume DMC Rengine capabilities, not fork them. If a recovered semantic, parser, writer or resource capability belongs in the central engine, it should be promoted there first and then exposed through the appropriate downstream tool.
+
 ## Success metric
 
-The primary product metric is:
+The primary Native Reader product metric is:
 
 > **How many opaque DMC resource types have become directly understandable and viewable?**
 
@@ -128,6 +146,6 @@ The project should prefer adding honest, familiar representations for new resour
 
 ## Next promotion rule
 
-No historical family returns to `main` merely because old code exists. Each future format must enter through the same Architecture v2 module contracts and, wherever possible, reuse the corresponding canonical `dmc-rengine-cpp` parser/source authority.
+No historical family returns to `main` merely because old code exists. Each future format must enter through the same Architecture v2 module contracts and, wherever possible, reuse the corresponding DMC Rengine parser/source authority.
 
 A promoted format must also define the natural user-facing representation it enables: model, scene, image, gallery, hierarchy, animation, graph, bounds/volume or another evidence-backed view.
