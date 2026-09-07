@@ -159,6 +159,20 @@ int main() {
     assert(ptx_ok.inspection.root.children.size() == 1U);
     assert(ptx_ok.inspection.root.children[0].children.size() == 1U);
 
+    // PTX must publish the DDS through the generic child-resource projection,
+    // including an actual image preview when the bounded gallery budget allows.
+    assert(ptx_ok.children.size() == 1U);
+    const auto& child = ptx_ok.children[0];
+    assert(child.title == "DDS 0");
+    assert(child.suggested_filename == "texture_0.dds");
+    assert(child.probe.format == dmcresource::Format::Dds);
+    assert(child.probe.content_confirmed);
+    assert(has_capability(child.capabilities, ResourceCapability::Inspection));
+    assert(has_capability(child.capabilities, ResourceCapability::ImagePreview));
+    assert(child.inspection.format == "DDS");
+    assert(child.inspection.root.title == "Texture 0");
+    require_red_preview(child.image_preview);
+
     auto bad_descriptor_size = ptx;
     put_u32(bad_descriptor_size, 0x800U + 0x64U, 1U);
     assert(!run_decode_pipeline("bad.ptx", bad_descriptor_size.data(),
