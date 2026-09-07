@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/image_preview.h"
 #include "dmcresource/inspection_document.h"
 #include "dmcresource/render_scene.h"
 #include "dmcresource/resource_capabilities.h"
@@ -25,10 +26,12 @@ struct PipelineResult {
 
     // Architecture v2 reusable contracts. Format-specific parsers/adapters may
     // use temporary local Mesh values internally, but geometry leaves a module
-    // only through RenderScene. This prevents parallel downstream authorities.
+    // only through RenderScene. Static image resources use ImagePreview rather
+    // than a second geometry representation or a format-specific Android path.
     ResourceCapabilities capabilities{};
     InspectionDocument inspection;
     RenderScene scene;
+    ImagePreview image_preview;
 
     std::string detail;
     std::vector<ModuleState> modules;
