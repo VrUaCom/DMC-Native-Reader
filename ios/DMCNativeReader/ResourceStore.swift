@@ -24,9 +24,20 @@ final class ResourceStore: ObservableObject {
     @Published var pitch: Float = -0.45
     @Published var zoom: Float = 1.0
     @Published var wireframe = false
+    @Published var hierarchy = false
 
     var hasResource: Bool { resource != nil }
     var hasGeometry: Bool { resource?.hasGeometry ?? false }
+    var canShowHierarchy: Bool { resource?.hierarchyAvailable ?? false }
+
+    // Keep the bridge generic. Bit 0 and bit 1 are the shared C++20
+    // RenderFlag::Wireframe and RenderFlag::Hierarchy contract.
+    var renderFlags: DmcRenderFlags {
+        var raw: UInt = 0
+        if wireframe { raw |= 1 << 0 }
+        if hierarchy && canShowHierarchy { raw |= 1 << 1 }
+        return DmcRenderFlags(rawValue: raw)
+    }
 
     func open(url: URL) {
         fileName = url.lastPathComponent
@@ -35,11 +46,15 @@ final class ResourceStore: ObservableObject {
             resource = decoded
             status = decoded.summary
             errorMessage = nil
+            wireframe = false
+            hierarchy = false
             resetView()
         } catch {
             resource = nil
             status = "\(fileName)\nOpen failed: \(error.localizedDescription)"
             errorMessage = error.localizedDescription
+            wireframe = false
+            hierarchy = false
         }
     }
 
@@ -50,6 +65,15 @@ final class ResourceStore: ObservableObject {
     }
 
     func toggleWireframe() {
+        guard hasGeometry else { return }
         wireframe.toggle()
+    }
+
+    func toggleHierarchy() {
+        guard canShowHierarchy else {
+            hierarchy = false
+            return
+        }
+        hierarchy.toggle()
     }
 }
