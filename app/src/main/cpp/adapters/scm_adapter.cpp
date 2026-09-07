@@ -108,10 +108,6 @@ InspectionNode make_diagnostic_node(
     return node;
 }
 
-// Convert already-parsed canonical SCM streams into the generic local-space
-// triangle-list mesh carried by a RenderScene primitive. Winding remains the
-// established Native Reader projection, but no second flattened scene mesh is
-// produced: world placement belongs exclusively to RenderScene node bindings.
 [[nodiscard]] bool append_local_mesh(const scm::Mesh& source, Mesh* output) {
     if (output == nullptr) return false;
     const std::size_t vertex_count = source.positions.size();
@@ -250,6 +246,7 @@ struct SceneProjection final {
         render_node.name = "SCM Node " + std::to_string(node_index);
         render_node.kind = RenderNodeKind::Scene;
         render_node.parent = parent_by_node[node_index];
+        render_node.spatial_authority = true;
         render_node.local = to_matrix4(scm::build_local_transform(transform));
         render_node.world = to_matrix4((*world)[node_index]);
         scene->nodes.push_back(std::move(render_node));

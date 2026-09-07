@@ -27,12 +27,12 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.1.1-debug-ui2-modspatial"
+        versionCode = 14
+        versionName = "1.1.2-debug-ui2-modmaterials"
 
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++17", "-Wall", "-Wextra", "-Wpedantic")
+                cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-Wpedantic")
             }
         }
         ndk {

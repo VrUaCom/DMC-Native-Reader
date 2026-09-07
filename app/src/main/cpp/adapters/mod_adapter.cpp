@@ -265,6 +265,7 @@ InspectionNode make_diagnostic_node(
         render_node.name = "Bone " + std::to_string(index);
         render_node.kind = RenderNodeKind::Bone;
         render_node.parent = hierarchy_mapping_valid ? parent_by_node[index] : -1;
+        render_node.spatial_authority = spatial_authorized;
 
         if (spatial_authorized) {
             const auto canonical_local = CanonicalWorld::build_local_matrix(
@@ -372,6 +373,60 @@ void project_skin(const CanonicalMesh& source,
     mesh_node->children.push_back(std::move(skin));
 }
 
+void project_material_state(const CanonicalMesh& source,
+                            std::uint32_t primitive_index,
+                            RenderScene* scene,
+                            InspectionNode* mesh_node) {
+    if (scene == nullptr || mesh_node == nullptr) return;
+
+    scene->textures.push_back(TextureBinding{
+        primitive_index,
+        source.texture_slot,
+        "MOD runtime texture slot; bitmap source unresolved",
+    });
+
+    mesh_node->properties.push_back({
+        "TextureSlot", std::to_string(source.texture_slot),
+        EvidenceLevel::ExeConfirmed,
+    });
+
+    InspectionNode texture;
+    texture.id = mesh_node->id + "-texture";
+    texture.title = "Texture binding";
+    texture.kind = InspectionKind::Texture;
+    texture.properties.push_back({
+        "Slot", std::to_string(source.texture_slot),
+        EvidenceLevel::ExeConfirmed,
+    });
+    texture.properties.push_back({
+        "BitmapSource", "unresolved",
+        EvidenceLevel::Unknown,
+    });
+    mesh_node->children.push_back(std::move(texture));
+
+    InspectionNode sampler;
+    sampler.id = mesh_node->id + "-gs-clamp";
+    sampler.title = "Legacy GS CLAMP REGION_REPEAT";
+    sampler.kind = InspectionKind::MaterialState;
+    sampler.properties.push_back({
+        "MinU", std::to_string(source.gs_clamp_region_repeat.min_u),
+        EvidenceLevel::ExeConfirmed,
+    });
+    sampler.properties.push_back({
+        "MaxU", std::to_string(source.gs_clamp_region_repeat.max_u),
+        EvidenceLevel::ExeConfirmed,
+    });
+    sampler.properties.push_back({
+        "MinV", std::to_string(source.gs_clamp_region_repeat.min_v),
+        EvidenceLevel::ExeConfirmed,
+    });
+    sampler.properties.push_back({
+        "MaxV", std::to_string(source.gs_clamp_region_repeat.max_v),
+        EvidenceLevel::ExeConfirmed,
+    });
+    mesh_node->children.push_back(std::move(sampler));
+}
+
 }  // namespace
 
 PipelineResult run_mod_adapter(const ProbeResult& probe,
@@ -403,6 +458,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
         out.modules.push_back({"identity-probe", true});
         out.modules.push_back({"bounded-read-guard", true});
         out.modules.push_back({"canonical.mod.structural-parser", true});
+        out.modules.push_back({"canonical.mod.texture-state", true});
         out.modules.push_back({module_id, true});
 
         out.inspection.format = "MOD";
@@ -497,6 +553,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                     EvidenceLevel::StructuralConfirmed,
                 });
 
+                project_material_state(source, primitive_index, &out.scene, &mesh_node);
                 project_skin(source, primitive_index, &out.scene, &mesh_node);
                 object_node.children.push_back(std::move(mesh_node));
                 out.scene.meshes.push_back(std::move(primitive));
@@ -531,6 +588,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                << " vertices=" << total_vertices
                << " triangles=" << total_triangles
                << " nodes=" << out.scene.nodes.size()
+               << " textures=" << out.scene.textures.size()
                << " spatialHierarchy=" << (spatial_hierarchy ? "yes" : "no")
                << " skinFailures=" << total_skin_failures
                << " diagnostics=" << parsed.diagnostics.size();

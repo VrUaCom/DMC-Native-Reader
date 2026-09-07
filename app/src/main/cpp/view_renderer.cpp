@@ -13,7 +13,6 @@ namespace {
 
 constexpr std::size_t kMaxSceneVertices = 2U * 1024U * 1024U;
 constexpr std::size_t kMaxSceneIndices = 12U * 1024U * 1024U;
-constexpr float kSpatialEpsilon2 = 1.0e-10F;
 
 struct P3 { float x, y, z; };
 struct P2 { float x, y, z; };
@@ -61,13 +60,6 @@ P3 rotate(const Vec3& v, float yaw, float pitch) {
     if (std::fabs(m[15] - 1.0F) > 0.0001F) return false;
     *out = {m[12], m[13], m[14]};
     return true;
-}
-
-[[nodiscard]] float distance2(Vec3 a, Vec3 b) noexcept {
-    const float dx = a.x - b.x;
-    const float dy = a.y - b.y;
-    const float dz = a.z - b.z;
-    return dx * dx + dy * dy + dz * dz;
 }
 
 void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
@@ -174,17 +166,14 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
         overlay.kinds.reserve(scene.nodes.size());
         overlay.edges.reserve(scene.nodes.size());
 
+        bool spatial_authority = !scene.nodes.empty();
         for (std::size_t index = 0U; index < scene.nodes.size(); ++index) {
             const auto& node = scene.nodes[index];
             Vec3 point;
             if (!finite_matrix_translation(node.world, &point)) return false;
             overlay.points.push_back(point);
             overlay.kinds.push_back(node.kind);
-
-            if (point.x * point.x + point.y * point.y + point.z * point.z >
-                kSpatialEpsilon2) {
-                overlay.spatial = true;
-            }
+            if (!node.spatial_authority) spatial_authority = false;
 
             if (node.parent >= 0) {
                 const auto parent = static_cast<std::size_t>(node.parent);
@@ -214,11 +203,12 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
                 edge_value.child >= overlay.points.size()) {
                 return false;
             }
-            if (distance2(overlay.points[edge_value.parent],
-                          overlay.points[edge_value.child]) > kSpatialEpsilon2) {
-                overlay.spatial = true;
-            }
         }
+
+        // Spatial availability is an evidence property, not a coordinate
+        // heuristic. A fully authoritative hierarchy may legitimately place a
+        // root or multiple nodes at exactly the same model-space position.
+        overlay.spatial = spatial_authority;
 
         *out = std::move(overlay);
         return true;

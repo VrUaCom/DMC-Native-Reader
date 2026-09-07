@@ -83,16 +83,13 @@ NativeModule scm_module() noexcept {
             ModuleKind::Mesh, true, run_scm, caps};
 }
 NativeModule mod_module() noexcept {
-    // TextureBinding is intentionally not advertised yet: the pinned canonical
-    // MOD Document exposes geometry/UV/skin/hierarchy but does not currently
-    // publish the shared +0x02 texture-slot field. The adapter never reparses
-    // source bytes to manufacture missing semantics.
     const auto caps = capability(ResourceCapability::Inspection) |
         ResourceCapability::Geometry |
         ResourceCapability::Wireframe |
         ResourceCapability::NodeHierarchy |
         ResourceCapability::SkeletalSkinning |
-        ResourceCapability::SkinWeights;
+        ResourceCapability::SkinWeights |
+        ResourceCapability::TextureBinding;
     return {"formats.mod.mesh-reader", "MOD", Format::Mod,
             ModuleKind::Mesh, true, run_mod, caps};
 }
