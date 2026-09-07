@@ -29,8 +29,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.1.5-debug-child-gallery"
+        versionCode = 19
+        versionName = "1.0.0-core-cleanup"
 
         externalNativeBuild {
             cmake {
@@ -49,8 +49,8 @@ android {
         }
         release {
             isMinifyEnabled = false
-            // Intentionally no signingConfig here. Production v1.0 signing
-            // belongs to a dedicated release pipeline with an external key.
+            // Intentionally no signingConfig here. Production signing authority
+            // must remain outside repository history.
         }
     }
 

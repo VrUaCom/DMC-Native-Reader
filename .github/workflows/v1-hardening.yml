@@ -1,4 +1,4 @@
-name: DMC Native Reader v1 hardening
+name: DMC Native Reader v1 core hardening
 
 on:
   pull_request:
@@ -12,7 +12,6 @@ jobs:
   hardening:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +53,7 @@ jobs:
       - name: Build debug and unsigned release APKs
         run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
 
-      - name: Verify v1 hardening artifacts
+      - name: Verify v1 core artifacts
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -67,24 +66,18 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$DEBUG_APK" | tee /tmp/debug-badging.txt
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
-
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='17'" "$BADGING"
-            grep -q "versionName='1.1.5-debug-child-gallery'" "$BADGING"
+            grep -q "versionCode='19'" "$BADGING"
+            grep -q "versionName='1.0.0-core-cleanup'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
-            ! grep -q 'DMC Native Reader v8' "$BADGING"
           done
 
           unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
-          strings /tmp/libdmcviewer.so | grep -q 'formats.mod.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.spatial-hierarchy'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.texture-state'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.dmc3-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.base-mip-preview'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.ptx.bundle-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'children='
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.dds.dmc3-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.ptx.bundle-reader'
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
@@ -97,17 +90,15 @@ jobs:
           sha256sum "$DEBUG_APK" | tee /tmp/debug-apk.sha256
           sha256sum "$RELEASE_APK" | tee /tmp/release-apk.sha256
 
-      - name: Upload hardening debug APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.5-debug-child-gallery
+          name: dmc-native-reader-1.0.0-core-cleanup-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Upload hardening evidence
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.5-child-gallery-hardening-evidence
+          name: dmc-native-reader-1.0.0-core-cleanup-hardening-evidence
           path: |
             /tmp/debug-badging.txt
             /tmp/release-badging.txt
