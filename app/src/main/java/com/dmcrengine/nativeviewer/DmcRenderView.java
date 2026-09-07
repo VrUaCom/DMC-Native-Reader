@@ -50,6 +50,12 @@ public final class DmcRenderView extends View {
         return state.canPreviewImage && NativeBridge.imagePreviewAvailable(session);
     }
 
+    private void clearStaticImagePreview() {
+        staticImagePreview = false;
+        bitmap = null;
+        invalidate();
+    }
+
     public void setSession(long newSession) {
         session = newSession;
         renderFlags = 0;
@@ -68,26 +74,37 @@ public final class DmcRenderView extends View {
 
     private void loadStaticImagePreview() {
         if (!canUseStaticImagePreview()) {
-            staticImagePreview = false;
-            bitmap = null;
-            invalidate();
+            clearStaticImagePreview();
             return;
         }
 
         final int width = NativeBridge.imagePreviewWidth(session);
         final int height = NativeBridge.imagePreviewHeight(session);
-        final int[] pixels = NativeBridge.imagePreview(session);
         final long expected = (long) width * (long) height;
         if (width <= 0 || height <= 0 || expected <= 0L ||
-                expected > Integer.MAX_VALUE || pixels == null ||
-                pixels.length != (int) expected) {
-            staticImagePreview = false;
-            bitmap = null;
-            invalidate();
+                expected > Integer.MAX_VALUE) {
+            clearStaticImagePreview();
             return;
         }
 
-        bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
+        final int[] pixels;
+        try {
+            pixels = NativeBridge.imagePreview(session);
+        } catch (OutOfMemoryError error) {
+            clearStaticImagePreview();
+            return;
+        }
+        if (pixels == null || pixels.length != (int) expected) {
+            clearStaticImagePreview();
+            return;
+        }
+
+        try {
+            bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
+            clearStaticImagePreview();
+            return;
+        }
         staticImagePreview = true;
         lastRenderMs = SystemClock.uptimeMillis();
         invalidate();
