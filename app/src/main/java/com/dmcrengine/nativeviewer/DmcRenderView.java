@@ -43,6 +43,13 @@ public final class DmcRenderView extends View {
                 });
     }
 
+    private boolean canUseStaticImagePreview() {
+        if (session == 0) return false;
+        final ResourceUiState state = ResourceUiState.fromCapabilities(
+                NativeBridge.capabilities(session));
+        return state.canPreviewImage && NativeBridge.imagePreviewAvailable(session);
+    }
+
     public void setSession(long newSession) {
         session = newSession;
         renderFlags = 0;
@@ -52,7 +59,7 @@ public final class DmcRenderView extends View {
         invalidate();
         if (session == 0) return;
 
-        if (NativeBridge.imagePreviewAvailable(session)) {
+        if (canUseStaticImagePreview()) {
             loadStaticImagePreview();
         } else {
             resetView();
@@ -60,7 +67,7 @@ public final class DmcRenderView extends View {
     }
 
     private void loadStaticImagePreview() {
-        if (session == 0 || !NativeBridge.imagePreviewAvailable(session)) {
+        if (!canUseStaticImagePreview()) {
             staticImagePreview = false;
             bitmap = null;
             invalidate();
