@@ -2,12 +2,20 @@
 
 ## Unreleased — public repository hardening
 
+Public-opening preparation after the accepted v1.0.0 binary. No v1 runtime/parser behavior is being expanded in this section.
+
 - separated public debug builds from the production package with `com.dmcrengine.nativereader.debug`;
 - retired the committed development test keystore from the current tree;
 - moved production signing to protected GitHub environment/repository secrets;
 - pinned the production signing certificate fingerprint in the release workflow;
-- removed production-key backup uploads from CI;
-- expanded public-facing documentation, contribution and security guidance.
+- removed production-key backup generation/uploads from the current release workflow;
+- added `DMC Native Reader Personal Non-Commercial License 1.0` with the Capcom Special Grant;
+- documented third-party licensing separately, including the MIT-licensed vendored DMC Rengine slice;
+- formalized the product mission: **Make DMC resources feel like ordinary files.**;
+- documented DMC Rengine as the central decompilation/reimplementation engine and C++20 modding foundation;
+- documented Android / iOS / Windows / Web product direction with Web semantics supplied through C++20/WebAssembly rather than a second JavaScript parser stack;
+- expanded README, release notes, contribution, support, security and public-opening guidance;
+- added canonical v1.0.0 release and APK download paths.
 
 ## 1.0.0 — DMC Native Reader v1
 
@@ -17,23 +25,24 @@
 
 The v1 production registry is intentionally limited to four promoted families:
 
-- **MOD** — canonical `dmc-rengine-cpp` structural reader projected into `RenderScene` / `InspectionDocument`;
-- **SCM** — canonical `dmc-rengine-cpp` structural reader projected into `RenderScene` / `InspectionDocument`;
+- **MOD** — canonical DMC Rengine structural reader projected into `RenderScene` / `InspectionDocument`;
+- **SCM** — canonical DMC Rengine structural reader projected into `RenderScene` / `InspectionDocument`;
 - **DDS** — bounded DMC3 DDS validation with generic image preview;
 - **PTX** — bounded texture-bundle reader with validated DDS child resources and parent navigation.
 
-The release removed the older broad multi-format surface from `main` until those families can be promoted through the same canonical/evidence contract.
+The release removed the older broad multi-format surface from `main` until those families can be promoted through the same Architecture v2 / canonical-evidence contract.
 
 ### Architecture
 
-- `NativeModuleRegistry` is the single product routing surface;
+- `NativeModuleRegistry` is the single v1 product routing surface;
 - registry size is exactly four in v1;
 - unknown/unpromoted formats fail closed;
 - no wildcard structural parser;
-- no Java-owned MOD/SCM binary parser;
+- no platform-UI-owned MOD/SCM binary parser;
 - no legacy `DecodeResult -> Mesh -> RenderScene` compatibility bridge;
-- generic JNI session and capability-driven Android UI;
-- renderability and inspection state are format capabilities, not filename guesses.
+- generic native Session with `InspectionDocument`, `RenderScene`, `ImagePreview`, `ChildResource[]` and capabilities;
+- Android v1 UI availability is capability-driven rather than filename-driven;
+- reusable engine-level semantics belong in DMC Rengine rather than in private product forks.
 
 ### Model readers
 
@@ -52,7 +61,7 @@ The release removed the older broad multi-format surface from `main` until those
 - generic DDS child resources;
 - PTX -> DDS child preview and child -> parent navigation.
 
-### Android
+### Android v1 shell
 
 - system `Open with` / SAF integration;
 - Samsung/OEM file-manager routing path;
@@ -61,13 +70,24 @@ The release removed the older broad multi-format surface from `main` until those
 - ARM64 native build;
 - capability-driven UI prevents stale geometry on non-renderable sessions.
 
+### Device acceptance
+
+The accepted Samsung/device path proved:
+
+- MOD 3D render, rotate/zoom, wireframe, hierarchy/skeleton and Inspector;
+- SCM 3D render, hierarchy and Inspector;
+- standalone DDS image preview;
+- PTX gallery with real DDS thumbnails;
+- child DDS preview and explicit return to the parent PTX session;
+- unsupported/malformed resources fail closed without stale geometry.
+
 ### Validation
 
 The accepted release head passed:
 
 - four-module registry regression;
 - MOD/SCM end-to-end native pipeline regression;
-- MOD spatial adapter regression;
+- MOD spatial/material adapter regression;
 - DDS/PTX valid/malformed/bounds regression;
 - `RenderScene` regression;
 - capability UI policy regression;
@@ -88,6 +108,18 @@ Production certificate SHA-256:
 v1.0.0 APK SHA-256:
 
 `a81ef5555ecc67e0213d2f1f6baa351609a659c5898ba8f71f81d2fc2cefc68c`
+
+### Canonical release URLs
+
+Release page:
+
+`https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/v1.0.0`
+
+Direct APK:
+
+`https://github.com/VrUaCom/DMC-Native-Reader/releases/download/v1.0.0/DMC-Native-Reader-v1.0.0.apk`
+
+These URLs are the canonical public distribution surface once the GitHub Release is published.
 
 ## Earlier development milestones
 
