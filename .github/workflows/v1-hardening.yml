@@ -85,7 +85,7 @@ jobs:
           grep -q "package: name='com.dmcrengine.nativereader.debug'" /tmp/debug-badging.txt
           grep -q "versionCode='20'" /tmp/debug-badging.txt
           grep -q "versionName='1.0.0-debug'" /tmp/debug-badging.txt
-          grep -q "application-label:'DMC Native Reader'" /tmp/debug-badging.txt
+          grep -q "application-label:'DMC Native Reader (Debug)'" /tmp/debug-badging.txt
 
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/release-badging.txt
           grep -q "versionCode='20'" /tmp/release-badging.txt
