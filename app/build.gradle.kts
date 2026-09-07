@@ -29,8 +29,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.0.0-core-cleanup"
+        versionCode = 20
+        versionName = "1.0.0"
 
         externalNativeBuild {
             cmake {
@@ -50,7 +50,7 @@ android {
         release {
             isMinifyEnabled = false
             // Intentionally no signingConfig here. Production signing authority
-            // must remain outside repository history.
+            // is injected only by the external release-signing workflow.
         }
     }
 
