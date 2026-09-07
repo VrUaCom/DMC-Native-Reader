@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   bootstrap-public-release:
@@ -20,21 +19,12 @@ jobs:
       ACCEPTED_RUN_ID: "34113850403"
       ACCEPTED_ARTIFACT: "DMC-Native-Reader-v1.0.0-production"
       ACCEPTED_APK_SHA256: "a81ef5555ecc67e0213d2f1f6baa351609a659c5898ba8f71f81d2fc2cefc68c"
-      KEY_BACKUP_ARTIFACT_ID: "10015511171"
       RELEASE_TAG: "v1.0.0"
       RELEASE_TITLE: "DMC Native Reader v1.0.0"
       RELEASE_TARGET: "baseline/v1.0.0"
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Remove historical production-key backup artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api --method DELETE \
-            "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${KEY_BACKUP_ARTIFACT_ID}" \
-            || true
 
       - name: Remove obsolete pre-v1 iOS prerelease and tag
         shell: bash
