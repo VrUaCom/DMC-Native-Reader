@@ -85,6 +85,66 @@ jobs:
             -o /tmp/dmc-core-registry-test
           /tmp/dmc-core-registry-test
 
+      - name: Build and run MOD SCM pipeline regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
+            app/src/test/native/core_model_pipeline_test.cpp \
+            app/src/main/cpp/dmc_resource.cpp \
+            app/src/main/cpp/decode_pipeline.cpp \
+            app/src/main/cpp/inspection_format.cpp \
+            app/src/main/cpp/formats/dds.cpp \
+            app/src/main/cpp/adapters/mod_adapter.cpp \
+            app/src/main/cpp/adapters/scm_adapter.cpp \
+            app/src/main/cpp/modules/module_registry.cpp \
+            app/src/main/cpp/modules/module_model.cpp \
+            app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
+            -o /tmp/dmc-core-model-pipeline-test
+          /tmp/dmc-core-model-pipeline-test
+
+      - name: Build and run DDS PTX validation regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
+            app/src/test/native/dds_ptx_v1_test.cpp \
+            app/src/main/cpp/dmc_resource.cpp \
+            app/src/main/cpp/decode_pipeline.cpp \
+            app/src/main/cpp/inspection_format.cpp \
+            app/src/main/cpp/formats/dds.cpp \
+            app/src/main/cpp/adapters/mod_adapter.cpp \
+            app/src/main/cpp/adapters/scm_adapter.cpp \
+            app/src/main/cpp/modules/module_registry.cpp \
+            app/src/main/cpp/modules/module_model.cpp \
+            app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
+            -o /tmp/dmc-core-dds-ptx-test
+          /tmp/dmc-core-dds-ptx-test
+
       - name: Build and run MOD spatial adapter regression
         run: |
           set -euxo pipefail
