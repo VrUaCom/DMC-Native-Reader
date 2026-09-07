@@ -1,5 +1,17 @@
 # DMC Native Reader — Status
 
+## Product role
+
+**Mission:** Make DMC resources feel like ordinary files.
+
+Native Reader is the viewing/accessibility layer of the DMC tooling ecosystem. Its purpose is to open, recognize, inspect, visualize, navigate and explain promoted resources without requiring ordinary users to understand their binary formats.
+
+The current stable implementation is Android. The architecture is intended to preserve the same C++20 semantic truth across future Android, iOS and Windows shells.
+
+Native Reader is not the primary archive-management, editing or repacking workspace. Those responsibilities belong to authoring/resource-management tooling such as Pocket GDS and to canonical writer layers in DMC Rengine.
+
+See [`PRODUCT_VISION.md`](PRODUCT_VISION.md).
+
 ## Current stable baseline
 
 `1.0.0` / versionCode `20`
@@ -106,6 +118,16 @@ The accepted Samsung/OEM behavior remains the practical UI target:
 - parent navigation returns to the PTX session;
 - malformed/unsupported inputs fail closed without stale geometry.
 
+## Success metric
+
+The primary product metric is:
+
+> **How many opaque DMC resource types have become directly understandable and viewable?**
+
+The project should prefer adding honest, familiar representations for new resource families over adding unrelated editor features to the Reader itself.
+
 ## Next promotion rule
 
 No historical family returns to `main` merely because old code exists. Each future format must enter through the same Architecture v2 module contracts and, wherever possible, reuse the corresponding canonical `dmc-rengine-cpp` parser/source authority.
+
+A promoted format must also define the natural user-facing representation it enables: model, scene, image, gallery, hierarchy, animation, graph, bounds/volume or another evidence-backed view.
