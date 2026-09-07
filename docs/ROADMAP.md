@@ -36,7 +36,7 @@ Completed properties:
 
 ## Phase 2 — Device validation
 
-**Status: complete for the v1.0.0 acceptance baseline**
+**Status: complete for the Android v1.0.0 acceptance baseline**
 
 Accepted practical behavior includes:
 
@@ -59,18 +59,20 @@ Completed in public-prep:
 - current production workflow keeps signing material in protected secrets rather than source/artifacts;
 - source license selected: **DMC Native Reader Personal Non-Commercial License 1.0** with Capcom Special Grant;
 - third-party licensing documented separately;
-- canonical v1.0.0 release/download URLs documented;
-- Code of Conduct, Support, Security, contribution and issue/PR templates prepared.
+- canonical Android v1.0.0 release/download URLs documented;
+- Code of Conduct, Support, Security, contribution and issue/PR templates prepared;
+- cross-platform preview work separated from the accepted Android v1 binary.
 
 Remaining before visibility changes to Public:
 
 - delete or confirm expiry of the historical one-day production-key backup artifact;
-- remove obsolete `ios-unsigned-latest` prerelease/tag;
-- publish the actual GitHub Release `v1.0.0` and attach the accepted signed APK;
+- rebuild the retained `ios-unsigned-latest` line as the current **DMC Native Reader for iOS — Preview** and replace the obsolete `DMCReader-unsigned.ipa` only after the replacement build passes;
+- publish/update the Windows preview line only after its x64 build passes;
+- publish the actual stable GitHub Release `v1.0.0` and attach the accepted signed Android APK;
 - verify the canonical direct APK link and checksum;
 - audit/prune historical branches and decide commit-email exposure;
 - configure GitHub About/topics, `main` rules and private vulnerability/security features;
-- verify protected production signing environment;
+- verify protected Android production signing environment;
 - perform a logged-out final repository/release audit.
 
 See [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md).
@@ -121,18 +123,42 @@ file -> learn binary format -> choose specialist decoder -> inspect
 
 ## Phase 7 — Cross-platform Native Reader
 
-Android is the first stable implementation. The strategic direction is to carry the same C++20 semantic contracts to iOS, Windows and Web without creating platform-specific parser forks.
+**Status: active preview implementation**
 
-Targets include:
+Android remains the first stable implementation. The same C++20 semantic contracts are now being carried to native iOS and Windows shells without platform-specific parser forks.
 
-- Android Open with / SAF integration;
-- iOS Files / Share / document-opening integration;
-- Windows desktop file opening;
-- Windows Explorer preview/thumbnail integration where practical;
-- Web UI backed by the same C++20 core compiled to **WebAssembly**;
-- consistent `InspectionDocument`, `RenderScene`, `ImagePreview`, `ChildResource` and capability semantics across all shells.
+### Implemented preview foundation
 
-For Web, JavaScript/TypeScript remains a thin browser/presentation layer for DOM, file input, routing and Canvas/WebGL/WebGPU integration. DMC binary semantics remain in C++20/WebAssembly.
+- [x] platform-neutral C++20 `PortableSession` over the current Architecture v2 `PipelineResult`;
+- [x] iOS SwiftUI + Objective-C++ shell using the current four-format registry;
+- [x] iOS Files/Share-sheet opening, MOD/SCM render, DDS preview, PTX gallery and Inspector path;
+- [x] Windows native Win32/x64 shell using the same C++20 registry/adapters/renderer;
+- [x] Windows file open, drag-and-drop, MOD/SCM render, DDS preview, PTX child navigation and Inspector path;
+- [x] separate macOS and Windows preview build jobs;
+- [x] guarded publish path that retains and replaces the historical iOS preview only after successful builds;
+- [x] intended Windows moving preview release `windows-preview-latest`.
+
+### Still required before platform promotion
+
+- [ ] successful iOS CI build from the current branch;
+- [ ] successful Windows x64 CI build from the current branch;
+- [ ] real iPhone/iPad corpus acceptance for MOD / SCM / DDS / PTX;
+- [ ] real Windows corpus acceptance for MOD / SCM / DDS / PTX;
+- [ ] define signed iOS distribution path if moving beyond unsigned technical preview;
+- [ ] define Windows signing/installer identity before calling Windows stable;
+- [ ] only then promote either platform from **Preview** to **Stable**.
+
+The old iOS release/tag is deliberately **not deleted**. `ios-unsigned-latest` becomes the moving iOS preview line. Its obsolete pre-v1 asset and HITS/TXT/index claims are replaced only when the current four-format build succeeds.
+
+See [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md).
+
+### Web
+
+Web remains the next shell direction:
+
+- C++20 core compiled to **WebAssembly**;
+- JavaScript/TypeScript limited to browser/file/DOM/Canvas/WebGL/WebGPU presentation concerns;
+- no second DMC binary parser in the browser layer.
 
 Platform UI may differ. Binary meaning must not.
 
