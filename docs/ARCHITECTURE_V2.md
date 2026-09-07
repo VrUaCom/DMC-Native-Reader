@@ -1,7 +1,8 @@
 # Native Reader Architecture v2 — stable v1 core contract
 
-**Status:** stable v1.0.0 baseline  
+**Status:** stable v1.0.0 core baseline  
 **Stable v1 product shell:** Android  
+**Preview shells:** iOS / Windows  
 **Core product surface:** MOD / SCM / DDS / PTX  
 **Central engine/modding foundation:** DMC Rengine C++20
 
@@ -16,16 +17,18 @@ NativeModuleRegistry
         ↓
 format module / canonical adapter
         ↓
+PipelineResult
+        ↓
 InspectionDocument | RenderScene | ImagePreview | ChildResource[] | ResourceCapabilities
         ↓
-generic native Session
+platform-neutral ownership / bridge
         ↓
 platform presentation shell
 ```
 
-For the stable v1.0.0 product, the platform shell is Android and the Session bridge is JNI. The architecture itself is not Android-specific: future iOS, Windows and Web shells must reuse the same C++20 semantic contracts rather than reimplementing DMC binary semantics independently.
+For stable Android v1.0.0, the ownership/bridge path is the existing JNI Session. The cross-platform preview branch adds `PortableSession`, a C++20 owner around the same `PipelineResult` contracts for iOS and Windows.
 
-For Web, the intended path is C++20 compiled to WebAssembly with a thin browser binding/presentation layer.
+`PortableSession` is not a second decoder. It calls the same `run_decode_pipeline()`, materializes `RenderScene` once for CPU rendering, exposes the same `ImagePreview` / `ChildResource[]` data, and flattens the same typed `InspectionDocument` for thin platform presentation.
 
 No platform-UI component owns a promoted format parser. No renderer owns a format parser. No wildcard module or broad recognition-only catalog is present in the v1 core.
 
@@ -66,11 +69,24 @@ Generic image-preview contract used by DDS and PTX DDS children. Platform presen
 
 ### ChildResource
 
-Generic nested-resource projection. PTX publishes DDS children; opening a child creates the same generic native Session used for a top-level resource. Parent navigation is session-based, not PTX-specific platform parsing.
+Generic nested-resource projection. PTX publishes DDS children through the same typed contracts used by a top-level resource. Platform code may present a gallery/navigation model but may not decode PTX bytes independently.
 
-## Stable v1 Android bridge
+### PortableSession
 
-The Android implementation uses:
+Cross-platform preview owner with these responsibilities only:
+
+- call the existing Architecture v2 pipeline;
+- reject any resource the core rejects;
+- cache materialized render geometry for a static decoded resource;
+- expose root image preview and child resources;
+- expose typed inspection as presentation text where a richer native tree UI has not yet been built;
+- preserve the same read-only/fail-closed contract.
+
+It may not add format recognition, binary layout knowledge or alternate semantics.
+
+## Platform shells
+
+### Android — stable v1.0.0
 
 ```text
 generic native Session
@@ -80,23 +96,43 @@ JNI bridge
 ResourceUiState / capability-driven Android UI
 ```
 
-This is the accepted v1 platform implementation, not a rule that future shells must use JNI.
+This remains the accepted stable v1 platform implementation.
 
-## Future shells
-
-The semantic direction is:
+### iOS — preview
 
 ```text
-                 DMC Rengine / Native Reader C++20 core
-                              |
-            +-----------------+-----------------+
-            |                 |                 |
-         Android             iOS             Windows
-            |
-            `---------------- WebAssembly -> Web UI
+PortableSession
+      ↓
+Objective-C++ ABI bridge
+      ↓
+SwiftUI / Files integration
 ```
 
-Platform-specific code may own file pickers, gestures, windows, OS thumbnails, DOM/Canvas/WebGL/WebGPU integration and other presentation concerns. It may not fork binary semantics that belong to the C++20 core.
+The current iOS preview compiles the same four-format C++20 module/adapters and replaces the old pre-v1 iOS experiment. HITS/TXT/index decoders are not revived.
+
+### Windows — preview
+
+```text
+PortableSession
+      ↓
+native Win32 shell
+```
+
+The current x64 preview uses the same CPU renderer, image preview and child-resource contracts. Windows-specific code owns only file/window/input/presentation concerns.
+
+### Web — planned
+
+```text
+C++20 core
+   ↓
+WebAssembly
+   ↓
+thin browser presentation layer
+```
+
+JavaScript/TypeScript may own DOM, browser file APIs and rendering integration but not a second DMC binary parser.
+
+See [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md).
 
 ## Not promoted into the stable v1 core
 
@@ -121,8 +157,9 @@ Historical branches may preserve experiments for research reference, but they ar
 - retired source paths may not re-enter the core build tree accidentally;
 - MOD and SCM pass full pipeline projection tests, not only registry checks;
 - DDS and PTX pass valid and malformed-input regressions;
-- the APK contains the four expected module IDs and none of the retired module IDs;
+- the Android APK contains the four expected module IDs and none of the retired module IDs;
 - Android v1 manifest explicit DMC MIME exposure is limited to MOD, SCM, DDS and PTX;
-- public debug identity is isolated from production;
+- public Android debug identity is isolated from production;
 - production signing material remains outside Git history and public artifacts;
-- cross-platform work reuses the C++20 semantic core instead of introducing independent platform parsers.
+- iOS/Windows preview work reuses the C++20 semantic core instead of introducing independent platform parsers;
+- iOS/Windows remain labelled **Preview** until their own compile + corpus/device acceptance gates pass.
