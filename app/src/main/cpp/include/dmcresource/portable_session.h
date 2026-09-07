@@ -31,15 +31,22 @@ public:
     [[nodiscard]] const Mesh& render_mesh() const noexcept { return render_mesh_; }
     [[nodiscard]] const HierarchyOverlay& hierarchy() const noexcept { return hierarchy_; }
     [[nodiscard]] bool has_geometry() const noexcept { return geometry_ready_; }
+    [[nodiscard]] bool hierarchy_available() const noexcept {
+        return has_capability(result_.capabilities, ResourceCapability::NodeHierarchy) &&
+               hierarchy_.available();
+    }
     [[nodiscard]] bool has_image_preview() const noexcept {
         return result_.image_preview.available();
     }
     [[nodiscard]] std::size_t child_count() const noexcept { return result_.children.size(); }
     [[nodiscard]] const ChildResource* child(std::size_t index) const noexcept;
 
+    // Generic render flags are shared across platform shells. The core decides
+    // whether a requested overlay is actually evidence/capability-authorized.
     [[nodiscard]] RgbaImage render(int width,
                                    int height,
-                                   const ViewState& view) const;
+                                   const ViewState& view,
+                                   RenderFlags flags = 0U) const;
 
     [[nodiscard]] std::string summary() const;
     [[nodiscard]] std::string inspection_text(std::size_t max_lines = 4096U) const;
