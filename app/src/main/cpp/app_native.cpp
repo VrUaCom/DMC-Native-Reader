@@ -69,16 +69,16 @@ private:
 struct Session {
     dmcresource::ProbeResult probe;
 
-    // v2 reusable session state. Inspection, typed scene data and static image
-    // previews are produced once by the native module pipeline and retained for
-    // all JNI consumers.
+    // Architecture v2 reusable session state. The same contracts are used for
+    // top-level resources and children opened from a container/browser.
     dmcresource::ResourceCapabilities capabilities{};
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
     dmcresource::ImagePreview image_preview;
+    std::vector<dmcresource::ChildResource> children;
 
     // Static viewer caches. World-space geometry and hierarchy positions are
-    // materialized once at open(), never once per touch/rotation frame.
+    // materialized once per session, never once per touch/rotation frame.
     dmcresource::Mesh render_mesh;
     dmcresource::HierarchyOverlay hierarchy_overlay;
 
@@ -93,6 +93,49 @@ Session* from_handle(jlong handle) noexcept {
 
 jlong to_handle(Session* session) noexcept {
     return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(session));
+}
+
+const dmcresource::ChildResource* child_at(const Session* session, jint index) noexcept {
+    if (session == nullptr || index < 0) return nullptr;
+    const auto i = static_cast<std::size_t>(index);
+    return i < session->children.size() ? &session->children[i] : nullptr;
+}
+
+void prepare_session_caches(Session* session) {
+    if (session == nullptr) return;
+
+    if (!dmcresource::materialize_hierarchy_overlay(
+            session->scene, &session->hierarchy_overlay)) {
+        session->hierarchy_overlay = {};
+        if (!session->detail.empty()) session->detail += "\n";
+        session->detail += "Hierarchy overlay rejected malformed node/matrix data";
+    }
+
+    if (session->renderable) {
+        if (!session->scene.has_geometry() ||
+            !dmcresource::materialize_render_scene(session->scene,
+                                                   &session->render_mesh)) {
+            session->renderable = false;
+            if (!session->detail.empty()) session->detail += "\n";
+            session->detail +=
+                "RenderScene projection rejected malformed or missing geometry";
+        }
+    }
+}
+
+std::unique_ptr<Session> session_from_child(const dmcresource::ChildResource& child) {
+    auto session = std::make_unique<Session>();
+    session->probe = child.probe;
+    session->capabilities = child.capabilities;
+    session->inspection = child.inspection;
+    session->scene = child.scene;
+    session->image_preview = child.image_preview;
+    session->children = child.children;
+    session->detail = child.detail;
+    session->trace = child.trace;
+    session->renderable = child.renderable;
+    prepare_session_caches(session.get());
+    return session;
 }
 
 jintArray rgba_to_argb(JNIEnv* env, std::size_t width, std::size_t height,
@@ -157,35 +200,22 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     auto pipeline = dmcresource::run_decode_pipeline(name, mapped.data(), mapped.size());
     if (!pipeline.accepted) return 0;
 
-    auto session = std::make_unique<Session>();
-    session->probe = pipeline.probe;
-    session->capabilities = pipeline.capabilities;
-    session->inspection = std::move(pipeline.inspection);
-    session->scene = std::move(pipeline.scene);
-    session->image_preview = std::move(pipeline.image_preview);
-    session->detail = std::move(pipeline.detail);
-    session->trace = dmcresource::pipeline_trace(pipeline);
-    session->renderable = pipeline.renderable;
-
-    if (!dmcresource::materialize_hierarchy_overlay(
-            session->scene, &session->hierarchy_overlay)) {
-        session->hierarchy_overlay = {};
-        if (!session->detail.empty()) session->detail += "\n";
-        session->detail += "Hierarchy overlay rejected malformed node/matrix data";
+    try {
+        auto session = std::make_unique<Session>();
+        session->probe = pipeline.probe;
+        session->capabilities = pipeline.capabilities;
+        session->inspection = std::move(pipeline.inspection);
+        session->scene = std::move(pipeline.scene);
+        session->image_preview = std::move(pipeline.image_preview);
+        session->children = std::move(pipeline.children);
+        session->detail = std::move(pipeline.detail);
+        session->trace = dmcresource::pipeline_trace(pipeline);
+        session->renderable = pipeline.renderable;
+        prepare_session_caches(session.get());
+        return to_handle(session.release());
+    } catch (...) {
+        return 0;
     }
-
-    if (session->renderable) {
-        if (!session->scene.has_geometry() ||
-            !dmcresource::materialize_render_scene(session->scene,
-                                                   &session->render_mesh)) {
-            session->renderable = false;
-            if (!session->detail.empty()) session->detail += "\n";
-            session->detail +=
-                "RenderScene projection rejected malformed or missing geometry";
-        }
-    }
-
-    return to_handle(session.release());
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -215,6 +245,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
             << "x" << session->image_preview.height;
     } else {
         out << " | preview=inspection";
+    }
+    if (!session->children.empty()) {
+        out << " | children=" << session->children.size();
     }
     out << " | spatialHierarchy="
         << (session->hierarchy_overlay.available() ? "yes" : "no");
@@ -277,6 +310,77 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreview(
     const Session* session = from_handle(handle);
     if (session == nullptr) return nullptr;
     return preview_to_argb(env, session->image_preview);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_childResourceCount(
+        JNIEnv*, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr ||
+        session->children.size() > static_cast<std::size_t>(
+            std::numeric_limits<jint>::max())) {
+        return 0;
+    }
+    return static_cast<jint>(session->children.size());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_childResourceTitle(
+        JNIEnv* env, jclass, jlong handle, jint index) {
+    const auto* child = child_at(from_handle(handle), index);
+    return env->NewStringUTF(child == nullptr ? "" : child->title.c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreviewAvailable(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const auto* child = child_at(from_handle(handle), index);
+    return child != nullptr && child->image_preview.available() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreviewWidth(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const auto* child = child_at(from_handle(handle), index);
+    if (child == nullptr || !child->image_preview.available() ||
+        child->image_preview.width > static_cast<std::uint32_t>(
+            std::numeric_limits<jint>::max())) {
+        return 0;
+    }
+    return static_cast<jint>(child->image_preview.width);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreviewHeight(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const auto* child = child_at(from_handle(handle), index);
+    if (child == nullptr || !child->image_preview.available() ||
+        child->image_preview.height > static_cast<std::uint32_t>(
+            std::numeric_limits<jint>::max())) {
+        return 0;
+    }
+    return static_cast<jint>(child->image_preview.height);
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreview(
+        JNIEnv* env, jclass, jlong handle, jint index) {
+    const auto* child = child_at(from_handle(handle), index);
+    if (child == nullptr) return nullptr;
+    return preview_to_argb(env, child->image_preview);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_openChild(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const auto* child = child_at(from_handle(handle), index);
+    if (child == nullptr) return 0;
+    try {
+        auto session = session_from_child(*child);
+        return to_handle(session.release());
+    } catch (...) {
+        return 0;
+    }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
