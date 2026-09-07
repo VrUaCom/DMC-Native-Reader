@@ -7,8 +7,10 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "dmcresource/binary_reader.h"
+#include "dmcresource/child_resource.h"
 #include "dmcresource/formats/dds.h"
 #include "dmcresource/module_support.h"
 
@@ -19,6 +21,7 @@ constexpr std::size_t kPtxHeaderBytes = 0x800U;
 constexpr std::size_t kPtxDescriptorBytes = 0x70U;
 constexpr std::size_t kSectorBytes = 0x800U;
 constexpr std::uint32_t kMaxTextureCount = 4096U;
+constexpr std::uint64_t kMaxPtxGalleryPreviewPixels = 4ULL * 1024ULL * 1024ULL;
 
 InspectionNode dds_inspection_node(const formats::dds::Document& dds,
                                    std::string id,
@@ -43,6 +46,20 @@ InspectionNode dds_inspection_node(const formats::dds::Document& dds,
     return node;
 }
 
+std::string dds_detail(const formats::dds::Document& dds) {
+    std::ostringstream detail;
+    detail << "DDS " << formats::dds::compression_name(dds.compression)
+           << " " << dds.width << "x" << dds.height
+           << " mips=" << dds.mip_count
+           << " payload=" << dds.payload_size;
+    return detail.str();
+}
+
+ProbeResult child_dds_probe() noexcept {
+    return {Format::Dds, true, true, "DDS", "texture", "recognized",
+            "DATA_CONFIRMED", "image/vnd-ms.dds"};
+}
+
 PipelineResult run_dds(std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
@@ -52,23 +69,28 @@ PipelineResult run_dds(std::string_view,
         return module_support::reject(probe, module_id, "DDS rejected: null input");
     }
 
-    const auto parsed = formats::dds::parse(
-        std::span<const std::uint8_t>{bytes, size});
+    const auto span = std::span<const std::uint8_t>{bytes, size};
+    const auto parsed = formats::dds::parse(span);
     if (!parsed.ok || parsed.document.total_size != size) {
         return module_support::reject(
             probe, module_id,
             "DDS rejected: expected a bounded complete DXT1/DXT5 full mip chain");
     }
 
-    std::ostringstream detail;
-    detail << "DDS " << formats::dds::compression_name(parsed.document.compression)
-           << " " << parsed.document.width << "x" << parsed.document.height
-           << " mips=" << parsed.document.mip_count
-           << " payload=" << parsed.document.payload_size;
-    auto out = structural_pipeline(probe, module_id, detail.str());
+    auto out = structural_pipeline(probe, module_id, dds_detail(parsed.document));
     out.inspection.format = "DDS";
     out.inspection.root = dds_inspection_node(parsed.document, "dds", "DDS", 0U);
     out.inspection.root.kind = InspectionKind::Document;
+
+    const auto preview = formats::dds::decode_preview(span, parsed.document);
+    if (preview.ok) {
+        out.image_preview = std::move(preview.image);
+        out.modules.push_back({"formats.dds.base-mip-preview", true});
+    } else {
+        out.modules.push_back({"formats.dds.base-mip-preview", false});
+        if (!out.detail.empty()) out.detail += "\n";
+        out.detail += "Image preview unavailable: " + preview.diagnostic;
+    }
     return out;
 }
 
@@ -96,10 +118,20 @@ PipelineResult run_ptx(std::string_view,
     textures.title = "Textures";
     textures.kind = InspectionKind::Collection;
 
+    std::vector<ChildResource> child_resources;
+    try {
+        child_resources.reserve(count);
+    } catch (...) {
+        return module_support::reject(probe, module_id,
+                                      "PTX rejected: child-resource allocation failed");
+    }
+
     std::size_t descriptor = kPtxHeaderBytes;
     std::uint64_t total_dds_bytes = 0U;
+    std::uint64_t gallery_preview_pixels = 0U;
     std::uint32_t dxt1 = 0U;
     std::uint32_t dxt5 = 0U;
+    std::uint32_t previewed = 0U;
 
     for (std::uint32_t index = 0U; index < count; ++index) {
         std::uint32_t sector_span = 0U;
@@ -141,8 +173,9 @@ PipelineResult run_ptx(std::string_view,
                 "PTX rejected: descriptor DDS offset leaves bounded span");
         }
 
-        const auto dds = formats::dds::parse(std::span<const std::uint8_t>{
-            bytes + dds_offset, bounded_end - dds_offset});
+        const auto dds_span = std::span<const std::uint8_t>{
+            bytes + dds_offset, bounded_end - dds_offset};
+        const auto dds = formats::dds::parse(dds_span);
         if (!dds.ok) {
             return module_support::reject(
                 probe, module_id,
@@ -184,24 +217,58 @@ PipelineResult run_ptx(std::string_view,
             ++dxt5;
         }
 
-        auto child = dds_inspection_node(
+        auto child_inspection = dds_inspection_node(
             dds.document,
             "texture-" + std::to_string(index),
             "Texture " + std::to_string(index),
             dds_offset);
-        child.properties.push_back({"DescriptorOffset", std::to_string(descriptor),
-                                    EvidenceLevel::StructuralConfirmed});
-        child.properties.push_back({"SectorSpan", std::to_string(sector_span),
-                                    EvidenceLevel::StructuralConfirmed});
-        textures.children.push_back(std::move(child));
+        child_inspection.properties.push_back({"DescriptorOffset", std::to_string(descriptor),
+                                               EvidenceLevel::StructuralConfirmed});
+        child_inspection.properties.push_back({"SectorSpan", std::to_string(sector_span),
+                                               EvidenceLevel::StructuralConfirmed});
+        textures.children.push_back(child_inspection);
 
+        ChildResource child;
+        child.id = "dds-" + std::to_string(index);
+        child.title = "DDS " + std::to_string(index);
+        child.suggested_filename = "texture_" + std::to_string(index) + ".dds";
+        child.source_span = SourceSpan{dds_offset, dds.document.total_size};
+        child.probe = child_dds_probe();
+        child.capabilities = capability(ResourceCapability::Inspection) |
+                             ResourceCapability::ImagePreview;
+        child.inspection.format = "DDS";
+        child.inspection.root = child_inspection;
+        child.inspection.root.kind = InspectionKind::Document;
+        child.detail = dds_detail(dds.document);
+        child.trace = "[OK] formats.dds.child-validation";
+
+        const std::uint64_t pixels =
+            static_cast<std::uint64_t>(dds.document.width) * dds.document.height;
+        if (pixels <= kMaxPtxGalleryPreviewPixels - gallery_preview_pixels) {
+            const auto preview = formats::dds::decode_preview(
+                std::span<const std::uint8_t>{bytes + dds_offset,
+                                              dds.document.total_size},
+                dds.document);
+            if (preview.ok) {
+                child.image_preview = std::move(preview.image);
+                gallery_preview_pixels += pixels;
+                ++previewed;
+            } else {
+                child.detail += "\nImage preview unavailable: " + preview.diagnostic;
+            }
+        } else {
+            child.detail += "\nImage preview omitted by PTX gallery memory budget";
+        }
+
+        child_resources.push_back(std::move(child));
         if (!final) descriptor = bounded_end;
     }
 
     std::ostringstream detail;
     detail << "PTX texture bundle | textures=" << count
            << " dxt1=" << dxt1 << " dxt5=" << dxt5
-           << " ddsBytes=" << total_dds_bytes;
+           << " ddsBytes=" << total_dds_bytes
+           << " galleryPreviews=" << previewed;
     auto out = structural_pipeline(probe, module_id, detail.str());
     out.modules.insert(out.modules.begin() + 3,
                        {"formats.dds.child-validation", true});
@@ -216,6 +283,7 @@ PipelineResult run_ptx(std::string_view,
     out.inspection.root.properties.push_back({"DDSBytes", std::to_string(total_dds_bytes),
                                               EvidenceLevel::StructuralConfirmed});
     out.inspection.root.children.push_back(std::move(textures));
+    out.children = std::move(child_resources);
     return out;
 }
 
@@ -238,9 +306,10 @@ PipelineResult run_ptx_module(const NativeModule& module,
 }  // namespace
 
 NativeModule dds_module() noexcept {
+    const auto caps = capability(ResourceCapability::Inspection) |
+        ResourceCapability::ImagePreview;
     return {"formats.dds.dmc3-reader", "DDS", Format::Dds,
-            ModuleKind::Structural, false, run_dds_module,
-            capability(ResourceCapability::Inspection)};
+            ModuleKind::Structural, false, run_dds_module, caps};
 }
 
 NativeModule ptx_module() noexcept {

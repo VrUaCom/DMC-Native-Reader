@@ -1,0 +1,74 @@
+name: DMC Native Reader DDS PTX v1 gate
+
+on:
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dds-ptx-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DDS/PTX v1 acceptance regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
+            app/src/test/native/dds_ptx_v1_test.cpp \
+            app/src/main/cpp/dmc_resource.cpp \
+            app/src/main/cpp/decode_status.cpp \
+            app/src/main/cpp/decode_hits.cpp \
+            app/src/main/cpp/decode_text.cpp \
+            app/src/main/cpp/decode_pipeline.cpp \
+            app/src/main/cpp/inspection_format.cpp \
+            app/src/main/cpp/formats/dds.cpp \
+            app/src/main/cpp/adapters/mod_adapter.cpp \
+            app/src/main/cpp/adapters/scm_adapter.cpp \
+            app/src/main/cpp/modules/module_registry.cpp \
+            app/src/main/cpp/modules/module_catalog.cpp \
+            app/src/main/cpp/modules/module_model.cpp \
+            app/src/main/cpp/modules/module_hits.cpp \
+            app/src/main/cpp/modules/module_text.cpp \
+            app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/modules/module_structural.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
+            -o /tmp/dmc-dds-ptx-v1-test
+          /tmp/dmc-dds-ptx-v1-test
+
+      - name: Guard generic preview and child-resource architecture
+        run: |
+          set -euxo pipefail
+          grep -q 'ImagePreview image_preview' app/src/main/cpp/include/dmcresource/decode_pipeline.h
+          grep -q 'std::vector<ChildResource> children' app/src/main/cpp/include/dmcresource/decode_pipeline.h
+          grep -q 'struct ChildResource' app/src/main/cpp/include/dmcresource/child_resource.h
+          grep -q 'ResourceCapability::ImagePreview' app/src/main/cpp/modules/module_texture.cpp
+          grep -q 'ResourceCapability::ChildResources' app/src/main/cpp/modules/module_texture.cpp
+          grep -q 'childResourceCount' app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
+          grep -q 'openChild' app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
+          grep -q 'ChildResourceBrowserView' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
+          grep -q 'staticImagePreview' app/src/main/java/com/dmcrengine/nativeviewer/DmcRenderView.java
+          grep -q 'Back to parent resource' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
+          grep -q 'navigateToParent' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
+          grep -q 'navigation.isEmpty() ? View.GONE : View.VISIBLE' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
+          ! grep -R -q 'DdsActivity\|PtxActivity\|DdsViewer\|PtxViewer' app/src/main/java app/src/main/cpp
+          ! grep -E -q 'if[[:space:]]*\([^)]*(PTX|DDS)|switch[[:space:]]*\([^)]*(PTX|DDS)' \
+            app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java \
+            app/src/main/java/com/dmcrengine/nativeviewer/ChildResourceBrowserView.java

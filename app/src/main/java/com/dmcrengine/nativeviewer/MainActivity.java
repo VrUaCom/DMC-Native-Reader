@@ -17,9 +17,11 @@ import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.View;
 import android.view.WindowInsets;
 import android.webkit.MimeTypeMap;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -27,6 +29,7 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Set;
 
@@ -35,13 +38,26 @@ public final class MainActivity extends Activity {
     private static final int TOOL_SIZE_DP = 48;
     private static final int TOOL_GAP_DP = 4;
 
+    private static final class NavigationEntry {
+        final long session;
+        final String title;
+
+        NavigationEntry(long session, String title) {
+            this.session = session;
+            this.title = title;
+        }
+    }
+
     private DmcRenderView renderView;
+    private ChildResourceBrowserView childBrowser;
     private TextView titleView;
+    private Button parentButton;
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
     private Button infoButton;
     private long session;
+    private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
     private ResourceUiState uiState = ResourceUiState.empty();
     private boolean spatialHierarchyAvailable;
     private String infoText = "";
@@ -102,8 +118,30 @@ public final class MainActivity extends Activity {
         button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
     }
 
+    private void applyPrimaryPresentation() {
+        final boolean hasSession = session != 0;
+        final boolean childBrowserMode = hasSession
+                && uiState.hasChildResources
+                && !uiState.canRender
+                && !uiState.canPreviewImage
+                && NativeBridge.childResourceCount(session) > 0;
+
+        if (childBrowserMode) {
+            renderView.setVisibility(View.GONE);
+            childBrowser.setVisibility(View.VISIBLE);
+            childBrowser.setSession(session);
+        } else {
+            childBrowser.setSession(0);
+            childBrowser.setVisibility(View.GONE);
+            renderView.setVisibility(View.VISIBLE);
+        }
+    }
+
     private void applyResourceUiState() {
         final boolean hasSession = session != 0;
+        applyPrimaryPresentation();
+
+        parentButton.setVisibility(navigation.isEmpty() ? View.GONE : View.VISIBLE);
         setToolAvailable(resetButton, hasSession && uiState.canRender);
         syncToggleButton(wireButton,
                 hasSession && uiState.canWireframe,
@@ -117,9 +155,6 @@ public final class MainActivity extends Activity {
                 hierarchyAvailable,
                 renderView.isHierarchyVisible());
 
-        // When there is no accepted resource, keep Info available for routing or
-        // rejection diagnostics. For accepted resources the policy comes from
-        // the native Inspection capability.
         setToolAvailable(infoButton,
                 hasSession ? uiState.canInspect : !infoText.isEmpty());
     }
@@ -155,19 +190,44 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(0xff0b0b0e);
         applySystemBarInsets(root);
 
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        parentButton = makeSquareButton("←", "Back to parent resource", 28f);
+        parentButton.setVisibility(View.GONE);
+        parentButton.setOnClickListener(v -> navigateToParent());
+        header.addView(parentButton, new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+
         titleView = new TextView(this);
         titleView.setTextColor(Color.WHITE);
         titleView.setTextSize(15f);
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
-        titleView.setPadding(dp(16), dp(8), dp(16), dp(6));
+        titleView.setPadding(dp(12), dp(8), dp(16), dp(6));
         titleView.setText("DMC Native Reader");
-        root.addView(titleView, new LinearLayout.LayoutParams(
+        header.addView(titleView, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        root.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        FrameLayout viewport = new FrameLayout(this);
         renderView = new DmcRenderView(this);
-        root.addView(renderView, new LinearLayout.LayoutParams(
+        viewport.addView(renderView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        childBrowser = new ChildResourceBrowserView(this);
+        childBrowser.setVisibility(View.GONE);
+        childBrowser.setListener(this::openChildResource);
+        viewport.addView(childBrowser, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        root.addView(viewport, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
         LinearLayout bar = new LinearLayout(this);
@@ -350,38 +410,17 @@ public final class MainActivity extends Activity {
         return getContentResolver().openFileDescriptor(uri, "r");
     }
 
-    private void openUri(Uri uri) {
-        closeSession();
-        String name = displayName(uri);
+    private void activateSession(long handle, String name) {
+        session = handle;
         titleView.setText(name);
-        lastProviderDiag = describeProvider(uri);
-        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
-            if (pfd == null) throw new FileNotFoundException("No file descriptor");
-            session = NativeBridge.open(pfd.getFd(), name);
-        } catch (Exception e) {
-            setInfo(name + "\nOpen failed: " + e + "\n\n"
-                    + "ANDROID ROUTING DIAGNOSTICS\n"
-                    + routingSelfTest + "\n" + systemMimeDiag + "\n"
-                    + lastProviderDiag + "\n" + lastIntentDiag);
-            applyResourceUiState();
-            Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (session == 0) {
-            setInfo(name + "\nRejected by native reader\n\n"
-                    + "ANDROID ROUTING DIAGNOSTICS\n"
-                    + routingSelfTest + "\n" + systemMimeDiag + "\n"
-                    + lastProviderDiag + "\n" + lastIntentDiag);
-            applyResourceUiState();
-            Toast.makeText(this, "Native DMC reader rejected this file", Toast.LENGTH_LONG).show();
-            return;
-        }
-
         renderView.setSession(session);
         uiState = ResourceUiState.fromCapabilities(NativeBridge.capabilities(session));
         spatialHierarchyAvailable = NativeBridge.hierarchyAvailable(session);
         applyResourceUiState();
+        rebuildInfo(name);
+    }
 
+    private void rebuildInfo(String name) {
         final String inspection = NativeBridge.inspection(session);
         final String nativeInfo = NativeBridge.info(session);
 
@@ -392,6 +431,11 @@ public final class MainActivity extends Activity {
                 ? "No typed inspection document.\n"
                 : inspection);
         details.append("\nSESSION / EVIDENCE\n").append(nativeInfo).append("\n");
+        if (!navigation.isEmpty()) {
+            details.append("\nNAVIGATION\n")
+                    .append("Depth: ").append(navigation.size()).append("\n")
+                    .append("Back returns to: ").append(navigation.peek().title).append("\n");
+        }
         details.append("\nANDROID ROUTING DIAGNOSTICS\n")
                 .append(routingSelfTest).append("\n")
                 .append(systemMimeDiag).append("\n")
@@ -399,6 +443,67 @@ public final class MainActivity extends Activity {
                 .append(lastIntentDiag);
         setInfo(details.toString());
         applyResourceUiState();
+    }
+
+    private void openUri(Uri uri) {
+        closeAllSessions();
+        String name = displayName(uri);
+        titleView.setText(name);
+        lastProviderDiag = describeProvider(uri);
+        long opened = 0;
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+            if (pfd == null) throw new FileNotFoundException("No file descriptor");
+            opened = NativeBridge.open(pfd.getFd(), name);
+        } catch (Exception e) {
+            setInfo(name + "\nOpen failed: " + e + "\n\n"
+                    + "ANDROID ROUTING DIAGNOSTICS\n"
+                    + routingSelfTest + "\n" + systemMimeDiag + "\n"
+                    + lastProviderDiag + "\n" + lastIntentDiag);
+            applyResourceUiState();
+            Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (opened == 0) {
+            setInfo(name + "\nRejected by native reader\n\n"
+                    + "ANDROID ROUTING DIAGNOSTICS\n"
+                    + routingSelfTest + "\n" + systemMimeDiag + "\n"
+                    + lastProviderDiag + "\n" + lastIntentDiag);
+            applyResourceUiState();
+            Toast.makeText(this, "Native DMC reader rejected this file", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        activateSession(opened, name);
+    }
+
+    private void openChildResource(int index, String childTitle) {
+        if (session == 0) return;
+        final long child = NativeBridge.openChild(session, index);
+        if (child == 0) {
+            Toast.makeText(this, "Could not open child resource", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        navigation.push(new NavigationEntry(session, titleView.getText().toString()));
+        activateSession(child, childTitle);
+    }
+
+    private boolean navigateToParent() {
+        if (navigation.isEmpty()) return false;
+
+        final long child = session;
+        renderView.setSession(0);
+        childBrowser.setSession(0);
+        if (child != 0) NativeBridge.close(child);
+
+        NavigationEntry parent = navigation.pop();
+        activateSession(parent.session, parent.title);
+        return true;
+    }
+
+    @Override public void onBackPressed() {
+        if (navigateToParent()) return;
+        super.onBackPressed();
     }
 
     private String describeIntent(Intent intent) {
@@ -475,19 +580,25 @@ public final class MainActivity extends Activity {
         return ok ? "OK" : "FAIL";
     }
 
-    private void closeSession() {
+    private void closeAllSessions() {
         renderView.setSession(0);
+        childBrowser.setSession(0);
         uiState = ResourceUiState.empty();
         spatialHierarchyAvailable = false;
-        applyResourceUiState();
+
         if (session != 0) {
             NativeBridge.close(session);
             session = 0;
         }
+        while (!navigation.isEmpty()) {
+            NavigationEntry entry = navigation.pop();
+            if (entry.session != 0) NativeBridge.close(entry.session);
+        }
+        applyResourceUiState();
     }
 
     @Override protected void onDestroy() {
-        closeSession();
+        closeAllSessions();
         super.onDestroy();
     }
 }

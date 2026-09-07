@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -22,6 +23,7 @@ public final class DmcRenderView extends View {
     private float zoom = 1.0f;
     private int renderFlags;
     private boolean hierarchyAvailable;
+    private boolean staticImagePreview;
     private float lastX;
     private float lastY;
     private long lastRenderMs;
@@ -32,6 +34,7 @@ public final class DmcRenderView extends View {
         scaleDetector = new ScaleGestureDetector(context,
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     @Override public boolean onScale(ScaleGestureDetector detector) {
+                        if (staticImagePreview) return false;
                         zoom *= detector.getScaleFactor();
                         zoom = Math.max(0.15f, Math.min(8.0f, zoom));
                         renderThrottled(false);
@@ -40,51 +43,112 @@ public final class DmcRenderView extends View {
                 });
     }
 
+    private boolean canUseStaticImagePreview() {
+        if (session == 0) return false;
+        final ResourceUiState state = ResourceUiState.fromCapabilities(
+                NativeBridge.capabilities(session));
+        return state.canPreviewImage && NativeBridge.imagePreviewAvailable(session);
+    }
+
+    private void clearStaticImagePreview() {
+        staticImagePreview = false;
+        bitmap = null;
+        invalidate();
+    }
+
     public void setSession(long newSession) {
         session = newSession;
         renderFlags = 0;
         hierarchyAvailable = false;
-        // A structural/non-mesh session intentionally renders no bitmap. Clear
-        // any previous frame before asking native code for a new one.
+        staticImagePreview = false;
         bitmap = null;
         invalidate();
         if (session == 0) return;
-        resetView();
+
+        if (canUseStaticImagePreview()) {
+            loadStaticImagePreview();
+        } else {
+            resetView();
+        }
+    }
+
+    private void loadStaticImagePreview() {
+        if (!canUseStaticImagePreview()) {
+            clearStaticImagePreview();
+            return;
+        }
+
+        final int width = NativeBridge.imagePreviewWidth(session);
+        final int height = NativeBridge.imagePreviewHeight(session);
+        final long expected = (long) width * (long) height;
+        if (width <= 0 || height <= 0 || expected <= 0L ||
+                expected > Integer.MAX_VALUE) {
+            clearStaticImagePreview();
+            return;
+        }
+
+        final int[] pixels;
+        try {
+            pixels = NativeBridge.imagePreview(session);
+        } catch (OutOfMemoryError error) {
+            clearStaticImagePreview();
+            return;
+        }
+        if (pixels == null || pixels.length != (int) expected) {
+            clearStaticImagePreview();
+            return;
+        }
+
+        try {
+            bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
+            clearStaticImagePreview();
+            return;
+        }
+        staticImagePreview = true;
+        lastRenderMs = SystemClock.uptimeMillis();
+        invalidate();
     }
 
     public void resetView() {
         yaw = 0.65f;
         pitch = -0.45f;
         zoom = 1.0f;
-        renderNow();
+        if (staticImagePreview) {
+            invalidate();
+        } else {
+            renderNow();
+        }
     }
 
     public void toggleWireframe() {
+        if (staticImagePreview) return;
         renderFlags ^= RENDER_WIREFRAME;
         renderNow();
     }
 
     public boolean isWireframe() {
-        return (renderFlags & RENDER_WIREFRAME) != 0;
+        return !staticImagePreview && (renderFlags & RENDER_WIREFRAME) != 0;
     }
 
     public void toggleHierarchy() {
-        if (!hierarchyAvailable) return;
+        if (staticImagePreview || !hierarchyAvailable) return;
         renderFlags ^= RENDER_HIERARCHY;
         renderNow();
     }
 
     public void setHierarchyAvailable(boolean available) {
         final boolean hierarchyWasRequested = (renderFlags & RENDER_HIERARCHY) != 0;
-        hierarchyAvailable = available;
-        if (!available && hierarchyWasRequested) {
+        hierarchyAvailable = !staticImagePreview && available;
+        if (!hierarchyAvailable && hierarchyWasRequested) {
             renderFlags &= ~RENDER_HIERARCHY;
             renderNow();
         }
     }
 
     public boolean isHierarchyVisible() {
-        return hierarchyAvailable && (renderFlags & RENDER_HIERARCHY) != 0;
+        return !staticImagePreview && hierarchyAvailable &&
+                (renderFlags & RENDER_HIERARCHY) != 0;
     }
 
     private int renderWidth() {
@@ -107,6 +171,11 @@ public final class DmcRenderView extends View {
 
     public void renderNow() {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return;
+        if (staticImagePreview) {
+            invalidate();
+            return;
+        }
+
         int rw = renderWidth();
         int rh = renderHeight();
         int[] pixels = NativeBridge.render(session, rw, rh, yaw, pitch, zoom,
@@ -122,23 +191,44 @@ public final class DmcRenderView extends View {
     }
 
     private void renderThrottled(boolean force) {
+        if (staticImagePreview) return;
         long now = SystemClock.uptimeMillis();
         if (force || now - lastRenderMs >= 45) renderNow();
     }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        renderNow();
+        if (staticImagePreview) {
+            invalidate();
+        } else {
+            renderNow();
+        }
     }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         if (bitmap == null) return;
+
+        if (!staticImagePreview) {
+            canvas.drawBitmap(bitmap, null,
+                    new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+            return;
+        }
+
+        final float sx = (float) getWidth() / (float) bitmap.getWidth();
+        final float sy = (float) getHeight() / (float) bitmap.getHeight();
+        final float scale = Math.min(sx, sy);
+        final float drawWidth = bitmap.getWidth() * scale;
+        final float drawHeight = bitmap.getHeight() * scale;
+        final float left = (getWidth() - drawWidth) * 0.5f;
+        final float top = (getHeight() - drawHeight) * 0.5f;
         canvas.drawBitmap(bitmap, null,
-                new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+                new RectF(left, top, left + drawWidth, top + drawHeight), paint);
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
+        if (staticImagePreview) return true;
+
         scaleDetector.onTouchEvent(event);
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:

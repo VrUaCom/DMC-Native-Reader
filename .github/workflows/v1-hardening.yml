@@ -70,8 +70,8 @@ jobs:
 
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='15'" "$BADGING"
-            grep -q "versionName='1.1.3-debug-v1-hardening'" "$BADGING"
+            grep -q "versionCode='17'" "$BADGING"
+            grep -q "versionName='1.1.5-debug-child-gallery'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
             ! grep -q 'DMC Native Reader v8' "$BADGING"
           done
@@ -81,6 +81,10 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.spatial-hierarchy'
           strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.texture-state'
           strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.dmc3-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.base-mip-preview'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.ptx.bundle-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'children='
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
@@ -96,14 +100,14 @@ jobs:
       - name: Upload hardening debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.3-debug-v1-hardening
+          name: dmc-native-reader-v1.1.5-debug-child-gallery
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload hardening evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.3-hardening-evidence
+          name: dmc-native-reader-v1.1.5-child-gallery-hardening-evidence
           path: |
             /tmp/debug-badging.txt
             /tmp/release-badging.txt
