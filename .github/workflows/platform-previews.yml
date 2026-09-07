@@ -1,0 +1,144 @@
+name: DMC Native Reader cross-platform previews
+
+on:
+  pull_request:
+    paths:
+      - "ios/**"
+      - "windows/**"
+      - "app/src/main/cpp/portable_session.cpp"
+      - "app/src/main/cpp/include/dmcresource/portable_session.h"
+      - ".github/workflows/platform-previews.yml"
+  workflow_dispatch:
+    inputs:
+      publish_previews:
+        description: Update the iOS/Windows preview releases after successful builds
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: iOS unsigned preview
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Build unsigned iOS application
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project DMCNativeReader.xcodeproj \
+            -scheme DMCNativeReader \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build" \
+            build
+          test -d "build/DMC Native Reader.app"
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          rm -rf Payload
+          mkdir Payload
+          cp -R "build/DMC Native Reader.app" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload \
+            DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-iOS-v1.0.0-unsigned
+          path: ios/DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 90
+
+  windows:
+    name: Windows x64 preview
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S windows -B build/windows -A x64
+      - name: Build
+        run: cmake --build build/windows --config Release --parallel
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "dist/DMC-Native-Reader-Windows-v1.0.0-preview"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "build/windows/Release/DMC-Native-Reader.exe" "$out/DMC-Native-Reader.exe"
+          Copy-Item "LICENSE" "$out/LICENSE.txt"
+          Copy-Item "THIRD_PARTY_NOTICES.md" "$out/THIRD_PARTY_NOTICES.md"
+          Compress-Archive -Path "$out/*" -DestinationPath "dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v1.0.0-preview
+          path: dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Update platform preview releases
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_previews }}
+    needs: [ios, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: DMC-Native-Reader-iOS-v1.0.0-unsigned
+          path: dist/ios
+      - uses: actions/download-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v1.0.0-preview
+          path: dist/windows
+
+      - name: Update existing iOS preview instead of deleting it
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/git/refs/tags/ios-unsigned-latest" \
+            -f sha="$GITHUB_SHA" -F force=true
+          gh release edit ios-unsigned-latest \
+            --title "DMC Native Reader for iOS — Preview" \
+            --notes-file docs/releases/ios-preview.md \
+            --prerelease
+          gh release delete-asset ios-unsigned-latest DMCReader-unsigned.ipa --yes || true
+          gh release upload ios-unsigned-latest \
+            dist/ios/DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa --clobber
+
+      - name: Create or update Windows preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=dist/windows/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+          if gh release view windows-preview-latest >/dev/null 2>&1; then
+            gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/git/refs/tags/windows-preview-latest" \
+              -f sha="$GITHUB_SHA" -F force=true
+            gh release edit windows-preview-latest \
+              --title "DMC Native Reader for Windows — Preview" \
+              --notes-file docs/releases/windows-preview.md \
+              --prerelease
+            gh release upload windows-preview-latest "$ZIP" --clobber
+          else
+            gh release create windows-preview-latest "$ZIP" \
+              --target "$GITHUB_SHA" \
+              --title "DMC Native Reader for Windows — Preview" \
+              --notes-file docs/releases/windows-preview.md \
+              --prerelease
+          fi
