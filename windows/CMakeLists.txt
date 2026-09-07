@@ -36,8 +36,14 @@ target_include_directories(DMCNativeReader PRIVATE
 )
 target_compile_features(DMCNativeReader PRIVATE cxx_std_20)
 target_compile_definitions(DMCNativeReader PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+
 if(MSVC)
     target_compile_options(DMCNativeReader PRIVATE /W4 /permissive- /EHsc)
+elseif(MINGW)
+    target_compile_options(DMCNativeReader PRIVATE -Wall -Wextra -Wpedantic)
+    # Produce a self-contained preview executable so users do not need MinGW
+    # runtime DLLs beside the application.
+    target_link_options(DMCNativeReader PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 
 target_link_libraries(DMCNativeReader PRIVATE user32 gdi32 comdlg32 shell32)
