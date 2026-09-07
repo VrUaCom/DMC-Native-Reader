@@ -45,12 +45,15 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          openssl rand -base64 48 | tr -d '\n' > /tmp/release-key-passphrase.txt
+          PASS="$(openssl rand -base64 48 | tr -d '\n')"
+          printf '%s\n' "$PASS" > /tmp/release-key-passphrase.txt
+          printf '%s\n' "$PASS" > /tmp/release-key-passphrase-key.txt
+          unset PASS
           keytool -genkeypair \
             -keystore /tmp/dmc-native-reader-release-v1.jks \
             -storetype JKS \
             -storepass:file /tmp/release-key-passphrase.txt \
-            -keypass:file /tmp/release-key-passphrase.txt \
+            -keypass:file /tmp/release-key-passphrase-key.txt \
             -alias dmc-native-reader-release-v1 \
             -keyalg RSA \
             -keysize 4096 \
@@ -69,7 +72,7 @@ jobs:
             --ks /tmp/dmc-native-reader-release-v1.jks \
             --ks-key-alias dmc-native-reader-release-v1 \
             --ks-pass file:/tmp/release-key-passphrase.txt \
-            --key-pass file:/tmp/release-key-passphrase.txt \
+            --key-pass file:/tmp/release-key-passphrase-key.txt \
             --v1-signing-enabled true \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
