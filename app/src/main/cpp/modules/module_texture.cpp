@@ -319,4 +319,4 @@ NativeModule ptx_module() noexcept {
             ModuleKind::Structural, false, run_ptx_module, caps};
 }
 
-}  // namespace dmcresource;
+}  // namespace dmcresource
