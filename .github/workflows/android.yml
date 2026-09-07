@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main", "feature/ui2-model-inspector", "feature/mod-spatial-hierarchy"]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -157,7 +157,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify Native Reader v1.1.2 UI2 MOD materials debug build
+      - name: Verify Native Reader v1.1.3 v1 hardening debug build
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -169,8 +169,10 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='14'" /tmp/badging.txt
-          grep -q "versionName='1.1.2-debug-ui2-modmaterials'" /tmp/badging.txt
+          grep -q "versionCode='15'" /tmp/badging.txt
+          grep -q "versionName='1.1.3-debug-v1-hardening'" /tmp/badging.txt
+          grep -q "application-label:'DMC Native Reader'" /tmp/badging.txt
+          ! grep -q 'DMC Native Reader v8' /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
@@ -232,14 +234,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.2-debug-ui2-modmaterials
+          name: dmc-native-reader-v1.1.3-debug-v1-hardening
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.2-debug-ui2-modmaterials-evidence
+          name: dmc-native-reader-v1.1.3-debug-v1-hardening-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
