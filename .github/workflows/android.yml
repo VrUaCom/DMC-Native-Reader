@@ -157,7 +157,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify Native Reader v1.1.3 v1 hardening debug build
+      - name: Verify Native Reader v1.1.4 DDS PTX debug build
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -169,8 +169,8 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='15'" /tmp/badging.txt
-          grep -q "versionName='1.1.3-debug-v1-hardening'" /tmp/badging.txt
+          grep -q "versionCode='16'" /tmp/badging.txt
+          grep -q "versionName='1.1.4-debug-dds-ptx'" /tmp/badging.txt
           grep -q "application-label:'DMC Native Reader'" /tmp/badging.txt
           ! grep -q 'DMC Native Reader v8' /tmp/badging.txt
           grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
@@ -200,6 +200,7 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -q 'formats.hits.collision-reader'
           strings /tmp/libdmcviewer.so | grep -q 'formats.stage-txt.lexer'
           strings /tmp/libdmcviewer.so | grep -q 'formats.dds.dmc3-reader'
+          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.base-mip-preview'
           strings /tmp/libdmcviewer.so | grep -q 'formats.ptx.bundle-reader'
           strings /tmp/libdmcviewer.so | grep -q 'formats.dca.record-reader'
           strings /tmp/libdmcviewer.so | grep -q 'formats.lig2.record-reader'
@@ -234,14 +235,14 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.3-debug-v1-hardening
+          name: dmc-native-reader-v1.1.4-debug-dds-ptx
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload build evidence
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.3-debug-v1-hardening-evidence
+          name: dmc-native-reader-v1.1.4-debug-dds-ptx-evidence
           path: |
             /tmp/badging.txt
             /tmp/manifest-tree.txt
