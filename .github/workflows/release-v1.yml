@@ -1,0 +1,149 @@
+name: DMC Native Reader v1 production release
+
+on:
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  production-release:
+    if: github.head_ref == 'release/v1.0.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.5.0"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Build unsigned release APK
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Generate production release authority outside Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          openssl rand -base64 48 | tr -d '\n' > /tmp/release-key-passphrase.txt
+          keytool -genkeypair \
+            -keystore /tmp/dmc-native-reader-release-v1.jks \
+            -storetype JKS \
+            -storepass:file /tmp/release-key-passphrase.txt \
+            -keypass:file /tmp/release-key-passphrase.txt \
+            -alias dmc-native-reader-release-v1 \
+            -keyalg RSA \
+            -keysize 4096 \
+            -sigalg SHA256withRSA \
+            -validity 10000 \
+            -dname "CN=DMC Native Reader Release, OU=Release Signing, O=VrUaCom, L=Madrid, ST=Madrid, C=ES"
+
+      - name: Sign v1.0.0 release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          SIGNED="/tmp/DMC-Native-Reader-v1.0.0.apk"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          "$APKSIGNER" sign \
+            --ks /tmp/dmc-native-reader-release-v1.jks \
+            --ks-key-alias dmc-native-reader-release-v1 \
+            --ks-pass file:/tmp/release-key-passphrase.txt \
+            --key-pass file:/tmp/release-key-passphrase.txt \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$SIGNED" \
+            "$UNSIGNED"
+
+      - name: Verify production release identity and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="/tmp/DMC-Native-Reader-v1.0.0.apk"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
+
+          unzip -t "$APK"
+          "$AAPT2" dump badging "$APK" | tee /tmp/release-badging.txt
+          grep -q "package: name='com.dmcrengine.nativereader'" /tmp/release-badging.txt
+          grep -q "versionCode='20'" /tmp/release-badging.txt
+          grep -q "versionName='1.0.0'" /tmp/release-badging.txt
+          grep -q "application-label:'DMC Native Reader'" /tmp/release-badging.txt
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/release-signing.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/release-signing.txt
+          grep -q 'Verified using v3 scheme (APK Signature Scheme v3): true' /tmp/release-signing.txt
+          if tr -d ': ' < /tmp/release-signing.txt | grep -qi 'f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac'; then
+            echo 'production release was signed by the development certificate'
+            exit 1
+          fi
+
+          unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.dds.dmc3-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.ptx.bundle-reader'
+
+          sha256sum "$APK" | tee /tmp/release-apk.sha256
+          keytool -list -v \
+            -keystore /tmp/dmc-native-reader-release-v1.jks \
+            -storepass:file /tmp/release-key-passphrase.txt \
+            -alias dmc-native-reader-release-v1 > /tmp/release-certificate.txt
+
+          cat > /tmp/KEY_BACKUP_README.txt <<'EOF'
+          DMC Native Reader v1 production signing backup.
+
+          KEEP THIS KEYSTORE AND PASSPHRASE PRIVATE AND BACKED UP.
+          Future v1.x APK updates for com.dmcrengine.nativereader must be signed
+          with this same authority (or a formally configured Android key lineage).
+          Do not commit these files to Git.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-v1.0.0-production
+          path: /tmp/DMC-Native-Reader-v1.0.0.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-v1.0.0-release-evidence
+          path: |
+            /tmp/release-badging.txt
+            /tmp/release-signing.txt
+            /tmp/release-apk.sha256
+            /tmp/release-certificate.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-v1.0.0-production-key-backup
+          path: |
+            /tmp/dmc-native-reader-release-v1.jks
+            /tmp/release-key-passphrase.txt
+            /tmp/KEY_BACKUP_README.txt
+          if-no-files-found: error
+          retention-days: 1
