@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "dmcresource/child_resource.h"
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/image_preview.h"
 #include "dmcresource/inspection_document.h"
@@ -32,6 +33,7 @@ struct PipelineResult {
     InspectionDocument inspection;
     RenderScene scene;
     ImagePreview image_preview;
+    std::vector<ChildResource> children;
 
     std::string detail;
     std::vector<ModuleState> modules;
