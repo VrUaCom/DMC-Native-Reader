@@ -65,6 +65,9 @@ jobs:
           grep -q 'openChild' app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
           grep -q 'ChildResourceBrowserView' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
           grep -q 'staticImagePreview' app/src/main/java/com/dmcrengine/nativeviewer/DmcRenderView.java
+          grep -q 'Back to parent resource' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
+          grep -q 'navigateToParent' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
+          grep -q 'navigation.isEmpty() ? View.GONE : View.VISIBLE' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
           ! grep -R -q 'DdsActivity\|PtxActivity\|DdsViewer\|PtxViewer' app/src/main/java app/src/main/cpp
           ! grep -E -q 'if[[:space:]]*\([^)]*(PTX|DDS)|switch[[:space:]]*\([^)]*(PTX|DDS)' \
             app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java \
