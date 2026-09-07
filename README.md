@@ -2,132 +2,144 @@
 
 > **A system-integrated native Android file reader for Devil May Cry 3 HD resources.**
 >
-> Open a DMC3 resource from your file manager, let Android route it to DMC Native Reader, and inspect it through an evidence-aware C++ parser selected by its real resource family.
+> Open a DMC3 resource from your file manager, let Android route it to DMC Native Reader, and inspect or preview it through an evidence-aware C++20 module selected by its real resource family.
 
 **DMC Native Reader** is an Android application built to make Devil May Cry 3 HD Collection resource files behave more like first-class files on a modern device.
 
-Instead of treating `.mod`, `.scm`, `.ptx`, `.dds`, stage text, collision data and container files as anonymous binary blobs, the app identifies the resource family and routes the file into an explicit native reader module.
+Instead of treating `.mod`, `.scm`, `.ptx`, `.dds`, stage text, collision data and container files as anonymous binary blobs, the app identifies the resource family and routes it into an explicit native reader module.
 
-The application integrates with Android's standard file-opening flow (`Open with`, SAF `content://` URIs, OEM file managers such as Samsung My Files) while the actual parsing work happens in a native C++ core.
+The application integrates with Android's normal file-opening flow (`Open with`, SAF `content://` URIs, OEM file managers such as Samsung My Files) while parsing, inspection, geometry projection and image decoding stay in the native C++ core.
 
-**It is not a kernel driver or a filesystem replacement.** It is a system-integrated Android file reader that registers supported DMC resource types with the OS and provides native, read-only inspection of those files.
-
----
-
-## Why this project exists
-
-DMC3 HD resources were never designed to be user-facing documents. They live inside a game-specific ecosystem of archives, model formats, texture bundles, stage configuration, collision structures and runtime-only resource families.
-
-For modding, reverse engineering and preservation work this creates a practical problem: the operating system sees a pile of unknown extensions, while the useful structure is hidden several layers deeper.
-
-DMC Native Reader is an attempt to close that gap.
-
-The long-term idea is simple:
-
-```text
-Tap a DMC file
-    ↓
-Android recognizes that DMC Native Reader can open it
-    ↓
-Native probe identifies the resource family
-    ↓
-NativeModuleRegistry selects exactly one explicit reader
-    ↓
-The reader validates and exposes only structure supported by evidence
-    ↓
-Renderable formats can be visualized; structural formats can be inspected
-```
-
-No wildcard parser pretends to understand everything. Unknown data stays unknown.
+**It is not a kernel driver or filesystem replacement.** It is a read-only, system-integrated resource reader.
 
 ---
 
 ## Current release line
 
-### Native Reader v1 — Debug Baseline
+### Native Reader v1.0.0 RC1
 
-- `versionCode`: **10**
-- `versionName`: **1.0.0-debug-baseline**
+- `versionCode`: **18**
+- `versionName`: **1.0.0-rc1**
 - package: `com.dmcrengine.nativereader`
+- application label: `DMC Native Reader`
 - ABI: `arm64-v8a`
 - minimum Android: API 26
 - target / compile SDK: 36
-- native language: C++17
+- native language: **C++20**
 - Android NDK: 28.2.13676358
 - CMake: 3.22.1
 
-**v1 marks the end of the initial architecture/build-out phase and the beginning of device + real-corpus debugging.**
+RC1 freezes the first stable v1 architecture after real-device acceptance of the primary MOD, SCM, DDS and PTX flows. It does **not** mean every recognized DMC family is semantically complete.
 
-The milestone does **not** mean every known DMC format is fully reversed. It means the Native Reader architecture is fixed, the main modding formats have real readers, recognized families have explicit contracts, and unsupported semantics are no longer hidden behind generic fallbacks.
-
-See [`docs/V1_BASELINE.md`](docs/V1_BASELINE.md) for the frozen milestone contract.
+See [`docs/V1_RC1.md`](docs/V1_RC1.md), [`docs/STATUS.md`](docs/STATUS.md) and [`docs/RELEASE_GATES_V1.md`](docs/RELEASE_GATES_V1.md).
 
 ---
 
-## What makes it "native"
+## Architecture
 
-There are two different meanings here, and both matter.
-
-### Native Android integration
-
-DMC Native Reader participates in Android's normal document-opening system:
-
-- `Open with` integration;
-- Storage Access Framework (`content://`) input;
-- file URI fallback where available;
-- explicit DMC MIME / extension routes;
-- exported `DmcOpenActivity` for OEM file-manager routing;
-- dedicated handling for common DMC modding extensions such as `.mod`, `.scm`, `.ptx` and `.dds`.
-
-The goal is that a modder can browse files normally and open a supported DMC resource directly from the system file manager.
-
-### Native C++ reader core
-
-The parser path is native C++ and intentionally modular:
+The production path is intentionally modular:
 
 ```text
-probe
-  -> NativeModuleRegistry
-      -> explicit NativeModule
-          -> family-specific runner
-              -> inspection / mesh session
-                  -> Android UI
+bytes
+  ↓
+NativeModuleRegistry
+  ↓
+explicit NativeModule
+  ↓
+family-specific canonical/native reader
+  ↓
+PipelineResult
+  ├── InspectionDocument
+  ├── RenderScene
+  ├── ImagePreview
+  ├── ChildResource[]
+  └── ResourceCapabilities
+  ↓
+JNI Session
+  ↓
+generic Android presentation
 ```
 
-There is:
+Important invariants:
 
-- **no central family `if/else` decoder**;
-- **no wildcard structural parser**;
-- **no "try SCM/MOD and hope" fallback**;
-- **no unknown-family success path**.
+- no central family `if/else` decoder;
+- no wildcard structural parser;
+- no "try SCM/MOD and hope" fallback;
+- no unknown-family success path;
+- no duplicate MOD/SCM geometry representation;
+- no DDS/PTX/MOD/SCM-specific Android viewer classes;
+- `InspectionDocument` is inspection authority;
+- `RenderScene` is geometry/hierarchy authority;
+- `ResourceCapabilities` / `ResourceUiState` decide which UI actions are available;
+- `RenderFlags` control overlays;
+- nested resources use generic `ChildResource` + Session navigation.
 
-Each known family owns a stable module contract: identity, `Format`, module kind, renderability and runner.
+The reverse/evidence authority for DMC3 HD semantics lives in the companion project `VrUaCom/dmc-rengine-cpp`. New confirmed fields are promoted there first, then consumed by Native Reader.
+
+---
+
+## Real-device accepted v1 flows
+
+The current v1 surface has been exercised on a real Samsung Android device using user-supplied DMC3 HD resources.
+
+### MOD
+
+- 3D geometry preview;
+- rotation / zoom / wireframe;
+- canonical model-space node hierarchy;
+- generic hierarchy/bone overlay gated by per-document spatial authority;
+- skin weights / influence inspection;
+- typed texture slot;
+- legacy GS CLAMP / REGION_REPEAT state;
+- unresolved bitmap companion mapping stays explicitly unresolved.
+
+### SCM
+
+- 3D geometry preview;
+- canonical scene hierarchy / world matrices;
+- generic scene-hierarchy overlay;
+- texture binding and legacy GS sampler inspection.
+
+### DDS
+
+- bounded DXT1 / DXT5 validation;
+- full mip-chain structural validation;
+- base-mip image preview in the shared viewport;
+- standalone DDS uses the same generic ImagePreview path as nested DDS.
+
+### PTX
+
+- bundle inspection;
+- embedded DDS validation;
+- preview-first child-resource gallery;
+- real DDS texture thumbnails;
+- tap child → full DDS preview through an ordinary child Session;
+- explicit `←` and Android system Back return to the existing parent PTX Session without reparsing it;
+- per-tile fallback label remains available if an image preview cannot be safely materialized.
 
 ---
 
 ## Format support
 
-Native Reader v1 contains **71 explicit recognized family contracts**.
-
-That number is intentionally separate from "71 fully decoded formats". Some families have full structural readers, some are partial and evidence-gated, and the rest are explicit recognition modules waiting for enough reverse evidence.
+Native Reader v1 contains **71 explicit recognized family contracts**. Recognition is deliberately separate from semantic completeness.
 
 ### Core v1 modding formats
 
-| Family | v1 status | What Native Reader currently knows |
+| Family | v1 status | Current product surface |
 |---|---|---|
-| **MOD** | ✅ structural / renderable | Corpus-backed model mesh path, model adapter, positions/normals/UV and recovered model-family structure |
-| **SCM** | ✅ structural / renderable | Scene/model mesh path, hierarchy/transform adapter and recovered scene-model structure |
-| **DDS** | ✅ structural texture reader | DMC3 HD DDS validation, DXT1/DXT5 and bounded full mip-chain validation |
-| **PTX** | ✅ structural texture bundle | Texture bundle framing with bounded embedded DDS-child validation |
-| **TXT** | ✅ bounded structural text | Stage text lexer and known parser/token boundary; individual command semantics remain partially open |
-| **`.index`** | ✅ textual manifest reader | Naming/manifest parsing with PAC/PNST text-vs-binary precedence handling |
+| **MOD** | ✅ structural / renderable | Geometry, hierarchy, world transforms, skin/weights, UV, texture slot, GS state |
+| **SCM** | ✅ structural / renderable | Scene geometry, hierarchy/world transforms, texture binding, GS sampler state |
+| **DDS** | ✅ structural / image preview | DXT1/DXT5, mip validation, bounded base-mip preview |
+| **PTX** | ✅ structural / child resources | DDS bundle validation, thumbnails, child navigation |
+| **TXT** | ✅ bounded structural text | Stage lexer / known parser-token boundary |
+| **`.index`** | ✅ textual manifest | Naming/manifest parsing with PAC/PNST precedence handling |
 
 ### Additional promoted readers
 
 | Family | Status | Purpose |
 |---|---|---|
 | **HITS** | ✅ structural / renderable | Collision mesh / spatial collision inspection |
-| **DCA** | ✅ structural | `0x10` header + bounded `0x410` record envelope |
+| **DCA** | ✅ structural | Bounded record envelope |
 | **LIG / LIG2** | ✅ structural | Stage-lighting record envelopes |
 | **PAC** | ✅ container inspection | Relative-slot container structure |
 | **PNST** | ✅ container inspection | Relative-slot container structure with distinct family identity |
@@ -135,49 +147,38 @@ That number is intentionally separate from "71 fully decoded formats". Some fami
 
 ### Partial / evidence-gated families
 
-These are real DMC families with dedicated module identities, but v1 deliberately does not claim complete schemas:
+- **EFM** — explicit family adapter; exact format-specific geometry/material bindings remain open;
+- **MRP** — family identity confirmed; exact record schema remains open;
+- **SHW** — strong reverse/corpus evidence exists, but v1 does not claim full product semantic closure;
+- **SO** — reverse work exists, but v1 does not claim a completed semantic product reader.
 
-- **EFM** — effect/model family adapter; exact vertex/material/topology binding still open;
-- **MRP** — runtime family is confirmed; exact record schema and downstream ownership remain open;
-- **SHW** — strong executable + real-payload evidence for shadow-hull geometry, but the guarded product reader is not yet closed;
-- **SO** — research exists, but v1 does not claim a completed semantic Native Reader module.
-
-### Recognition-only families
-
-The remaining known resource families have their own explicit `Recognition` modules.
-
-Examples include TIM2, PTZ, MOT variants, MCV, CAM, HID variants, CLT/C1D/TSC, EVE/POS/ITM/STE/EST, audio/bank resources, video/media families, saves, legacy UI resources, EventTbl and SPUMAPDT.
-
-A recognition module can say **"this is a known DMC family"** without pretending that its binary schema has been recovered.
-
-Unknown / unmapped families are rejected.
+The remaining known families use explicit recognition-only contracts where semantic evidence is insufficient. Unknown / unmapped families are rejected.
 
 ---
 
 ## Evidence-aware by design
 
-This project comes from a reverse-engineering codebase, so "it opens" is not treated as proof that a format is understood.
+"It opens" is not treated as proof that a format is understood.
 
-Native Reader keeps several states separate:
+Native Reader keeps separate:
 
 - filename / extension recognition;
 - content-confirmed identity;
 - structural decoding;
-- mesh decoding;
+- semantic interpretation;
+- render authority;
 - partial / evidence-gated support;
 - recognition-only support.
 
-A module is not allowed to borrow another format's layout simply because the bytes look similar.
+The product must not:
 
-In particular:
-
-- incomplete families must not be routed through SCM/MOD;
-- unknown offsets are not given invented names;
-- unknown bytes are not silently discarded;
-- a filename extension is not promoted to semantic authority by itself;
-- non-renderable files may not reuse stale geometry from a previously opened resource.
-
-The reverse/evidence authority for DMC3 HD semantics lives in the companion project [`VrUaCom/dmc-rengine-cpp`](https://github.com/VrUaCom/dmc-rengine-cpp).
+- route incomplete families through SCM/MOD;
+- invent field names or offsets;
+- derive MOD bone positions from mesh vertices;
+- invent a MOD bitmap companion when only a texture slot is confirmed;
+- display stale geometry for non-renderable sessions;
+- promote filename-only recognition to semantic authority;
+- hide unresolved semantics behind a generic success path.
 
 ---
 
@@ -185,58 +186,51 @@ The reverse/evidence authority for DMC3 HD semantics lives in the companion proj
 
 DMC Native Reader is currently **read-only**.
 
-Important runtime boundaries:
+Runtime boundaries include:
 
-- input is opened read-only;
-- native mapping is capped at 512 MiB;
-- non-renderable resources open as inspection sessions rather than fake meshes;
-- files are not rewritten as part of normal inspection;
-- the application does not include Capcom game archives, executable files or proprietary DMC3 assets.
+- input opened read-only;
+- native mapped-input cap of 512 MiB;
+- bounded image-preview allocation;
+- bounded PTX aggregate gallery-preview budget;
+- malformed / truncated / overflow DDS/PTX cases fail closed;
+- invalid MOD spatial data does not gain hierarchy-overlay authority;
+- Java Bitmap allocation failure is handled without crashing the native Session;
+- non-renderable resources cannot reuse stale 3D geometry.
 
-The v1 debug phase is focused on proving real-world routing and parser behavior against legitimate user-supplied game resources.
-
----
-
-## The architecture milestone
-
-The important v1 result is not only the number of formats.
-
-It is that the reader now has one scalable rule for adding them:
-
-```text
-Known resource family
-    -> explicit module contract
-    -> evidence-appropriate reader
-```
-
-This replaces the early experimental architecture where format knowledge could accumulate inside central dispatch code.
-
-Current registry invariants are tested in CI:
-
-- **71 recognized families**;
-- **71 explicit registry entries**;
-- unknown family resolves to no module;
-- no wildcard `formats.generic.structural-inspector` exists;
-- promoted reader IDs are physically present in the compiled ARM64 `.so`.
+The project does not distribute Capcom game archives, proprietary game files or game executable binaries.
 
 ---
 
-## CI and reproducible APK evidence
+## CI and release evidence
 
-Every production build runs through GitHub Actions and checks:
+The normal Android gate checks:
 
-1. host C++ modular-reader regression;
-2. registry completeness and unknown-family rejection;
-3. synthetic valid/invalid cases for promoted readers;
-4. Android NDK / ARM64 compilation;
-5. APK ZIP, classes and native library integrity;
-6. application id and version metadata;
-7. compiled module IDs in `libdmcviewer.so`;
-8. absence of the removed wildcard inspector;
-9. development signing certificate;
-10. APK SHA-256 evidence.
+1. canonical vendor provenance;
+2. modular-reader regression;
+3. MOD spatial/material regression;
+4. Java capability/UI policy;
+5. RenderScene/overlay regression;
+6. Android NDK / ARM64 build;
+7. APK identity / version / manifest;
+8. native module markers;
+9. absence of retired wildcard / duplicate decoder paths;
+10. development signer and APK SHA-256 evidence.
 
-The v1 debug-baseline build passed this complete gate before the project entered device-testing phase.
+DDS/PTX has a dedicated malformed / child-resource gate.
+
+RC1 adds a self-contained release-candidate workflow that repeats the critical native/UI regressions, builds both debug and release variants, verifies `1.0.0-rc1` identity, verifies the development debug signer, confirms the release APK is unsigned, and records SHA-256 evidence.
+
+---
+
+## Signing boundary
+
+The committed `keys/dmc-native-reader-test.jks` is a **disposable development-only signer** used to keep internal debug APKs update-compatible.
+
+It is not a production authority.
+
+The normal Gradle `release` variant is intentionally **unsigned**. Stable public `1.0.0` distribution requires a separate production key stored outside Git history and injected through protected release infrastructure. The production certificate fingerprint and final APK SHA-256 must be recorded before stable promotion.
+
+An unsigned RC release APK proves the production build path; it is not itself an official distributable release.
 
 ---
 
@@ -251,35 +245,39 @@ Prerequisites:
 - CMake 3.22.1;
 - Gradle 9.5.x.
 
-Build the debug APK:
+Debug APK:
 
 ```bash
 gradle --no-daemon :app:assembleDebug
 ```
 
-Expected output:
+Unsigned release APK:
+
+```bash
+gradle --no-daemon :app:assembleRelease
+```
+
+Expected outputs:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
 ---
 
-## Debug phase: what we need from testers
+## RC testing
 
-For v1 the most valuable reports are **real files that are recognized incorrectly, rejected unexpectedly, parsed differently from known evidence, or routed incorrectly by Android/OEM file managers**.
+The final RC device checklist is in [`docs/RC1_DEVICE_CHECKLIST.md`](docs/RC1_DEVICE_CHECKLIST.md).
 
-Useful test flow:
+The release-candidate focus is regression, not feature expansion. The four primary smoke surfaces are:
 
-1. install the v1 debug baseline;
-2. open known `.mod` and `.scm` samples and verify mesh sessions;
-3. open `.dds` and `.ptx` samples and verify structural texture output;
-4. open stage `.txt`, DCA, PAC/PNST and other structural resources;
-5. try one recognition-only family and confirm the UI does not fabricate decoded semantics;
-6. test `Open with` from Android Files / Samsung My Files;
-7. report the exact filename, resource family, visible result and whether the issue is routing, recognition, parsing or rendering.
+1. MOD;
+2. SCM;
+3. PTX → DDS child flow;
+4. standalone DDS.
 
-See [`docs/STATUS.md`](docs/STATUS.md) for the current technical boundary.
+Any new format promotion belongs after the v1 freeze unless it is required to fix a release-blocking regression.
 
 ---
 
@@ -287,12 +285,12 @@ See [`docs/STATUS.md`](docs/STATUS.md) for the current technical boundary.
 
 DMC Native Reader is part of the wider **DMC Rengine** reverse-engineering effort around Devil May Cry 3 HD Collection.
 
-The project is directed as an architecture-first modding/reverse-engineering tool: recover evidence in the canonical C++ project, promote only bounded behavior into product modules, then validate the result on real Android devices and real corpus files.
+The project follows an architecture-first workflow: recover evidence in the canonical C++ project, promote only bounded behavior into product modules, then validate on real devices and real resources.
 
 **Project direction / product architecture:** VrUaCom / Viktor  
-**AI-assisted implementation and review:** OpenAI ChatGPT and Anthropic Claude have both contributed to development/review workflows under human project direction and acceptance.
+**AI-assisted implementation and review:** OpenAI ChatGPT and Anthropic Claude have contributed to development/review workflows under human project direction and acceptance.
 
-The project is intentionally transparent about that collaboration: AI can accelerate implementation and review, but reverse claims are accepted only when they are backed by code, corpus or executable evidence.
+AI can accelerate implementation and review, but reverse claims are accepted only when backed by code, corpus or executable evidence.
 
 ---
 
@@ -304,12 +302,12 @@ It is **not affiliated with, endorsed by, or sponsored by Capcom**. Devil May Cr
 
 This repository is intended for interoperability, research, preservation and modding workflows. It does not distribute the game, proprietary game data or Capcom executable binaries.
 
-A repository license has **not yet been selected**. Until a license is explicitly added, publication of the source code does not grant an open-source license by implication.
+A repository license has **not yet been selected**. Until a license is explicitly added, publication of source code does not grant an open-source license by implication.
 
 ---
 
 ## Public opening status
 
-The codebase has reached the **Native Reader v1 debug baseline** and is being prepared for its first public repository opening.
+The codebase is in **v1.0 release-candidate hardening**. Source-repository publication and production-signed APK publication remain separate owner decisions.
 
-Public-opening checklist and remaining manual gates are tracked in [`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md).
+Manual public-opening items — license, branch/history/privacy review and production-signing policy — are tracked in [`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md).
