@@ -41,9 +41,9 @@ if(MSVC)
     target_compile_options(DMCNativeReader PRIVATE /W4 /permissive- /EHsc)
 elseif(MINGW)
     target_compile_options(DMCNativeReader PRIVATE -Wall -Wextra -Wpedantic)
-    # Produce a self-contained preview executable so users do not need MinGW
-    # runtime DLLs beside the application.
-    target_link_options(DMCNativeReader PRIVATE -static -static-libgcc -static-libstdc++)
+    # wWinMain is the Unicode GUI entry point; MinGW needs -municode to select
+    # the matching CRT startup shim. Keep the preview self-contained as well.
+    target_link_options(DMCNativeReader PRIVATE -municode -static -static-libgcc -static-libstdc++)
 endif()
 
 target_link_libraries(DMCNativeReader PRIVATE user32 gdi32 comdlg32 shell32)
