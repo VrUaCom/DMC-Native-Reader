@@ -4,9 +4,27 @@
 [![DDS/PTX gate](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/dds-ptx-v1.yml/badge.svg)](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/dds-ptx-v1.yml)
 [![v1 hardening](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/v1-hardening.yml/badge.svg)](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/v1-hardening.yml)
 
-**DMC Native Reader** is a native Android reader for selected Devil May Cry 3 HD Collection resource formats.
+> **Make DMC resources feel like ordinary files.**
 
-It integrates with Android's normal file-opening flow and routes supported files into a bounded C++20 reader pipeline. The project is intentionally evidence-aware: a format is promoted only when its identity and structure are supported strongly enough to expose without inventing semantics.
+**DMC Native Reader** is a native resource-viewing and accessibility layer for Devil May Cry 3 HD Collection files. The stable v1 implementation targets Android; the architecture is intended to carry the same C++20 semantic truth to Android, iOS and Windows over time.
+
+The product goal is simple: a user should be able to open an unfamiliar DMC resource and immediately get the most natural useful representation — a 3D model, scene, image, texture gallery, hierarchy or other evidence-backed view — without first learning the binary format.
+
+Native Reader integrates with normal file-opening flows and routes promoted resources into a bounded C++20 reader pipeline. The project is intentionally evidence-aware: a format is promoted only when its identity and structure are supported strongly enough to expose without inventing semantics.
+
+The long-term product doctrine is documented in [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md).
+
+## Product role
+
+Native Reader is the **viewability layer**, not the primary authoring workspace.
+
+Its core verbs are:
+
+```text
+Open -> Recognize -> Inspect -> Visualize -> Navigate -> Understand
+```
+
+Editing, archive management, replacement and repacking belong to dedicated authoring/resource-management tooling such as Pocket GDS and to canonical writer layers in DMC Rengine. Native Reader may integrate with those tools later, but its baseline purpose remains immediate viewing and understanding.
 
 ## v1.0.0 baseline
 
@@ -59,21 +77,41 @@ capability-driven Android UI
 
 The app is read-only. It does not rewrite game files as part of inspection.
 
+## Cross-platform direction
+
+Android is the first stable shell, not the semantic boundary of the project.
+
+The strategic direction is:
+
+```text
+                  DMC Rengine
+              canonical C++20 core
+                     |
+        +------------+------------+
+        |            |            |
+     Android         iOS        Windows
+        |            |            |
+        +------ DMC Native Reader -+
+```
+
+Platform integration can differ — Android Open with, iOS Files/Share integration, Windows Explorer previews/thumbnails — but file semantics must not be reimplemented independently per platform.
+
 ## Architecture rules
 
 `main` follows Architecture v2 and keeps parser ownership explicit:
 
 - format bytes are interpreted in native C++;
 - MOD/SCM structural authority comes from the vendored canonical core;
-- the Android UI consumes typed capabilities instead of parsing binary layouts itself;
+- the platform UI consumes typed capabilities instead of parsing binary layouts itself;
 - no renderer-owned format parser is allowed;
 - no unknown family is accepted through a generic structural fallback;
 - non-renderable sessions cannot reuse stale geometry;
-- unknown or unresolved semantics stay unknown.
+- unknown or unresolved semantics stay unknown;
+- new formats extend the module/capability system rather than creating standalone format viewers.
 
 The canonical reverse/evidence project is [`VrUaCom/dmc-rengine-cpp`](https://github.com/VrUaCom/dmc-rengine-cpp).
 
-More detail: [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) and [`docs/V1_BASELINE.md`](docs/V1_BASELINE.md).
+More detail: [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md), [`docs/V1_BASELINE.md`](docs/V1_BASELINE.md), and [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md).
 
 ## Build from source
 
@@ -147,7 +185,7 @@ Contributions are welcome, especially for:
 - parser bounds / malformed-input hardening;
 - MOD/SCM rendering or hierarchy regressions;
 - DDS/PTX validation;
-- Android file-routing behavior;
+- platform file-routing behavior;
 - regression tests and evidence-backed documentation.
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. Please do not upload copyrighted game archives, proprietary executable binaries, leaked source, or other material you do not have the right to redistribute.
@@ -159,7 +197,8 @@ Security issues should follow [`SECURITY.md`](SECURITY.md), not a public issue w
 - stable product baseline: **v1.0.0**;
 - current supported registry: **MOD / SCM / DDS / PTX**;
 - next formats are promoted one by one only after canonical/evidence closure;
-- authoring/repacking remains outside the Native Reader v1 read-only contract.
+- primary progress metric: how many previously opaque DMC resources become directly understandable and viewable;
+- authoring/repacking remains outside the Native Reader core product role.
 
 See [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -173,4 +212,4 @@ See [`NOTICE.md`](NOTICE.md).
 
 ## License
 
-A source-code license must be selected and committed before the repository is presented as open source. Repository visibility by itself does not grant reuse rights.
+A source-code license must be selected and committed before the repository is presented as open source or source-available under explicit reuse terms. Repository visibility by itself does not grant reuse rights.
