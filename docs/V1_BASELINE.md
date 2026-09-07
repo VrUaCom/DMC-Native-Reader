@@ -4,6 +4,7 @@
 **versionCode:** `20`  
 **Production package:** `com.dmcrengine.nativereader`  
 **Stable v1 shell:** Android / arm64-v8a  
+**Preview shells:** iOS / Windows (not part of the accepted stable binary baseline)  
 **Production branch:** `main`  
 **Frozen baseline ref:** `baseline/v1.0.0`  
 **Central engine/modding foundation:** DMC Rengine C++20
@@ -18,6 +19,8 @@ The v1 production baseline is deliberately narrow. It contains exactly four prom
 - PTX.
 
 This is an architecture/evidence decision, not a claim that other DMC3 formats are unimportant. Earlier experimental readers are not part of the supported v1 product surface until they meet the same Architecture v2 and canonical-authority standard.
+
+The accepted **stable release claim is Android v1.0.0**. Native iOS and Windows implementations may reuse this same four-format semantic core as previews, but their existence does not retroactively make them part of the accepted Android release evidence.
 
 ## Product mission
 
@@ -34,21 +37,21 @@ resource bytes
   -> bounded / DMC Rengine-backed C++20 authority
   -> four-entry NativeModuleRegistry
   -> format module / canonical adapter
+  -> PipelineResult
   -> InspectionDocument / RenderScene / ImagePreview / ChildResource[] / ResourceCapabilities
-  -> generic native Session
-  -> Android v1 JNI/capability UI
+  -> platform bridge/session
 ```
 
-The Android bridge is the stable v1 shell. Future iOS, Windows and Web shells must preserve the same C++20 semantic authority. Web semantics are intended to run through WebAssembly rather than a separate JavaScript/TypeScript parser implementation.
+Stable Android v1 uses the JNI Session/capability-driven UI. Cross-platform preview work may use `PortableSession`, but it must consume the same `PipelineResult` and must not introduce a second parser authority.
 
-Forbidden in the v1 production baseline:
+Forbidden in the v1 production baseline and its preview shells:
 
 - wildcard format dispatcher;
 - broad recognition-only fallback;
-- platform-UI-owned MOD/SCM format parsers;
+- platform-UI-owned MOD/SCM/DDS/PTX format parsers;
 - renderer-owned binary parsers;
 - legacy `DecodeResult -> Mesh -> RenderScene` compatibility bridge;
-- archived HITS/TXT/DCA/PAC/PNST/etc. module translation units in the production build;
+- archived HITS/TXT/DCA/PAC/PNST/etc. module translation units in the production registry;
 - private downstream semantic forks of capabilities that belong in DMC Rengine.
 
 ## Accepted format contracts
@@ -67,9 +70,9 @@ Bounded DMC3 DXT1/DXT5 reader with strict mip/payload validation and generic ima
 
 ### PTX
 
-Bounded texture-bundle reader with descriptor validation and generic DDS child resources. Child previews and parent navigation use the same generic Session/UI contracts as top-level resources.
+Bounded texture-bundle reader with descriptor validation and generic DDS child resources. Child previews and navigation use the same generic typed contracts as top-level resources.
 
-## Release acceptance gate
+## Android v1.0.0 release acceptance gate
 
 The accepted v1.0.0 candidate proved:
 
@@ -107,7 +110,26 @@ Canonical direct APK path:
 
 `https://github.com/VrUaCom/DMC-Native-Reader/releases/download/v1.0.0/DMC-Native-Reader-v1.0.0.apk`
 
-Public-source debug builds are intentionally isolated under `com.dmcrengine.nativereader.debug` and do not share the production trust chain.
+Public-source Android debug builds are intentionally isolated under `com.dmcrengine.nativereader.debug` and do not share the production trust chain.
+
+## Cross-platform preview boundary
+
+The current iOS and Windows work is deliberately outside the accepted stable-binary evidence until separately validated.
+
+### iOS preview
+
+- reuses MOD / SCM / DDS / PTX Architecture v2 core through `PortableSession`;
+- retains the historical `ios-unsigned-latest` release line but replaces its old pre-v1 binary/claims only after a successful current build;
+- remains an unsigned technical preview until Apple signing/provisioning is defined;
+- must pass real-device/corpus acceptance before any stable claim.
+
+### Windows preview
+
+- reuses the same four-format C++20 core through `PortableSession`;
+- builds as native Win32/x64;
+- remains an unsigned technical preview until build/corpus acceptance and Windows signing/distribution identity are defined.
+
+See [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md).
 
 ## License baseline
 
@@ -115,7 +137,7 @@ DMC Native Reader is source-available under the **DMC Native Reader Personal Non
 
 The project permits personal non-commercial use under the exact license terms, prohibits third-party commercial use without separate written authorization, and contains the Capcom Special Grant. Vendored third-party components remain under their own licenses, including the MIT-licensed DMC Rengine slice.
 
-## Device regression
+## Stable Android device regression
 
 The accepted practical UI target covers:
 
