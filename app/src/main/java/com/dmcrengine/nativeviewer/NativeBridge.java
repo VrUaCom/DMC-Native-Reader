@@ -15,6 +15,10 @@ public final class NativeBridge {
     // projections without reparsing format bytes in Java.
     public static native long capabilities(long handle);
     public static native boolean hierarchyAvailable(long handle);
+    public static native boolean imagePreviewAvailable(long handle);
+    public static native int imagePreviewWidth(long handle);
+    public static native int imagePreviewHeight(long handle);
+    public static native int[] imagePreview(long handle);
     public static native String inspection(long handle);
 
     public static native int[] render(long handle, int width, int height,
