@@ -44,8 +44,8 @@ struct ContentView: View {
                 Text("DMC Native Reader")
                     .font(.system(size: 15, weight: .bold))
                 Spacer()
-                Text("iOS · v1.0")
-                    .font(.system(size: 11, design: .monospaced))
+                Text("iOS · v1.0.0 Preview")
+                    .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(Color(white: 0.62))
             }
             if !store.fileName.isEmpty {
@@ -113,21 +113,52 @@ struct ContentView: View {
 
     private var controls: some View {
         HStack(spacing: 10) {
-            Button("Open") { showingImporter = true }
-            Button("Inspector") { showingInspector = true }
-                .disabled(!store.hasResource)
-            Button("Reset") { store.resetView() }
-                .disabled(!store.hasGeometry)
-            Button(store.wireframe ? "Wire: on" : "Wire: off") {
-                store.toggleWireframe()
+            toolbarButton("folder", accessibility: "Open DMC resource") {
+                showingImporter = true
+            }
+
+            toolbarButton("arrow.counterclockwise", accessibility: "Reset view") {
+                store.resetView()
             }
             .disabled(!store.hasGeometry)
+
+            Button("W") { store.toggleWireframe() }
+                .frame(width: 44, height: 44)
+                .background(store.wireframe ? Color.white.opacity(0.20) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .disabled(!store.hasGeometry)
+                .accessibilityLabel("Wireframe")
+                .accessibilityValue(store.wireframe ? "On" : "Off")
+
+            Button("H") { store.toggleHierarchy() }
+                .frame(width: 44, height: 44)
+                .background(store.hierarchy ? Color.white.opacity(0.20) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .disabled(!store.canShowHierarchy)
+                .accessibilityLabel("Hierarchy overlay")
+                .accessibilityValue(store.hierarchy ? "On" : "Off")
+
+            toolbarButton("info.circle", accessibility: "Resource Inspector") {
+                showingInspector = true
+            }
+            .disabled(!store.hasResource)
         }
         .buttonStyle(.bordered)
         .tint(.white)
         .padding(.horizontal, 10)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
+    }
+
+    private func toolbarButton(_ systemName: String,
+                               accessibility: String,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .frame(width: 24, height: 24)
+        }
+        .frame(width: 44, height: 44)
+        .accessibilityLabel(accessibility)
     }
 }
 
@@ -187,9 +218,15 @@ private struct ChildGallery: View {
                                     Rectangle()
                                         .fill(Color(white: 0.12))
                                         .frame(width: 88, height: 88)
-                                        .overlay(Image(systemName: "photo"))
+                                        .overlay(
+                                            VStack(spacing: 3) {
+                                                Image(systemName: "photo")
+                                                Text("DDS")
+                                                    .font(.system(size: 9, design: .monospaced))
+                                            }
+                                        )
                                 }
-                                Text(resource.childTitle(at: UInt(index)) ?? "Child \(index)")
+                                Text(resource.childTitle(at: UInt(index)) ?? "DDS \(index)")
                                     .font(.system(size: 9, design: .monospaced))
                                     .lineLimit(1)
                                     .frame(width: 96)
@@ -224,7 +261,7 @@ private struct MeshView: View {
                     yaw: store.yaw,
                     pitch: store.pitch,
                     zoom: store.zoom,
-                    wireframe: store.wireframe) {
+                    flags: store.renderFlags) {
                     Image(uiImage: image)
                         .resizable()
                         .interpolation(.none)
