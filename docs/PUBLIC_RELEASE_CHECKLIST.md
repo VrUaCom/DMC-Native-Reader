@@ -1,127 +1,169 @@
 # DMC Native Reader — Public Repository Opening Checklist
 
-This checklist separates **opening the source repository** from publishing an **official signed distribution APK**.
+This checklist separates **source repository opening**, **GitHub project configuration** and **production APK distribution**.
 
-## Product baseline
+## Completed in the public-prep branch
 
-- [x] Native Reader v1 debug-baseline milestone frozen.
-- [x] System-integrated Android file opening path documented.
-- [x] Native C++ `NativeModuleRegistry` architecture documented.
-- [x] 71 recognized DMC families represented by 71 explicit module contracts.
-- [x] Core modding readers documented: MOD, SCM, DDS, PTX, TXT and `.index`.
-- [x] Additional promoted readers documented: HITS, DCA, LIG/LIG2, PAC, PNST and NBZ.
-- [x] Partial/evidence-gated status is explicit for EFM, MRP and SHW.
-- [x] SO is not misrepresented as a completed v1 semantic reader.
-- [x] Unknown-family behavior is fail-closed.
-- [x] v1 exact-head CI / Android APK gate passed before entering debug phase.
+- [x] Stable v1.0.0 product surface documented as MOD / SCM / DDS / PTX only.
+- [x] Architecture v2 / evidence-aware rules documented.
+- [x] README, changelog, contribution and security policies aligned with v1.0.0.
+- [x] Public-source debug builds isolated as `com.dmcrengine.nativereader.debug`.
+- [x] Committed development test keystore removed from the current tree.
+- [x] Signing/private-key file patterns added to `.gitignore`.
+- [x] CI rejects tracked key material.
+- [x] Production release workflow changed from key generation/upload to protected secret injection.
+- [x] Production certificate fingerprint pinned in release CI.
+- [x] Production release workflow no longer uploads keystores/passwords.
+- [x] Production package remains `com.dmcrengine.nativereader` and ordinary Gradle release output remains unsigned.
+- [x] Production certificate and original v1.0.0 APK checksum documented.
 
-## Public-facing repository material
+## Hard blockers before changing visibility to Public
 
-- [x] Public README explains what the application is and why it exists.
-- [x] Architecture and evidence policy are visible from the repository front page.
-- [x] Format support is described by maturity instead of a misleading binary supported/unsupported claim.
-- [x] Capcom / Devil May Cry affiliation disclaimer is present.
-- [x] Project contains no Capcom game archives, proprietary game files or game executable binaries.
-- [x] Contribution guide added.
-- [x] Security policy added.
-- [x] Bug / real-file debug issue templates added.
-- [x] Development signing-key boundary documented.
-- [x] Public roadmap and changelog added.
-
-## Manual gates before switching repository visibility to Public
-
-### 1. Choose the source-code license
+### 1. Select the source-code license
 
 **OPEN — owner decision required.**
 
-No license is currently selected. Do not label the project "open source" until a license is explicitly committed.
+No source-code license is currently selected. Do not market the repository as open source until a `LICENSE` file is committed.
 
-Possible directions to evaluate separately:
+Typical choices to evaluate:
 
-- permissive open-source license;
-- copyleft open-source license;
-- source-available / custom terms;
-- public repository with all rights reserved.
+- Apache-2.0 — permissive, explicit patent grant;
+- MIT — very short permissive license;
+- GPL-3.0 — strong copyleft;
+- source-available/custom terms if public code reuse should be restricted.
 
-This is a legal/product decision and is intentionally not selected by an implementation agent.
+The license should be chosen deliberately because it controls downstream reuse, forks and commercial redistribution.
 
-### 2. Repository About text
+### 2. Remove/expire the historical production-key backup artifact
 
-Recommended GitHub **About** description:
+**BLOCKER.**
 
-> System-integrated native Android reader for Devil May Cry 3 HD resources — modular C++ parsers for MOD, SCM, DDS, PTX, stage/config files, containers and more.
+The private v1.0.0 production-signing workflow previously uploaded a one-day backup artifact containing the production keystore/passphrase.
 
-Recommended topics:
+That artifact was created by workflow run `34113850403` and is scheduled to expire at:
 
-`devil-may-cry` `dmc3` `reverse-engineering` `modding` `android` `cpp` `file-format` `binary-analysis` `dds` `game-modding`
+`2026-09-08T10:56:52Z`
 
-### 3. Review old branches before visibility change
+Do **not** make the repository public while that artifact is still accessible.
+
+Preferred action: manually delete the key-backup artifact in GitHub Actions now. Otherwise wait until GitHub confirms it has expired before changing repository visibility.
+
+The production key backup itself must remain private and stored separately from GitHub source history.
+
+### 3. Historical branches and refs
 
 **OPEN — owner/admin cleanup decision required.**
 
-GitHub repository visibility applies to more than the current `main` branch. The repository currently also contains historical development branches such as:
+Repository visibility applies to all branches/refs, not only `main`.
 
-- `ci/standalone-actions-probe`;
-- `claude/mod-scm-file-opening-t93oeh`;
-- `feature/*`;
-- `fix/*`;
-- `integrate/*`;
-- `test/*`;
-- `release/native-reader-v1-debug-baseline`;
-- `public/opening-v1`.
+The repository contains many historical branches (`architecture/*`, `feature/*`, `fix/*`, `integrate/*`, `test/*`, release branches, `main.2`, old public-opening work, etc.). Decide which are intentionally part of the public development record and prune obsolete/private branches before opening.
 
-Before making the repository public, decide which historical branches are intentionally part of the public development record and prune branches that should not be public.
+At minimum keep:
 
-Do not assume that a clean `main` hides content reachable from another branch/ref.
+- `main`;
+- `baseline/v1.0.0`;
+- active development branches that are intentionally public.
 
-### 4. Review commit metadata / personal-email exposure
+Historical branches that are not useful to public contributors should be removed to reduce confusion and accidental exposure.
 
-**OPEN — privacy review recommended.**
+### 4. Commit metadata privacy
 
-Historical Git commits may contain author/committer email metadata. Before public visibility, review whether the existing history exposes a personal email address that should instead use a GitHub `noreply` identity.
+**OPEN — privacy decision required.**
 
-If privacy cleanup is required, rewrite/sanitize history before opening the repository. Changing the account's future commit-email setting does not retroactively rewrite existing commits.
+Existing Git history contains author email metadata from private development.
 
-### 5. Development signer
+If exposing that address is acceptable, no history rewrite is necessary. If not, sanitize/rewrite history before switching visibility. Changing the GitHub commit-email preference only affects future commits.
 
-The committed `keys/dmc-native-reader-test.jks` is intentionally a **disposable development-only key** used for update compatibility across internal/debug APKs.
+A clean public mirror starting at the v1.0.0 baseline is an alternative if preserving the full private-development history is not valuable.
 
-It is not a production secret and must **never** be used as the trust root for an official public release.
+## GitHub repository configuration before opening
 
-Before publishing a production APK:
+### About description
 
-- generate/provision a separate production signing key;
-- keep the production private key outside Git history;
-- store CI signing material in protected repository/environment secrets;
-- document the production certificate fingerprint;
-- decide the migration path from development-signed APKs (normally uninstall/reinstall unless a supported signing migration is configured).
+Recommended:
 
-Opening the source repository and publishing a production-signed APK are therefore two separate milestones.
+> Native Android reader for Devil May Cry 3 HD resources — evidence-aware C++20 support for MOD, SCM, DDS and PTX.
 
-### 6. Visibility change
+### Topics
 
-Keep the repository private until the owner has reviewed:
+Recommended topics:
 
-- README wording;
-- license choice;
-- old branches/history;
-- commit metadata/privacy;
-- public issue policy;
-- public contribution policy;
-- development-vs-production signing distinction.
+`devil-may-cry-3` `dmc3` `reverse-engineering` `android` `cpp20` `modding` `binary-formats` `model-viewer` `texture-viewer` `game-modding` `dmc-rengine`
 
-After those are accepted, repository visibility can be changed to `Public` by the owner/admin.
+### Main-branch protection / ruleset
 
-## First public-debug milestone
+Recommended rules for `main`:
 
-The recommended first public phase is **Native Reader v1 / Debug & Corpus Validation**.
+- require a pull request before merge;
+- require conversation resolution;
+- block force pushes and deletion;
+- require the core architecture workflow;
+- require the DDS/PTX core gate;
+- require the v1 hardening workflow;
+- require branches to be up to date where practical;
+- allow repository owner emergency bypass only.
 
-Public messaging should be:
+### Merge hygiene
 
-- architecture milestone achieved;
-- core popular DMC3 modding formats have real native readers;
-- 71 known families have explicit registry contracts;
-- semantic completeness is still evidence-gated per format;
-- real-world device/corpus testing is now the primary goal.
+Recommended:
 
-The project should not claim that every recognized family is fully reversed.
+- enable squash merge;
+- enable rebase merge if desired;
+- disable ordinary merge commits for feature PRs if a linear public history is preferred;
+- enable automatic deletion of merged head branches.
+
+### Security settings
+
+Enable before/publication where available:
+
+- private vulnerability reporting;
+- Dependabot security updates/alerts;
+- secret scanning and push protection;
+- dependency graph.
+
+Do not expose production signing secrets to pull requests from forks.
+
+## Protected production signing setup
+
+Create a GitHub Environment named `production` and require owner/reviewer approval.
+
+Configure these secrets from the private v1 production key backup:
+
+- `ANDROID_RELEASE_KEYSTORE_B64` — base64 of the production keystore;
+- `ANDROID_RELEASE_STORE_PASSWORD`;
+- `ANDROID_RELEASE_KEY_ALIAS`;
+- `ANDROID_RELEASE_KEY_PASSWORD`.
+
+The current release workflow verifies the pinned production certificate SHA-256:
+
+`2d82bd3e77b2c1882d3f8143fe8760fc4c834aa65fc5e7b1b12082afcb7718d1`
+
+Do not store the keystore or passwords as repository files or Actions artifacts.
+
+## v1.0.0 GitHub Release
+
+Before announcing the repository publicly, create a GitHub Release for `v1.0.0` and attach:
+
+- the signed `DMC-Native-Reader-v1.0.0.apk`;
+- release notes;
+- APK SHA-256;
+- production certificate SHA-256.
+
+Recorded v1.0.0 APK SHA-256:
+
+`a81ef5555ecc67e0213d2f1f6baa351609a659c5898ba8f71f81d2fc2cefc68c`
+
+## Public opening sequence
+
+1. Merge the public-prep PR after all CI gates are green.
+2. Choose and commit the source license.
+3. Delete or wait for expiry of the historical production-key backup artifact.
+4. Decide whether to prune/sanitize historical branches and commit metadata.
+5. Configure About text, topics and `main` protection/ruleset.
+6. Enable GitHub security features/private vulnerability reporting.
+7. Configure protected `production` signing secrets/environment.
+8. Create the `v1.0.0` GitHub Release with signed APK and evidence.
+9. Change repository visibility from Private to Public.
+10. Verify the repository as a logged-out visitor: README, CI badges, release asset, issues, license and security links.
+
+Only after these gates should the repository be announced as public/open source.
