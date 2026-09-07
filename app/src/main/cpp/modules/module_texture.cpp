@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "dmcresource/binary_reader.h"
 #include "dmcresource/formats/dds.h"
@@ -52,8 +53,8 @@ PipelineResult run_dds(std::string_view,
         return module_support::reject(probe, module_id, "DDS rejected: null input");
     }
 
-    const auto parsed = formats::dds::parse(
-        std::span<const std::uint8_t>{bytes, size});
+    const auto span = std::span<const std::uint8_t>{bytes, size};
+    const auto parsed = formats::dds::parse(span);
     if (!parsed.ok || parsed.document.total_size != size) {
         return module_support::reject(
             probe, module_id,
@@ -69,6 +70,16 @@ PipelineResult run_dds(std::string_view,
     out.inspection.format = "DDS";
     out.inspection.root = dds_inspection_node(parsed.document, "dds", "DDS", 0U);
     out.inspection.root.kind = InspectionKind::Document;
+
+    const auto preview = formats::dds::decode_preview(span, parsed.document);
+    if (preview.ok) {
+        out.image_preview = std::move(preview.image);
+        out.modules.push_back({"formats.dds.base-mip-preview", true});
+    } else {
+        out.modules.push_back({"formats.dds.base-mip-preview", false});
+        if (!out.detail.empty()) out.detail += "\n";
+        out.detail += "Image preview unavailable: " + preview.diagnostic;
+    }
     return out;
 }
 
@@ -238,9 +249,10 @@ PipelineResult run_ptx_module(const NativeModule& module,
 }  // namespace
 
 NativeModule dds_module() noexcept {
+    const auto caps = capability(ResourceCapability::Inspection) |
+        ResourceCapability::ImagePreview;
     return {"formats.dds.dmc3-reader", "DDS", Format::Dds,
-            ModuleKind::Structural, false, run_dds_module,
-            capability(ResourceCapability::Inspection)};
+            ModuleKind::Structural, false, run_dds_module, caps};
 }
 
 NativeModule ptx_module() noexcept {
