@@ -1,0 +1,95 @@
+name: Public prep — publish accepted v1.0.0
+
+on:
+  push:
+    branches:
+      - prep/public-v1.0
+    paths:
+      - .github/workflows/public-prep-v1-bootstrap.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  bootstrap-public-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACCEPTED_RUN_ID: "34113850403"
+      ACCEPTED_ARTIFACT: "DMC-Native-Reader-v1.0.0-production"
+      ACCEPTED_APK_SHA256: "a81ef5555ecc67e0213d2f1f6baa351609a659c5898ba8f71f81d2fc2cefc68c"
+      KEY_BACKUP_ARTIFACT_ID: "10015511171"
+      RELEASE_TAG: "v1.0.0"
+      RELEASE_TITLE: "DMC Native Reader v1.0.0"
+      RELEASE_TARGET: "baseline/v1.0.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove historical production-key backup artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method DELETE \
+            "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${KEY_BACKUP_ARTIFACT_ID}" \
+            || true
+
+      - name: Remove obsolete pre-v1 iOS prerelease and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view ios-unsigned-latest >/dev/null 2>&1; then
+            gh release delete ios-unsigned-latest --cleanup-tag --yes
+          else
+            gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/git/refs/tags/ios-unsigned-latest" || true
+          fi
+
+      - name: Download the accepted production APK artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v1-release
+          gh run download "$ACCEPTED_RUN_ID" \
+            --name "$ACCEPTED_ARTIFACT" \
+            --dir /tmp/v1-release
+          test -f /tmp/v1-release/DMC-Native-Reader-v1.0.0.apk
+
+      - name: Verify accepted APK checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=/tmp/v1-release/DMC-Native-Reader-v1.0.0.apk
+          ACTUAL="$(sha256sum "$APK" | awk '{print $1}')"
+          test "$ACTUAL" = "$ACCEPTED_APK_SHA256"
+
+      - name: Create or refresh GitHub Release v1.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=/tmp/v1-release/DMC-Native-Reader-v1.0.0.apk
+          NOTES=docs/releases/v1.0.0.md
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$NOTES" \
+              --latest
+            gh release upload "$RELEASE_TAG" "$APK" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$APK" \
+              --target "$RELEASE_TARGET" \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$NOTES" \
+              --latest
+          fi
+
+      - name: Verify public release surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" \
+            --json tagName,name,isDraft,isPrerelease,url,assets \
+            | tee /tmp/release.json
+          grep -q 'DMC-Native-Reader-v1.0.0.apk' /tmp/release.json
