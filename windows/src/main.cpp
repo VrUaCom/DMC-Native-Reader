@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -69,7 +70,7 @@ void reset_view() {
 }
 
 bool load_resource(HWND hwnd, const std::wstring& path) {
-    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    std::ifstream input(std::filesystem::path(path), std::ios::binary | std::ios::ate);
     if (!input) {
         MessageBoxW(hwnd, L"Could not open the selected file.", L"DMC Native Reader",
                     MB_OK | MB_ICONERROR);
@@ -146,13 +147,13 @@ void draw_rgba(HDC hdc, const RECT& dest,
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height; // top-down
+    bmi.bmiHeader.biHeight = -height;
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
 
-    const int area_w = std::max(1L, dest.right - dest.left);
-    const int area_h = std::max(1L, dest.bottom - dest.top);
+    const int area_w = static_cast<int>(std::max<LONG>(1, dest.right - dest.left));
+    const int area_h = static_cast<int>(std::max<LONG>(1, dest.bottom - dest.top));
     const double scale = std::min(static_cast<double>(area_w) / width,
                                   static_cast<double>(area_h) / height);
     const int out_w = std::max(1, static_cast<int>(width * scale));
@@ -204,8 +205,8 @@ void paint(HWND hwnd) {
 
     if (g_session) {
         if (g_session->has_geometry()) {
-            const int w = std::clamp(content.right - content.left, 64L, 1600L);
-            const int h = std::clamp(content.bottom - content.top, 64L, 1200L);
+            const int w = static_cast<int>(std::clamp<LONG>(content.right - content.left, 64, 1600));
+            const int h = static_cast<int>(std::clamp<LONG>(content.bottom - content.top, 64, 1200));
             const auto image = g_session->render(w, h, g_view);
             draw_rgba(hdc, content, image.pixels.data(), image.pixels.size(), image.width, image.height);
         } else if (const auto* preview = current_preview()) {
@@ -370,7 +371,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
 }
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     const wchar_t class_name[] = L"DMCNativeReaderWindow";
     WNDCLASSW wc{};
     wc.lpfnWndProc = window_proc;
@@ -388,13 +389,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     ShowWindow(hwnd, show_command);
     UpdateWindow(hwnd);
 
-    if (command_line != nullptr && command_line[0] != L'\0') {
-        int argc = 0;
-        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (argv != nullptr && argc > 1) {
-            load_resource(hwnd, argv[1]);
-            LocalFree(argv);
-        }
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv != nullptr) {
+        if (argc > 1) load_resource(hwnd, argv[1]);
+        LocalFree(argv);
     }
 
     MSG msg{};

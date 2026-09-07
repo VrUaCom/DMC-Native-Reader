@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -83,7 +84,8 @@ PortableSession::PortableSession(PipelineResult&& result)
     if (result_.renderable && result_.scene.has_geometry()) {
         geometry_ready_ = materialize_render_scene(result_.scene, &render_mesh_);
         if (geometry_ready_) {
-            // A valid non-spatial hierarchy is allowed; the overlay simply stays unavailable.
+            // Materialize the evidence-safe overlay once for platform shells that
+            // choose to expose a hierarchy toggle. Plain rendering stays overlay-free.
             (void)materialize_hierarchy_overlay(result_.scene, &hierarchy_);
         }
     }
@@ -99,8 +101,7 @@ RgbaImage PortableSession::render(int width,
     if (!geometry_ready_) return {};
     const int safe_width = std::clamp(width, 64, 2048);
     const int safe_height = std::clamp(height, 64, 2048);
-    const auto* overlay = hierarchy_.available() ? &hierarchy_ : nullptr;
-    return render_view(render_mesh_, safe_width, safe_height, view, overlay);
+    return render_view(render_mesh_, safe_width, safe_height, view, nullptr);
 }
 
 std::string PortableSession::summary() const {
