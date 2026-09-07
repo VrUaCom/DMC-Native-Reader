@@ -4,7 +4,7 @@
 
 **Make DMC resources feel like ordinary files.**
 
-Native Reader is the viewability/accessibility layer of the DMC tooling ecosystem. Its job is to turn opaque resources into familiar, directly understandable representations across everyday devices.
+Native Reader is the viewability/accessibility product of the DMC Rengine ecosystem. Its job is to turn opaque resources into familiar, directly understandable representations across everyday devices.
 
 The primary measure of progress is not feature count. It is:
 
@@ -29,9 +29,9 @@ Completed properties:
 - fail-closed unknown/unpromoted formats;
 - no wildcard or recognition-only fallback;
 - no legacy `DecodeResult` compatibility bridge;
-- MOD/SCM canonical adapters;
+- MOD/SCM canonical DMC Rengine adapters;
 - generic image and child-resource contracts for DDS/PTX;
-- capability-driven Android UI;
+- capability-driven Android v1 UI;
 - host + Android CI proving the four paths and absence of retired modules.
 
 ## Phase 2 — Device validation
@@ -43,24 +43,35 @@ Accepted practical behavior includes:
 1. MOD render/inspection;
 2. SCM render/inspection;
 3. DDS preview;
-4. PTX gallery;
+4. PTX gallery with real texture thumbnails;
 5. PTX -> DDS child preview;
 6. child -> parent navigation;
 7. malformed/unsupported input fails closed without stale UI state.
 
 ## Phase 3 — Public repository opening
 
-**Status: active**
+**Status: active — source/docs substantially prepared, GitHub admin gates remain**
 
-Before visibility changes to public:
+Completed in public-prep:
 
-- finish public documentation and repository hygiene;
-- isolate debug package/signing identity from production;
-- ensure production signing material exists only in protected secrets;
-- select and commit the source-code license;
-- audit historical branches and commit metadata that will become public;
-- configure GitHub About/topics, branch rules and private vulnerability reporting;
-- publish the v1.0.0 release APK with checksum/signing evidence.
+- public documentation and v1 product identity aligned;
+- debug package/signing identity isolated from production;
+- current production workflow keeps signing material in protected secrets rather than source/artifacts;
+- source license selected: **DMC Native Reader Personal Non-Commercial License 1.0** with Capcom Special Grant;
+- third-party licensing documented separately;
+- canonical v1.0.0 release/download URLs documented;
+- Code of Conduct, Support, Security, contribution and issue/PR templates prepared.
+
+Remaining before visibility changes to Public:
+
+- delete or confirm expiry of the historical one-day production-key backup artifact;
+- remove obsolete `ios-unsigned-latest` prerelease/tag;
+- publish the actual GitHub Release `v1.0.0` and attach the accepted signed APK;
+- verify the canonical direct APK link and checksum;
+- audit/prune historical branches and decide commit-email exposure;
+- configure GitHub About/topics, `main` rules and private vulnerability/security features;
+- verify protected production signing environment;
+- perform a logged-out final repository/release audit.
 
 See [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md).
 
@@ -68,7 +79,7 @@ See [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md).
 
 Historical readers return only as Architecture v2 modules with canonical/evidence closure and regression coverage. Do not restore the old multi-format implementation wholesale.
 
-Candidate families are selected according to canonical readiness in `dmc-rengine-cpp`, for example HITS, DCA, LIG2, Stage TXT, PAC/PNST, SHW, EFM, MOT, SO or other families once their product integration contract is clean.
+Candidate families are selected according to canonical readiness in DMC Rengine, for example HITS, DCA, LIG2, Stage TXT, PAC/PNST, SHW, EFM, MOT, SO or other families once their product integration contract is clean.
 
 Each promoted family must answer two questions:
 
@@ -82,7 +93,7 @@ NBZ remains special: it should follow the canonical source/materialization archi
 - richer SCM material/scene semantics;
 - deeper MOD skeletal/material closure;
 - texture/material linkage between model slots and texture resources;
-- promote shared texture authority into canonical core where doing so removes duplication rather than creating a second parser.
+- promote shared texture authority into DMC Rengine where doing so removes duplication rather than creating a second parser.
 
 These improvements should make existing resources easier to understand, not turn Native Reader into an authoring suite.
 
@@ -110,7 +121,7 @@ file -> learn binary format -> choose specialist decoder -> inspect
 
 ## Phase 7 — Cross-platform Native Reader
 
-Android is the first stable implementation. The strategic direction is to carry the same C++20 semantic contracts to iOS and Windows without creating platform-specific parser forks.
+Android is the first stable implementation. The strategic direction is to carry the same C++20 semantic contracts to iOS, Windows and Web without creating platform-specific parser forks.
 
 Targets include:
 
@@ -118,11 +129,16 @@ Targets include:
 - iOS Files / Share / document-opening integration;
 - Windows desktop file opening;
 - Windows Explorer preview/thumbnail integration where practical;
-- consistent Inspector, RenderScene, ImagePreview and ChildResource semantics across platforms.
+- Web UI backed by the same C++20 core compiled to **WebAssembly**;
+- consistent `InspectionDocument`, `RenderScene`, `ImagePreview`, `ChildResource` and capability semantics across all shells.
+
+For Web, JavaScript/TypeScript remains a thin browser/presentation layer for DOM, file input, routing and Canvas/WebGL/WebGPU integration. DMC binary semantics remain in C++20/WebAssembly.
 
 Platform UI may differ. Binary meaning must not.
 
 ## Phase 8 — Ecosystem integration boundary
+
+DMC Rengine remains the central decompilation/reimplementation engine and C++20 modding foundation.
 
 Native Reader remains focused on:
 
@@ -130,7 +146,7 @@ Native Reader remains focused on:
 Open -> View -> Inspect -> Navigate -> Understand
 ```
 
-Authoring/resource-management tools such as Pocket GDS remain focused on:
+DMC Rengine-backed authoring/resource-management tools such as Pocket GDS remain focused on:
 
 ```text
 Browse archives -> Extract -> Replace -> Edit -> Repack -> Manage
@@ -138,7 +154,7 @@ Browse archives -> Extract -> Replace -> Edit -> Repack -> Manage
 
 Possible future integration includes handing a viewed resource to an authoring tool or sharing canonical reader/writer contracts. Editing and repacking are **not** core Native Reader roadmap requirements unless a future decision explicitly changes the product role.
 
-This separation prevents two competing toolchains from growing around the same resource formats.
+This separation prevents competing private toolchains from growing around the same resource formats.
 
 ## Long-term end state
 
@@ -157,9 +173,9 @@ future graph/structure -> visible tree/graph
 The strongest version of Native Reader is not the one with the most buttons. It is the one users stop thinking about because opening a DMC resource simply works.
 
 ```text
-canonical authority
-  -> bounded read
+DMC Rengine authority
+  -> bounded C++20 read
       -> familiar representation
           -> real corpus/device validation
-              -> cross-platform availability
+              -> Android / iOS / Windows / Web
 ```
