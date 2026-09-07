@@ -104,6 +104,8 @@ public final class ChildResourceBrowserView extends ScrollView {
             if (listener != null) listener.onChildSelected(index, selectedTitle);
         });
 
+        // Preview is the primary representation. The child title is rendered
+        // only as a visible fallback when no safe bitmap can be materialized.
         if (!tryAddPreview(tile, index)) {
             TextView fallback = new TextView(getContext());
             fallback.setText(selectedTitle);
