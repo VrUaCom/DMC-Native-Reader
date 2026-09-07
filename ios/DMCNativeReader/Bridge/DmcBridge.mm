@@ -1,6 +1,7 @@
 #import "DmcBridge.h"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -22,8 +23,13 @@ UIImage *ImageFromRgba(const std::uint8_t *pixels,
                        std::uint32_t width,
                        std::uint32_t height) {
     if (pixels == nullptr || width == 0U || height == 0U) return nil;
-    const std::size_t expected = static_cast<std::size_t>(width) *
-                                 static_cast<std::size_t>(height) * 4U;
+
+    const std::size_t w = static_cast<std::size_t>(width);
+    const std::size_t h = static_cast<std::size_t>(height);
+    if (h > std::numeric_limits<std::size_t>::max() / w) return nil;
+    const std::size_t pixelCount = w * h;
+    if (pixelCount > std::numeric_limits<std::size_t>::max() / 4U) return nil;
+    const std::size_t expected = pixelCount * 4U;
     if (byteCount != expected) return nil;
 
     NSData *data = [NSData dataWithBytes:pixels length:expected];
@@ -34,7 +40,7 @@ UIImage *ImageFromRgba(const std::uint8_t *pixels,
                                       height,
                                       8,
                                       32,
-                                      static_cast<std::size_t>(width) * 4U,
+                                      w * 4U,
                                       space,
                                       kCGBitmapByteOrderDefault | kCGImageAlphaLast,
                                       provider,
@@ -103,18 +109,18 @@ UIImage *ImageFromRender(const dmcresource::RgbaImage &image) {
                 NSString *message = nativeError.empty()
                     ? @"Architecture v2 rejected this resource"
                     : [NSString stringWithUTF8String:nativeError.c_str()];
-                *error = MakeError(3, message);
+                *error = MakeError(3, message ?: @"Native decoder rejected this resource");
             }
             return nil;
         }
 
         const auto &result = _session->result();
         const char *family = result.probe.family != nullptr ? result.probe.family : "UNKNOWN";
-        _formatName = [NSString stringWithUTF8String:family];
+        _formatName = [NSString stringWithUTF8String:family] ?: @"UNKNOWN";
         const std::string summary = _session->summary();
-        _summary = [NSString stringWithUTF8String:summary.c_str()];
+        _summary = [NSString stringWithUTF8String:summary.c_str()] ?: @"Resource decoded";
         const std::string inspection = _session->inspection_text();
-        _inspectionText = [NSString stringWithUTF8String:inspection.c_str()];
+        _inspectionText = [NSString stringWithUTF8String:inspection.c_str()] ?: @"";
         return self;
     } @finally {
         if (scoped) [url stopAccessingSecurityScopedResource];
@@ -123,6 +129,10 @@ UIImage *ImageFromRender(const dmcresource::RgbaImage &image) {
 
 - (BOOL)hasGeometry {
     return _session != nullptr && _session->has_geometry();
+}
+
+- (BOOL)hierarchyAvailable {
+    return _session != nullptr && _session->hierarchy_available();
 }
 
 - (nullable UIImage *)imagePreview {
@@ -152,16 +162,20 @@ UIImage *ImageFromRender(const dmcresource::RgbaImage &image) {
                                  yaw:(float)yaw
                                pitch:(float)pitch
                                 zoom:(float)zoom
-                           wireframe:(BOOL)wireframe {
+                               flags:(DmcRenderFlags)flags {
     if (_session == nullptr || !_session->has_geometry()) return nil;
     dmcresource::ViewState view;
     view.yaw_radians = yaw;
     view.pitch_radians = std::clamp(pitch, -1.55F, 1.55F);
     view.zoom = std::clamp(zoom, 0.15F, 8.0F);
-    view.wireframe = wireframe == YES;
-    const int width = std::clamp(static_cast<int>(size.width), 64, 2048);
-    const int height = std::clamp(static_cast<int>(size.height), 64, 2048);
-    return ImageFromRender(_session->render(width, height, view));
+    view.wireframe = false;
+
+    const auto nativeFlags = static_cast<dmcresource::RenderFlags>(flags);
+    return ImageFromRender(_session->render(
+        static_cast<int>(std::clamp(size.width, 64.0, 2048.0)),
+        static_cast<int>(std::clamp(size.height, 64.0, 2048.0)),
+        view,
+        nativeFlags));
 }
 
 @end
