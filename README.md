@@ -16,7 +16,7 @@ The stable **v1.0.0** implementation targets Android. The architecture is design
 
 [**Download DMC Native Reader v1.0.0 APK**](https://github.com/VrUaCom/DMC-Native-Reader/releases/download/v1.0.0/DMC-Native-Reader-v1.0.0.apk)
 
-[View the v1.0.0 GitHub Release](https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/v1.0.0)
+[View the v1.0.0 GitHub Release](https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/v1.0.0) · [SHA256SUMS](SHA256SUMS)
 
 Release identity:
 
