@@ -1,25 +1,28 @@
 # DMC Native Reader — Public Repository Opening Checklist
 
-This checklist separates **opening the source repository** from publishing an **official signed distribution APK**.
+This checklist separates **opening the source repository** from publishing an **official production-signed APK**.
 
 ## Product baseline
 
-- [x] Native Reader v1 debug-baseline milestone frozen.
+- [x] Native Reader v1 architecture frozen.
+- [x] v1 real-device acceptance completed for MOD, SCM, DDS and PTX feature paths.
+- [x] `1.0.0-rc1` release-candidate branch defined.
 - [x] System-integrated Android file opening path documented.
-- [x] Native C++ `NativeModuleRegistry` architecture documented.
+- [x] Native C++20 `NativeModuleRegistry` architecture documented.
 - [x] 71 recognized DMC families represented by 71 explicit module contracts.
 - [x] Core modding readers documented: MOD, SCM, DDS, PTX, TXT and `.index`.
 - [x] Additional promoted readers documented: HITS, DCA, LIG/LIG2, PAC, PNST and NBZ.
 - [x] Partial/evidence-gated status is explicit for EFM, MRP and SHW.
 - [x] SO is not misrepresented as a completed v1 semantic reader.
 - [x] Unknown-family behavior is fail-closed.
-- [x] v1 exact-head CI / Android APK gate passed before entering debug phase.
+- [x] Generic `ImagePreview` / `ChildResource` nested-resource UI is documented.
+- [x] v1 RC automated release gates exist.
 
 ## Public-facing repository material
 
-- [x] Public README explains what the application is and why it exists.
+- [x] README explains the project, current RC line and evidence policy.
 - [x] Architecture and evidence policy are visible from the repository front page.
-- [x] Format support is described by maturity instead of a misleading binary supported/unsupported claim.
+- [x] Format support is described by maturity instead of a misleading supported/unsupported binary.
 - [x] Capcom / Devil May Cry affiliation disclaimer is present.
 - [x] Project contains no Capcom game archives, proprietary game files or game executable binaries.
 - [x] Contribution guide added.
@@ -27,6 +30,7 @@ This checklist separates **opening the source repository** from publishing an **
 - [x] Bug / real-file debug issue templates added.
 - [x] Development signing-key boundary documented.
 - [x] Public roadmap and changelog added.
+- [x] RC release/device/evidence checklists added.
 
 ## Manual gates before switching repository visibility to Public
 
@@ -49,7 +53,7 @@ This is a legal/product decision and is intentionally not selected by an impleme
 
 Recommended GitHub **About** description:
 
-> System-integrated native Android reader for Devil May Cry 3 HD resources — modular C++ parsers for MOD, SCM, DDS, PTX, stage/config files, containers and more.
+> System-integrated native Android reader for Devil May Cry 3 HD resources — modular C++20 readers for MOD, SCM, DDS, PTX, stage/config files, containers and more.
 
 Recommended topics:
 
@@ -59,18 +63,7 @@ Recommended topics:
 
 **OPEN — owner/admin cleanup decision required.**
 
-GitHub repository visibility applies to more than the current `main` branch. The repository currently also contains historical development branches such as:
-
-- `ci/standalone-actions-probe`;
-- `claude/mod-scm-file-opening-t93oeh`;
-- `feature/*`;
-- `fix/*`;
-- `integrate/*`;
-- `test/*`;
-- `release/native-reader-v1-debug-baseline`;
-- `public/opening-v1`.
-
-Before making the repository public, decide which historical branches are intentionally part of the public development record and prune branches that should not be public.
+Repository visibility applies to historical branches as well as `main`. Review development branches before public visibility and decide which are intentionally part of the public development record.
 
 Do not assume that a clean `main` hides content reachable from another branch/ref.
 
@@ -82,21 +75,22 @@ Historical Git commits may contain author/committer email metadata. Before publi
 
 If privacy cleanup is required, rewrite/sanitize history before opening the repository. Changing the account's future commit-email setting does not retroactively rewrite existing commits.
 
-### 5. Development signer
+### 5. Production signer
 
-The committed `keys/dmc-native-reader-test.jks` is intentionally a **disposable development-only key** used for update compatibility across internal/debug APKs.
+The committed `keys/dmc-native-reader-test.jks` is intentionally a **disposable development-only key** used for internal/debug APK update compatibility.
 
-It is not a production secret and must **never** be used as the trust root for an official public release.
+It is not a production secret and must **never** be used as the trust root for an official stable release.
 
 Before publishing a production APK:
 
 - generate/provision a separate production signing key;
-- keep the production private key outside Git history;
+- keep the private key outside Git history;
 - store CI signing material in protected repository/environment secrets;
 - document the production certificate fingerprint;
-- decide the migration path from development-signed APKs (normally uninstall/reinstall unless a supported signing migration is configured).
+- decide the migration path from development-signed APKs (normally uninstall/reinstall unless a supported signing migration is configured);
+- record the final production APK SHA-256.
 
-Opening the source repository and publishing a production-signed APK are therefore two separate milestones.
+The RC pipeline intentionally builds an unsigned release APK until this authority exists.
 
 ### 6. Visibility change
 
@@ -112,16 +106,16 @@ Keep the repository private until the owner has reviewed:
 
 After those are accepted, repository visibility can be changed to `Public` by the owner/admin.
 
-## First public-debug milestone
+## Public v1 messaging
 
-The recommended first public phase is **Native Reader v1 / Debug & Corpus Validation**.
+Recommended messaging for the v1 line:
 
-Public messaging should be:
-
-- architecture milestone achieved;
-- core popular DMC3 modding formats have real native readers;
+- modular architecture and primary real-device flows are established;
+- MOD, SCM, DDS and PTX have real native reader/preview surfaces;
 - 71 known families have explicit registry contracts;
-- semantic completeness is still evidence-gated per format;
-- real-world device/corpus testing is now the primary goal.
+- semantic completeness remains evidence-gated per family;
+- unsupported semantics are not hidden behind generic parsing;
+- the product remains read-only;
+- production signing and public repository licensing are separate owner-controlled release gates.
 
 The project should not claim that every recognized family is fully reversed.
