@@ -1,69 +1,64 @@
-# DMC Native Reader — Public Roadmap
+# DMC Native Reader — Roadmap
 
-## Phase 1 — Native Reader v1 architecture
+## Phase 1 — Clean Architecture v2 core
 
-**Status: achieved**
+**Status: active acceptance**
 
-- explicit modular reader architecture;
-- no central family decoder;
-- no wildcard structural fallback;
-- fail-closed unknown-family behavior;
-- 71 known-family contracts;
-- production Android `Open with` path;
-- core popular DMC3 modding formats promoted to real readers;
-- reproducible host + Android CI gate.
+Target production surface:
 
-## Phase 2 — Device / corpus debug
+- MOD;
+- SCM;
+- DDS;
+- PTX.
 
-**Status: active**
+Required properties:
 
-Primary goal: test the fixed v1 architecture against real DMC3 HD files and real Android/OEM routing behavior.
+- exactly four registered modules;
+- fail-closed unknown/unpromoted formats;
+- no wildcard or recognition-only fallback;
+- no legacy `DecodeResult` compatibility bridge;
+- MOD/SCM canonical adapters;
+- generic image and child-resource contracts for DDS/PTX;
+- capability-driven Android UI;
+- host + Android CI proving the four paths and absence of archived modules.
 
-Priority debug targets:
+The pre-cleanup multi-format implementation is preserved on `main.2` and marked **до опрацювання**.
 
-1. MOD real-model corpus;
-2. SCM real-scene corpus;
-3. PTX -> DDS child consistency;
-4. DDS mip/compression edge cases;
-5. stage TXT and `.index` parser/routing edge cases;
-6. PAC/PNST/NBZ inspection behavior;
-7. Samsung My Files / Android Files `Open with` routing;
-8. malformed/truncated input hardening.
+## Phase 2 — Device validation
 
-## Phase 3 — Promote the next evidence-ready readers
+After CI is green, validate the clean APK on Samsung:
 
-A family is promoted only when reverse evidence is strong enough to support a bounded product parser.
+1. MOD render;
+2. SCM render;
+3. DDS preview;
+4. PTX gallery;
+5. PTX -> DDS child preview;
+6. child -> parent navigation;
+7. malformed/unsupported input fails closed without stale UI state.
 
-Current candidates:
+## Phase 3 — One-by-one format promotion
 
-- SHW — strong real-payload + executable evidence; guarded product parser still needs closure;
-- EFM — mesh-bearing family evidence exists; exact format-specific bindings remain open;
-- SO — significant research exists; product parser contract still needs promotion;
-- MRP — family identity is confirmed, but exact binary schema remains open.
+Removed families return only as Architecture v2 modules with evidence and regression coverage. Do not restore the old module implementation wholesale.
 
-## Phase 4 — Deeper semantic interpretation
+Likely promotion candidates are selected from `main.2` according to canonical readiness in `dmc-rengine-cpp`, for example HITS, DCA, LIG2, Stage TXT, PAC/PNST or other families once their product integration contract is clean.
 
-After structural reliability is established:
+NBZ remains special: it should follow the canonical source/materialization architecture rather than being reintroduced as an ad-hoc ordinary format parser.
 
-- richer SCM scene/material semantics;
-- MOD skeletal/skin behavior closure;
-- texture/material linkage;
-- animation/control families;
-- stage/event semantics;
-- deeper archive-to-resource provenance.
+## Phase 4 — Deeper model/texture semantics
 
-## Phase 5 — Authoring / write path
+- richer SCM material/scene semantics;
+- deeper MOD skeletal and material closure;
+- texture/material linkage between model slots and texture resources;
+- move DDS/PTX parser authority to an appropriately pinned canonical core revision when that migration can be done without duplicating reader logic.
 
-Native Reader v1 is intentionally read-only.
+## Phase 5 — Authoring
 
-Editing/repacking belongs to a later milestone and must reuse canonical writer contracts from DMC Rengine rather than adding ad-hoc Android-only writers.
-
-The order is deliberate:
+Native Reader remains read-only. Editing/repacking belongs to later tooling and must reuse DMC Rengine writer contracts instead of adding Android-only writers.
 
 ```text
-recognize correctly
-  -> parse safely
-      -> validate on real corpus
-          -> understand semantics
-              -> only then author/write
+clean authority
+  -> bounded read
+      -> real corpus/device validation
+          -> semantic promotion
+              -> author/write
 ```
