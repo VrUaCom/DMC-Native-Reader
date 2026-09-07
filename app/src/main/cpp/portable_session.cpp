@@ -84,8 +84,8 @@ PortableSession::PortableSession(PipelineResult&& result)
     if (result_.renderable && result_.scene.has_geometry()) {
         geometry_ready_ = materialize_render_scene(result_.scene, &render_mesh_);
         if (geometry_ready_) {
-            // Materialize the evidence-safe overlay once for platform shells that
-            // choose to expose a hierarchy toggle. Plain rendering stays overlay-free.
+            // Materialize once. The overlay remains unavailable unless every
+            // participating node has canonical spatial authority.
             (void)materialize_hierarchy_overlay(result_.scene, &hierarchy_);
         }
     }
@@ -97,11 +97,23 @@ const ChildResource* PortableSession::child(std::size_t index) const noexcept {
 
 RgbaImage PortableSession::render(int width,
                                   int height,
-                                  const ViewState& view) const {
+                                  const ViewState& view,
+                                  RenderFlags flags) const {
     if (!geometry_ready_) return {};
     const int safe_width = std::clamp(width, 64, 2048);
     const int safe_height = std::clamp(height, 64, 2048);
-    return render_view(render_mesh_, safe_width, safe_height, view, nullptr);
+
+    ViewState effective_view = view;
+    if (has_render_flag(flags, RenderFlag::Wireframe)) {
+        effective_view.wireframe = true;
+    }
+
+    const HierarchyOverlay* overlay = nullptr;
+    if (has_render_flag(flags, RenderFlag::Hierarchy) && hierarchy_available()) {
+        overlay = &hierarchy_;
+    }
+
+    return render_view(render_mesh_, safe_width, safe_height, effective_view, overlay);
 }
 
 std::string PortableSession::summary() const {
@@ -112,6 +124,7 @@ std::string PortableSession::summary() const {
         out << " | vertices=" << render_mesh_.vertices.size()
             << " | triangles=" << (render_mesh_.indices.size() / 3U)
             << " | nodes=" << result_.scene.nodes.size();
+        if (hierarchy_available()) out << " | hierarchy=spatial";
     }
     if (result_.image_preview.available()) {
         out << " | image=" << result_.image_preview.width << 'x'
