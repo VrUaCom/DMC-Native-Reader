@@ -1,4 +1,4 @@
-name: DMC Native Reader Android
+name: DMC Native Reader core architecture
 
 on:
   push:
@@ -11,10 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  build-apk:
+  core:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - uses: actions/checkout@v4
 
@@ -39,48 +38,24 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-      - name: Verify canonical vendor provenance
+      - name: Reject archived legacy source paths
         run: |
           set -euxo pipefail
-          check_blob() {
-            expected="$1"
-            path="$2"
-            actual="$(git hash-object "$path")"
-            test "$actual" = "$expected"
-          }
+          for path in \
+            app/src/main/cpp/decode_hits.cpp \
+            app/src/main/cpp/decode_text.cpp \
+            app/src/main/cpp/decode_status.cpp \
+            app/src/main/cpp/modules/module_hits.cpp \
+            app/src/main/cpp/modules/module_text.cpp \
+            app/src/main/cpp/modules/module_structural.cpp \
+            app/src/main/cpp/modules/module_catalog.cpp \
+            app/src/main/cpp/include/dmcresource/decode.h \
+            app/src/main/cpp/include/dmcresource/hits_decode.h \
+            app/src/main/cpp/include/dmcresource/text_decode.h; do
+            test ! -e "$path"
+          done
 
-          # MOD read-side slice from canonical dmc-rengine-cpp main@3a203b01.
-          check_blob 43d721a9dd83d171184ecfabac6ca5d758ac2130 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/binary/reader.hpp
-          check_blob 63ff1b0eb6a05375eda16757425df9bcf41eff9e app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp
-          check_blob 2c66b7b38462bea096046404e39e1146a8c0d187 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/diagnostic.hpp
-          check_blob 805bda2d8dc80d4ce3b9b04fbe587930a834eeaa app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/model_mesh_core.hpp
-          check_blob cecae752b294913bca74631dd59df5baf68972f3 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/model_node_domain_core.hpp
-          check_blob d4ba6cb33ff7cd3d8da067fe0263f5f56c74ca46 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod_skin.hpp
-          check_blob 69d711a9f09465861a08a50252b9c00436943b21 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
-          check_blob 9555c23d3caed786ae7837941d50e5a0d0d8dc3f app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod/transform_domain.hpp
-          check_blob 8d7be95f41d1694045d28d6b9cfdcae5f08f543b app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
-          check_blob 35c222143536e48349b56fc1f3d6aec1fd0d5c5d app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod/world_transform.hpp
-          check_blob fabb723bb7b4d8c1ee5795a6c51f32c5f1fa7ad3 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
-          check_blob f708f05a04682250692ab0effa3759ba0875e1dc app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/mod.hpp
-          check_blob 3a4862b1b7c23c9ad70253e1923f1419899ea6b6 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp
-
-          # SCM structural/read-side slice.
-          check_blob 9ae5b8575b66080f0a8925c59a615bf8c96c5219 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm.hpp
-          check_blob 0c497ded59816a16f7d8d2240ef595995904637c app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_render.hpp
-          check_blob f9bde16aa3275d48d7d31d7a57b6244c259e6077 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_resource_code.hpp
-          check_blob e9f8fffde0e6805b24e62b32e7d3480a7f040cd2 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_layout.hpp
-          check_blob bd373d9e63cdb35cec1f976f3a0a748c51e3bcb7 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_topology.hpp
-          check_blob e4bfb52f23439cfcce5c58b3631b381c6e4a5187 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_transform.hpp
-          check_blob 2c0e9dd43a9b110cf26ab99bef29432802fefe52 app/src/main/cpp/vendor/dmc-rengine-cpp/include/dmc_rengine/formats/scm_hierarchy.hpp
-          check_blob 46d936dd60166c45c90be9089c574cc9de9b069c app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_internal.hpp
-          check_blob 03563d931136bb8a5436c2d9a53c75fb20f73f87 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
-          check_blob 26e910488ee7a4b8f40572ad3e7be03ad20d8212 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
-          check_blob aef01676cab6151c43066871fc3ca3ed2044e917 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
-          check_blob 3b0bff72137a0b5cca924f3e0767eb840d361d4a app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
-          check_blob 9cd38e59ed95d63baf7bbd912d73c7ca9cb4c969 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
-          check_blob ed0aec2ac8c4648baa517bc439885b628b854e69 app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp
-
-      - name: Build and run host modular-reader regression
+      - name: Build and run four-module registry regression
         run: |
           set -euxo pipefail
           g++ -std=c++20 -Wall -Wextra -Wpedantic \
@@ -88,21 +63,14 @@ jobs:
             -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
             app/src/test/native/module_registry_test.cpp \
             app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_status.cpp \
-            app/src/main/cpp/decode_hits.cpp \
-            app/src/main/cpp/decode_text.cpp \
             app/src/main/cpp/decode_pipeline.cpp \
             app/src/main/cpp/inspection_format.cpp \
             app/src/main/cpp/formats/dds.cpp \
             app/src/main/cpp/adapters/mod_adapter.cpp \
             app/src/main/cpp/adapters/scm_adapter.cpp \
             app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_catalog.cpp \
             app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_hits.cpp \
-            app/src/main/cpp/modules/module_text.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/modules/module_structural.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
@@ -114,8 +82,8 @@ jobs:
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-native-module-test
-          /tmp/dmc-native-module-test
+            -o /tmp/dmc-core-registry-test
+          /tmp/dmc-core-registry-test
 
       - name: Build and run MOD spatial adapter regression
         run: |
@@ -133,18 +101,7 @@ jobs:
             -o /tmp/dmc-mod-spatial-adapter-test
           /tmp/dmc-mod-spatial-adapter-test
 
-      - name: Build and run capability UI policy regression
-        run: |
-          set -euxo pipefail
-          rm -rf /tmp/dmc-ui-policy-test
-          mkdir -p /tmp/dmc-ui-policy-test
-          javac -d /tmp/dmc-ui-policy-test \
-            app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
-            app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java
-          java -cp /tmp/dmc-ui-policy-test \
-            com.dmcrengine.nativeviewer.ResourceUiStateTest
-
-      - name: Build and run RenderScene projection regression
+      - name: Build and run RenderScene regression
         run: |
           set -euxo pipefail
           g++ -std=c++20 -Wall -Wextra -Wpedantic \
@@ -154,100 +111,62 @@ jobs:
             -o /tmp/dmc-render-scene-test
           /tmp/dmc-render-scene-test
 
+      - name: Build and run capability UI policy regression
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/dmc-ui-policy-test
+          mkdir -p /tmp/dmc-ui-policy-test
+          javac -d /tmp/dmc-ui-policy-test \
+            app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
+            app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java
+          java -cp /tmp/dmc-ui-policy-test com.dmcrengine.nativeviewer.ResourceUiStateTest
+
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify Native Reader v1.1.5 child gallery debug build
+      - name: Verify APK core-only module surface
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
           unzip -t "$APK"
-          unzip -l "$APK" | grep -q 'classes.dex'
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libdmcviewer.so'
+          unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
+
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.dds.dmc3-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.ptx.bundle-reader'
+
+          for legacy in \
+            'formats.hits.collision-reader' \
+            'formats.stage-txt.lexer' \
+            'formats.dca.record-reader' \
+            'formats.lig2.record-reader' \
+            'formats.pac.relative-slot-reader' \
+            'formats.pnst.relative-slot-reader' \
+            'formats.nbz.container-reader' \
+            'formats.efm.family-adapter' \
+            'formats.mrp.family-adapter' \
+            'formats.shw.family-adapter' \
+            'formats.mot.recognition'; do
+            if strings /tmp/libdmcviewer.so | grep -Fq "$legacy"; then
+              echo "legacy module leaked into core APK: $legacy"
+              exit 1
+            fi
+          done
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
-          "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
-          grep -q "package: name='com.dmcrengine.nativereader'" /tmp/badging.txt
-          grep -q "versionCode='17'" /tmp/badging.txt
-          grep -q "versionName='1.1.5-debug-child-gallery'" /tmp/badging.txt
-          grep -q "application-label:'DMC Native Reader'" /tmp/badging.txt
-          ! grep -q 'DMC Native Reader v8' /tmp/badging.txt
-          grep -q "launchable-activity: name='com.dmcrengine.nativeviewer.MainActivity'" /tmp/badging.txt
+          "$AAPT2" dump badging "$APK" | grep -Fq "package: name='com.dmcrengine.nativereader'"
+          "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
+          grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
+          grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
+          grep -Fq 'application/vnd.dmc.ptx' /tmp/manifest.txt
+          grep -Fq 'image/vnd-ms.dds' /tmp/manifest.txt
+          ! grep -Fq 'application/vnd.dmc.hits' /tmp/manifest.txt
+          ! grep -Fq 'application/vnd.dmc.pac' /tmp/manifest.txt
+          ! grep -Fq 'application/vnd.dmc.pnst' /tmp/manifest.txt
 
-          "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest-tree.txt
-          grep -q 'com.dmcrengine.nativeviewer.DmcOpenActivity' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.scm' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.mod' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.hits' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.dca' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.ptx' /tmp/manifest-tree.txt
-          grep -q 'image/vnd-ms.dds' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.efm' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.mrp' /tmp/manifest-tree.txt
-          grep -q 'application/vnd.dmc.shw' /tmp/manifest-tree.txt
-
-          unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
-          strings /tmp/libdmcviewer.so | grep -q 'formats.scm.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.structural-parser'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.scm.scene-hierarchy'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.mod.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.structural-parser'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.spatial-hierarchy'
-          strings /tmp/libdmcviewer.so | grep -q 'canonical.mod.texture-state'
-          strings /tmp/libdmcviewer.so | grep -q 'MOD runtime texture slot; bitmap source unresolved'
-          strings /tmp/libdmcviewer.so | grep -q 'Legacy GS CLAMP REGION_REPEAT'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.hits.collision-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.stage-txt.lexer'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.dmc3-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.base-mip-preview'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.ptx.bundle-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.dds.child-validation'
-          strings /tmp/libdmcviewer.so | grep -q 'children='
-          strings /tmp/libdmcviewer.so | grep -q 'formats.dca.record-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.lig2.record-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.pac.relative-slot-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.pnst.relative-slot-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.nbz.container-reader'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.efm.family-adapter'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.mrp.family-adapter'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.shw.family-adapter'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.mot.recognition'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.eventtbl.recognition'
-          strings /tmp/libdmcviewer.so | grep -q 'formats.spumapdt.recognition'
-          strings /tmp/libdmcviewer.so | grep -q 'spatialHierarchy='
-          if strings /tmp/libdmcviewer.so | grep -q 'formats.generic.structural-inspector'; then
-            echo 'legacy wildcard module is present'
-            exit 1
-          fi
-          if strings /tmp/libdmcviewer.so | grep -q 'SCM corpus-backed mesh decode'; then
-            echo 'retired legacy SCM decoder is still linked'
-            exit 1
-          fi
-          if strings /tmp/libdmcviewer.so | grep -q 'MOD corpus-backed mesh decode'; then
-            echo 'retired legacy MOD decoder is still linked'
-            exit 1
-          fi
-
-          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
-          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
-          tr -d ': ' < /tmp/signing.txt | grep -qi 'f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac'
-          sha256sum "$APK" | tee /tmp/apk.sha256
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.1.5-debug-child-gallery
+          name: dmc-native-reader-core-debug
           path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Upload build evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: dmc-native-reader-v1.1.5-debug-child-gallery-evidence
-          path: |
-            /tmp/badging.txt
-            /tmp/manifest-tree.txt
-            /tmp/signing.txt
-            /tmp/apk.sha256
-          if-no-files-found: error

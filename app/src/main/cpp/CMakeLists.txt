@@ -6,21 +6,14 @@ set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 add_library(dmcviewer SHARED
     app_native.cpp
     dmc_resource.cpp
-    decode_status.cpp
-    decode_hits.cpp
-    decode_text.cpp
     decode_pipeline.cpp
     inspection_format.cpp
     formats/dds.cpp
     adapters/mod_adapter.cpp
     adapters/scm_adapter.cpp
     modules/module_registry.cpp
-    modules/module_catalog.cpp
     modules/module_model.cpp
-    modules/module_hits.cpp
-    modules/module_text.cpp
     modules/module_texture.cpp
-    modules/module_structural.cpp
     view_renderer.cpp
     vendor/dmc-rengine-cpp/src/binary/reader.cpp
     vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp

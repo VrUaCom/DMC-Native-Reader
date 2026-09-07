@@ -3,26 +3,11 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "dmcresource/native_module.h"
 
 namespace dmcresource {
 namespace {
-
-[[nodiscard]] bool has_index_extension(std::string_view filename) noexcept {
-    constexpr std::string_view extension = ".index";
-    if (filename.size() < extension.size()) return false;
-    const auto tail = filename.substr(filename.size() - extension.size());
-    for (std::size_t i = 0; i < extension.size(); ++i) {
-        char value = tail[i];
-        if (value >= 'A' && value <= 'Z') {
-            value = static_cast<char>(value - 'A' + 'a');
-        }
-        if (value != extension[i]) return false;
-    }
-    return true;
-}
 
 void enforce_render_scene_contract(PipelineResult& result) {
     if (!result.renderable) return;
@@ -31,9 +16,6 @@ void enforce_render_scene_contract(PipelineResult& result) {
     result.modules.push_back({"render-scene-contract", complete});
     if (complete) return;
 
-    // Architecture v2 has exactly one downstream geometry authority. A
-    // renderable module must publish RenderScene before leaving its module
-    // boundary; the pipeline never reconstructs a second representation.
     result.renderable = false;
     if (!result.detail.empty()) result.detail += "\n";
     result.detail +=
@@ -65,17 +47,10 @@ PipelineResult run_decode_pipeline(std::string_view filename,
                                    const std::uint8_t* bytes,
                                    std::size_t size) noexcept {
     PipelineResult rejected;
-
-    // DMC3 .index files are textual extraction/naming metadata and may begin
-    // with the literal line `PNST` or `PAC`. That four-byte text prefix must
-    // not be promoted to binary-container authority. Force extension/name
-    // identity for this metadata family, then let its own module validate text.
-    rejected.probe = has_index_extension(filename)
-        ? probe(filename, nullptr, 0u)
-        : probe(filename, bytes, size);
+    rejected.probe = probe(filename, bytes, size);
 
     if (!rejected.probe.recognized) {
-        rejected.detail = "pipeline rejected unknown resource";
+        rejected.detail = "pipeline rejected: format is outside the Native Reader 1.0 core";
         return rejected;
     }
 
@@ -84,24 +59,16 @@ PipelineResult run_decode_pipeline(std::string_view filename,
             ? std::string_view{rejected.probe.family}
             : std::string_view{});
     if (module == nullptr || module->run == nullptr) {
-        rejected.detail = "recognized resource has no registered native module";
+        rejected.detail = "recognized core resource has no registered native module";
         return rejected;
     }
 
-    // The catalog owns recognition/evidence metadata; once a family has a
-    // registered module contract, the registry owns its Native Reader format
-    // identity and execution policy. There is no wildcard/fallback dispatcher.
     auto authoritative_probe = rejected.probe;
-    if (module->format != Format::Unknown) {
-        authoritative_probe.format = module->format;
-    }
+    authoritative_probe.format = module->format;
 
     auto result = module->run(*module, filename, bytes, size, authoritative_probe);
     result.capabilities = module->capabilities;
     enforce_render_scene_contract(result);
-
-    // Every accepted module can be inspected immediately. Format-specific
-    // adapters replace this minimal root with a typed tree as they migrate.
     ensure_minimal_inspection(result);
     return result;
 }

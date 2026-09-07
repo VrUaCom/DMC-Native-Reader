@@ -7,28 +7,14 @@
 
 namespace dmcresource {
 
-// Stable resource identities used by the modular Native Reader. Recognition
-// and decoding are deliberately separate: a format may be recognized while its
-// module remains structural/inspection-only.
+// Clean Native Reader 1.0 format surface. Other DMC families are intentionally
+// not registered in main until they are promoted to the same modular contract.
 enum class Format : std::uint8_t {
     Unknown = 0,
     Scm,
     Mod,
-    Efm,
-    Mrp,
-    Shw,
-    Hits,
-    StageTxt,
-    Index,
     Dds,
     Ptx,
-    Dca,
-    Lig,
-    Lig2,
-    Pac,
-    Pnst,
-    Nbz,
-    Other,
 };
 
 struct ProbeResult {
@@ -46,8 +32,6 @@ ProbeResult probe(std::string_view filename,
                   const std::uint8_t* bytes,
                   std::size_t size) noexcept;
 
-// Produces a bounded human-readable structural summary. This is deliberately
-// separate from decode modules so recognition never implies fake semantics.
 std::string describe_resource(std::string_view filename,
                               const std::uint8_t* bytes,
                               std::size_t size,

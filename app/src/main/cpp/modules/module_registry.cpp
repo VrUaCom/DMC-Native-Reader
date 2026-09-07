@@ -1,81 +1,29 @@
 #include "dmcresource/native_module.h"
 
 #include <algorithm>
-#include <string>
 #include <string_view>
 #include <utility>
 
 namespace dmcresource {
 
 const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
-    static const std::vector<NativeModule> registry = [] {
-        std::vector<NativeModule> out{
-            scm_module(),
-            mod_module(),
-            hits_module(),
-            stage_txt_module(),
-            index_module(),
-            dds_module(),
-            ptx_module(),
-            dca_module(),
-            lig_module(),
-            lig2_module(),
-            pac_module(),
-            pnst_module(),
-            nbz_module(),
-            efm_module(),
-            mrp_module(),
-            shw_module(),
-        };
-        auto recognition = catalog_recognition_modules();
-        out.insert(out.end(), recognition.begin(), recognition.end());
-        return out;
-    }();
+    static const std::vector<NativeModule> registry{
+        scm_module(),
+        mod_module(),
+        dds_module(),
+        ptx_module(),
+    };
     return registry;
 }
 
 const NativeModule* NativeModuleRegistry::find(std::string_view family) noexcept {
     const auto& registry = modules();
-    const auto it = std::find_if(registry.begin(), registry.end(),
-                                 [family](const NativeModule& module) {
-                                     return std::string_view{module.family} == family;
-                                 });
+    const auto it = std::find_if(
+        registry.begin(), registry.end(),
+        [family](const NativeModule& module) {
+            return std::string_view{module.family} == family;
+        });
     return it == registry.end() ? nullptr : &*it;
-}
-
-PipelineResult pipeline_from_decode(const ProbeResult& probe,
-                                    DecodeResult decoded,
-                                    const char* module_id,
-                                    bool renderable) noexcept {
-    PipelineResult out;
-    out.probe = probe;
-    out.accepted = decoded.status == DecodeStatus::Ok;
-
-    const bool has_geometry =
-        !decoded.mesh.vertices.empty() && !decoded.mesh.indices.empty();
-    out.renderable = out.accepted && renderable && has_geometry;
-    if (out.renderable) {
-        MeshPrimitive primitive;
-        primitive.name = probe.family != nullptr
-            ? std::string{probe.family}
-            : std::string{"resource"};
-        primitive.mesh = std::move(decoded.mesh);
-        out.scene.meshes.push_back(std::move(primitive));
-    }
-
-    out.modules.push_back({"identity-probe", true});
-    out.modules.push_back({"bounded-read-guard", true});
-    out.modules.push_back({module_id, out.accepted});
-    out.detail = decoded.detail != nullptr ? decoded.detail : "module completed";
-    if (!decoded.info.empty()) {
-        if (!out.detail.empty()) out.detail += "\n";
-        out.detail += decoded.info;
-    }
-    if (!decoded.text.empty()) {
-        if (!out.detail.empty()) out.detail += "\n";
-        out.detail += decoded.text;
-    }
-    return out;
 }
 
 PipelineResult structural_pipeline(const ProbeResult& probe,
