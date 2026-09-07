@@ -1,148 +1,83 @@
-# Native Reader Architecture v2 — reusable resource presentation core
+# Native Reader Architecture v2 — clean core contract
 
-**Status:** implementation in progress  
-**Branch:** `architecture/v2-resource-session-core`  
-**Baseline preserved:** v1 / `1.0.1-debug-ui1`
+**Status:** active baseline on `main`  
+**Core product surface:** MOD / SCM / DDS / PTX  
+**Archived pre-cleanup state:** `main.2` — до опрацювання
 
-## Goal
-
-Keep format parsing evidence-aware and format-specific while making inspection,
-rendering, hierarchy overlays, texture bindings and future tools reusable across
-DMC3 resource families.
-
-The dependency direction is one-way:
+## Dependency direction
 
 ```text
-binary primitives
-      ↓
-format parsers
-      ↓
-semantic / cross-resource analysis
-      ↓
-inspection + render adapters
-      ↓
-resource session / JNI
-      ↓
-Android UI
+bounded resource probe
+        ↓
+NativeModuleRegistry
+        ↓
+format module / canonical adapter
+        ↓
+InspectionDocument | RenderScene | ImagePreview | ChildResource[]
+        ↓
+generic JNI Session
+        ↓
+capability-driven Android UI
 ```
 
-No UI component may parse MOD, SCM, PTX, DDS, SO, SHW or another resource directly.
-No renderer may become a second format parser.
+No Java/UI component parses format bytes. No renderer owns a format parser. No wildcard module or recognition-only catalog is present in the v1 core.
 
-## v2 contracts
+## Core modules
+
+`NativeModuleRegistry` contains exactly four promoted modules:
+
+- **MOD** — canonical `dmc-rengine-cpp` parser -> Architecture v2 adapter -> typed inspection, geometry, hierarchy, skin weights and texture-slot state;
+- **SCM** — canonical `dmc-rengine-cpp` parser -> Architecture v2 adapter -> typed inspection, scene hierarchy, transforms, geometry and texture-slot state;
+- **DDS** — bounded DMC3 DXT1/DXT5 texture module -> generic `ImagePreview`;
+- **PTX** — bounded texture-bundle module -> generic `ChildResource[]`, each DDS child using the same generic preview/session UI path.
+
+DDS/PTX remain direct Architecture v2 modules in the current Native Reader snapshot. Their future parser-authority synchronization with newer `dmc-rengine-cpp` revisions is a separate controlled migration; it must not reintroduce a legacy compatibility bridge.
+
+## Contracts
 
 ### ResourceCapabilities
 
-Capabilities belong to `NativeModule`, not to Android conditionals. UI visibility
-must be driven by capabilities such as:
-
-- Inspection
-- Geometry
-- Wireframe
-- NodeHierarchy
-- SkeletalSkinning
-- SkinWeights
-- TextureBinding
-- ImagePreview
-- ChildResources
-- Text
-- Container
-- Collision
-- Adjacency
-- TransformSelectors
-
-A capability is published only when the module has evidence-backed data that can
-support it. Recognition alone does not imply a semantic capability.
+The module declares capabilities; Android only consumes them. Current core capabilities include Inspection, Geometry, Wireframe, NodeHierarchy, SkeletalSkinning, SkinWeights, TextureBinding, ImagePreview and ChildResources as appropriate.
 
 ### InspectionDocument
 
-Generic tree projection for the info/inspector UI. It carries:
-
-- stable node id;
-- title and node kind;
-- optional source byte span;
-- properties with an evidence level;
-- children.
-
-Format parsers retain authority over typed/raw data. `InspectionDocument` is a tool
-projection and must not erase unresolved bytes or upgrade evidence.
+Generic evidence-aware tree. Format-specific typed data is projected into it once. It is presentation IR, not a second parser.
 
 ### RenderScene
 
-Reusable presentation IR containing:
+The only downstream geometry authority. MOD and SCM publish geometry, nodes and optional skin/texture bindings through `RenderScene`. There is no `DecodeResult -> Mesh -> RenderScene` compatibility bridge in `main`.
 
-- independent mesh primitives;
-- scene/bone/selector nodes;
-- optional skin bindings;
-- optional texture-slot bindings.
+### ImagePreview
 
-MOD, SCM, HITS, SHW and future geometry families should adapt into this IR instead
-of teaching the renderer their binary layout.
+Generic RGBA preview contract used by DDS and PTX DDS children. Android does not contain a DDS-specific viewer.
 
-## Migration rule
+### ChildResource
 
-v1 `Mesh` remains temporarily as a compatibility projection. During migration:
+Generic nested-resource projection. PTX publishes DDS children; opening a child creates the same generic JNI Session used for a top-level resource. Parent navigation is session-based, not PTX-specific Java parsing.
 
-1. existing module decodes once;
-2. pipeline projects the v1 mesh into `RenderScene` once;
-3. format-specific v2 adapters progressively replace that flattened projection;
-4. only after all consumers use `RenderScene` may the v1 mesh field be removed.
+## Removed from main
 
-This avoids a big-bang rewrite and keeps the device-tested v1 rendering path usable.
+The following pre-v2 / unpromoted paths are intentionally absent from the core registry and build:
 
-## Model-family capability boundary
+- HITS;
+- TXT and `.index`;
+- DCA;
+- LIG / LIG2;
+- PAC / PNST;
+- NBZ format module;
+- EFM / MRP / SHW partial adapters;
+- broad recognition-only catalog;
+- `DecodeResult` compatibility API and its HITS/TXT decoders.
 
-Current v2 contracts intentionally distinguish MOD from SCM:
+Their previous implementation remains recoverable from branch `main.2`. Promotion back to `main` requires a module that conforms to this Architecture v2 contract and has its own regression evidence.
 
-```text
-SCM
-  Inspection
-  Geometry
-  Wireframe
-  NodeHierarchy
-  TextureBinding
+## Non-negotiable gates
 
-MOD
-  Inspection
-  Geometry
-  Wireframe
-  NodeHierarchy
-  SkeletalSkinning
-  SkinWeights
-  TextureBinding
-```
-
-SCM scene nodes must not be mislabeled as skeletal bones. A common hierarchy UI may
-render both, but labels and capabilities remain semantically accurate.
-
-## Canonical core reuse
-
-`VrUaCom/dmc-rengine-cpp` remains the canonical reverse/evidence source. Native
-Reader must move toward a pinned C++20 core snapshot/target rather than independently
-reimplementing proven parsers.
-
-Architecture v2 therefore raises the Android native target from C++17 to C++20.
-This is a prerequisite for direct reuse of canonical reader modules based on
-`std::span` and other C++20 APIs.
-
-## Next migration slices
-
-1. Shared binary/diagnostic helpers; remove duplicated reject/magic/bounds helpers.
-2. Extract DDS parser from the PTX module so PTX consumes the same reusable DDS API.
-3. Replace `decode_part*.inc` MOD/SCM implementation with pinned canonical Model
-   Family C++20 modules.
-4. Add typed MOD and SCM `InspectionDocument` adapters.
-5. Add typed hierarchy and skin projections into `RenderScene`.
-6. Expose capabilities/inspection through JNI without format switches in Java.
-7. Build generic hierarchy/skeleton overlay renderer.
-8. Reuse the same blocks for SHW, EFM, SO and later resource families.
-
-## Non-negotiable rules
-
-- one parsing pass per resource;
-- no format-specific parsing in Java/UI;
-- no format-specific binary parsing in renderer code;
-- no duplicated DDS/model/hierarchy parser just for inspection;
-- unknown/evidence-gated semantics remain explicit;
-- module capabilities must have regression coverage;
-- v1 behavior remains the fallback baseline until v2 device tests pass.
+- exactly four registered core modules until an explicit promotion is accepted;
+- unknown and archived families fail closed;
+- no old source files may exist in the core build tree;
+- MOD and SCM must pass full pipeline projection tests, not only registry checks;
+- DDS and PTX must pass valid and malformed-input regressions;
+- the APK must contain the four expected module IDs and none of the archived module IDs;
+- Android manifest explicit DMC MIME exposure is limited to MOD, SCM, DDS and PTX;
+- release signing remains outside repository history.
