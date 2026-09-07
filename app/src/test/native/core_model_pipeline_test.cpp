@@ -1,0 +1,257 @@
+#include "dmcresource/decode_pipeline.h"
+#include "dmcresource/resource_capabilities.h"
+
+#include <bit>
+#include <cassert>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+#include <vector>
+
+namespace {
+
+void put_u8(std::vector<std::uint8_t>& bytes, std::size_t offset,
+            std::uint8_t value) {
+    assert(offset < bytes.size());
+    bytes[offset] = value;
+}
+
+void put_u16(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             std::uint16_t value) {
+    assert(offset + 2U <= bytes.size());
+    put_u8(bytes, offset + 0U, static_cast<std::uint8_t>(value & 0xFFU));
+    put_u8(bytes, offset + 1U,
+           static_cast<std::uint8_t>((value >> 8U) & 0xFFU));
+}
+
+void put_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             std::uint32_t value) {
+    assert(offset + 4U <= bytes.size());
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        put_u8(bytes, offset + i,
+               static_cast<std::uint8_t>((value >> (i * 8U)) & 0xFFU));
+    }
+}
+
+void put_u64(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             std::uint64_t value) {
+    assert(offset + 8U <= bytes.size());
+    for (std::size_t i = 0U; i < 8U; ++i) {
+        put_u8(bytes, offset + i,
+               static_cast<std::uint8_t>((value >> (i * 8U)) & 0xFFU));
+    }
+}
+
+void put_f32(std::vector<std::uint8_t>& bytes, std::size_t offset,
+             float value) {
+    put_u32(bytes, offset, std::bit_cast<std::uint32_t>(value));
+}
+
+std::vector<std::uint8_t> make_mod() {
+    std::vector<std::uint8_t> bytes(0x240U, 0U);
+    bytes[0] = 'M'; bytes[1] = 'O'; bytes[2] = 'D'; bytes[3] = ' ';
+    put_f32(bytes, 0x04U, 1.01F);
+    put_u8(bytes, 0x10U, 1U);
+    put_u8(bytes, 0x11U, 1U);
+    put_u64(bytes, 0x20U, 0x200U);
+
+    put_u8(bytes, 0x40U, 1U);
+    put_u16(bytes, 0x42U, 3U);
+    put_u64(bytes, 0x48U, 0x80U);
+
+    put_u16(bytes, 0x80U, 3U);
+    put_u16(bytes, 0x82U, 5U);
+    put_u16(bytes, 0x84U, 1U);
+    put_u16(bytes, 0x86U, 2U);
+    put_u16(bytes, 0x88U, 3U);
+    put_u16(bytes, 0x8AU, 4U);
+    put_u64(bytes, 0x90U, 0xD0U);
+    put_u64(bytes, 0x98U, 0x100U);
+    put_u64(bytes, 0xA0U, 0x130U);
+    put_u64(bytes, 0xA8U, 0x140U);
+    put_u64(bytes, 0xB0U, 0x150U);
+    put_u64(bytes, 0xB8U, 0U);
+    put_u64(bytes, 0xC0U, 0xE0U);
+    put_u32(bytes, 0xC8U, 0U);
+    put_u32(bytes, 0xCCU, 0U);
+
+    put_f32(bytes, 0xD0U, 0.0F); put_f32(bytes, 0xD4U, 0.0F); put_f32(bytes, 0xD8U, 0.0F);
+    put_f32(bytes, 0xDCU, 1.0F); put_f32(bytes, 0xE0U, 0.0F); put_f32(bytes, 0xE4U, 0.0F);
+    put_f32(bytes, 0xE8U, 0.0F); put_f32(bytes, 0xECU, 1.0F); put_f32(bytes, 0xF0U, 0.0F);
+
+    for (std::size_t i = 0U; i < 3U; ++i) {
+        const auto n = 0x100U + i * 12U;
+        put_f32(bytes, n + 0U, 0.0F);
+        put_f32(bytes, n + 4U, 0.0F);
+        put_f32(bytes, n + 8U, 1.0F);
+    }
+
+    put_u16(bytes, 0x130U, 0U);    put_u16(bytes, 0x132U, 0U);
+    put_u16(bytes, 0x134U, 4096U); put_u16(bytes, 0x136U, 0U);
+    put_u16(bytes, 0x138U, 0U);    put_u16(bytes, 0x13AU, 4096U);
+
+    put_u16(bytes, 0x150U, 0x001FU);
+    put_u16(bytes, 0x152U, 0x001FU);
+    put_u16(bytes, 0x154U, 0x001FU);
+
+    put_u32(bytes, 0x200U, 0x10U);
+    put_u32(bytes, 0x204U, 0x20U);
+    put_u32(bytes, 0x208U, 0x30U);
+    put_u8(bytes, 0x210U, 0xFFU);
+    put_u8(bytes, 0x220U, 0U);
+    put_u8(bytes, 0x230U, 0U);
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_scm() {
+    std::vector<std::uint8_t> bytes(0x1B0U, 0U);
+    bytes[0] = 'S'; bytes[1] = 'C'; bytes[2] = 'M'; bytes[3] = ' ';
+    put_f32(bytes, 0x04U, 1.01F);
+    put_u8(bytes, 0x10U, 1U);
+    put_u8(bytes, 0x11U, 1U);
+    put_u8(bytes, 0x12U, 1U);
+    put_u32(bytes, 0x14U, 300100U);
+    put_u64(bytes, 0x20U, 0x150U);
+
+    put_u8(bytes, 0x40U, 1U);
+    put_u8(bytes, 0x41U, 0x80U);
+    put_u16(bytes, 0x42U, 3U);
+    put_u64(bytes, 0x48U, 0x80U);
+    put_u32(bytes, 0x50U, 0x00004000U);
+    put_f32(bytes, 0x70U, 0.5F);
+    put_f32(bytes, 0x74U, 0.5F);
+    put_f32(bytes, 0x78U, 0.0F);
+    put_f32(bytes, 0x7CU, 1.0F);
+
+    put_u16(bytes, 0x80U, 3U);
+    put_u16(bytes, 0x82U, 0U);
+    put_u16(bytes, 0x84U, 1U);
+    put_u16(bytes, 0x86U, 2U);
+    put_u16(bytes, 0x88U, 3U);
+    put_u16(bytes, 0x8AU, 4U);
+    put_u64(bytes, 0x90U, 0xD0U);
+    put_u64(bytes, 0x98U, 0x100U);
+    put_u64(bytes, 0xA0U, 0x130U);
+    put_u64(bytes, 0xA8U, 0U);
+    put_u64(bytes, 0xB8U, 0x140U);
+    put_u64(bytes, 0xC0U, 0x120U);
+
+    put_f32(bytes, 0xD0U, 0.0F); put_f32(bytes, 0xD4U, 0.0F); put_f32(bytes, 0xD8U, 0.0F);
+    put_f32(bytes, 0xDCU, 1.0F); put_f32(bytes, 0xE0U, 0.0F); put_f32(bytes, 0xE4U, 0.0F);
+    put_f32(bytes, 0xE8U, 0.0F); put_f32(bytes, 0xECU, 1.0F); put_f32(bytes, 0xF0U, 0.0F);
+
+    for (std::size_t i = 0U; i < 3U; ++i) {
+        const auto n = 0x100U + i * 12U;
+        put_f32(bytes, n + 0U, 0.0F);
+        put_f32(bytes, n + 4U, 0.0F);
+        put_f32(bytes, n + 8U, 1.0F);
+    }
+
+    put_u16(bytes, 0x130U, 0U);    put_u16(bytes, 0x132U, 0U);
+    put_u16(bytes, 0x134U, 4096U); put_u16(bytes, 0x136U, 0U);
+    put_u16(bytes, 0x138U, 0U);    put_u16(bytes, 0x13AU, 4096U);
+
+    bytes[0x140U] = 255U; bytes[0x141U] = 0U;   bytes[0x142U] = 0U;   bytes[0x143U] = 0U;
+    bytes[0x144U] = 0U;   bytes[0x145U] = 255U; bytes[0x146U] = 0U;   bytes[0x147U] = 0U;
+    bytes[0x148U] = 0U;   bytes[0x149U] = 0U;   bytes[0x14AU] = 255U; bytes[0x14BU] = 0U;
+
+    put_u32(bytes, 0x150U, 0x20U);
+    put_u32(bytes, 0x154U, 0x24U);
+    put_u32(bytes, 0x158U, 0x28U);
+    put_u32(bytes, 0x15CU, 0x30U);
+    put_u8(bytes, 0x170U, 0xFFU);
+    put_u8(bytes, 0x174U, 0U);
+    put_u8(bytes, 0x178U, 0U);
+
+    put_f32(bytes, 0x180U, 10.0F);
+    put_f32(bytes, 0x184U, 20.0F);
+    put_f32(bytes, 0x188U, 30.0F);
+    put_f32(bytes, 0x18CU, std::sqrt(1400.0F));
+    put_f32(bytes, 0x190U, 0.0F);
+    put_f32(bytes, 0x194U, 0.0F);
+    put_f32(bytes, 0x198U, 0.0F);
+    put_f32(bytes, 0x19CU, 0.0F);
+
+    put_u16(bytes, 0x1A0U, 0x1212U);
+    return bytes;
+}
+
+bool trace_contains(const dmcresource::PipelineResult& result,
+                    std::string_view id) {
+    for (const auto& module : result.modules) {
+        if (module.name != nullptr && std::string_view{module.name} == id &&
+            module.complete) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+int main() {
+    using dmcresource::Format;
+    using dmcresource::ResourceCapability;
+    using dmcresource::has_capability;
+    using dmcresource::run_decode_pipeline;
+
+    const auto scm = make_scm();
+    const auto scm_result = run_decode_pipeline(
+        "sample.scm", scm.data(), scm.size());
+    assert(scm_result.accepted);
+    assert(scm_result.renderable);
+    assert(scm_result.probe.format == Format::Scm);
+    assert(trace_contains(scm_result, "canonical.scm.structural-parser"));
+    assert(trace_contains(scm_result, "canonical.scm.scene-hierarchy"));
+    assert(trace_contains(scm_result, "render-scene-contract"));
+    assert(scm_result.scene.meshes.size() == 1U);
+    assert(scm_result.scene.meshes[0].node_index == 0);
+    assert(scm_result.scene.meshes[0].mesh.vertices.size() == 3U);
+    assert(scm_result.scene.meshes[0].mesh.indices.size() == 3U);
+    assert(scm_result.scene.nodes.size() == 1U);
+    assert(scm_result.scene.nodes[0].parent == -1);
+    assert(std::fabs(scm_result.scene.nodes[0].local.values[12] - 10.0F) < 0.0001F);
+    assert(std::fabs(scm_result.scene.nodes[0].world.values[13] - 20.0F) < 0.0001F);
+    assert(scm_result.scene.textures.size() == 1U);
+    assert(scm_result.scene.textures[0].texture_slot == 0U);
+    assert(!scm_result.inspection.empty());
+    assert(scm_result.inspection.format == "SCM");
+    assert(has_capability(scm_result.capabilities,
+                          ResourceCapability::TextureBinding));
+
+    const auto mod = make_mod();
+    const auto mod_result = run_decode_pipeline(
+        "sample.mod", mod.data(), mod.size());
+    assert(mod_result.accepted);
+    assert(mod_result.renderable);
+    assert(mod_result.probe.format == Format::Mod);
+    assert(trace_contains(mod_result, "canonical.mod.structural-parser"));
+    assert(trace_contains(mod_result, "canonical.mod.texture-state"));
+    assert(trace_contains(mod_result, "render-scene-contract"));
+    assert(mod_result.scene.meshes.size() == 1U);
+    assert(mod_result.scene.meshes[0].mesh.vertices.size() == 3U);
+    assert(mod_result.scene.meshes[0].mesh.indices.size() == 3U);
+    assert(mod_result.scene.nodes.size() == 1U);
+    assert(mod_result.scene.skins.size() == 1U);
+    assert(mod_result.scene.skins[0].vertices.size() == 3U);
+    for (const auto& vertex : mod_result.scene.skins[0].vertices) {
+        assert(vertex.influences.size() == 1U);
+        assert(vertex.influences[0].node_index == 0U);
+        assert(vertex.influences[0].weight > 0.999F);
+    }
+    assert(mod_result.scene.textures.size() == 1U);
+    assert(mod_result.scene.textures[0].texture_slot == 5U);
+    assert(!mod_result.inspection.empty());
+    assert(mod_result.inspection.format == "MOD");
+    assert(has_capability(mod_result.capabilities,
+                          ResourceCapability::SkinWeights));
+
+    // A known old-family filename must remain outside the clean main surface.
+    const std::uint8_t old_family[] = {'H', 'I', 'T', 'S'};
+    const auto rejected = run_decode_pipeline(
+        "sample.hits", old_family, sizeof(old_family));
+    assert(!rejected.accepted);
+
+    return 0;
+}
