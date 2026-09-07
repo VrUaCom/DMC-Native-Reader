@@ -1,25 +1,27 @@
 # Support
 
-DMC Native Reader is a community reverse-engineering/modding tool. Support is best-effort and evidence-driven.
+DMC Native Reader is a source-available community resource-viewing tool in the DMC Rengine ecosystem. Support is best-effort and evidence-driven.
 
 ## Where to ask
 
-Use GitHub Issues for:
+Use GitHub Issues in this repository for:
 
 - reproducible Native Reader bugs;
-- Android `Open with` / SAF routing problems;
+- Android v1 `Open with` / SAF routing problems;
 - MOD/SCM rendering or inspection regressions;
-- DDS/PTX validation problems;
-- evidence-backed format/corpus reports.
+- DDS/PTX validation or preview problems;
+- child-resource navigation problems;
+- Native Reader platform-shell issues;
+- evidence-backed reports that affect the Reader product surface.
 
-Use the companion [`VrUaCom/dmc-rengine-cpp`](https://github.com/VrUaCom/dmc-rengine-cpp) repository for canonical reverse/evidence work that is not specific to the Android product.
+Use the central [`VrUaCom/dmc-rengine-cpp`](https://github.com/VrUaCom/dmc-rengine-cpp) repository for engine-level reverse engineering, canonical format semantics, writer/runtime work, or reusable C++20 capabilities that belong in DMC Rengine rather than in a Native Reader-specific adapter.
 
 ## Before opening an issue
 
 Please include:
 
 - Native Reader version;
-- Android device/version;
+- platform/device and OS version;
 - resource family/extension;
 - exact behavior or error;
 - reproduction steps;
@@ -28,16 +30,22 @@ Please include:
 
 Do not upload proprietary game archives, executable binaries, leaked source, credentials or production signing material.
 
-## Supported product surface
+## Supported v1 product surface
 
-The stable v1 registry is intentionally limited to:
+The stable v1.0.0 registry is intentionally limited to:
 
 - MOD;
 - SCM;
 - DDS;
 - PTX.
 
-A historical branch containing another reader does not mean that format is currently supported in the production Android application.
+Android is the stable v1 shell. iOS, Windows and Web are strategic platform directions, not claims of stable v1 distribution support.
+
+A historical branch containing another reader does not mean that format or platform is currently supported in the production release.
+
+## License/support boundary
+
+DMC Native Reader is licensed for personal non-commercial use under the project `LICENSE`, with the separate Capcom Special Grant defined there. Support availability does not grant commercial-use rights.
 
 ## Security
 
