@@ -6,7 +6,7 @@
 
 > **Make DMC resources feel like ordinary files.**
 
-**DMC Native Reader** is a native resource-viewing and accessibility product built on the DMC Rengine ecosystem for Devil May Cry 3 HD Collection files. The stable v1 implementation targets Android; the architecture is intended to carry the same C++20 semantic truth to Android, iOS and Windows over time.
+**DMC Native Reader** is a resource-viewing and accessibility product built on the DMC Rengine ecosystem for Devil May Cry 3 HD Collection files. The stable v1 implementation targets Android; the architecture is intended to carry the same C++20 semantic truth to Android, iOS, Windows and Web over time.
 
 The product goal is simple: a user should be able to open an unfamiliar DMC resource and immediately get the most natural useful representation — a 3D model, scene, image, texture gallery, hierarchy or other evidence-backed view — without first learning the binary format.
 
@@ -37,7 +37,7 @@ The intended relationship is:
        Native Reader                       Pocket GDS
   view / inspect / visualize       manage / edit / author / repack
              |
-      Android / iOS / Windows
+   Android / iOS / Windows / Web
 ```
 
 Native Reader should not become a second independent format authority or a competing authoring workspace. If a capability belongs in the central engine, it should be promoted in DMC Rengine and then consumed by downstream tools.
@@ -107,18 +107,20 @@ The strategic direction is:
              |                                 |
        Native Reader                       other tools
              |
-      +------+------+ 
-      |      |      |
-   Android  iOS  Windows
+   +------+------+------+
+   |      |      |      |
+Android  iOS  Windows   Web
 ```
 
-Platform integration can differ — Android Open with, iOS Files/Share integration, Windows Explorer previews/thumbnails — but file semantics must not be reimplemented independently per platform.
+Platform integration can differ — Android Open with, iOS Files/Share integration, Windows Explorer previews/thumbnails, Web drag-and-drop/browser file input — but file semantics must not be reimplemented independently per platform.
+
+For the future Web version, the resource engine remains C++20 and is intended to be compiled to WebAssembly. JavaScript/TypeScript should remain a thin browser/presentation layer for DOM, canvas/WebGL/WebGPU, routing and user interaction rather than becoming a second parser or semantic implementation.
 
 ## Architecture rules
 
 `main` follows Architecture v2 and keeps parser ownership explicit:
 
-- format bytes are interpreted in native C++;
+- format bytes are interpreted in C++20;
 - MOD/SCM structural authority comes from the vendored DMC Rengine canonical core;
 - the platform UI consumes typed capabilities instead of parsing binary layouts itself;
 - no renderer-owned format parser is allowed;
@@ -126,7 +128,8 @@ Platform integration can differ — Android Open with, iOS Files/Share integrati
 - non-renderable sessions cannot reuse stale geometry;
 - unknown or unresolved semantics stay unknown;
 - new formats extend the module/capability system rather than creating standalone format viewers;
-- capabilities that belong to the central modding engine are promoted in DMC Rengine first instead of being reimplemented privately in Native Reader.
+- capabilities that belong to the central modding engine are promoted in DMC Rengine first instead of being reimplemented privately in Native Reader;
+- the future Web build must reuse the same C++20 resource logic through WebAssembly rather than reimplementing it in JavaScript/TypeScript.
 
 The central decompilation/reimplementation and modding project is [`VrUaCom/dmc-rengine-cpp`](https://github.com/VrUaCom/dmc-rengine-cpp).
 
@@ -218,7 +221,8 @@ Security issues should follow [`SECURITY.md`](SECURITY.md), not a public issue w
 - DMC Rengine remains the central engine/modding foundation;
 - next formats are promoted one by one only after canonical/evidence closure;
 - primary progress metric: how many previously opaque DMC resources become directly understandable and viewable;
-- authoring/repacking remains outside the Native Reader core product role and belongs to DMC Rengine-backed authoring/resource tools.
+- authoring/repacking remains outside the Native Reader core product role and belongs to DMC Rengine-backed authoring/resource tools;
+- future Android, iOS, Windows and Web shells share the same central C++20 resource semantics.
 
 See [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
