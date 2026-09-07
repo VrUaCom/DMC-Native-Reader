@@ -1,16 +1,14 @@
 # DMC Native Reader — Status
 
-## Current baseline
+## Current stable baseline
 
-`1.0.0-core-cleanup` / versionCode `19`
+`1.0.0` / versionCode `20`
 
 Repository: `VrUaCom/DMC-Native-Reader`  
 Canonical reverse/evidence repository: `VrUaCom/dmc-rengine-cpp`  
-Archived pre-cleanup branch: `main.2` — **до опрацювання**
+Frozen stable ref: `baseline/v1.0.0`
 
-## Main architecture
-
-Production path:
+## Production architecture
 
 ```text
 probe
@@ -21,9 +19,9 @@ probe
                   -> capability-driven Android UI
 ```
 
-Current registry size: **4**.
+Current production registry size: **4**.
 
-There is no wildcard fallback and no recognition-only catalog in `main`. A file outside the four promoted families fails closed.
+There is no wildcard fallback and no broad recognition-only catalog in the supported v1 product path. Files outside the four promoted families fail closed.
 
 ## Supported core
 
@@ -32,8 +30,8 @@ There is no wildcard fallback and no recognition-only catalog in `main`. A file 
 - renderable;
 - canonical `dmc-rengine-cpp` structural parser;
 - `RenderScene` geometry;
-- hierarchy/spatial projection when canonical authority is available;
-- skin weights;
+- hierarchy/spatial projection where canonical authority is available;
+- skin/weight inspection state;
 - texture-slot state;
 - typed `InspectionDocument`.
 
@@ -50,52 +48,64 @@ There is no wildcard fallback and no recognition-only catalog in `main`. A file 
 
 - bounded DMC3 DXT1/DXT5 validation;
 - complete mip-chain checks;
-- generic `ImagePreview`;
+- generic image preview;
 - malformed/overflow rejection.
 
 ### PTX
 
 - bounded texture-bundle validation;
 - descriptor/DDS size coherence;
-- generic DDS `ChildResource[]`;
-- thumbnail/image previews through the generic image contract;
+- generic DDS child resources;
+- child image previews through the generic image contract;
 - child -> parent navigation through generic sessions.
 
-## Removed from main
+## Not in the supported v1 registry
 
-The old multi-format surface is not part of the clean v1 core. HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ module, EFM/MRP/SHW and the broad recognition catalog are absent from the registry/build. Their pre-cleanup state is preserved on `main.2` for later canonical promotion.
+Earlier experiments included additional DMC families, but they are not part of the stable v1 product surface. HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and the broader recognition catalog must be re-promoted one by one through the same v2/canonical authority rules.
 
-The old `DecodeResult` compatibility path, HITS decoder and text decoder are removed from `main`.
+Historical branches are development evidence, not supported release lines.
 
 ## CI gates
 
-The push/PR core workflow must prove:
+The public PR/push workflow proves:
 
 1. archived legacy source paths are absent;
 2. registry contains exactly MOD, SCM, DDS and PTX;
-3. archived families resolve to no module;
-4. MOD and SCM pass end-to-end synthetic pipeline projection tests;
+3. retired families resolve to no module;
+4. MOD and SCM pass end-to-end native pipeline projection tests;
 5. MOD spatial adapter regression passes;
 6. DDS and PTX pass valid, malformed, bounds and child-preview regressions;
 7. `RenderScene` regression passes;
 8. Java capability UI regression passes;
-9. ARM64 APK builds;
-10. the APK contains only the four promoted module IDs from the old module set;
-11. explicit DMC MIME exposure in the manifest is limited to MOD/SCM/DDS/PTX.
+9. ARM64 debug APK builds;
+10. the APK contains the four promoted module IDs and no retired module IDs;
+11. explicit DMC MIME exposure is limited to MOD/SCM/DDS/PTX;
+12. public-source debug package identity is isolated as `com.dmcrengine.nativereader.debug`;
+13. no signing/private-key material is tracked in the public tree;
+14. normal Gradle release output remains unsigned.
+
+## Production signing
+
+Official production package: `com.dmcrengine.nativereader`.
+
+Pinned v1 production certificate SHA-256:
+
+`2d82bd3e77b2c1882d3f8143fe8760fc4c834aa65fc5e7b1b12082afcb7718d1`
+
+Production signing is performed only through a protected release environment using secrets that are not committed or uploaded as artifacts.
 
 ## Device boundary
 
-The previously accepted Samsung behavior remains the practical UI target:
+The accepted Samsung/OEM behavior remains the practical UI target:
 
 - MOD opens/renders;
 - SCM opens/renders;
 - standalone DDS previews;
 - PTX opens as a child gallery;
 - DDS child preview opens;
-- `←` returns to the PTX parent.
-
-After the cleanup APK is green in CI it receives one short Samsung regression pass because the module routing surface and APK version changed.
+- parent navigation returns to the PTX session;
+- malformed/unsupported inputs fail closed without stale geometry.
 
 ## Next promotion rule
 
-No archived family returns to `main` merely because old code exists. Each future format must enter through the same v2 module contracts and preferably reuse the corresponding canonical `dmc-rengine-cpp` parser/source authority. The `main.2` branch is backlog/reference, not a second production architecture.
+No historical family returns to `main` merely because old code exists. Each future format must enter through the same Architecture v2 module contracts and, wherever possible, reuse the corresponding canonical `dmc-rengine-cpp` parser/source authority.
