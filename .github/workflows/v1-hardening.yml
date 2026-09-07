@@ -2,7 +2,7 @@ name: DMC Native Reader v1 hardening
 
 on:
   pull_request:
-    branches: ["feature/mod-texture-state"]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
