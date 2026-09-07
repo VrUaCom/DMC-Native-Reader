@@ -1,128 +1,86 @@
-# DMC Native Reader v1 — Baseline Specification
+# DMC Native Reader v1 — Clean Baseline
 
-**Milestone:** `1.0.0-debug-baseline`  
-**versionCode:** `10`  
-**Product repository:** `VrUaCom/DMC-Native-Reader`  
-**Canonical reverse/evidence source:** `VrUaCom/dmc-rengine-cpp`  
-**Phase transition:** architecture/build-out -> debug and device/corpus validation
+**Build:** `1.0.0-core-cleanup`  
+**versionCode:** `19`  
+**Production branch:** `main`  
+**Archive/backlog branch:** `main.2` — до опрацювання
 
-## 1. Milestone decision
+## Baseline decision
 
-The project-management/architecture milestone is accepted: the production Native Reader now uses one explicit modular dispatch architecture and covers the primary DMC3 HD modding resource families needed for the first practical field-test cycle.
+The v1 baseline is deliberately narrow. It contains only four promoted format families:
 
-This closes the **v1 architecture + primary-reader implementation goal**. It does **not** claim complete reverse-engineering of every recognized DMC family or complete semantic understanding of every field in the promoted readers.
+- MOD;
+- SCM;
+- DDS;
+- PTX.
 
-## 2. Architecture baseline — closed
+This is a structural decision, not a claim that other DMC3 formats do not matter. Other readers were removed from `main` because their current implementation did not meet the same Architecture v2/canonical-authority standard. Their old state is preserved on `main.2`.
 
-Production path:
+## Required architecture
 
-`probe -> NativeModuleRegistry -> explicit NativeModule -> runner -> inspection/mesh session -> Android UI`
+```text
+resource bytes
+  -> bounded probe
+  -> four-entry NativeModuleRegistry
+  -> format module / canonical adapter
+  -> InspectionDocument / RenderScene / ImagePreview / ChildResource[]
+  -> generic JNI Session
+  -> capability-driven Android UI
+```
 
-Required v1 properties:
+Forbidden in the v1 main baseline:
 
-- central family `if/else` decoder: removed;
-- legacy SCM/MOD `decode_resource()` dispatcher: removed;
-- wildcard structural fallback: removed;
-- unknown families: fail closed;
-- every recognized catalog family: explicit module contract;
-- current registry: 71 recognized families / 71 explicit entries;
-- format identity, module id, kind and renderability: owned by the module contract;
-- Android input remains read-only.
+- wildcard format dispatcher;
+- broad recognition-only registry;
+- Java format parsers;
+- renderer-owned binary parsers;
+- legacy `DecodeResult -> Mesh -> RenderScene` bridge;
+- archived HITS/TXT/DCA/PAC/PNST/etc. module translation units in the main build.
 
-## 3. Primary v1 modding readers — accepted for debug phase
+## Accepted format contracts
 
 ### MOD
 
-Status: **structural / renderable**.
-
-Current bounded capabilities include model-family mesh decoding, positions, normals, UVs, model adapter data and recovered skin/control handling. Remaining semantic/writer gaps do not block reader field testing.
+Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into geometry, hierarchy, skin/weight and texture-slot presentation contracts.
 
 ### SCM
 
-Status: **structural / renderable**.
-
-Current bounded capabilities include model-family mesh decoding plus scene transform/hierarchy adapter behavior. Full material/topology semantics remain a later reverse boundary.
-
-### PTX
-
-Status: **structural texture-bundle reader**.
-
-Current bounded capabilities include bundle/descriptor validation and validation of contained DDS children with size/span coherence.
+Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into scene hierarchy, transforms, geometry and texture-slot presentation contracts.
 
 ### DDS
 
-Status: **structural texture reader**.
+Bounded DMC3 DXT1/DXT5 reader with strict mip/payload validation and generic RGBA image preview.
 
-Current bounded capabilities include DMC3 HD DDS header validation and complete bounded DXT1/DXT5 mip-chain validation.
+### PTX
 
-### TXT
+Bounded texture-bundle reader with descriptor validation and generic DDS child resources. Child previews and parent navigation use the same generic session/UI contracts as top-level resources.
 
-Status: **bounded structural text reader**.
+## Completion gate
 
-The stage TXT lexer/parser is usable for field testing. Individual script/token semantics remain partially unresolved and must not be presented as fully reversed.
+A v1 core candidate is acceptable only when CI proves:
 
-### .index
+1. registry size is exactly four;
+2. MOD/SCM/DDS/PTX modules are present;
+3. removed families do not resolve to modules;
+4. MOD and SCM execute end-to-end through the pipeline and publish valid `RenderScene`/inspection state;
+5. DDS accepts valid DXT1/DXT5 and rejects malformed/overflow cases;
+6. PTX validates children, bounds and padding and publishes a generic DDS child preview;
+7. no archived source path is present in the main build tree;
+8. Android UI policy remains capability-driven;
+9. ARM64 APK builds and contains the four expected module IDs;
+10. archived module IDs are absent from `libdmcviewer.so`;
+11. explicit DMC MIME exposure is limited to MOD, SCM, DDS and PTX;
+12. debug signing remains test-only and release output remains unsigned until production authority is provisioned.
 
-Status: **bounded textual manifest reader**.
+## Device regression
 
-Includes the PNST/PAC first-line identity precedence correction.
+After CI is green, the cleanup build receives a short Samsung pass:
 
-## 4. Additional promoted support
+- MOD render;
+- SCM render;
+- DDS preview;
+- PTX gallery;
+- PTX -> DDS child preview;
+- child `←` parent navigation.
 
-The v1 product also contains promoted support for:
-
-- HITS collision reading;
-- DCA structural records;
-- LIG/LIG2 structural records;
-- PAC relative-slot inspection;
-- PNST relative-slot inspection;
-- NBZ top-level volume inspection boundary.
-
-## 5. Explicitly not closed by v1
-
-These families must not be reported as complete semantic readers merely because they have explicit modules:
-
-- **EFM** — evidence-gated partial family adapter; exact mesh/material/topology bindings remain open;
-- **MRP** — evidence-gated partial family adapter; exact record schema/ownership remains open;
-- **SHW** — evidence-gated partial family adapter; strong reverse/corpus evidence exists, but the product-level guarded semantic reader is not yet closed;
-- **SO** — not part of the completed v1 Native Reader semantic-reader set;
-- recognition-only families — explicit identity/inspection contracts only, with semantic decoder TODO where appropriate.
-
-## 6. Definition of v1 completion
-
-The architecture/implementation milestone is complete when CI proves:
-
-1. host C++ modular registry regression passes;
-2. 71 recognized families map to 71 explicit registry entries;
-3. unknown family resolution fails closed;
-4. promoted synthetic valid/invalid fixtures pass;
-5. Android NDK ARM64 compilation succeeds;
-6. APK is produced with package `com.dmcrengine.nativereader`;
-7. APK reports versionCode `10` and versionName `1.0.0-debug-baseline`;
-8. promoted module IDs are present in `libdmcviewer.so`;
-9. wildcard structural module is absent;
-10. canonical development signing certificate verifies;
-11. APK SHA-256 receipt is captured.
-
-After those gates, the project enters **debug/field-test phase**.
-
-## 7. Debug/field-test phase
-
-The project manager/device tester validates real corpus files on Android. Minimum first-pass matrix:
-
-- known-good `.mod` — opens and renders expected model geometry;
-- known-good `.scm` — opens and renders expected scene/model geometry;
-- known-good `.ptx` — opens as texture bundle and reports coherent DDS children;
-- known-good `.dds` DXT1/DXT5 — opens with valid structural report;
-- known-good stage `.txt` — opens without false binary routing and exposes structural text diagnostics;
-- known-good HITS — collision path still renders/inspects correctly;
-- representative DCA/LIG/PAC/PNST/NBZ — inspection path remains stable;
-- EFM/MRP/SHW — only the evidence-gated partial behavior is expected;
-- SO — not used as a v1 pass/fail completion criterion;
-- unknown extension/family — rejected;
-- opening non-renderable content after renderable content — no stale previous mesh frame;
-- Samsung/OEM file routing — record any extension/MIME route that bypasses `DmcOpenActivity`.
-
-## 8. Exit from debug phase
-
-Field defects are recorded against the exact file/hash and module id. Fixes remain format-local wherever possible. A format is promoted beyond the v1 baseline only with new evidence and regression coverage; the v1 baseline itself remains the reference point for architecture and initial practical reader coverage.
+This device pass verifies the cleaned routing surface. It is not an invitation to restore removed formats before they are properly promoted.
