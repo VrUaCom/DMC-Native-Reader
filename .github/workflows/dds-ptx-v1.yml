@@ -53,11 +53,16 @@ jobs:
             -o /tmp/dmc-dds-ptx-v1-test
           /tmp/dmc-dds-ptx-v1-test
 
-      - name: Guard generic preview architecture
+      - name: Guard generic preview and child-resource architecture
         run: |
           set -euxo pipefail
           grep -q 'ImagePreview image_preview' app/src/main/cpp/include/dmcresource/decode_pipeline.h
+          grep -q 'std::vector<ChildResource> children' app/src/main/cpp/include/dmcresource/decode_pipeline.h
+          grep -q 'struct ChildResource' app/src/main/cpp/include/dmcresource/child_resource.h
           grep -q 'ResourceCapability::ImagePreview' app/src/main/cpp/modules/module_texture.cpp
-          grep -q 'imagePreviewAvailable' app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
+          grep -q 'ResourceCapability::ChildResources' app/src/main/cpp/modules/module_texture.cpp
+          grep -q 'childResourceCount' app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
+          grep -q 'openChild' app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
+          grep -q 'ChildResourceBrowserView' app/src/main/java/com/dmcrengine/nativeviewer/MainActivity.java
           grep -q 'staticImagePreview' app/src/main/java/com/dmcrengine/nativeviewer/DmcRenderView.java
-          ! grep -R -q 'DdsActivity\|PtxActivity\|DdsViewer\|PtxViewer' app/src/main/java app/src/main/cpp
+          ! grep -R -q 'DdsActivity\|PtxActivity\|DdsViewer\|PtxViewer\|if *(.*PTX\|if *(.*DDS' app/src/main/java app/src/main/cpp
