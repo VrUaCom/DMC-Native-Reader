@@ -57,7 +57,7 @@ The answer should be immediate, visual where possible, evidence-aware, and usabl
 
 Native Reader is not intended to become the primary authoring, archive-management or repacking workspace.
 
-Editing, replacement, extraction/repacking, archive workflows and broader resource-management belong to dedicated tools such as Pocket GDS and to canonical writer/authoring layers in DMC Rengine.
+Editing, replacement, extraction/repacking, archive workflows and broader resource-management belong to dedicated tools such as Pocket GDS and to the central DMC Rengine modding/authoring stack.
 
 Some carefully selected interoperability actions may be added later — for example handing a resource off to an editor or authoring tool — but they must not turn Native Reader into a second competing resource manager.
 
@@ -108,7 +108,7 @@ The architecture is:
 resource bytes
     |
     v
-canonical / bounded C++20 reader authority
+DMC Rengine / bounded C++20 reader authority
     |
     v
 typed resource projection
@@ -129,7 +129,7 @@ platform presentation
 A new format should normally mean:
 
 ```text
-parser/source authority
+DMC Rengine capability / parser authority
   + typed adapter
   + capabilities
   + tests
@@ -137,22 +137,30 @@ parser/source authority
 
 It should not mean a new Android, iOS or Windows application/viewer.
 
-## One semantic truth across devices
+## One engine foundation across tools and devices
 
-Android is the first stable product implementation, not the final architectural boundary.
+Android is the first stable Native Reader product implementation, not the final architectural boundary.
 
-The strategic platform target is:
+The central foundation is DMC Rengine:
 
 ```text
-                  DMC Rengine
-              canonical C++20 core
-                     |
-        +------------+------------+
-        |            |            |
-     Android         iOS        Windows
-        |            |            |
-        +------ DMC Native Reader -+
+                         DMC Rengine
+          decompilation/reimplementation engine
+              + central modding platform
+                       + C++20 core
+                              |
+          +-------------------+-------------------+
+          |                   |                   |
+    Native Reader         Pocket GDS        other tools
+          |                   |                   |
+   +------+------+            |                   |
+   |      |      |            |                   |
+Android  iOS  Windows    resource workflows   specialized tooling
 ```
+
+DMC Rengine is not merely a documentation or reverse-engineering database. It is the central technical engine and modding foundation from which the ecosystem's specialized tools are derived.
+
+The same recovered format semantics, resource contracts, readers, writers and runtime knowledge should be promoted through DMC Rengine first wherever that is the canonical authority. Native Reader then exposes the relevant read-side capabilities in a simple viewing experience; Pocket GDS exposes resource-management and authoring workflows; future tools can reuse the same core without inventing parallel format implementations.
 
 The same resource should mean the same thing on every platform. Platform code may differ in file-picker integration, windows, gestures, thumbnails and navigation, but binary semantics must not be reimplemented independently per platform.
 
@@ -168,22 +176,33 @@ These are strategic directions, not claims about the current v1 platform surface
 
 ## Relationship to DMC Rengine
 
-DMC Rengine is the canonical reverse/evidence and typed format authority wherever that authority exists.
+**DMC Rengine is the central project.**
 
-Native Reader consumes that knowledge and turns it into a user-facing representation. It must not create a second incompatible interpretation simply to satisfy UI needs.
+Its role is to decompile/reconstruct the DMC3 HD engine and provide the common modding foundation: recovered runtime behavior, typed resource models, parsers, writers, validation, resource architecture and reusable C++20 capabilities.
 
-The intended direction is:
+Native Reader is one consumer of that foundation. It takes DMC Rengine capabilities that are suitable for safe read-side presentation and turns them into a device-native viewing experience.
+
+Pocket GDS is another consumer of the same foundation, focused on resource browsing, extraction, replacement, editing, repacking and authoring workflows.
+
+The intended ecosystem direction is:
 
 ```text
-DMC resource
-    -> DMC Rengine canonical knowledge
-        -> Native Reader generic representation
-            -> device-native viewing experience
+                         DMC Rengine
+                 central engine + modding core
+                              |
+             +----------------+----------------+
+             |                                 |
+       Native Reader                       Pocket GDS
+  view / inspect / visualize       manage / edit / author / repack
+             |
+      Android / iOS / Windows
 ```
+
+Native Reader must not create a second incompatible interpretation simply to satisfy UI needs. If a new semantic or capability belongs in the central engine, it should be promoted in DMC Rengine first and then consumed by downstream tools.
 
 ## Relationship to Pocket GDS
 
-Pocket GDS and Native Reader solve different problems.
+Pocket GDS and Native Reader solve different user-facing problems, but both belong to the DMC Rengine ecosystem and should reuse its central capabilities.
 
 Native Reader:
 
@@ -191,13 +210,13 @@ Native Reader:
 Open -> View -> Inspect -> Navigate -> Understand
 ```
 
-Pocket GDS / authoring tooling:
+Pocket GDS:
 
 ```text
 Browse archives -> Extract -> Replace -> Edit -> Repack -> Manage
 ```
 
-The two products may share canonical readers, writers and resource contracts, and they may eventually hand resources to each other. They should not duplicate each other's primary product role.
+The two products may hand resources to each other and share DMC Rengine readers, writers and typed contracts. They should not duplicate each other's primary product role or create independent parser authorities.
 
 ## Evidence remains part of the product
 
@@ -210,7 +229,7 @@ Native Reader should prefer:
 - capability-gated visualization over format-name assumptions;
 - fail-closed behavior over plausible but unsupported decoding.
 
-Ease of use and evidence discipline are not competing goals. The product exists to make confirmed knowledge accessible.
+Ease of use and evidence discipline are not competing goals. The product exists to make confirmed DMC Rengine capabilities accessible.
 
 ## Primary success metric
 
@@ -241,17 +260,18 @@ PTX -> visible
 
 This four-format core is the base, not the final scope.
 
-Future formats should be added one by one only when they can enter the same architecture cleanly and produce an honest, useful representation.
+Future formats should be added one by one only when they can enter the same architecture cleanly and produce an honest, useful representation from DMC Rengine-backed or otherwise explicitly bounded authority.
 
 ## Product doctrine
 
 The guiding rules are:
 
 1. **Make DMC resources feel like ordinary files.**
-2. **Opening and understanding comes before editing.**
-3. **The user should not need binary-format knowledge for ordinary viewing.**
-4. **One canonical semantic truth should serve every platform.**
-5. **New formats extend the module system, not the number of standalone viewers.**
-6. **Native Reader remains a viewing/accessibility layer; authoring remains a separate concern.**
-7. **Unknown semantics stay unknown.**
-8. **The best Native Reader eventually feels boring: the user taps a DMC file and simply expects it to open.**
+2. **DMC Rengine is the central engine and modding foundation; Native Reader is a viewing product built on top of it.**
+3. **Opening and understanding comes before editing inside Native Reader.**
+4. **The user should not need binary-format knowledge for ordinary viewing.**
+5. **One central semantic truth should serve every tool and every platform.**
+6. **New formats extend the shared module/capability system, not the number of standalone viewers.**
+7. **Native Reader remains a viewing/accessibility layer; Pocket GDS remains a resource-work/authoring tool.**
+8. **Unknown semantics stay unknown.**
+9. **The best Native Reader eventually feels boring: the user taps a DMC file and simply expects it to open.**
