@@ -6,3 +6,22 @@ local.properties
 .cxx/
 captures/
 .externalNativeBuild/
+
+# Local secrets / Android signing material
+.env
+.env.*
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+
+# Local distributables and signing outputs
+*.apk
+*.aab
+*.apks
+release-key-passphrase*.txt
+release-signing*.txt
+release-certificate*.txt
