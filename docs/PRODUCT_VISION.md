@@ -135,7 +135,7 @@ DMC Rengine capability / parser authority
   + tests
 ```
 
-It should not mean a new Android, iOS or Windows application/viewer.
+It should not mean a new Android, iOS, Windows or Web format implementation.
 
 ## One engine foundation across tools and devices
 
@@ -152,10 +152,10 @@ The central foundation is DMC Rengine:
           +-------------------+-------------------+
           |                   |                   |
     Native Reader         Pocket GDS        other tools
-          |                   |                   |
-   +------+------+            |                   |
-   |      |      |            |                   |
-Android  iOS  Windows    resource workflows   specialized tooling
+          |
+   +------+------+------+
+   |      |      |      |
+Android  iOS  Windows   Web
 ```
 
 DMC Rengine is not merely a documentation or reverse-engineering database. It is the central technical engine and modding foundation from which the ecosystem's specialized tools are derived.
@@ -164,9 +164,46 @@ The same recovered format semantics, resource contracts, readers, writers and ru
 
 The same resource should mean the same thing on every platform. Platform code may differ in file-picker integration, windows, gestures, thumbnails and navigation, but binary semantics must not be reimplemented independently per platform.
 
-Long-term platform integration can include ordinary OS-native behaviors such as:
+## Web architecture
+
+The future Web version follows the same rule as the native shells: **the functional resource engine remains C++20**.
+
+The intended browser path is:
+
+```text
+DMC Rengine / Native Reader C++20 core
+                |
+                v
+        WebAssembly build
+                |
+                v
+       thin browser bindings
+                |
+                v
+       Web presentation layer
+```
+
+The following functionality should remain implemented in the shared C++20 core wherever technically applicable:
+
+- format probing and parsing;
+- validation and malformed-input rejection;
+- typed resource models;
+- `InspectionDocument` generation;
+- `RenderScene` preparation;
+- hierarchy and overlay construction;
+- `ImagePreview` decoding/projection;
+- `ChildResource` discovery and navigation contracts;
+- evidence/capability logic;
+- shared resource-side algorithms.
+
+JavaScript/TypeScript in the Web product should be treated as a thin platform/presentation layer for browser APIs such as file selection, DOM/UI, routing, canvas/WebGL/WebGPU presentation and user interaction. It must not become a second parser authority or a parallel reimplementation of DMC semantics.
+
+In other words, Web is another shell over the same engine, not a separate implementation.
+
+Long-term platform integration can include ordinary OS/browser-native behaviors such as:
 
 - Open with / Share / Files integration;
+- drag-and-drop and browser file input;
 - file thumbnails;
 - preview panes / quick preview;
 - familiar image-like browsing for texture resources;
@@ -180,7 +217,7 @@ These are strategic directions, not claims about the current v1 platform surface
 
 Its role is to decompile/reconstruct the DMC3 HD engine and provide the common modding foundation: recovered runtime behavior, typed resource models, parsers, writers, validation, resource architecture and reusable C++20 capabilities.
 
-Native Reader is one consumer of that foundation. It takes DMC Rengine capabilities that are suitable for safe read-side presentation and turns them into a device-native viewing experience.
+Native Reader is one consumer of that foundation. It takes DMC Rengine capabilities that are suitable for safe read-side presentation and turns them into a device-native or browser-native viewing experience.
 
 Pocket GDS is another consumer of the same foundation, focused on resource browsing, extraction, replacement, editing, repacking and authoring workflows.
 
@@ -195,7 +232,7 @@ The intended ecosystem direction is:
        Native Reader                       Pocket GDS
   view / inspect / visualize       manage / edit / author / repack
              |
-      Android / iOS / Windows
+   Android / iOS / Windows / Web
 ```
 
 Native Reader must not create a second incompatible interpretation simply to satisfy UI needs. If a new semantic or capability belongs in the central engine, it should be promoted in DMC Rengine first and then consumed by downstream tools.
@@ -241,9 +278,9 @@ It is:
 
 Secondary measures include:
 
-- time from tapping a file to seeing a useful representation;
+- time from opening a file to seeing a useful representation;
 - percentage of promoted formats available through the same generic architecture;
-- consistency of the same resource across Android, iOS and Windows;
+- consistency of the same resource across Android, iOS, Windows and Web;
 - reduction in format-specific knowledge required for routine inspection;
 - absence of duplicated parser authority or platform-specific semantic forks.
 
@@ -270,8 +307,9 @@ The guiding rules are:
 2. **DMC Rengine is the central engine and modding foundation; Native Reader is a viewing product built on top of it.**
 3. **Opening and understanding comes before editing inside Native Reader.**
 4. **The user should not need binary-format knowledge for ordinary viewing.**
-5. **One central semantic truth should serve every tool and every platform.**
+5. **One central C++20 semantic truth should serve every tool and every platform, including Web through WebAssembly.**
 6. **New formats extend the shared module/capability system, not the number of standalone viewers.**
 7. **Native Reader remains a viewing/accessibility layer; Pocket GDS remains a resource-work/authoring tool.**
-8. **Unknown semantics stay unknown.**
-9. **The best Native Reader eventually feels boring: the user taps a DMC file and simply expects it to open.**
+8. **Web UI code is a presentation shell, not a second implementation of the resource engine.**
+9. **Unknown semantics stay unknown.**
+10. **The best Native Reader eventually feels boring: the user opens a DMC file and simply expects it to work.**
