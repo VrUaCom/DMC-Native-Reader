@@ -29,8 +29,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.1.6-debug-child-nav"
+        versionCode = 17
+        versionName = "1.1.5-debug-child-gallery"
 
         externalNativeBuild {
             cmake {
