@@ -282,8 +282,6 @@ PipelineResult run_ptx(std::string_view,
                                               EvidenceLevel::StructuralConfirmed});
     out.inspection.root.properties.push_back({"DDSBytes", std::to_string(total_dds_bytes),
                                               EvidenceLevel::StructuralConfirmed});
-    out.inspection.root.properties.push_back({"GalleryPreviews", std::to_string(previewed),
-                                              EvidenceLevel::DataConfirmed});
     out.inspection.root.children.push_back(std::move(textures));
     out.children = std::move(child_resources);
     return out;
@@ -321,4 +319,4 @@ NativeModule ptx_module() noexcept {
             ModuleKind::Structural, false, run_ptx_module, caps};
 }
 
-}  // namespace dmcresource
+}  // namespace dmcresource;
