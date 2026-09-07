@@ -7,6 +7,7 @@ on:
       - "windows/**"
       - "app/src/main/cpp/portable_session.cpp"
       - "app/src/main/cpp/include/dmcresource/portable_session.h"
+      - "app/src/test/native/portable_session_test.cpp"
       - ".github/workflows/platform-previews.yml"
   workflow_dispatch:
     inputs:
@@ -30,8 +31,53 @@ jobs:
           echo "runner=ubuntu"
           echo "sha=${GITHUB_SHA}"
 
+  portable_core:
+    name: Portable C++20 session regression
+    needs: runner_probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run PortableSession regression
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FLAGS=(
+            -std=c++20 -Wall -Wextra -Wpedantic
+            -Iapp/src/main/cpp/include
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include
+          )
+          COMMON=(
+            app/src/main/cpp/dmc_resource.cpp
+            app/src/main/cpp/decode_pipeline.cpp
+            app/src/main/cpp/inspection_format.cpp
+            app/src/main/cpp/portable_session.cpp
+            app/src/main/cpp/formats/dds.cpp
+            app/src/main/cpp/adapters/mod_adapter.cpp
+            app/src/main/cpp/adapters/scm_adapter.cpp
+            app/src/main/cpp/modules/module_registry.cpp
+            app/src/main/cpp/modules/module_model.cpp
+            app/src/main/cpp/modules/module_texture.cpp
+            app/src/main/cpp/view_renderer.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp
+          )
+          g++ "${FLAGS[@]}" app/src/test/native/portable_session_test.cpp \
+            "${COMMON[@]}" -o /tmp/dmc-portable-session-test
+          /tmp/dmc-portable-session-test
+
   ios:
     name: iOS unsigned preview
+    needs: portable_core
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -74,6 +120,7 @@ jobs:
 
   windows:
     name: Windows x64 preview (MinGW)
+    needs: portable_core
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
