@@ -1,40 +1,45 @@
 # Native Reader Architecture v2 — reusable resource presentation core
 
-**Status:** implementation in progress  
-**Branch:** `architecture/v2-resource-session-core`  
-**Baseline preserved:** v1 / `1.0.1-debug-ui1`
+**Status:** implemented and device-accepted for the v1 primary reader surface  
+**Release line:** `1.0.0-rc1`
 
 ## Goal
 
 Keep format parsing evidence-aware and format-specific while making inspection,
-rendering, hierarchy overlays, texture bindings and future tools reusable across
-DMC3 resource families.
+rendering, hierarchy overlays, image previews and nested-resource navigation reusable
+across DMC3 resource families.
 
 The dependency direction is one-way:
 
 ```text
-binary primitives
-      ↓
-format parsers
-      ↓
-semantic / cross-resource analysis
-      ↓
-inspection + render adapters
-      ↓
-resource session / JNI
-      ↓
-Android UI
+bytes
+  ↓
+canonical / native format parser
+  ↓
+typed document + bounded analysis
+  ↓
+PipelineResult
+  ├── ResourceCapabilities
+  ├── InspectionDocument
+  ├── RenderScene
+  ├── ImagePreview
+  └── ChildResource[]
+  ↓
+JNI Session
+  ↓
+generic Android presentation
 ```
 
-No UI component may parse MOD, SCM, PTX, DDS, SO, SHW or another resource directly.
-No renderer may become a second format parser.
+No UI component parses MOD, SCM, PTX, DDS, SO, SHW or another resource directly.
+No renderer is allowed to become a second format parser.
 
-## v2 contracts
+## Implemented v2 contracts
 
 ### ResourceCapabilities
 
-Capabilities belong to `NativeModule`, not to Android conditionals. UI visibility
-must be driven by capabilities such as:
+Capabilities belong to the native module/result contract, not to Android filename or
+format conditionals. UI availability is derived through `ResourceUiState` from
+capabilities such as:
 
 - Inspection
 - Geometry
@@ -56,93 +61,143 @@ support it. Recognition alone does not imply a semantic capability.
 
 ### InspectionDocument
 
-Generic tree projection for the info/inspector UI. It carries:
+Generic tree projection used by the resource Inspector. It carries:
 
 - stable node id;
 - title and node kind;
 - optional source byte span;
-- properties with an evidence level;
+- properties with evidence level;
 - children.
 
-Format parsers retain authority over typed/raw data. `InspectionDocument` is a tool
-projection and must not erase unresolved bytes or upgrade evidence.
+Format parsers retain authority over typed/raw data. `InspectionDocument` is a
+presentation/tool projection and must not upgrade evidence or invent semantics.
 
 ### RenderScene
 
-Reusable presentation IR containing:
+The sole reusable geometry/hierarchy presentation IR. It contains:
 
 - independent mesh primitives;
 - scene/bone/selector nodes;
+- local/world matrices where spatial authority exists;
 - optional skin bindings;
 - optional texture-slot bindings.
 
-MOD, SCM, HITS, SHW and future geometry families should adapt into this IR instead
-of teaching the renderer their binary layout.
+MOD and SCM adapt into this IR. The retired flattened `PipelineResult.mesh` and the
+old duplicate MOD/SCM decoder path have been physically removed.
 
-## Migration rule
+### RenderFlags / overlays
 
-v1 `Mesh` remains temporarily as a compatibility projection. During migration:
+Renderer options use a reusable bitmask rather than a growing JNI list of booleans.
+The hierarchy overlay is built from `RenderScene.nodes` and can therefore serve
+skeletal, scene or future spatial hierarchy resources without a format-specific
+renderer.
 
-1. existing module decodes once;
-2. pipeline projects the v1 mesh into `RenderScene` once;
-3. format-specific v2 adapters progressively replace that flattened projection;
-4. only after all consumers use `RenderScene` may the v1 mesh field be removed.
+Spatial authority is explicit. A node at the origin is still valid when the
+canonical adapter authorizes its transform; structural-only hierarchy does not gain
+3D authority through coordinate heuristics.
 
-This avoids a big-bang rewrite and keeps the device-tested v1 rendering path usable.
+### ImagePreview
 
-## Model-family capability boundary
+Static image presentation is a generic IR, not a DDS-specific Android viewer.
 
-Current v2 contracts intentionally distinguish MOD from SCM:
+Current v1 use:
 
-```text
-SCM
-  Inspection
-  Geometry
-  Wireframe
-  NodeHierarchy
-  TextureBinding
+- DDS validates through the native DDS parser;
+- bounded DXT1/DXT5 base-mip decode produces `ImagePreview`;
+- Android displays the preview in the shared viewport;
+- image allocation and Java Bitmap failure are bounded/fail-closed.
 
-MOD
-  Inspection
-  Geometry
-  Wireframe
-  NodeHierarchy
-  SkeletalSkinning
-  SkinWeights
-  TextureBinding
-```
+### ChildResource
 
-SCM scene nodes must not be mislabeled as skeletal bones. A common hierarchy UI may
-render both, but labels and capabilities remain semantically accurate.
+Nested resources use a reusable projection containing child title/source span plus
+ordinary presentation contracts (`ResourceCapabilities`, `InspectionDocument`,
+`RenderScene`, `ImagePreview`, nested children).
+
+Current v1 use:
+
+- PTX publishes validated DDS children;
+- generic `ChildResourceBrowserView` renders preview-first tiles;
+- fallback text is used only when a preview cannot be materialized;
+- tapping a child creates a normal native child Session;
+- `←` and Android Back close only the child and restore the existing parent Session.
+
+The Android presentation layer does not branch on PTX/DDS for this behavior. The
+same contract can later serve PAC/PNST/SO or other nested resources.
+
+## Model-family evidence boundaries
+
+### SCM
+
+Current capabilities include inspection, geometry, wireframe, node hierarchy and
+texture binding. Scene nodes remain scene nodes; they are not mislabeled as bones.
+Canonical SCM world matrices authorize the generic scene-hierarchy overlay.
+
+### MOD
+
+Current capabilities include inspection, geometry, wireframe, node hierarchy,
+skeletal skinning, skin weights and texture binding.
+
+The canonical MOD path provides:
+
+- parent/order domain;
+- local transform records;
+- model-space world propagation;
+- instance-level `supports_spatial_hierarchy()` gate;
+- bone/node positions from world-matrix translation, never mesh vertices;
+- typed texture slot and confirmed legacy GS CLAMP / REGION_REPEAT state.
+
+The unresolved MOD bitmap/companion mapping remains unresolved.
 
 ## Canonical core reuse
 
-`VrUaCom/dmc-rengine-cpp` remains the canonical reverse/evidence source. Native
-Reader must move toward a pinned C++20 core snapshot/target rather than independently
-reimplementing proven parsers.
+`VrUaCom/dmc-rengine-cpp` is the canonical reverse/evidence source for promoted
+DMC3 HD format semantics.
 
-Architecture v2 therefore raises the Android native target from C++17 to C++20.
-This is a prerequisite for direct reuse of canonical reader modules based on
-`std::span` and other C++20 APIs.
+When Native Reader needs a newly confirmed field, the required direction is:
 
-## Next migration slices
+```text
+dmc-rengine-cpp
+  → typed parser promotion
+  → tests
+  → canonical merge
+  → pinned Native Reader snapshot/provenance
+  → adapter projection
+```
 
-1. Shared binary/diagnostic helpers; remove duplicated reject/magic/bounds helpers.
-2. Extract DDS parser from the PTX module so PTX consumes the same reusable DDS API.
-3. Replace `decode_part*.inc` MOD/SCM implementation with pinned canonical Model
-   Family C++20 modules.
-4. Add typed MOD and SCM `InspectionDocument` adapters.
-5. Add typed hierarchy and skin projections into `RenderScene`.
-6. Expose capabilities/inspection through JNI without format switches in Java.
-7. Build generic hierarchy/skeleton overlay renderer.
-8. Reuse the same blocks for SHW, EFM, SO and later resource families.
+Android adapters must not re-read canonical fields by raw offsets to bypass this
+rule.
+
+The Native Reader native target is C++20.
+
+## v1 device acceptance
+
+Architecture v2 has been exercised on a real Samsung device for the primary v1
+surface:
+
+- MOD geometry + generic hierarchy overlay + Inspector;
+- SCM geometry + generic scene hierarchy overlay + Inspector;
+- MOD skin/weights and texture/GS state;
+- SCM texture/GS state;
+- PTX preview-first DDS child gallery;
+- child DDS full image preview;
+- generic parent-session navigation;
+- standalone DDS image preview.
 
 ## Non-negotiable rules
 
-- one parsing pass per resource;
-- no format-specific parsing in Java/UI;
+- one parsing pass per opened resource/session;
+- no format-specific binary parsing in Java/UI;
 - no format-specific binary parsing in renderer code;
-- no duplicated DDS/model/hierarchy parser just for inspection;
+- no duplicate DDS/model/hierarchy parser just for presentation;
+- `RenderScene` remains the sole geometry authority;
+- `InspectionDocument` remains the inspection projection;
 - unknown/evidence-gated semantics remain explicit;
-- module capabilities must have regression coverage;
-- v1 behavior remains the fallback baseline until v2 device tests pass.
+- capabilities require regression coverage;
+- malformed/untrusted inputs fail closed and stay bounded;
+- new format support is parser + adapter + capabilities, not a new Android viewer.
+
+## Post-v1 extension direction
+
+After the v1 release freeze, the same contracts are intended for evidence-ready
+SHW, EFM, SO and deeper PAC/PNST/NBZ child-resource flows. Promotion remains
+evidence-driven and does not expand RC scope merely to add more family names.
