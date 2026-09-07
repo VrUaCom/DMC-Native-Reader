@@ -43,6 +43,7 @@ public final class ChildResourceBrowserView extends ScrollView {
     }
 
     public void setSession(long newSession) {
+        if (session == newSession) return;
         session = newSession;
         rebuild();
     }
