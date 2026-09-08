@@ -45,10 +45,10 @@ public:
                                                  const char* module_id,
                                                  std::string detail) noexcept;
 
-// Native Reader 1.0 clean baseline: exactly four promoted format modules.
+// Native Reader 1.0 exposes four format routes. DDS and PTX intentionally share
+// one texture implementation; Spider decides whether PTX framing is required.
 [[nodiscard]] NativeModule scm_module() noexcept;
 [[nodiscard]] NativeModule mod_module() noexcept;
-[[nodiscard]] NativeModule dds_module() noexcept;
-[[nodiscard]] NativeModule ptx_module() noexcept;
+[[nodiscard]] NativeModule texture_module(Format format) noexcept;
 
 }  // namespace dmcresource
