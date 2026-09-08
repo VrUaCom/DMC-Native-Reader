@@ -33,6 +33,7 @@ jobs:
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
