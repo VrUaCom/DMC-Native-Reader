@@ -188,6 +188,17 @@ bool trace_contains(const dmcresource::PipelineResult& result,
     return false;
 }
 
+void assert_unit_uv_triangle(const dmcresource::Mesh& mesh) {
+    assert(mesh.has_uv0());
+    assert(mesh.uv0.size() == 3U);
+    assert(std::fabs(mesh.uv0[0].u - 0.0F) < 0.0001F);
+    assert(std::fabs(mesh.uv0[0].v - 0.0F) < 0.0001F);
+    assert(std::fabs(mesh.uv0[1].u - 1.0F) < 0.0001F);
+    assert(std::fabs(mesh.uv0[1].v - 0.0F) < 0.0001F);
+    assert(std::fabs(mesh.uv0[2].u - 0.0F) < 0.0001F);
+    assert(std::fabs(mesh.uv0[2].v - 1.0F) < 0.0001F);
+}
+
 }  // namespace
 
 int main() {
@@ -204,11 +215,13 @@ int main() {
     assert(scm_result.probe.format == Format::Scm);
     assert(trace_contains(scm_result, "canonical.scm.structural-parser"));
     assert(trace_contains(scm_result, "canonical.scm.scene-hierarchy"));
+    assert(trace_contains(scm_result, "native.uv-projection"));
     assert(trace_contains(scm_result, "render-scene-contract"));
     assert(scm_result.scene.meshes.size() == 1U);
     assert(scm_result.scene.meshes[0].node_index == 0);
     assert(scm_result.scene.meshes[0].mesh.vertices.size() == 3U);
     assert(scm_result.scene.meshes[0].mesh.indices.size() == 3U);
+    assert_unit_uv_triangle(scm_result.scene.meshes[0].mesh);
     assert(scm_result.scene.nodes.size() == 1U);
     assert(scm_result.scene.nodes[0].parent == -1);
     assert(std::fabs(scm_result.scene.nodes[0].local.values[12] - 10.0F) < 0.0001F);
@@ -219,6 +232,8 @@ int main() {
     assert(scm_result.inspection.format == "SCM");
     assert(has_capability(scm_result.capabilities,
                           ResourceCapability::TextureBinding));
+    assert(has_capability(scm_result.capabilities,
+                          ResourceCapability::UvCoordinates));
 
     const auto mod = make_mod();
     const auto mod_result = run_decode_pipeline(
@@ -228,10 +243,12 @@ int main() {
     assert(mod_result.probe.format == Format::Mod);
     assert(trace_contains(mod_result, "canonical.mod.structural-parser"));
     assert(trace_contains(mod_result, "canonical.mod.texture-state"));
+    assert(trace_contains(mod_result, "native.uv-projection"));
     assert(trace_contains(mod_result, "render-scene-contract"));
     assert(mod_result.scene.meshes.size() == 1U);
     assert(mod_result.scene.meshes[0].mesh.vertices.size() == 3U);
     assert(mod_result.scene.meshes[0].mesh.indices.size() == 3U);
+    assert_unit_uv_triangle(mod_result.scene.meshes[0].mesh);
     assert(mod_result.scene.nodes.size() == 1U);
     assert(mod_result.scene.skins.size() == 1U);
     assert(mod_result.scene.skins[0].vertices.size() == 3U);
@@ -246,6 +263,8 @@ int main() {
     assert(mod_result.inspection.format == "MOD");
     assert(has_capability(mod_result.capabilities,
                           ResourceCapability::SkinWeights));
+    assert(has_capability(mod_result.capabilities,
+                          ResourceCapability::UvCoordinates));
 
     // A known old-family filename must remain outside the clean main surface.
     const std::uint8_t old_family[] = {'H', 'I', 'T', 'S'};
