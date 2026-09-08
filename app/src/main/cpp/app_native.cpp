@@ -239,7 +239,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         << (session->probe.content_confirmed ? "content-confirmed" : "extension/name-only");
     if (session->renderable) {
         out << " | vertices=" << session->render_mesh.vertices.size()
-            << " | triangles=" << (session->render_mesh.indices.size() / 3u);
+            << " | triangles=" << (session->render_mesh.indices.size() / 3u)
+            << " | uv0=" << session->render_mesh.uv0.size();
     } else if (session->image_preview.available()) {
         out << " | imagePreview=" << session->image_preview.width
             << "x" << session->image_preview.height;
@@ -409,10 +410,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
     view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
     view.wireframe = dmcresource::has_render_flag(
         flags, dmcresource::RenderFlag::Wireframe);
+    view.uv_layout = dmcresource::has_render_flag(
+        flags, dmcresource::RenderFlag::UvLayout);
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
     const auto* hierarchy =
+        !view.uv_layout &&
         dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
         session->hierarchy_overlay.available()
             ? &session->hierarchy_overlay
