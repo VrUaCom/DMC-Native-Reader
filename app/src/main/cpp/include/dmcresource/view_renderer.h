@@ -14,6 +14,7 @@ enum class RenderFlag : std::uint32_t {
     Bounds = 1U << 2U,
     SkinDebug = 1U << 3U,
     Normals = 1U << 4U,
+    UvLayout = 1U << 5U,
 };
 
 using RenderFlags = std::uint32_t;
@@ -32,6 +33,7 @@ struct ViewState {
     float pitch_radians{-0.45f};
     float zoom{1.0f};
     bool wireframe{false};
+    bool uv_layout{false};
 };
 
 struct HierarchyEdge final {
@@ -56,9 +58,8 @@ struct HierarchyOverlay final {
 
 // Materialize local-space scene primitives into one world-space render mesh
 // using the explicit MeshPrimitive -> RenderNode binding. Unbound primitives
-// remain in local space. Call once when opening a static resource and cache the
-// result; the rasterizer deliberately does not hide scene materialization per
-// frame. Returns false for malformed bindings/matrices or size overflow.
+// remain in local space. Complete UV0 channels are preserved unchanged because
+// world transforms affect geometry, not texture coordinates.
 [[nodiscard]] bool materialize_render_scene(const RenderScene& scene,
                                             Mesh* out) noexcept;
 
@@ -69,6 +70,9 @@ struct HierarchyOverlay final {
 [[nodiscard]] bool materialize_hierarchy_overlay(const RenderScene& scene,
                                                  HierarchyOverlay* out) noexcept;
 
+// One generic CPU renderer. Normal mode consumes positions/indices; UV Layout
+// mode consumes only the neutral UV0 channel + topology and therefore remains
+// independent of MOD/SCM parser details.
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,
                       const HierarchyOverlay* hierarchy = nullptr);
