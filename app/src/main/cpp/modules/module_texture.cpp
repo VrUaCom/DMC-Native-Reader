@@ -2,13 +2,13 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include "dmc_rengine/profiles/dmc3/texture_slot_framing.hpp"
 #include "dmcresource/binary_reader.h"
 #include "dmcresource/child_resource.h"
 #include "dmcresource/formats/dds.h"
@@ -17,11 +17,16 @@
 namespace dmcresource {
 namespace {
 
-constexpr std::size_t kPtxHeaderBytes = 0x800U;
-constexpr std::size_t kPtxDescriptorBytes = 0x70U;
-constexpr std::size_t kSectorBytes = 0x800U;
-constexpr std::uint32_t kMaxTextureCount = 4096U;
 constexpr std::uint64_t kMaxPtxGalleryPreviewPixels = 4ULL * 1024ULL * 1024ULL;
+
+using RengineFramingDocument =
+    dmc::rengine::profiles::dmc3::TextureSlotFramingDocument;
+using RengineFramingKind =
+    dmc::rengine::profiles::dmc3::TextureSlotFramingKind;
+using RengineFramingParser =
+    dmc::rengine::profiles::dmc3::TextureSlotFramingParser;
+using RengineTextureEntry =
+    dmc::rengine::profiles::dmc3::TextureSlotEntry;
 
 InspectionNode dds_inspection_node(const formats::dds::Document& dds,
                                    std::string id,
@@ -60,6 +65,27 @@ ProbeResult child_dds_probe() noexcept {
             "DATA_CONFIRMED", "image/vnd-ms.dds"};
 }
 
+std::span<const std::byte> as_bytes(const std::uint8_t* bytes,
+                                    std::size_t size) noexcept {
+    if (bytes == nullptr) return {};
+    return std::as_bytes(std::span<const std::uint8_t>{bytes, size});
+}
+
+formats::dds::Document dds_document_from_frame(
+    const RengineTextureEntry& frame) noexcept {
+    formats::dds::Document out;
+    out.width = frame.width;
+    out.height = frame.height;
+    out.mip_count = frame.mip_map_count;
+    out.payload_size = frame.dds_payload_size;
+    out.total_size = frame.dds_size;
+    out.compression = frame.compression ==
+            dmc::rengine::profiles::dmc3::TextureCompressionKind::dxt1
+        ? formats::dds::Compression::Dxt1
+        : formats::dds::Compression::Dxt5;
+    return out;
+}
+
 struct LocatedDds final {
     bool ok{};
     formats::dds::Document document;
@@ -78,13 +104,17 @@ LocatedDds locate_top_level_dds(const std::uint8_t* bytes,
         return out;
     }
 
-    const BinaryReader reader(bytes, size);
+    // Standalone DDS is handled by the reusable DDS reader/preview module.
+    // Partial mip chains are valid here when the declared chain is bounded by
+    // the supplied bytes. Only zero trailer padding is tolerated.
     const auto direct_span = std::span<const std::uint8_t>{bytes, size};
     const auto direct = formats::dds::parse(direct_span);
     if (direct.ok) {
         const auto end = static_cast<std::size_t>(direct.document.total_size);
+        const BinaryReader reader(bytes, size);
         if (!module_support::zero_range(reader, end, size)) {
-            out.diagnostic = "DDS rejected: non-zero bytes follow the bounded DDS payload";
+            out.diagnostic =
+                "DDS rejected: non-zero bytes follow the bounded DDS payload";
             return out;
         }
         out.ok = true;
@@ -94,55 +124,43 @@ LocatedDds locate_top_level_dds(const std::uint8_t* bytes,
         return out;
     }
 
-    // DMC texture extraction can expose the canonical 0x70-byte texture
-    // descriptor together with the DDS payload. The same descriptor shape is
-    // already validated inside PTX: +0x38 is payload bytes and +0x64 is total
-    // DDS bytes. Accept it only when both fields agree exactly with the parsed
-    // embedded DDS and all bytes after that DDS are zero padding.
-    if (size >= kPtxDescriptorBytes + 128U &&
-        module_support::magic4(reader, kPtxDescriptorBytes,
-                               'D', 'D', 'S', ' ')) {
-        const auto embedded_span = std::span<const std::uint8_t>{
-            bytes + kPtxDescriptorBytes, size - kPtxDescriptorBytes};
-        const auto embedded = formats::dds::parse(embedded_span);
-        if (!embedded.ok) {
-            out.diagnostic = "DDS descriptor carrier rejected: " + embedded.diagnostic;
-            return out;
+    // DMC descriptor+DDS framing is canonical DMC Rengine territory. Native
+    // Reader does not reinterpret +0x38/+0x64 or any other descriptor fields.
+    // The vendored parser is copied text-identically from dmc-rengine-cpp and
+    // returns a typed TextureSlotEntry only after the full framing contract is
+    // accepted.
+    const auto framing = RengineFramingParser::parse(as_bytes(bytes, size));
+    if (!framing.ok()) {
+        out.diagnostic = "DDS rejected: ";
+        if (!framing.detail.empty()) {
+            out.diagnostic.append(framing.detail.data(), framing.detail.size());
+        } else if (!direct.diagnostic.empty()) {
+            out.diagnostic += direct.diagnostic;
+        } else {
+            out.diagnostic += "no valid direct or DMC descriptor-wrapped DDS";
         }
-
-        std::uint32_t descriptor_payload = 0U;
-        std::uint32_t descriptor_dds_size = 0U;
-        if (!reader.read_le(0x38U, &descriptor_payload) ||
-            !reader.read_le(0x64U, &descriptor_dds_size) ||
-            descriptor_payload != embedded.document.payload_size ||
-            descriptor_dds_size != embedded.document.total_size) {
-            out.diagnostic =
-                "DDS descriptor carrier rejected: descriptor sizes disagree with embedded DDS";
-            return out;
-        }
-
-        const auto dds_end = kPtxDescriptorBytes +
-            static_cast<std::size_t>(embedded.document.total_size);
-        if (dds_end > size || !module_support::zero_range(reader, dds_end, size)) {
-            out.diagnostic =
-                "DDS descriptor carrier rejected: non-zero bytes follow embedded DDS";
-            return out;
-        }
-
-        out.ok = true;
-        out.document = embedded.document;
-        out.bytes = std::span<const std::uint8_t>{
-            bytes + kPtxDescriptorBytes,
-            static_cast<std::size_t>(embedded.document.total_size)};
-        out.source_offset = kPtxDescriptorBytes;
-        out.trailing_padding = size - dds_end;
-        out.descriptor_wrapped = true;
+        return out;
+    }
+    if (framing.document.kind != RengineFramingKind::wrapped_dds ||
+        framing.document.textures.size() != 1U) {
+        out.diagnostic =
+            "DDS rejected: resource is a DMC texture bundle rather than a single DDS";
         return out;
     }
 
-    out.diagnostic = direct.diagnostic.empty()
-        ? "DDS rejected: no valid DDS payload found"
-        : "DDS rejected: " + direct.diagnostic;
+    const auto& frame = framing.document.textures.front();
+    if (frame.dds_offset > size || frame.dds_size > size - frame.dds_offset) {
+        out.diagnostic = "DDS rejected: canonical texture frame escaped input bounds";
+        return out;
+    }
+
+    out.ok = true;
+    out.document = dds_document_from_frame(frame);
+    out.bytes = std::span<const std::uint8_t>{
+        bytes + static_cast<std::size_t>(frame.dds_offset),
+        static_cast<std::size_t>(frame.dds_size)};
+    out.source_offset = static_cast<std::size_t>(frame.dds_offset);
+    out.descriptor_wrapped = true;
     return out;
 }
 
@@ -161,7 +179,9 @@ PipelineResult run_dds(std::string_view,
     confirmed_probe.evidence = "DATA_CONFIRMED";
 
     auto detail = dds_detail(located.document);
-    if (located.descriptor_wrapped) detail += " carrier=texture-descriptor+dds";
+    if (located.descriptor_wrapped) {
+        detail += " carrier=rengine-texture-slot-frame";
+    }
     if (located.trailing_padding != 0U) {
         detail += " zeroPadding=" + std::to_string(located.trailing_padding);
     }
@@ -173,7 +193,7 @@ PipelineResult run_dds(std::string_view,
     out.inspection.root.kind = InspectionKind::Document;
     if (located.descriptor_wrapped) {
         out.inspection.root.properties.push_back({
-            "Carrier", "0x70-byte DMC texture descriptor",
+            "Carrier", "canonical DMC texture-slot frame",
             EvidenceLevel::StructuralConfirmed});
         out.inspection.root.properties.push_back({
             "DDSOffset", std::to_string(located.source_offset),
@@ -185,7 +205,8 @@ PipelineResult run_dds(std::string_view,
             EvidenceLevel::StructuralConfirmed});
     }
 
-    const auto preview = formats::dds::decode_preview(located.bytes, located.document);
+    const auto preview = formats::dds::decode_preview(
+        located.bytes, located.document);
     if (preview.ok) {
         out.image_preview = std::move(preview.image);
         out.modules.push_back({"formats.dds.base-mip-preview", true});
@@ -202,20 +223,31 @@ PipelineResult run_ptx(std::string_view,
                        std::size_t size,
                        const ProbeResult& probe,
                        const char* module_id) noexcept {
-    const BinaryReader reader(bytes, size);
-    if (!reader.range(0U, kPtxHeaderBytes)) {
+    if (bytes == nullptr) {
+        return module_support::reject(probe, module_id, "PTX rejected: null input");
+    }
+
+    // PTX physical framing, descriptor validation, sector spans and alignment
+    // are all parsed once by the canonical dmc-rengine-cpp profile parser.
+    // Native Reader only projects the typed frame entries into generic child
+    // resources and image previews.
+    const auto framing = RengineFramingParser::parse(as_bytes(bytes, size));
+    if (!framing.ok()) {
+        std::string diagnostic = "PTX rejected: ";
+        if (!framing.detail.empty()) {
+            diagnostic.append(framing.detail.data(), framing.detail.size());
+        } else {
+            diagnostic += "canonical texture-slot framing parser rejected input";
+        }
+        return module_support::reject(probe, module_id, std::move(diagnostic));
+    }
+    if (framing.document.kind != RengineFramingKind::texture_bundle) {
         return module_support::reject(
             probe, module_id,
-            "PTX rejected: resource is shorter than the 0x800-byte bundle header");
+            "PTX rejected: canonical texture framing resolved a single wrapped DDS");
     }
 
-    std::uint32_t count = 0U;
-    if (!reader.read_le(0U, &count) || count == 0U || count > kMaxTextureCount ||
-        count > (kPtxHeaderBytes - 4U) / 4U) {
-        return module_support::reject(probe, module_id,
-                                      "PTX rejected: texture count is invalid");
-    }
-
+    const RengineFramingDocument& document = framing.document;
     InspectionNode textures;
     textures.id = "textures";
     textures.title = "Textures";
@@ -223,168 +255,109 @@ PipelineResult run_ptx(std::string_view,
 
     std::vector<ChildResource> child_resources;
     try {
-        child_resources.reserve(count);
+        child_resources.reserve(document.textures.size());
+        textures.children.reserve(document.textures.size());
     } catch (...) {
-        return module_support::reject(probe, module_id,
-                                      "PTX rejected: child-resource allocation failed");
+        return module_support::reject(
+            probe, module_id, "PTX rejected: child-resource allocation failed");
     }
 
-    std::size_t descriptor = kPtxHeaderBytes;
     std::uint64_t total_dds_bytes = 0U;
     std::uint64_t gallery_preview_pixels = 0U;
     std::uint32_t dxt1 = 0U;
     std::uint32_t dxt5 = 0U;
     std::uint32_t previewed = 0U;
 
-    for (std::uint32_t index = 0U; index < count; ++index) {
-        std::uint32_t sector_span = 0U;
-        if (!reader.read_le(4U + static_cast<std::size_t>(index) * 4U, &sector_span)) {
-            return module_support::reject(
-                probe, module_id, "PTX rejected: sector-span table is truncated");
-        }
-
-        const bool final = index + 1U == count;
-        std::size_t bounded_end = size;
-        if (!final || sector_span != 0U) {
-            if (sector_span == 0U ||
-                sector_span > std::numeric_limits<std::size_t>::max() / kSectorBytes) {
-                return module_support::reject(probe, module_id,
-                                              "PTX rejected: invalid sector span");
-            }
-            const auto span_bytes = static_cast<std::size_t>(sector_span) * kSectorBytes;
-            if (descriptor > size || span_bytes > size - descriptor) {
-                return module_support::reject(
-                    probe, module_id, "PTX rejected: sector span leaves resource bounds");
-            }
-            bounded_end = descriptor + span_bytes;
-            if (final && bounded_end != size) {
-                return module_support::reject(
-                    probe, module_id,
-                    "PTX rejected: final sector span does not terminate at EOF");
-            }
-        }
-
-        if (!reader.range(descriptor, kPtxDescriptorBytes)) {
-            return module_support::reject(probe, module_id,
-                                          "PTX rejected: descriptor is truncated");
-        }
-
-        const std::size_t dds_offset = descriptor + kPtxDescriptorBytes;
-        if (dds_offset > bounded_end) {
+    for (const auto& frame : document.textures) {
+        if (frame.dds_offset > size || frame.dds_size > size - frame.dds_offset) {
             return module_support::reject(
                 probe, module_id,
-                "PTX rejected: descriptor DDS offset leaves bounded span");
+                "PTX rejected: canonical texture frame escaped input bounds");
         }
 
+        const auto dds = dds_document_from_frame(frame);
         const auto dds_span = std::span<const std::uint8_t>{
-            bytes + dds_offset, bounded_end - dds_offset};
-        const auto dds = formats::dds::parse(dds_span);
-        if (!dds.ok) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: descriptor is not followed by a valid DXT1/DXT5 DDS");
-        }
+            bytes + static_cast<std::size_t>(frame.dds_offset),
+            static_cast<std::size_t>(frame.dds_size)};
 
-        std::uint32_t descriptor_payload = 0U;
-        std::uint32_t descriptor_dds_size = 0U;
-        if (!reader.read_le(descriptor + 0x38U, &descriptor_payload) ||
-            !reader.read_le(descriptor + 0x64U, &descriptor_dds_size) ||
-            descriptor_payload != dds.document.payload_size ||
-            descriptor_dds_size != dds.document.total_size) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: descriptor DDS sizes disagree with mip payload");
-        }
-
-        const std::size_t dds_end = dds_offset + dds.document.total_size;
-        if (dds_end > bounded_end) {
-            return module_support::reject(probe, module_id,
-                                          "PTX rejected: DDS escapes its descriptor span");
-        }
-        if (final && sector_span == 0U) {
-            if (dds_end != size) {
-                return module_support::reject(
-                    probe, module_id,
-                    "PTX rejected: zero-span final DDS does not end at EOF");
-            }
-        } else if (!module_support::zero_range(reader, dds_end, bounded_end)) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: alignment padding contains non-zero data");
-        }
-
-        total_dds_bytes += dds.document.total_size;
-        if (dds.document.compression == formats::dds::Compression::Dxt1) {
+        total_dds_bytes += frame.dds_size;
+        if (dds.compression == formats::dds::Compression::Dxt1) {
             ++dxt1;
         } else {
             ++dxt5;
         }
 
+        const auto index = frame.texture_index;
         auto child_inspection = dds_inspection_node(
-            dds.document,
+            dds,
             "texture-" + std::to_string(index),
             "Texture " + std::to_string(index),
-            dds_offset);
-        child_inspection.properties.push_back({"DescriptorOffset", std::to_string(descriptor),
-                                               EvidenceLevel::StructuralConfirmed});
-        child_inspection.properties.push_back({"SectorSpan", std::to_string(sector_span),
-                                               EvidenceLevel::StructuralConfirmed});
+            static_cast<std::size_t>(frame.dds_offset));
+        child_inspection.properties.push_back({
+            "DescriptorOffset", std::to_string(frame.descriptor_offset),
+            EvidenceLevel::StructuralConfirmed});
+        child_inspection.properties.push_back({
+            "SectorSpan", std::to_string(frame.sector_span),
+            EvidenceLevel::StructuralConfirmed});
         textures.children.push_back(child_inspection);
 
         ChildResource child;
         child.id = "dds-" + std::to_string(index);
         child.title = "DDS " + std::to_string(index);
         child.suggested_filename = "texture_" + std::to_string(index) + ".dds";
-        child.source_span = SourceSpan{dds_offset, dds.document.total_size};
+        child.source_span = SourceSpan{
+            static_cast<std::size_t>(frame.dds_offset),
+            static_cast<std::size_t>(frame.dds_size)};
         child.probe = child_dds_probe();
         child.capabilities = capability(ResourceCapability::Inspection) |
                              ResourceCapability::ImagePreview;
         child.inspection.format = "DDS";
         child.inspection.root = child_inspection;
         child.inspection.root.kind = InspectionKind::Document;
-        child.detail = dds_detail(dds.document);
-        child.trace = "[OK] formats.dds.child-validation";
+        child.detail = dds_detail(dds);
+        child.trace = "[OK] dmc-rengine.texture-slot-framing\n"
+                      "[OK] formats.dds.base-mip-preview";
 
         const std::uint64_t pixels =
-            static_cast<std::uint64_t>(dds.document.width) * dds.document.height;
+            static_cast<std::uint64_t>(dds.width) * dds.height;
         if (pixels <= kMaxPtxGalleryPreviewPixels - gallery_preview_pixels) {
-            const auto preview = formats::dds::decode_preview(
-                std::span<const std::uint8_t>{bytes + dds_offset,
-                                              dds.document.total_size},
-                dds.document);
+            const auto preview = formats::dds::decode_preview(dds_span, dds);
             if (preview.ok) {
                 child.image_preview = std::move(preview.image);
                 gallery_preview_pixels += pixels;
                 ++previewed;
             } else {
                 child.detail += "\nImage preview unavailable: " + preview.diagnostic;
+                child.trace = "[OK] dmc-rengine.texture-slot-framing\n"
+                              "[FAIL] formats.dds.base-mip-preview";
             }
         } else {
             child.detail += "\nImage preview omitted by PTX gallery memory budget";
         }
 
         child_resources.push_back(std::move(child));
-        if (!final) descriptor = bounded_end;
     }
 
     std::ostringstream detail;
-    detail << "PTX texture bundle | textures=" << count
+    detail << "PTX texture bundle | textures=" << document.textures.size()
            << " dxt1=" << dxt1 << " dxt5=" << dxt5
            << " ddsBytes=" << total_dds_bytes
            << " galleryPreviews=" << previewed;
     auto out = structural_pipeline(probe, module_id, detail.str());
     out.modules.insert(out.modules.begin() + 3,
-                       {"formats.dds.child-validation", true});
+                       {"dmc-rengine.texture-slot-framing", true});
 
     out.inspection.format = "PTX";
     out.inspection.root.id = "ptx";
     out.inspection.root.title = "PTX";
     out.inspection.root.kind = InspectionKind::Document;
     out.inspection.root.source_span = SourceSpan{0U, size};
-    out.inspection.root.properties.push_back({"TextureCount", std::to_string(count),
-                                              EvidenceLevel::StructuralConfirmed});
-    out.inspection.root.properties.push_back({"DDSBytes", std::to_string(total_dds_bytes),
-                                              EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.properties.push_back({
+        "TextureCount", std::to_string(document.textures.size()),
+        EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.properties.push_back({
+        "DDSBytes", std::to_string(total_dds_bytes),
+        EvidenceLevel::StructuralConfirmed});
     out.inspection.root.children.push_back(std::move(textures));
     out.children = std::move(child_resources);
     return out;
