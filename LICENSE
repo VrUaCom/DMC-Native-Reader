@@ -1,0 +1,84 @@
+DMC Native Reader Personal Non-Commercial License 1.0
+
+Copyright (c) 2026 VrUaCom.
+Contributions remain copyright of their respective authors unless otherwise agreed.
+
+1. Scope
+
+This license applies to the DMC Native Reader source code, binaries, documentation, and other original project materials distributed under this LICENSE (the "Covered Software").
+
+It does not apply to third-party components that are distributed under their own licenses, including vendored DMC Rengine components. It does not grant any rights in Devil May Cry, Capcom game assets, game data, executable binaries, trademarks, characters, or other intellectual property owned by Capcom Co., Ltd. or other rights holders.
+
+2. Personal Non-Commercial Use
+
+Subject to this license, an individual natural person may use, reproduce, study, modify, and create derivative works of the Covered Software solely for Personal Non-Commercial Use.
+
+"Personal Non-Commercial Use" means use by an individual for personal, hobbyist, educational, research, preservation, interoperability, or community modding purposes that:
+
+- is not performed on behalf of a company, organization, employer, client, or other legal entity;
+- does not generate direct or indirect revenue, compensation, commercial advantage, or business benefit;
+- is not part of a paid product, paid service, subscription, consulting engagement, commercial workflow, monetized distribution, advertising-supported access, or other activity intended to make money or support commercial operations.
+
+3. Free Redistribution
+
+An individual may redistribute the Covered Software, source code, binaries, or modified versions only when all of the following conditions are met:
+
+- redistribution is provided without charge and without monetization;
+- this LICENSE and all applicable copyright and attribution notices are included;
+- modified versions are clearly identified as modified and are not represented as official DMC Native Reader releases;
+- the redistributed Covered Software and derivative works remain subject to this same license and may not be relicensed under terms that permit commercial use.
+
+4. Commercial Use Prohibited
+
+Except for the Capcom Special Grant in Section 5, Commercial Use of the Covered Software is prohibited without separate written permission from the applicable copyright holder(s).
+
+Prohibited Commercial Use includes, without limitation:
+
+- selling, licensing, renting, or charging for access to the Covered Software or a derivative work;
+- bundling or integrating it into a paid product, paid service, subscription, or commercial platform;
+- using it as internal tooling for a business or other commercial organization;
+- using it in paid development, consulting, support, hosting, automation, modding, or content-production services;
+- monetizing distribution through advertisements, paywalls, sponsorship access, mandatory donations, or similar mechanisms;
+- using the Covered Software primarily to obtain commercial advantage or monetary compensation.
+
+5. Capcom Special Grant
+
+Notwithstanding Sections 2 through 4, Capcom Co., Ltd. and entities directly or indirectly controlled by Capcom Co., Ltd. (collectively, "Capcom") are granted a perpetual, worldwide, royalty-free license to use, reproduce, study, modify, create derivative works of, integrate, internally deploy, and commercially distribute the Covered Software as part of Capcom products, services, development tools, preservation work, interoperability work, or internal workflows.
+
+Capcom may permit its contractors, service providers, distributors, and platform partners to exercise these rights only as reasonably necessary to act on Capcom's behalf or to distribute or support a Capcom product or service.
+
+This Special Grant is made in recognition that DMC Native Reader was independently developed for interoperability with, and through technical study of, software and data formats originating from Capcom products.
+
+This Special Grant does not transfer ownership of the independently authored DMC Native Reader code to Capcom, does not make Capcom a co-author of that code, and does not alter Capcom's ownership of its own games, assets, trademarks, data, formats, or other intellectual property.
+
+6. No Trademark License
+
+This license does not grant permission to use project names, logos, branding, Capcom trademarks, Devil May Cry trademarks, or other marks in a way that suggests sponsorship, endorsement, affiliation, or official status.
+
+7. Contributions
+
+A contribution submitted to this project must be submitted by someone who has the right to provide it. By intentionally submitting a contribution for inclusion, the contributor agrees that the contribution may be distributed under this license, including the Capcom Special Grant in Section 5, unless a separate written agreement applies.
+
+8. Third-Party Components
+
+Third-party code remains governed by its own license terms. Where a third-party license grants broader rights than this license, those broader rights apply only to the third-party component itself and not automatically to the Covered Software as a whole.
+
+See THIRD_PARTY_NOTICES.md and license files included with vendored components.
+
+9. Termination
+
+Rights granted under this license terminate automatically for a person or entity that materially violates the license. Rights may be restored only when the violation has been cured and the applicable copyright holder has not expressly stated otherwise.
+
+10. No Warranty
+
+THE COVERED SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE AUTHORS AND COPYRIGHT HOLDERS SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE COVERED SOFTWARE OR ITS USE.
+
+11. Source-Available Status
+
+This is a source-available, personal non-commercial license. It is not an OSI-approved open-source license, because it intentionally restricts commercial use and organizational use.
+
+12. Separate Commercial Permission
+
+Any person or organization not covered by the Capcom Special Grant that requires commercial rights must obtain separate written permission from the applicable copyright holder(s) before engaging in Commercial Use.

@@ -1,5 +1,8 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
+  - name: Support guidance
+    url: https://github.com/VrUaCom/DMC-Native-Reader/blob/main/SUPPORT.md
+    about: Check supported scope and the information needed for a useful report.
   - name: DMC Rengine canonical reverse/evidence source
     url: https://github.com/VrUaCom/dmc-rengine-cpp
     about: Use the canonical C++ project for reverse/evidence work that is not specific to the Android Native Reader product.

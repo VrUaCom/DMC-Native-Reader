@@ -1,7 +1,7 @@
 ---
 name: Bug report
 title: "[BUG] "
-about: Report a Native Reader crash, routing, parsing or rendering problem
+about: Report a Native Reader crash, routing, parsing, preview or rendering problem
 labels: bug
 ---
 
@@ -9,12 +9,16 @@ labels: bug
 
 - Version / versionCode:
 - Commit (if self-built):
+- Official release or self-built/debug:
 
-## Device
+## Platform / device
 
-- Device model:
-- Android version:
-- File manager / opening path (Android Files, Samsung My Files, other):
+- Platform: Android / iOS / Windows / Web / other
+- Device / machine:
+- OS + version:
+- File-opening path / browser / file manager:
+
+For the stable Android v1.0.0 release, also include the file manager when relevant (Samsung My Files, Android Files, other).
 
 ## Resource
 
@@ -30,13 +34,15 @@ Do not upload copyrighted game archives or executable binaries unless you have r
 
 Choose the closest match:
 
-- [ ] Android routing / `Open with`
+- [ ] platform routing / file opening
 - [ ] family recognition
 - [ ] structural parsing
-- [ ] mesh/rendering
-- [ ] texture inspection
-- [ ] container inspection
+- [ ] 3D rendering / hierarchy
+- [ ] image preview
+- [ ] child-resource navigation
+- [ ] Inspector / evidence presentation
 - [ ] crash / memory-safety issue
+- [ ] build / release / signing
 - [ ] other
 
 ## What happened?
@@ -55,4 +61,4 @@ Describe the expected behavior and why.
 
 ## Additional evidence
 
-If available, include logs, screenshots, parser trace, a minimal legally shareable fixture, or comparison with another DMC Rengine tool.
+If available, include logs, screenshots, parser/session trace, a minimal legally shareable fixture, or comparison with the central DMC Rengine toolchain.

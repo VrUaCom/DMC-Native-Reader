@@ -14,6 +14,7 @@ jobs:
   core:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@v4
 
@@ -55,102 +56,50 @@ jobs:
             test ! -e "$path"
           done
 
-      - name: Build and run four-module registry regression
+      - name: Run native Architecture v2 regressions
+        shell: bash
         run: |
           set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/module_registry_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/formats/dds.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-core-registry-test
+
+          COMMON=(
+            app/src/main/cpp/dmc_resource.cpp
+            app/src/main/cpp/decode_pipeline.cpp
+            app/src/main/cpp/inspection_format.cpp
+            app/src/main/cpp/formats/dds.cpp
+            app/src/main/cpp/adapters/mod_adapter.cpp
+            app/src/main/cpp/adapters/scm_adapter.cpp
+            app/src/main/cpp/modules/module_registry.cpp
+            app/src/main/cpp/modules/module_model.cpp
+            app/src/main/cpp/modules/module_texture.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp
+          )
+
+          FLAGS=(
+            -std=c++20 -Wall -Wextra -Wpedantic
+            -Iapp/src/main/cpp/include
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include
+          )
+
+          g++ "${FLAGS[@]}" app/src/test/native/module_registry_test.cpp "${COMMON[@]}" -o /tmp/dmc-core-registry-test
           /tmp/dmc-core-registry-test
 
-      - name: Build and run MOD SCM pipeline regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/core_model_pipeline_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/formats/dds.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-core-model-pipeline-test
+          g++ "${FLAGS[@]}" app/src/test/native/core_model_pipeline_test.cpp "${COMMON[@]}" -o /tmp/dmc-core-model-pipeline-test
           /tmp/dmc-core-model-pipeline-test
 
-      - name: Build and run DDS PTX validation regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/dds_ptx_v1_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/formats/dds.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-core-dds-ptx-test
+          g++ "${FLAGS[@]}" app/src/test/native/dds_ptx_v1_test.cpp "${COMMON[@]}" -o /tmp/dmc-core-dds-ptx-test
           /tmp/dmc-core-dds-ptx-test
 
-      - name: Build and run MOD spatial adapter regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
+          g++ "${FLAGS[@]}" \
             app/src/test/native/mod_spatial_adapter_test.cpp \
             app/src/main/cpp/adapters/mod_adapter.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
@@ -161,9 +110,6 @@ jobs:
             -o /tmp/dmc-mod-spatial-adapter-test
           /tmp/dmc-mod-spatial-adapter-test
 
-      - name: Build and run RenderScene regression
-        run: |
-          set -euxo pipefail
           g++ -std=c++20 -Wall -Wextra -Wpedantic \
             -Iapp/src/main/cpp/include \
             app/src/test/native/render_scene_test.cpp \
@@ -171,7 +117,7 @@ jobs:
             -o /tmp/dmc-render-scene-test
           /tmp/dmc-render-scene-test
 
-      - name: Build and run capability UI policy regression
+      - name: Run capability UI policy regression
         run: |
           set -euxo pipefail
           rm -rf /tmp/dmc-ui-policy-test
@@ -181,10 +127,10 @@ jobs:
             app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java
           java -cp /tmp/dmc-ui-policy-test com.dmcrengine.nativeviewer.ResourceUiStateTest
 
-      - name: Build APK
+      - name: Build public-source debug APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify APK core-only module surface
+      - name: Verify debug APK core-only surface
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -216,7 +162,11 @@ jobs:
           done
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
-          "$AAPT2" dump badging "$APK" | grep -Fq "package: name='com.dmcrengine.nativereader'"
+          "$AAPT2" dump badging "$APK" | tee /tmp/debug-badging.txt
+          grep -Fq "package: name='com.dmcrengine.nativereader.debug'" /tmp/debug-badging.txt
+          grep -Fq "versionCode='20'" /tmp/debug-badging.txt
+          grep -Fq "versionName='1.0.0-debug'" /tmp/debug-badging.txt
+
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
@@ -228,5 +178,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-core-debug
+          name: dmc-native-reader-public-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

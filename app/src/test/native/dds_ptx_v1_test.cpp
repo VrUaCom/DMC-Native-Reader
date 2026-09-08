@@ -54,6 +54,15 @@ std::vector<std::uint8_t> make_dds(bool dxt5 = false) {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_descriptor_wrapped_dds(bool dxt5 = false) {
+    const auto dds = make_dds(dxt5);
+    std::vector<std::uint8_t> bytes(0x70U + dds.size(), 0U);
+    put_u32(bytes, 0x38U, static_cast<std::uint32_t>(dds.size() - 128U));
+    put_u32(bytes, 0x64U, static_cast<std::uint32_t>(dds.size()));
+    std::memcpy(bytes.data() + 0x70U, dds.data(), dds.size());
+    return bytes;
+}
+
 std::vector<std::uint8_t> make_ptx_zero_final_span() {
     const auto dds = make_dds(false);
     std::vector<std::uint8_t> bytes(0x800U + 0x70U + dds.size(), 0U);
@@ -117,6 +126,7 @@ int main() {
             dds.data(), dds.size());
         assert(result.accepted);
         assert(!result.renderable);
+        assert(result.probe.content_confirmed);
         assert(has_capability(result.capabilities,
                               ResourceCapability::ImagePreview));
         require_red_preview(result.image_preview);
@@ -128,12 +138,51 @@ int main() {
         assert(!capped.image.available());
     }
 
-    // Complete-mip validation remains strict.
-    auto incomplete_mips = make_dds(false);
-    put_u32(incomplete_mips, 28U, 1U);
+    // DMC resources are observed with a bounded partial mip chain. A base-only
+    // DDS is valid when its declared payload is present; zero bytes after the
+    // intrinsic DDS are accepted as carrier/alignment padding.
+    auto base_only = make_dds(false);
+    put_u32(base_only, 28U, 1U);
+    const auto base_only_parsed = dmcresource::formats::dds::parse(
+        std::span<const std::uint8_t>{base_only.data(), base_only.size()});
+    assert(base_only_parsed.ok);
+    assert(base_only_parsed.document.mip_count == 1U);
+    assert(base_only_parsed.document.total_size == 136U);
+
+    const auto base_only_result = run_decode_pipeline(
+        "base_only.dds", base_only.data(), base_only.size());
+    assert(base_only_result.accepted);
+    assert(base_only_result.probe.content_confirmed);
+    require_red_preview(base_only_result.image_preview);
+
+    auto nonzero_trailing = base_only;
+    nonzero_trailing.back() = 1U;
+    assert(!run_decode_pipeline("nonzero_tail.dds", nonzero_trailing.data(),
+                                nonzero_trailing.size()).accepted);
+
+    // Some extracted DMC texture resources retain the canonical 0x70-byte
+    // texture descriptor in front of the DDS. The wrapper is accepted only
+    // when +0x38 payload bytes and +0x64 total DDS bytes match exactly.
+    const auto wrapped = make_descriptor_wrapped_dds(true);
+    const auto wrapped_ok = run_decode_pipeline(
+        "descriptor_wrapped.dds", wrapped.data(), wrapped.size());
+    assert(wrapped_ok.accepted);
+    assert(wrapped_ok.probe.content_confirmed);
+    assert(wrapped_ok.inspection.root.source_span.has_value());
+    assert(wrapped_ok.inspection.root.source_span->offset == 0x70U);
+    require_red_preview(wrapped_ok.image_preview);
+
+    auto bad_wrapped = wrapped;
+    put_u32(bad_wrapped, 0x64U, 1U);
+    assert(!run_decode_pipeline("bad_descriptor.dds", bad_wrapped.data(),
+                                bad_wrapped.size()).accepted);
+
+    // More mip levels than can exist for the declared dimensions remain invalid.
+    auto too_many_mips = make_dds(false);
+    put_u32(too_many_mips, 28U, 4U);
     assert(!dmcresource::formats::dds::parse(
-        std::span<const std::uint8_t>{incomplete_mips.data(),
-                                     incomplete_mips.size()}).ok);
+        std::span<const std::uint8_t>{too_many_mips.data(),
+                                     too_many_mips.size()}).ok);
 
     // Huge dimensions must fail arithmetic before any large allocation/read.
     std::vector<std::uint8_t> huge(128U, 0U);

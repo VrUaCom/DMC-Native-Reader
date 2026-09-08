@@ -11,20 +11,6 @@ android {
         buildConfig = true
     }
 
-    // Public repository test signer used only to keep debug/device-test APKs
-    // upgrade-compatible across CI runs. It is not a production authority.
-    signingConfigs {
-        create("stableDebug") {
-            storeFile = file("../keys/dmc-native-reader-test.jks")
-            storePassword = "android"
-            keyAlias = "dmc-native-reader-test"
-            keyPassword = "android"
-            enableV1Signing = true
-            enableV2Signing = true
-            enableV3Signing = true
-        }
-    }
-
     defaultConfig {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
@@ -45,12 +31,16 @@ android {
     buildTypes {
         debug {
             isJniDebuggable = true
-            signingConfig = signingConfigs.getByName("stableDebug")
+            // Public-source debug builds use Android's ordinary local debug signer
+            // and a distinct package id. They can never update/impersonate the
+            // production application identity.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
         release {
             isMinifyEnabled = false
-            // Intentionally no signingConfig here. Production signing authority
-            // is injected only by the external release-signing workflow.
+            // Intentionally no signingConfig here. Production signing material
+            // is injected only by the protected release workflow/environment.
         }
     }
 

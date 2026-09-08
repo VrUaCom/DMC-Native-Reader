@@ -8,6 +8,7 @@ public final class NativeBridge {
     private NativeBridge() {}
 
     public static native long open(int fd, String filename);
+    public static native String lastOpenError();
     public static native void close(long handle);
     public static native String info(long handle);
 
