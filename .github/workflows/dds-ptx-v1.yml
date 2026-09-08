@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Build DDS/PTX acceptance regression
         run: |
@@ -25,13 +27,14 @@ jobs:
             app/src/main/cpp/dmc_resource.cpp \
             app/src/main/cpp/decode_pipeline.cpp \
             app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/formats/dds.cpp \
             app/src/main/cpp/adapters/mod_adapter.cpp \
             app/src/main/cpp/adapters/scm_adapter.cpp \
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
