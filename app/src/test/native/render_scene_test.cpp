@@ -38,6 +38,7 @@ int main() {
     static_assert(render_flag(RenderFlag::Bounds) == (1U << 2U));
     static_assert(render_flag(RenderFlag::SkinDebug) == (1U << 3U));
     static_assert(render_flag(RenderFlag::Normals) == (1U << 4U));
+    static_assert(render_flag(RenderFlag::UvLayout) == (1U << 5U));
     const RenderFlags combined_flags = render_flag(RenderFlag::Wireframe) |
                                        render_flag(RenderFlag::Hierarchy);
     assert(has_render_flag(combined_flags, RenderFlag::Wireframe));
@@ -217,6 +218,14 @@ int main() {
     assert(image.width == 64);
     assert(image.height == 64);
     assert(image.pixels.size() == 64U * 64U * 4U);
+
+    ViewState uv_view{};
+    uv_view.uv_layout = true;
+    const auto uv_image = render_view(materialized, 64, 64, uv_view);
+    assert(uv_image.width == 64);
+    assert(uv_image.height == 64);
+    assert(uv_image.pixels.size() == image.pixels.size());
+    assert(uv_image.pixels != image.pixels);
 
     const auto overlay_image = render_view(materialized, 64, 64, ViewState{}, &hierarchy);
     assert(overlay_image.width == 64);
