@@ -26,6 +26,7 @@ add_library(dmcviewer SHARED
     vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
     vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
     vendor/dmc-rengine-cpp/src/formats/scm.cpp
+    vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp
 )
 
 target_include_directories(dmcviewer PRIVATE
