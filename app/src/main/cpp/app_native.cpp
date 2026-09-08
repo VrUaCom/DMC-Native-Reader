@@ -19,6 +19,7 @@
 namespace {
 
 constexpr std::size_t kMaxMappedBytes = 512u * 1024u * 1024u;
+thread_local std::string g_last_open_error;
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -192,13 +193,25 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_open(
         JNIEnv* env, jclass, jint fd, jstring filename) {
-    if (fd < 0) return 0;
+    g_last_open_error.clear();
+    if (fd < 0) {
+        g_last_open_error = "Invalid file descriptor";
+        return 0;
+    }
     ReadOnlyMap mapped(fd);
-    if (!mapped.valid()) return 0;
+    if (!mapped.valid()) {
+        g_last_open_error = "Could not map the resource into the bounded read-only input span";
+        return 0;
+    }
 
     const auto name = to_utf8(env, filename);
     auto pipeline = dmcresource::run_decode_pipeline(name, mapped.data(), mapped.size());
-    if (!pipeline.accepted) return 0;
+    if (!pipeline.accepted) {
+        g_last_open_error = pipeline.detail.empty()
+            ? "Resource rejected by the native decode pipeline"
+            : pipeline.detail;
+        return 0;
+    }
 
     try {
         auto session = std::make_unique<Session>();
@@ -212,10 +225,18 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
         session->trace = dmcresource::pipeline_trace(pipeline);
         session->renderable = pipeline.renderable;
         prepare_session_caches(session.get());
+        g_last_open_error.clear();
         return to_handle(session.release());
     } catch (...) {
+        g_last_open_error = "Native session allocation failed";
         return 0;
     }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_lastOpenError(
+        JNIEnv* env, jclass) {
+    return env->NewStringUTF(g_last_open_error.c_str());
 }
 
 extern "C" JNIEXPORT void JNICALL
