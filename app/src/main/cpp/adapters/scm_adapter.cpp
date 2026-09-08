@@ -17,6 +17,7 @@
 #include "dmc_rengine/formats/scm_topology.hpp"
 #include "dmc_rengine/formats/scm_transform.hpp"
 #include "dmcresource/module_support.h"
+#include "dmcresource/uv_projection.h"
 
 namespace dmcresource::adapters {
 namespace {
@@ -112,6 +113,7 @@ InspectionNode make_diagnostic_node(
     if (output == nullptr) return false;
     const std::size_t vertex_count = source.positions.size();
     if (vertex_count != source.normals.size() ||
+        vertex_count != source.uvs.size() ||
         vertex_count != source.colors_topology.size() ||
         vertex_count != source.vertex_count) {
         return false;
@@ -126,6 +128,7 @@ InspectionNode make_diagnostic_node(
     for (const auto& position : source.positions) {
         output->vertices.push_back({position.x, position.y, position.z});
     }
+    if (!uv_projection::append_uv0(source.uvs, &output->uv0)) return false;
 
     if (vertex_count < 3U) return true;
     const auto capacity = (vertex_count - 2U) * 3U;
@@ -449,7 +452,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                 if (!append_local_mesh(source, &primitive.mesh)) {
                     return module_support::reject(
                         probe, module_id,
-                        "SCM canonical local-mesh projection exceeded topology/size limits");
+                        "SCM canonical local-mesh projection exceeded topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
 
@@ -528,6 +531,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
             }
             objects.children.push_back(std::move(object_node));
         }
+        out.modules.push_back({"native.uv-projection", true});
         out.inspection.root.children.push_back(std::move(objects));
 
         if (!parsed.diagnostics.empty()) {
