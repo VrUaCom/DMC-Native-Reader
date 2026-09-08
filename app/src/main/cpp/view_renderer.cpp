@@ -105,6 +105,7 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         Mesh materialized;
         std::size_t total_vertices = 0U;
         std::size_t total_indices = 0U;
+        bool complete_uv0 = !scene.meshes.empty();
         for (const auto& primitive : scene.meshes) {
             if (primitive.mesh.vertices.size() > kMaxSceneVertices - total_vertices ||
                 primitive.mesh.indices.size() > kMaxSceneIndices - total_indices) {
@@ -112,9 +113,11 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
             }
             total_vertices += primitive.mesh.vertices.size();
             total_indices += primitive.mesh.indices.size();
+            if (!primitive.mesh.has_uv0()) complete_uv0 = false;
         }
         materialized.vertices.reserve(total_vertices);
         materialized.indices.reserve(total_indices);
+        if (complete_uv0) materialized.uv0.reserve(total_vertices);
 
         for (const auto& primitive : scene.meshes) {
             const Matrix4* world = nullptr;
@@ -132,6 +135,12 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
                     return false;
                 }
                 materialized.vertices.push_back(projected);
+            }
+            if (complete_uv0) {
+                materialized.uv0.insert(
+                    materialized.uv0.end(),
+                    primitive.mesh.uv0.begin(),
+                    primitive.mesh.uv0.end());
             }
 
             if (base > static_cast<std::size_t>(
