@@ -39,7 +39,10 @@ std::vector<std::uint8_t> make_dds(bool dxt5 = false,
         128U + block_bytes * static_cast<std::size_t>(mip_count), 0U);
     bytes[0] = 'D'; bytes[1] = 'D'; bytes[2] = 'S'; bytes[3] = ' ';
     put_u32(bytes, 4U, 124U);
-    put_u32(bytes, 8U, 0x00081007U);
+    // DDSD_MIPMAPCOUNT must be present because this fixture explicitly carries
+    // mip_count levels. Without it the portable reader correctly treats the
+    // image as one mip and parse_exact_dds rejects the remaining payload bytes.
+    put_u32(bytes, 8U, 0x000A1007U);
     put_u32(bytes, 12U, 4U);
     put_u32(bytes, 16U, 4U);
     put_u32(bytes, 20U, static_cast<std::uint32_t>(block_bytes));
@@ -175,8 +178,6 @@ int main() {
         assert(!capped.image.available());
     }
 
-    // Reader-side DDS accepts bounded partial mip chains; this is intentionally
-    // broader than the strict descriptor-backed DMC3 authoring profile.
     const auto partial_mips = make_dds(false, 1U);
     const auto partial_parse = dds_bc::parse(as_bytes(partial_mips));
     assert(partial_parse.ok());
@@ -185,8 +186,6 @@ int main() {
     assert(partial_result.accepted);
     require_red_preview(partial_result.image_preview);
 
-    // Descriptor-wrapped DDS uses the canonical framing parser, then the same
-    // portable DDS decoder; platform code does not know descriptor offsets.
     const auto wrapped = make_wrapped_dds(false);
     const auto wrapped_result = run_decode_pipeline(
         "wrapped.dds", wrapped.data(), wrapped.size());
@@ -194,7 +193,6 @@ int main() {
     require_red_preview(wrapped_result.image_preview);
     assert(wrapped_result.inspection.root.children.size() == 1U);
 
-    // Huge dimensions must fail arithmetic/bounds before any large allocation.
     std::vector<std::uint8_t> huge(128U, 0U);
     huge[0] = 'D'; huge[1] = 'D'; huge[2] = 'S'; huge[3] = ' ';
     put_u32(huge, 4U, 124U);
