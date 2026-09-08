@@ -19,6 +19,7 @@ public final class ResourceUiState {
     private static final long CAP_COLLISION = 1L << 11;
     private static final long CAP_ADJACENCY = 1L << 12;
     private static final long CAP_TRANSFORM_SELECTORS = 1L << 13;
+    private static final long CAP_UV_COORDINATES = 1L << 14;
 
     public final long capabilities;
     public final boolean canRender;
@@ -35,6 +36,7 @@ public final class ResourceUiState {
     public final boolean hasCollision;
     public final boolean hasAdjacency;
     public final boolean hasTransformSelectors;
+    public final boolean hasUvCoordinates;
 
     private ResourceUiState(long capabilities) {
         this.capabilities = capabilities;
@@ -52,6 +54,7 @@ public final class ResourceUiState {
         hasCollision = has(capabilities, CAP_COLLISION);
         hasAdjacency = has(capabilities, CAP_ADJACENCY);
         hasTransformSelectors = has(capabilities, CAP_TRANSFORM_SELECTORS);
+        hasUvCoordinates = has(capabilities, CAP_UV_COORDINATES);
     }
 
     public static ResourceUiState fromCapabilities(long capabilities) {
