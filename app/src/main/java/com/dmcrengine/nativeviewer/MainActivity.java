@@ -50,6 +50,7 @@ public final class MainActivity extends Activity {
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
+    private Button uvButton;
     private Button infoButton;
 
     private long session;
@@ -134,16 +135,21 @@ public final class MainActivity extends Activity {
         parentButton.setVisibility(navigation.isEmpty() ? View.GONE : View.VISIBLE);
         setToolAvailable(resetButton, hasSession && uiState.canRender);
         syncToggleButton(wireButton,
-                hasSession && uiState.canWireframe,
+                hasSession && uiState.canWireframe && !renderView.isUvLayoutVisible(),
                 renderView.isWireframe());
 
         final boolean hierarchyAvailable = hasSession
                 && uiState.canShowHierarchy
-                && spatialHierarchyAvailable;
+                && spatialHierarchyAvailable
+                && !renderView.isUvLayoutVisible();
         renderView.setHierarchyAvailable(hierarchyAvailable);
         syncToggleButton(hierarchyButton,
                 hierarchyAvailable,
                 renderView.isHierarchyVisible());
+
+        syncToggleButton(uvButton,
+                hasSession && uiState.canRender && uiState.hasUvCoordinates,
+                renderView.isUvLayoutVisible());
 
         setToolAvailable(infoButton,
                 hasSession ? uiState.canInspect : !infoText.isEmpty());
@@ -246,6 +252,13 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, hierarchyButton);
+
+        uvButton = makeSquareButton("UV", "UV layout", 14f);
+        uvButton.setOnClickListener(v -> {
+            renderView.toggleUvLayout();
+            applyResourceUiState();
+        });
+        addToolButton(bar, uvButton);
 
         infoButton = makeSquareButton("\u2139", "Resource information", 22f);
         infoButton.setOnClickListener(v -> showInfoDialog());
