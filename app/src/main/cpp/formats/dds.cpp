@@ -197,8 +197,8 @@ ParseResult parse(std::span<const std::uint8_t> bytes) noexcept {
     if (width == 0U || height == 0U || mip_count == 0U) {
         return reject("DDS dimensions/mip count are invalid");
     }
-    if (mip_count != full_mip_count(width, height)) {
-        return reject("DDS mip chain is not complete for DMC3 HD reader contract");
+    if (mip_count > full_mip_count(width, height)) {
+        return reject("DDS mip count exceeds the valid chain for its dimensions");
     }
 
     Compression compression{};
