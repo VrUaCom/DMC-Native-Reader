@@ -1,4 +1,4 @@
-name: DMC Native Reader v1 hardening
+name: DMC Native Reader v1.x hardening
 
 on:
   pull_request:
@@ -62,7 +62,7 @@ jobs:
       - name: Build debug and unsigned release APKs
         run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
 
-      - name: Verify v1.0.0 artifacts
+      - name: Verify 1.1.0-dev artifacts
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -77,8 +77,8 @@ jobs:
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='20'" "$BADGING"
-            grep -q "versionName='1.0.0'" "$BADGING"
+            grep -q "versionCode='21'" "$BADGING"
+            grep -q "versionName='1.1.0-dev'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
 
@@ -101,19 +101,19 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0.0-debug
+          name: dmc-native-reader-v1.1.0-dev-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0.0-unsigned-release
+          name: dmc-native-reader-v1.1.0-dev-unsigned-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0.0-hardening-evidence
+          name: dmc-native-reader-v1.1.0-dev-hardening-evidence
           path: |
             /tmp/debug-badging.txt
             /tmp/release-badging.txt
