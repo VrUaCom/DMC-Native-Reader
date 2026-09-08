@@ -1,18 +1,18 @@
 # Changelog
 
-## 1.1.0-dev — Canonical ReaderCore / texture architecture
+## 1.0.1 — ReaderCore DDS/PTX bugfix release
 
-**Status:** active development line after the released 1.0.0 baseline.
+**Status:** active bugfix release on the 1.0.x line. This is not a new 1.1 feature milestone.
 
 ### Architecture
 
-- Native Reader now consumes the canonical DMC Rengine reader slice instead of maintaining duplicate format knowledge in the Android product;
+- Native Reader consumes the canonical DMC Rengine reader slice instead of maintaining duplicate format knowledge in the Android product;
 - introduced the `DMCRengine::ReaderCore` link boundary for the minimal cross-platform C++20 read-side used by product shells;
 - pinned `dmc-rengine-cpp` as the canonical source authority rather than manually copying and enumerating parser implementation files;
 - kept Android-specific work as projection into generic `InspectionDocument`, `ChildResource`, `ImagePreview`, and render contracts;
 - preserved the rule that format algorithms belong to DMC Rengine while orchestration belongs to Spider and platform presentation belongs to Native Reader.
 
-### DDS / PTX
+### DDS / PTX bugfix
 
 - standalone bounded DXT1/DXT5 DDS parsing and base-mip RGBA8 preview now use the shared Rengine `codecs::dds_bc` codec;
 - standalone DDS may use a bounded partial mip chain without weakening the strict DMC3 authoring/evidence profile;
@@ -23,16 +23,17 @@
 
 ### Build / validation
 
-- version line advanced to `versionCode 21` / `versionName 1.1.0-dev` while keeping the existing package identity;
+- bugfix build uses `versionCode 21` / `versionName 1.0.1` with the existing package identity;
 - Rengine upstream build for the portable DDS codec and ReaderCore slice is green;
-- Native Reader PR validation remains gated by GitHub-hosted runner availability before promotion from draft.
+- Native Reader PR validation remains gated by GitHub-hosted runner availability before promotion from draft;
+- production 1.0.1 must reuse the same release signing authority as 1.0.0 so Android accepts it as an update.
 
-### Next
+### Remaining release gates
 
 - finish Native Reader host + Android gates on the canonical ReaderCore path;
-- genericize the Spider C++20 execution kernel without moving DDS/PTX/MOD/SCM algorithms into Spider;
-- connect the proven generic Spider execution layer to the portable session boundary;
-- keep future Android/iOS/Windows/Web shells on the same canonical ReaderCore contracts.
+- build the 1.0.1 APK;
+- device-test SCM, MOD, standalone DDS, wrapped DDS, and PTX on Android;
+- sign the production APK with the existing v1 release authority.
 
 ## 1.0.0-debug-baseline — Native Reader v1
 
