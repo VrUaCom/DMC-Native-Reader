@@ -20,6 +20,11 @@ dmcresource::Mesh triangle(float z = 0.0F) {
         {0.0F, 1.0F, z},
     };
     mesh.indices = {0U, 1U, 2U};
+    mesh.uv0 = {
+        {0.0F, 0.0F},
+        {1.0F, 0.0F},
+        {0.0F, 1.0F},
+    };
     return mesh;
 }
 
@@ -64,6 +69,14 @@ int main() {
     assert(materialize_render_scene(scene, &materialized));
     assert(materialized.vertices.size() == 6U);
     assert(materialized.indices.size() == 6U);
+    assert(materialized.has_uv0());
+    assert(materialized.uv0.size() == 6U);
+    assert(near(materialized.uv0[0].u, 0.0F));
+    assert(near(materialized.uv0[0].v, 0.0F));
+    assert(near(materialized.uv0[1].u, 1.0F));
+    assert(near(materialized.uv0[2].v, 1.0F));
+    assert(near(materialized.uv0[3].u, 0.0F));
+    assert(near(materialized.uv0[4].u, 1.0F));
 
     assert(near(materialized.vertices[0].x, 10.0F));
     assert(near(materialized.vertices[0].y, 20.0F));
@@ -102,6 +115,7 @@ int main() {
     Mesh rotated_mesh;
     assert(materialize_render_scene(rotated, &rotated_mesh));
     assert(rotated_mesh.vertices.size() == 1U);
+    assert(rotated_mesh.uv0.empty());
     assert(near(rotated_mesh.vertices[0].x, 5.0F));
     assert(near(rotated_mesh.vertices[0].y, 7.0F));
     assert(near(rotated_mesh.vertices[0].z, 7.0F));
