@@ -60,29 +60,132 @@ ProbeResult child_dds_probe() noexcept {
             "DATA_CONFIRMED", "image/vnd-ms.dds"};
 }
 
+struct LocatedDds final {
+    bool ok{};
+    formats::dds::Document document;
+    std::span<const std::uint8_t> bytes;
+    std::size_t source_offset{};
+    std::size_t trailing_padding{};
+    bool descriptor_wrapped{};
+    std::string diagnostic;
+};
+
+LocatedDds locate_top_level_dds(const std::uint8_t* bytes,
+                                std::size_t size) noexcept {
+    LocatedDds out;
+    if (bytes == nullptr) {
+        out.diagnostic = "DDS rejected: null input";
+        return out;
+    }
+
+    const BinaryReader reader(bytes, size);
+    const auto direct_span = std::span<const std::uint8_t>{bytes, size};
+    const auto direct = formats::dds::parse(direct_span);
+    if (direct.ok) {
+        const auto end = static_cast<std::size_t>(direct.document.total_size);
+        if (!module_support::zero_range(reader, end, size)) {
+            out.diagnostic = "DDS rejected: non-zero bytes follow the bounded DDS payload";
+            return out;
+        }
+        out.ok = true;
+        out.document = direct.document;
+        out.bytes = std::span<const std::uint8_t>{bytes, end};
+        out.trailing_padding = size - end;
+        return out;
+    }
+
+    // DMC texture extraction can expose the canonical 0x70-byte texture
+    // descriptor together with the DDS payload. The same descriptor shape is
+    // already validated inside PTX: +0x38 is payload bytes and +0x64 is total
+    // DDS bytes. Accept it only when both fields agree exactly with the parsed
+    // embedded DDS and all bytes after that DDS are zero padding.
+    if (size >= kPtxDescriptorBytes + 128U &&
+        module_support::magic4(reader, kPtxDescriptorBytes,
+                               'D', 'D', 'S', ' ')) {
+        const auto embedded_span = std::span<const std::uint8_t>{
+            bytes + kPtxDescriptorBytes, size - kPtxDescriptorBytes};
+        const auto embedded = formats::dds::parse(embedded_span);
+        if (!embedded.ok) {
+            out.diagnostic = "DDS descriptor carrier rejected: " + embedded.diagnostic;
+            return out;
+        }
+
+        std::uint32_t descriptor_payload = 0U;
+        std::uint32_t descriptor_dds_size = 0U;
+        if (!reader.read_le(0x38U, &descriptor_payload) ||
+            !reader.read_le(0x64U, &descriptor_dds_size) ||
+            descriptor_payload != embedded.document.payload_size ||
+            descriptor_dds_size != embedded.document.total_size) {
+            out.diagnostic =
+                "DDS descriptor carrier rejected: descriptor sizes disagree with embedded DDS";
+            return out;
+        }
+
+        const auto dds_end = kPtxDescriptorBytes +
+            static_cast<std::size_t>(embedded.document.total_size);
+        if (dds_end > size || !module_support::zero_range(reader, dds_end, size)) {
+            out.diagnostic =
+                "DDS descriptor carrier rejected: non-zero bytes follow embedded DDS";
+            return out;
+        }
+
+        out.ok = true;
+        out.document = embedded.document;
+        out.bytes = std::span<const std::uint8_t>{
+            bytes + kPtxDescriptorBytes,
+            static_cast<std::size_t>(embedded.document.total_size)};
+        out.source_offset = kPtxDescriptorBytes;
+        out.trailing_padding = size - dds_end;
+        out.descriptor_wrapped = true;
+        return out;
+    }
+
+    out.diagnostic = direct.diagnostic.empty()
+        ? "DDS rejected: no valid DDS payload found"
+        : "DDS rejected: " + direct.diagnostic;
+    return out;
+}
+
 PipelineResult run_dds(std::string_view,
                        const std::uint8_t* bytes,
                        std::size_t size,
                        const ProbeResult& probe,
                        const char* module_id) noexcept {
-    if (bytes == nullptr) {
-        return module_support::reject(probe, module_id, "DDS rejected: null input");
+    const auto located = locate_top_level_dds(bytes, size);
+    if (!located.ok) {
+        return module_support::reject(probe, module_id, located.diagnostic);
     }
 
-    const auto span = std::span<const std::uint8_t>{bytes, size};
-    const auto parsed = formats::dds::parse(span);
-    if (!parsed.ok || parsed.document.total_size != size) {
-        return module_support::reject(
-            probe, module_id,
-            "DDS rejected: expected a bounded complete DXT1/DXT5 full mip chain");
+    auto confirmed_probe = probe;
+    confirmed_probe.content_confirmed = true;
+    confirmed_probe.evidence = "DATA_CONFIRMED";
+
+    auto detail = dds_detail(located.document);
+    if (located.descriptor_wrapped) detail += " carrier=texture-descriptor+dds";
+    if (located.trailing_padding != 0U) {
+        detail += " zeroPadding=" + std::to_string(located.trailing_padding);
     }
 
-    auto out = structural_pipeline(probe, module_id, dds_detail(parsed.document));
+    auto out = structural_pipeline(confirmed_probe, module_id, detail);
     out.inspection.format = "DDS";
-    out.inspection.root = dds_inspection_node(parsed.document, "dds", "DDS", 0U);
+    out.inspection.root = dds_inspection_node(
+        located.document, "dds", "DDS", located.source_offset);
     out.inspection.root.kind = InspectionKind::Document;
+    if (located.descriptor_wrapped) {
+        out.inspection.root.properties.push_back({
+            "Carrier", "0x70-byte DMC texture descriptor",
+            EvidenceLevel::StructuralConfirmed});
+        out.inspection.root.properties.push_back({
+            "DDSOffset", std::to_string(located.source_offset),
+            EvidenceLevel::StructuralConfirmed});
+    }
+    if (located.trailing_padding != 0U) {
+        out.inspection.root.properties.push_back({
+            "TrailingZeroPadding", std::to_string(located.trailing_padding),
+            EvidenceLevel::StructuralConfirmed});
+    }
 
-    const auto preview = formats::dds::decode_preview(span, parsed.document);
+    const auto preview = formats::dds::decode_preview(located.bytes, located.document);
     if (preview.ok) {
         out.image_preview = std::move(preview.image);
         out.modules.push_back({"formats.dds.base-mip-preview", true});
