@@ -97,6 +97,68 @@ void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
     }
 }
 
+void render_uv_layout(const Mesh& mesh, const ViewState& view,
+                      RgbaImage* image) {
+    if (image == nullptr || !mesh.has_uv0() || mesh.indices.size() < 3U) return;
+
+    // Always keep the canonical 0..1 tile visible while expanding to cover
+    // observed coordinates outside that tile (valid for REGION_REPEAT assets).
+    float min_u = 0.0F;
+    float min_v = 0.0F;
+    float max_u = 1.0F;
+    float max_v = 1.0F;
+    for (const auto& uv : mesh.uv0) {
+        if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) return;
+        min_u = std::min(min_u, uv.u);
+        min_v = std::min(min_v, uv.v);
+        max_u = std::max(max_u, uv.u);
+        max_v = std::max(max_v, uv.v);
+    }
+
+    const float span_u = std::max(1.0e-5F, max_u - min_u);
+    const float span_v = std::max(1.0e-5F, max_v - min_v);
+    const float padding = 0.08F * static_cast<float>(
+        std::min(image->width, image->height));
+    const float usable_w = std::max(1.0F, static_cast<float>(image->width) - 2.0F * padding);
+    const float usable_h = std::max(1.0F, static_cast<float>(image->height) - 2.0F * padding);
+    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float scale = std::min(usable_w / span_u, usable_h / span_v) * zoom;
+    const float center_u = (min_u + max_u) * 0.5F;
+    const float center_v = (min_v + max_v) * 0.5F;
+
+    const auto map_uv = [&](float u, float v) -> P2 {
+        return {
+            static_cast<float>(image->width) * 0.5F + (u - center_u) * scale,
+            static_cast<float>(image->height) * 0.5F - (v - center_v) * scale,
+            0.0F,
+        };
+    };
+
+    // Reference tile first, then actual UV topology on top.
+    const P2 uv00 = map_uv(0.0F, 0.0F);
+    const P2 uv10 = map_uv(1.0F, 0.0F);
+    const P2 uv11 = map_uv(1.0F, 1.0F);
+    const P2 uv01 = map_uv(0.0F, 1.0F);
+    line(*image, uv00, uv10, 80);
+    line(*image, uv10, uv11, 80);
+    line(*image, uv11, uv01, 80);
+    line(*image, uv01, uv00, 80);
+
+    std::vector<P2> points;
+    points.reserve(mesh.uv0.size());
+    for (const auto& uv : mesh.uv0) points.push_back(map_uv(uv.u, uv.v));
+
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t + 0U];
+        const auto ib = mesh.indices[t + 1U];
+        const auto ic = mesh.indices[t + 2U];
+        if (ia >= points.size() || ib >= points.size() || ic >= points.size()) continue;
+        line(*image, points[ia], points[ib]);
+        line(*image, points[ib], points[ic]);
+        line(*image, points[ic], points[ia]);
+    }
+}
+
 }  // namespace
 
 bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
@@ -242,6 +304,11 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         image.pixels[i + 3] = 255;
     }
     if (mesh.vertices.empty() || mesh.indices.size() < 3) return image;
+
+    if (view.uv_layout) {
+        render_uv_layout(mesh, view, &image);
+        return image;
+    }
 
     Vec3 center{};
     for (const auto& v : mesh.vertices) {
