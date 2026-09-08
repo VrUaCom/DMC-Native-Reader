@@ -1,0 +1,3 @@
+[submodule "app/src/main/cpp/vendor/dmc-rengine-cpp"]
+	path = app/src/main/cpp/vendor/dmc-rengine-cpp
+	url = https://github.com/VrUaCom/dmc-rengine-cpp.git
