@@ -1,5 +1,6 @@
 #include "dmcresource/native_module.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -10,6 +11,7 @@
 
 #include "dmc_rengine/codecs/dds_bc.hpp"
 #include "dmc_rengine/profiles/dmc3/texture_slot_framing.hpp"
+#include "dmc_rengine/spider/native_executor.hpp"
 #include "dmcresource/child_resource.h"
 #include "dmcresource/module_support.h"
 
@@ -18,9 +20,13 @@ namespace {
 
 namespace dds_bc = dmc::rengine::codecs::dds_bc;
 namespace dmc3 = dmc::rengine::profiles::dmc3;
+namespace spider = dmc::rengine::spider;
 
 constexpr std::uint64_t kMaxPtxGalleryPreviewPixels =
     4ULL * 1024ULL * 1024ULL;
+
+constexpr spider::NativeOperationId kTextureFramePtx = 1U;
+constexpr spider::NativeOperationId kTextureProject = 2U;
 
 [[nodiscard]] std::span<const std::byte> as_bytes(
     const std::uint8_t* bytes,
@@ -179,8 +185,7 @@ PipelineResult run_wrapped_dds(
     return out;
 }
 
-PipelineResult run_dds(
-    std::string_view,
+PipelineResult run_direct_dds(
     const std::uint8_t* bytes,
     std::size_t size,
     const ProbeResult& probe,
@@ -207,29 +212,11 @@ PipelineResult run_dds(
         "DDS rejected: neither a bounded standalone DXT DDS nor canonical descriptor-wrapped DDS");
 }
 
-PipelineResult run_ptx(
-    std::string_view,
-    const std::uint8_t* bytes,
-    std::size_t size,
+PipelineResult run_framed_ptx(
+    std::span<const std::byte> source,
+    const dmc3::TextureSlotFramingResult& framing,
     const ProbeResult& probe,
     const char* module_id) noexcept {
-    if (bytes == nullptr) {
-        return module_support::reject(
-            probe, module_id, "PTX rejected: null input");
-    }
-
-    const auto source = as_bytes(bytes, size);
-    const auto framing = dmc3::TextureSlotFramingParser::parse(source);
-    if (!framing.ok() || framing.document.kind !=
-            dmc3::TextureSlotFramingKind::texture_bundle) {
-        std::string detail = "PTX rejected by canonical texture-slot framing";
-        if (!framing.detail.empty()) {
-            detail += ": ";
-            detail += framing.detail;
-        }
-        return module_support::reject(probe, module_id, std::move(detail));
-    }
-
     InspectionNode textures;
     textures.id = "textures";
     textures.title = "Textures";
@@ -338,7 +325,7 @@ PipelineResult run_ptx(
     out.inspection.root.id = "ptx";
     out.inspection.root.title = "PTX";
     out.inspection.root.kind = InspectionKind::Document;
-    out.inspection.root.source_span = SourceSpan{0U, size};
+    out.inspection.root.source_span = SourceSpan{0U, source.size()};
     out.inspection.root.properties.push_back({
         "TextureCount", std::to_string(framing.document.textures.size()),
         EvidenceLevel::StructuralConfirmed});
@@ -350,38 +337,174 @@ PipelineResult run_ptx(
     return out;
 }
 
-PipelineResult run_dds_module(
-    const NativeModule& module,
-    std::string_view filename,
-    const std::uint8_t* bytes,
-    std::size_t size,
-    const ProbeResult& probe) noexcept {
-    return run_dds(filename, bytes, size, probe, module.id);
+struct TextureExecutionState final {
+    const std::uint8_t* bytes{};
+    std::size_t size{};
+    const ProbeResult* probe{};
+    const char* module_id{};
+    dmc3::TextureSlotFramingResult framing{};
+    PipelineResult result{};
+};
+
+bool frame_ptx_operation(void* raw, std::uint32_t) noexcept {
+    auto* state = static_cast<TextureExecutionState*>(raw);
+    if (state == nullptr || state->probe == nullptr || state->module_id == nullptr) {
+        return false;
+    }
+    if (state->bytes == nullptr) {
+        state->result = module_support::reject(
+            *state->probe, state->module_id, "PTX rejected: null input");
+        return false;
+    }
+
+    const auto source = as_bytes(state->bytes, state->size);
+    state->framing = dmc3::TextureSlotFramingParser::parse(source);
+    if (!state->framing.ok() || state->framing.document.kind !=
+            dmc3::TextureSlotFramingKind::texture_bundle) {
+        std::string detail = "PTX rejected by canonical texture-slot framing";
+        if (!state->framing.detail.empty()) {
+            detail += ": ";
+            detail += state->framing.detail;
+        }
+        state->result = module_support::reject(
+            *state->probe, state->module_id, std::move(detail));
+        return false;
+    }
+    return true;
 }
 
-PipelineResult run_ptx_module(
+bool project_texture_operation(void* raw, std::uint32_t) noexcept {
+    auto* state = static_cast<TextureExecutionState*>(raw);
+    if (state == nullptr || state->probe == nullptr || state->module_id == nullptr) {
+        return false;
+    }
+
+    if (state->probe->format == Format::Dds) {
+        state->result = run_direct_dds(
+            state->bytes, state->size, *state->probe, state->module_id);
+        return state->result.accepted;
+    }
+
+    if (state->probe->format == Format::Ptx) {
+        if (state->bytes == nullptr || !state->framing.ok() ||
+            state->framing.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
+            state->result = module_support::reject(
+                *state->probe, state->module_id,
+                "PTX rejected: Spider framing dependency is unavailable");
+            return false;
+        }
+        state->result = run_framed_ptx(
+            as_bytes(state->bytes, state->size), state->framing,
+            *state->probe, state->module_id);
+        return state->result.accepted;
+    }
+
+    state->result = module_support::reject(
+        *state->probe, state->module_id,
+        "Texture pipeline rejected: unsupported route");
+    return false;
+}
+
+const spider::NativePlan& direct_dds_plan() {
+    static const spider::NativePlan plan = [] {
+        spider::NativePlan out;
+        out.instructions.push_back(spider::NativeInstruction{
+            .operation = kTextureProject,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 0U,
+            .domain = spider::ExecutionDomain::cpu,
+        });
+        return out;
+    }();
+    return plan;
+}
+
+const spider::NativePlan& ptx_plan() {
+    static const spider::NativePlan plan = [] {
+        spider::NativePlan out;
+        out.dependencies.push_back(0U);
+        out.instructions.push_back(spider::NativeInstruction{
+            .operation = kTextureFramePtx,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 0U,
+            .domain = spider::ExecutionDomain::cpu,
+        });
+        out.instructions.push_back(spider::NativeInstruction{
+            .operation = kTextureProject,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 1U,
+            .domain = spider::ExecutionDomain::cpu,
+        });
+        return out;
+    }();
+    return plan;
+}
+
+PipelineResult run_texture_module(
     const NativeModule& module,
-    std::string_view filename,
+    std::string_view,
     const std::uint8_t* bytes,
     std::size_t size,
     const ProbeResult& probe) noexcept {
-    return run_ptx(filename, bytes, size, probe, module.id);
+    TextureExecutionState state{
+        .bytes = bytes,
+        .size = size,
+        .probe = &probe,
+        .module_id = module.id,
+    };
+
+    static const std::array bindings{
+        spider::NativeOperationBinding{
+            .operation = kTextureFramePtx,
+            .execute = &frame_ptx_operation,
+        },
+        spider::NativeOperationBinding{
+            .operation = kTextureProject,
+            .execute = &project_texture_operation,
+        },
+    };
+
+    const spider::NativePlan* plan = nullptr;
+    if (module.format == Format::Dds) {
+        plan = &direct_dds_plan();
+    } else if (module.format == Format::Ptx) {
+        plan = &ptx_plan();
+    }
+
+    if (plan == nullptr) {
+        return module_support::reject(
+            probe, module.id, "Texture pipeline rejected: invalid module route");
+    }
+
+    const auto report = spider::execute_native_plan(*plan, bindings, &state);
+    if (!report.ok()) {
+        if (!state.result.detail.empty()) return state.result;
+        std::string detail = "Spider texture execution failed: ";
+        detail += spider::to_string(report.status);
+        return module_support::reject(probe, module.id, std::move(detail));
+    }
+
+    state.result.modules.push_back({"spider.native-executor", true});
+    return state.result;
 }
 
 } // namespace
 
-NativeModule dds_module() noexcept {
+NativeModule texture_module(Format format) noexcept {
+    if (format == Format::Ptx) {
+        const auto caps = capability(ResourceCapability::Inspection) |
+            ResourceCapability::ChildResources;
+        return {"formats.texture.spider-reader", "PTX", Format::Ptx,
+                ModuleKind::Structural, false, run_texture_module, caps};
+    }
+
     const auto caps = capability(ResourceCapability::Inspection) |
         ResourceCapability::ImagePreview;
-    return {"formats.dds.dmc3-reader", "DDS", Format::Dds,
-            ModuleKind::Structural, false, run_dds_module, caps};
-}
-
-NativeModule ptx_module() noexcept {
-    const auto caps = capability(ResourceCapability::Inspection) |
-        ResourceCapability::ChildResources;
-    return {"formats.ptx.bundle-reader", "PTX", Format::Ptx,
-            ModuleKind::Structural, false, run_ptx_module, caps};
+    return {"formats.texture.spider-reader", "DDS", Format::Dds,
+            ModuleKind::Structural, false, run_texture_module, caps};
 }
 
 } // namespace dmcresource
