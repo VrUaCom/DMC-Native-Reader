@@ -14,6 +14,7 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/module_support.h"
+#include "dmcresource/uv_projection.h"
 
 namespace dmcresource::adapters {
 namespace {
@@ -58,7 +59,10 @@ namespace CanonicalWorld = dmc::rengine::formats::mod::world_transform;
                                                      Mesh* out) {
     if (out == nullptr) return false;
     const std::size_t vc = source.positions.size();
-    if (vc != source.normals.size() || vc != source.control_words.size()) return false;
+    if (vc != source.normals.size() || vc != source.uvs.size() ||
+        vc != source.control_words.size()) {
+        return false;
+    }
     if (vc > kMaxVertices || out->vertices.size() > kMaxVertices - vc) return false;
 
     const std::size_t base = out->vertices.size();
@@ -66,6 +70,7 @@ namespace CanonicalWorld = dmc::rengine::formats::mod::world_transform;
     for (const auto& p : source.positions) {
         out->vertices.push_back({p.x, p.y, p.z});
     }
+    if (!uv_projection::append_uv0(source.uvs, &out->uv0)) return false;
 
     if (vc < 3U) return true;
     const auto triangle_capacity = (vc - 2U) * 3U;
@@ -519,7 +524,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                 if (!append_legacy_compatible_topology(source, &primitive.mesh)) {
                     return module_support::reject(
                         probe, module_id,
-                        "MOD canonical projection rejected mesh topology/size limits");
+                        "MOD canonical projection rejected mesh topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
 
@@ -561,6 +566,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
             models.children.push_back(std::move(object_node));
         }
 
+        out.modules.push_back({"native.uv-projection", true});
         out.inspection.root.children.push_back(std::move(models));
         const bool spatial_hierarchy =
             project_hierarchy(parsed.document, &out.scene, &out.inspection.root);
