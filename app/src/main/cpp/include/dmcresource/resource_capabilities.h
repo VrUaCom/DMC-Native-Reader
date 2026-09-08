@@ -19,6 +19,7 @@ enum class ResourceCapability : std::uint64_t {
     Collision        = 1ULL << 11U,
     Adjacency        = 1ULL << 12U,
     TransformSelectors = 1ULL << 13U,
+    UvCoordinates    = 1ULL << 14U,
 };
 
 using ResourceCapabilities = std::uint64_t;
