@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   production-release:
-    if: github.head_ref == 'release/v1.0.0'
+    if: github.head_ref == 'release/v1.0.1'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -42,39 +42,41 @@ jobs:
       - name: Build unsigned release APK
         run: gradle --no-daemon :app:assembleRelease
 
-      - name: Generate production release authority outside Git history
+      - name: Restore existing v1 production signing authority
         shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.DMC_NATIVE_READER_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.DMC_NATIVE_READER_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.DMC_NATIVE_READER_RELEASE_KEY_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.DMC_NATIVE_READER_RELEASE_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          umask 077
-          PASS="$(openssl rand -base64 48 | tr -d '\n')"
-          printf '%s\n' "$PASS" > /tmp/release-key-passphrase.txt
-          printf '%s\n' "$PASS" > /tmp/release-key-passphrase-key.txt
-          unset PASS
-          keytool -genkeypair \
+          test -n "$RELEASE_KEYSTORE_BASE64"
+          test -n "$RELEASE_STORE_PASSWORD"
+          test -n "$RELEASE_KEY_PASSWORD"
+          test -n "$RELEASE_KEY_ALIAS"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > /tmp/dmc-native-reader-release-v1.jks
+          printf '%s\n' "$RELEASE_STORE_PASSWORD" > /tmp/release-store-passphrase.txt
+          printf '%s\n' "$RELEASE_KEY_PASSWORD" > /tmp/release-key-passphrase.txt
+          printf '%s\n' "$RELEASE_KEY_ALIAS" > /tmp/release-key-alias.txt
+          keytool -list \
             -keystore /tmp/dmc-native-reader-release-v1.jks \
-            -storetype JKS \
-            -storepass:file /tmp/release-key-passphrase.txt \
-            -keypass:file /tmp/release-key-passphrase-key.txt \
-            -alias dmc-native-reader-release-v1 \
-            -keyalg RSA \
-            -keysize 4096 \
-            -sigalg SHA256withRSA \
-            -validity 10000 \
-            -dname "CN=DMC Native Reader Release, OU=Release Signing, O=VrUaCom, L=Madrid, ST=Madrid, C=ES"
+            -storepass:file /tmp/release-store-passphrase.txt \
+            -alias "$RELEASE_KEY_ALIAS" >/dev/null
 
-      - name: Sign v1.0.0 release APK
+      - name: Sign v1.0.1 release APK
         shell: bash
         run: |
           set -euo pipefail
           UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
-          SIGNED="/tmp/DMC-Native-Reader-v1.0.0.apk"
+          SIGNED="/tmp/DMC-Native-Reader-v1.0.1.apk"
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          ALIAS="$(cat /tmp/release-key-alias.txt)"
           "$APKSIGNER" sign \
             --ks /tmp/dmc-native-reader-release-v1.jks \
-            --ks-key-alias dmc-native-reader-release-v1 \
-            --ks-pass file:/tmp/release-key-passphrase.txt \
-            --key-pass file:/tmp/release-key-passphrase-key.txt \
+            --ks-key-alias "$ALIAS" \
+            --ks-pass file:/tmp/release-store-passphrase.txt \
+            --key-pass file:/tmp/release-key-passphrase.txt \
             --v1-signing-enabled true \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
@@ -85,15 +87,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="/tmp/DMC-Native-Reader-v1.0.0.apk"
+          APK="/tmp/DMC-Native-Reader-v1.0.1.apk"
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
 
           unzip -t "$APK"
           "$AAPT2" dump badging "$APK" | tee /tmp/release-badging.txt
           grep -q "package: name='com.dmcrengine.nativereader'" /tmp/release-badging.txt
-          grep -q "versionCode='20'" /tmp/release-badging.txt
-          grep -q "versionName='1.0.0'" /tmp/release-badging.txt
+          grep -q "versionCode='21'" /tmp/release-badging.txt
+          grep -q "versionName='1.0.1'" /tmp/release-badging.txt
           grep -q "application-label:'DMC Native Reader'" /tmp/release-badging.txt
 
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/release-signing.txt
@@ -111,44 +113,20 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.ptx.bundle-reader'
 
           sha256sum "$APK" | tee /tmp/release-apk.sha256
-          keytool -list -v \
-            -keystore /tmp/dmc-native-reader-release-v1.jks \
-            -storepass:file /tmp/release-key-passphrase.txt \
-            -alias dmc-native-reader-release-v1 > /tmp/release-certificate.txt
-
-          cat > /tmp/KEY_BACKUP_README.txt <<'EOF'
-          DMC Native Reader v1 production signing backup.
-
-          KEEP THIS KEYSTORE AND PASSPHRASE PRIVATE AND BACKED UP.
-          Future v1.x APK updates for com.dmcrengine.nativereader must be signed
-          with this same authority (or a formally configured Android key lineage).
-          Do not commit these files to Git.
-          EOF
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DMC-Native-Reader-v1.0.0-production
-          path: /tmp/DMC-Native-Reader-v1.0.0.apk
+          name: DMC-Native-Reader-v1.0.1-production
+          path: /tmp/DMC-Native-Reader-v1.0.1.apk
           if-no-files-found: error
           retention-days: 90
 
       - uses: actions/upload-artifact@v4
         with:
-          name: DMC-Native-Reader-v1.0.0-release-evidence
+          name: DMC-Native-Reader-v1.0.1-release-evidence
           path: |
             /tmp/release-badging.txt
             /tmp/release-signing.txt
             /tmp/release-apk.sha256
-            /tmp/release-certificate.txt
           if-no-files-found: error
           retention-days: 90
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: DMC-Native-Reader-v1.0.0-production-key-backup
-          path: |
-            /tmp/dmc-native-reader-release-v1.jks
-            /tmp/release-key-passphrase.txt
-            /tmp/KEY_BACKUP_README.txt
-          if-no-files-found: error
-          retention-days: 1
