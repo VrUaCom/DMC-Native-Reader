@@ -73,6 +73,7 @@ jobs:
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
@@ -104,6 +105,7 @@ jobs:
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
@@ -135,6 +137,7 @@ jobs:
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
@@ -199,8 +202,9 @@ jobs:
 
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'formats.dds.dmc3-reader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'formats.ptx.bundle-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.texture.spider-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'spider.native-executor'
+          strings /tmp/libdmcviewer.so | grep -Fq 'native.uv-projection'
 
           for legacy in \
             'formats.hits.collision-reader' \
