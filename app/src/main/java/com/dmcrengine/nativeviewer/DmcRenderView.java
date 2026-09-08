@@ -13,6 +13,7 @@ import android.view.View;
 public final class DmcRenderView extends View {
     private static final int RENDER_WIREFRAME = 1 << 0;
     private static final int RENDER_HIERARCHY = 1 << 1;
+    private static final int RENDER_UV_LAYOUT = 1 << 5;
 
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final ScaleGestureDetector scaleDetector;
@@ -122,17 +123,18 @@ public final class DmcRenderView extends View {
     }
 
     public void toggleWireframe() {
-        if (staticImagePreview) return;
+        if (staticImagePreview || isUvLayoutVisible()) return;
         renderFlags ^= RENDER_WIREFRAME;
         renderNow();
     }
 
     public boolean isWireframe() {
-        return !staticImagePreview && (renderFlags & RENDER_WIREFRAME) != 0;
+        return !staticImagePreview && !isUvLayoutVisible() &&
+                (renderFlags & RENDER_WIREFRAME) != 0;
     }
 
     public void toggleHierarchy() {
-        if (staticImagePreview || !hierarchyAvailable) return;
+        if (staticImagePreview || isUvLayoutVisible() || !hierarchyAvailable) return;
         renderFlags ^= RENDER_HIERARCHY;
         renderNow();
     }
@@ -140,15 +142,28 @@ public final class DmcRenderView extends View {
     public void setHierarchyAvailable(boolean available) {
         final boolean hierarchyWasRequested = (renderFlags & RENDER_HIERARCHY) != 0;
         hierarchyAvailable = !staticImagePreview && available;
-        if (!hierarchyAvailable && hierarchyWasRequested) {
+        if ((!hierarchyAvailable || isUvLayoutVisible()) && hierarchyWasRequested) {
             renderFlags &= ~RENDER_HIERARCHY;
             renderNow();
         }
     }
 
     public boolean isHierarchyVisible() {
-        return !staticImagePreview && hierarchyAvailable &&
+        return !staticImagePreview && !isUvLayoutVisible() && hierarchyAvailable &&
                 (renderFlags & RENDER_HIERARCHY) != 0;
+    }
+
+    public void toggleUvLayout() {
+        if (staticImagePreview) return;
+        renderFlags ^= RENDER_UV_LAYOUT;
+        if (isUvLayoutVisible()) {
+            renderFlags &= ~RENDER_HIERARCHY;
+        }
+        renderNow();
+    }
+
+    public boolean isUvLayoutVisible() {
+        return !staticImagePreview && (renderFlags & RENDER_UV_LAYOUT) != 0;
     }
 
     private int renderWidth() {
@@ -236,6 +251,7 @@ public final class DmcRenderView extends View {
                 lastY = event.getY();
                 return true;
             case MotionEvent.ACTION_MOVE:
+                if (isUvLayoutVisible()) return true;
                 if (!scaleDetector.isInProgress()) {
                     float dx = event.getX() - lastX;
                     float dy = event.getY() - lastY;
