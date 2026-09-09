@@ -11,16 +11,10 @@ public final class NativeBridge {
     public static native void close(long handle);
     public static native String info(long handle);
 
-    // Architecture v2 generic resource-session APIs. UI code consumes these
-    // projections without reparsing format bytes in Java.
-    public static native long capabilities(long handle);
-
-    // Spider Black Widow owns application/UI decisions that must not be
-    // reconstructed in Java from diagnostics or format-specific conditions.
+    // Spider Black Widow is the single Android application/UI-state contract.
+    // Java must not reconstruct policy from raw capabilities or diagnostics.
     public static native long blackWidowState(long handle);
 
-    public static native boolean hierarchyAvailable(long handle);
-    public static native boolean imagePreviewAvailable(long handle);
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
     public static native int[] imagePreview(long handle);
