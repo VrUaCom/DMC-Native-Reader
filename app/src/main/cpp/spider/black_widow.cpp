@@ -1,23 +1,9 @@
 #include "dmcresource/spider/black_widow.h"
 
-#include <algorithm>
-#include <limits>
+#include "dmcresource/texture_companion.h"
 
 namespace dmcresource::spider::black_widow {
 namespace {
-
-constexpr std::uint32_t kNoTextureSlot =
-    std::numeric_limits<std::uint32_t>::max();
-
-[[nodiscard]] bool has_usable_texture_slot_mapping(
-    const Mesh& mesh,
-    std::span<const std::uint32_t> slots) noexcept {
-    if (mesh.indices.size() < 3U || mesh.indices.size() % 3U != 0U) return false;
-    if (slots.size() != mesh.indices.size() / 3U) return false;
-    return std::any_of(slots.begin(), slots.end(), [](std::uint32_t slot) {
-        return slot != kNoTextureSlot;
-    });
-}
 
 inline void set_if(StateBits* state, StateFlag flag, bool condition) noexcept {
     if (state != nullptr && condition) *state |= state_flag(flag);
@@ -65,8 +51,10 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
         has_child_resources && !can_render && !can_preview_image;
     const bool texture_companion_attachable = can_show_uv &&
         has_texture_bindings &&
-        has_usable_texture_slot_mapping(
-            *session.render_mesh, session.triangle_texture_slots);
+        texture_companion::can_attach({
+            .mesh = session.render_mesh,
+            .triangle_texture_slots = session.triangle_texture_slots,
+        });
 
     set_if(&state, StateFlag::CanRender, can_render);
     set_if(&state, StateFlag::CanWireframe, can_wireframe);
