@@ -6,8 +6,8 @@ namespace dmcresource::spider::crusader {
 
 // Product-facing Native Reader name for compact C++ module orchestration.
 // This is deliberately a zero-overhead facade over the pinned ReaderCore
-// generic native executor. No executor, plan, dependency graph, or binding
-// implementation is duplicated in Native Reader.
+// generic native executor. No executor, plan, dependency graph, binding, or
+// execution-domain implementation is duplicated in Native Reader.
 using OperationId = dmc::rengine::spider::NativeOperationId;
 using OperationFn = dmc::rengine::spider::NativeOperationFn;
 using Instruction = dmc::rengine::spider::NativeInstruction;
@@ -15,6 +15,7 @@ using Plan = dmc::rengine::spider::NativePlan;
 using OperationBinding = dmc::rengine::spider::NativeOperationBinding;
 using ExecutionStatus = dmc::rengine::spider::NativeExecutionStatus;
 using ExecutionReport = dmc::rengine::spider::NativeExecutionReport;
+using Domain = dmc::rengine::spider::ExecutionDomain;
 
 [[nodiscard]] inline ExecutionReport execute(
     const Plan& plan,
