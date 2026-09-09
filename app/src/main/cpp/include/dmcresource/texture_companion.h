@@ -25,14 +25,15 @@ struct AttachmentResult final {
     std::size_t source_texture_count{};
 };
 
-// Platform-neutral attachment gate shared by Black Widow/JNI tests. The
-// renderer and Java shell never need PTX-specific slot rules.
+// Platform-neutral attachment gate shared by Black Widow and platform bridges.
+// The renderer and Java shell never need PTX/DDS-specific slot rules.
 [[nodiscard]] bool can_attach(const ModelTextureView& model) noexcept;
 
 // Attach a complete PTX companion to a neutral model texture-slot projection.
-// PTX/DDS parsing remains delegated to the registered Native Reader texture
-// pipeline (Crusader + canonical framing/codecs). This module owns only
-// companion matching, required-slot validation and attachment result state.
+// Physical PTX/DDS parsing and on-demand base-mip decode are delegated to the
+// reusable TextureSet module. This layer owns only model-required slot matching
+// and the resulting attachment state; it does not depend on gallery previews or
+// Android presentation policy.
 [[nodiscard]] AttachmentResult attach_ptx(
     std::string_view filename,
     const std::uint8_t* bytes,
