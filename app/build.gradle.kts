@@ -11,7 +11,7 @@ android {
         buildConfig = true
     }
 
-    // Native Reader 1.0.1 recovery policy: package JNI libraries in the
+    // Native Reader 1.0 recovery policy: package JNI libraries in the
     // install-compatible legacy mode so Package Manager extracts them instead
     // of requiring mmap-ready ZIP alignment from a manually recovered shell.
     // This is a packaging decision only; native C++ module ownership and ABI
@@ -41,7 +41,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 21
-        versionName = "1.0.1"
+        versionName = "1.0"
 
         externalNativeBuild {
             cmake {
