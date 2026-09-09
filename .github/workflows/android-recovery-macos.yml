@@ -1,0 +1,79 @@
+name: DMC Native Reader recovery APK macOS
+
+on:
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-apk:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.5.0"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and CMake
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Assemble install-compatible debug APK
+        shell: bash
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify APK package, signer and JNI payload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          unzip -t "$APK"
+
+          AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          "$AAPT2" dump badging "$APK" | tee /tmp/badging.txt
+          grep -Fq "package: name='com.dmcrengine.nativereader' versionCode='21' versionName='1.0'" /tmp/badging.txt
+          grep -Fq "native-code: 'arm64-v8a'" /tmp/badging.txt
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/signing.txt
+          grep -Fq 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/signing.txt
+
+          unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
+          test -s /tmp/libdmcviewer.so
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'formats.texture.spider-reader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'spider.native-executor'
+          strings /tmp/libdmcviewer.so | grep -Fq 'native.uv-projection'
+
+          # Legacy JNI packaging must leave the native library extractable at
+          # install time instead of relying on mmap-ready in-APK placement.
+          unzip -lv "$APK" | grep -F 'lib/arm64-v8a/libdmcviewer.so' | tee /tmp/jni-entry.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmc-native-reader-1.0-recovery-macos
+          path: app/build/outputs/apk/debug/app-debug.apk
