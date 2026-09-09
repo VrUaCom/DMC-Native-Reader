@@ -58,6 +58,7 @@ public final class MainActivity extends Activity {
     private long session;
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
     private ResourceUiState uiState = ResourceUiState.empty();
+    private BlackWidowState blackWidowState = BlackWidowState.empty();
     private boolean spatialHierarchyAvailable;
     private String infoText = "";
 
@@ -111,17 +112,18 @@ public final class MainActivity extends Activity {
         button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
     }
 
+    private void refreshBlackWidowState() {
+        blackWidowState = session == 0
+                ? BlackWidowState.empty()
+                : BlackWidowState.fromNative(NativeBridge.blackWidowState(session));
+    }
+
     private boolean canAttachPtx() {
-        return session != 0
-                && uiState.canRender
-                && uiState.hasUvCoordinates
-                && uiState.hasTextureBindings;
+        return session != 0 && blackWidowState.canAttachTextureCompanion;
     }
 
     private boolean hasAttachedPtx() {
-        if (!canAttachPtx()) return false;
-        String detail = NativeBridge.textureAttachmentInfo(session);
-        return detail != null && detail.startsWith("PTX companion attached:");
+        return canAttachPtx() && blackWidowState.textureCompanionAttached;
     }
 
     private void applyPrimaryPresentation() {
@@ -151,6 +153,8 @@ public final class MainActivity extends Activity {
         // returns to the parent resource; at the top level it leaves the viewer.
         parentButton.setVisibility(View.VISIBLE);
 
+        // Spider Black Widow owns whether a companion action is available and
+        // whether it is active. Android only projects the returned typed state.
         final boolean ptxAvailable = canAttachPtx();
         ptxButton.setVisibility(ptxAvailable ? View.VISIBLE : View.GONE);
         syncToggleButton(ptxButton, ptxAvailable, hasAttachedPtx());
@@ -400,6 +404,7 @@ public final class MainActivity extends Activity {
     private void showIdleStatus() {
         titleView.setText("DMC Native Reader");
         uiState = ResourceUiState.empty();
+        blackWidowState = BlackWidowState.empty();
         spatialHierarchyAvailable = false;
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
@@ -435,6 +440,7 @@ public final class MainActivity extends Activity {
         titleView.setText(name);
         renderView.setSession(session);
         uiState = ResourceUiState.fromCapabilities(NativeBridge.capabilities(session));
+        refreshBlackWidowState();
         spatialHierarchyAvailable = NativeBridge.hierarchyAvailable(session);
         rebuildInfo(name);
         applyResourceUiState();
@@ -496,6 +502,9 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        // Refresh typed application state after the native action. Diagnostic
+        // text below is presentation only and never controls the button state.
+        refreshBlackWidowState();
         final String diagnostic = NativeBridge.textureAttachmentInfo(session);
         if (attached) {
             renderView.renderNow();
@@ -555,6 +564,7 @@ public final class MainActivity extends Activity {
         renderView.setSession(0);
         childBrowser.setSession(0);
         uiState = ResourceUiState.empty();
+        blackWidowState = BlackWidowState.empty();
         spatialHierarchyAvailable = false;
 
         if (session != 0) {
