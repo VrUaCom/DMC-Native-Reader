@@ -1,6 +1,6 @@
 #include "dmcresource/spider/black_widow.h"
 
-#include "dmcresource/texture_companion.h"
+#include "dmcresource/model_texture_binding.h"
 
 namespace dmcresource::spider::black_widow {
 namespace {
@@ -51,10 +51,8 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
         has_child_resources && !can_render && !can_preview_image;
     const bool texture_companion_attachable = can_show_uv &&
         has_texture_bindings &&
-        texture_companion::can_attach({
-            .mesh = session.render_mesh,
-            .triangle_texture_slots = session.triangle_texture_slots,
-        });
+        model_texture_binding::can_attach_texture_companion(
+            *session.render_mesh, session.triangle_texture_slots);
 
     set_if(&state, StateFlag::CanRender, can_render);
     set_if(&state, StateFlag::CanWireframe, can_wireframe);
