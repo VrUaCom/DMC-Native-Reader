@@ -21,6 +21,12 @@ public final class NativeBridge {
     public static native int[] imagePreview(long handle);
     public static native String inspection(long handle);
 
+    // Companion-resource orchestration. Java only supplies a file descriptor;
+    // native Spider/framing/DDS modules validate PTX and bind its decoded
+    // texture slots to an already-open neutral RenderScene.
+    public static native boolean attachPtx(long handle, int fd, String filename);
+    public static native String textureAttachmentInfo(long handle);
+
     // Generic nested-resource browser contract. Parent modules publish typed
     // children; Android does not know whether the parent is PTX/PAC/PNST/etc.
     public static native int childResourceCount(long handle);
