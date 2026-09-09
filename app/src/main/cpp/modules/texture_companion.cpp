@@ -1,13 +1,23 @@
 #include "dmcresource/texture_companion.h"
 
+#include <span>
 #include <sstream>
 #include <utility>
 
-#include "dmcresource/decode_pipeline.h"
-#include "dmcresource/dmc_resource.h"
 #include "dmcresource/model_texture_binding.h"
+#include "dmcresource/texture_set.h"
 
 namespace dmcresource::texture_companion {
+namespace {
+
+[[nodiscard]] std::span<const std::byte> as_bytes(
+    const std::uint8_t* bytes,
+    std::size_t size) noexcept {
+    if (bytes == nullptr) return {};
+    return std::as_bytes(std::span<const std::uint8_t>{bytes, size});
+}
+
+}  // namespace
 
 bool can_attach(const ModelTextureView& model) noexcept {
     if (model.mesh == nullptr) return false;
@@ -40,47 +50,53 @@ AttachmentResult attach_ptx(
         return out;
     }
 
-    auto pipeline = run_decode_pipeline(filename, bytes, size);
-    if (!pipeline.accepted || pipeline.probe.format != Format::Ptx) {
-        out.detail =
-            "PTX companion rejected: selected file did not pass the Native Reader PTX pipeline";
+    const auto source = as_bytes(bytes, size);
+    const auto set = texture_set::parse_ptx(source);
+    if (!set.ok() || set.kind != texture_set::Kind::ptx_bundle) {
+        out.detail = set.detail.empty()
+            ? "PTX companion rejected: selected file did not pass TextureSet validation"
+            : set.detail;
         return out;
     }
 
     out.required_slot_count = required.slots.size();
-    out.source_texture_count = pipeline.children.size();
+    out.source_texture_count = set.slots.size();
 
     try {
         std::vector<ImagePreview> textures(
             static_cast<std::size_t>(required.max_slot) + 1U);
-        for (const auto slot : required.slots) {
-            const auto index = static_cast<std::size_t>(slot);
-            if (index >= pipeline.children.size()) {
+        for (const auto slot_index : required.slots) {
+            const auto* slot = texture_set::find_slot(set, slot_index);
+            if (slot == nullptr) {
                 std::ostringstream detail;
                 detail << "PTX companion rejected: model requests texture slot "
-                       << slot << " but PTX exposes only "
-                       << pipeline.children.size() << " texture entries";
+                       << slot_index << " but PTX does not expose that slot";
                 out.detail = detail.str();
                 return out;
             }
 
-            auto& child = pipeline.children[index];
-            if (!child.image_preview.available()) {
+            std::string decode_detail;
+            ImagePreview decoded;
+            if (!texture_set::decode_base_mip(
+                    source, *slot, &decoded, &decode_detail)) {
                 std::ostringstream detail;
-                detail << "PTX companion rejected: texture slot " << slot
-                       << " has no decoded base-mip image";
-                if (!child.detail.empty()) detail << " | " << child.detail;
+                detail << "PTX companion rejected: texture slot " << slot_index
+                       << " could not decode base mip";
+                if (!decode_detail.empty()) detail << " | " << decode_detail;
                 out.detail = detail.str();
                 return out;
             }
-            textures[index] = std::move(child.image_preview);
+            textures[static_cast<std::size_t>(slot_index)] = std::move(decoded);
         }
 
         std::ostringstream detail;
         detail << "PTX companion attached: " << filename
                << " | requiredSlots=" << required.slots.size()
-               << " | bundleTextures=" << pipeline.children.size()
-               << " | route=Crusader/PTX->DDS->UV";
+               << " | bundleTextures=" << set.slots.size()
+               << " | route=TextureSet/Crusader/PTX->DDS->UV";
+        if (set.ptx_aux_compat_used) {
+            detail << " | auxCompat=retail-DXT1";
+        }
 
         out.textures = std::move(textures);
         out.detail = detail.str();
