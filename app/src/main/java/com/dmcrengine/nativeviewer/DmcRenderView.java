@@ -46,9 +46,9 @@ public final class DmcRenderView extends View {
 
     private boolean canUseStaticImagePreview() {
         if (session == 0) return false;
-        final ResourceUiState state = ResourceUiState.fromCapabilities(
-                NativeBridge.capabilities(session));
-        return state.canPreviewImage && NativeBridge.imagePreviewAvailable(session);
+        final BlackWidowState state = BlackWidowState.fromNative(
+                NativeBridge.blackWidowState(session));
+        return state.canPreviewImage;
     }
 
     private void clearStaticImagePreview() {
