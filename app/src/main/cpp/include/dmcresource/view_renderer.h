@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "dmcresource/image_preview.h"
 #include "dmcresource/mesh.h"
 #include "dmcresource/render_scene.h"
 
@@ -58,8 +59,9 @@ struct HierarchyOverlay final {
 
 // Materialize local-space scene primitives into one world-space render mesh
 // using the explicit MeshPrimitive -> RenderNode binding. Unbound primitives
-// remain in local space. Complete UV0 channels are preserved unchanged because
-// world transforms affect geometry, not texture coordinates.
+// remain in local space. Complete UV0 channels and per-primitive texture slots
+// are preserved unchanged because world transforms affect geometry, not
+// material coordinates/bindings.
 [[nodiscard]] bool materialize_render_scene(const RenderScene& scene,
                                             Mesh* out) noexcept;
 
@@ -70,11 +72,13 @@ struct HierarchyOverlay final {
 [[nodiscard]] bool materialize_hierarchy_overlay(const RenderScene& scene,
                                                  HierarchyOverlay* out) noexcept;
 
-// One generic CPU renderer. Normal mode consumes positions/indices; UV Layout
-// mode consumes only the neutral UV0 channel + topology and therefore remains
-// independent of MOD/SCM parser details.
+// One generic CPU renderer. Normal mode consumes positions/indices and may use
+// a frontend-neutral companion texture set indexed by canonical texture slot.
+// UV Layout mode consumes only UV0 + topology and remains independent of
+// MOD/SCM parser details.
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,
-                      const HierarchyOverlay* hierarchy = nullptr);
+                      const HierarchyOverlay* hierarchy = nullptr,
+                      const std::vector<ImagePreview>* textures = nullptr);
 
 }  // namespace dmcresource
