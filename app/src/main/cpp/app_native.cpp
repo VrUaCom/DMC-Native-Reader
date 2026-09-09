@@ -14,6 +14,7 @@
 
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -86,6 +87,7 @@ struct Session {
     // texture module + Spider route rather than Java or the renderer.
     std::vector<dmcresource::ImagePreview> attached_textures;
     std::string texture_attachment_detail;
+    bool texture_companion_attached{};
 
     std::string detail;
     std::string trace;
@@ -230,6 +232,18 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
     return !required->empty();
 }
 
+[[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
+        const Session* session) noexcept {
+    if (session == nullptr) return 0U;
+    return dmcresource::spider::black_widow::evaluate_model_session({
+        .capabilities = session->capabilities,
+        .renderable = session->renderable,
+        .render_mesh = &session->render_mesh,
+        .triangle_texture_slots = session->render_triangle_texture_slots,
+        .texture_companion_attached = session->texture_companion_attached,
+    });
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -316,6 +330,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_capabilities(
     const Session* session = from_handle(handle);
     if (session == nullptr) return 0;
     return static_cast<jlong>(session->capabilities);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_blackWidowState(
+        JNIEnv*, jclass, jlong handle) {
+    return static_cast<jlong>(black_widow_state(from_handle(handle)));
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -422,6 +442,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
         }
 
         session->attached_textures = std::move(textures);
+        session->texture_companion_attached = true;
         std::ostringstream detail;
         detail << "PTX companion attached: " << name
                << " | requiredSlots=" << required_slots.size()
