@@ -53,7 +53,9 @@ jobs:
             app/src/main/cpp/modules/module_catalog.cpp \
             app/src/main/cpp/include/dmcresource/decode.h \
             app/src/main/cpp/include/dmcresource/hits_decode.h \
-            app/src/main/cpp/include/dmcresource/text_decode.h; do
+            app/src/main/cpp/include/dmcresource/text_decode.h \
+            app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
+            app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java; do
             test ! -e "$path"
           done
 
@@ -72,6 +74,7 @@ jobs:
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/modules/texture_set.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
@@ -104,6 +107,7 @@ jobs:
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/modules/texture_set.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
@@ -121,7 +125,7 @@ jobs:
             -o /tmp/dmc-core-model-pipeline-test
           /tmp/dmc-core-model-pipeline-test
 
-      - name: Build and run DDS PTX validation regression
+      - name: Build and run DDS PTX TextureSet regression
         run: |
           set -euxo pipefail
           g++ -std=c++20 -Wall -Wextra -Wpedantic \
@@ -136,6 +140,7 @@ jobs:
             app/src/main/cpp/modules/module_registry.cpp \
             app/src/main/cpp/modules/module_model.cpp \
             app/src/main/cpp/modules/module_texture.cpp \
+            app/src/main/cpp/modules/texture_set.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
@@ -152,6 +157,17 @@ jobs:
             app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
             -o /tmp/dmc-core-dds-ptx-test
           /tmp/dmc-core-dds-ptx-test
+
+      - name: Build and run Black Widow state regression
+        run: |
+          set -euxo pipefail
+          g++ -std=c++20 -Wall -Wextra -Wpedantic \
+            -Iapp/src/main/cpp/include \
+            app/src/test/native/black_widow_state_test.cpp \
+            app/src/main/cpp/modules/model_texture_binding.cpp \
+            app/src/main/cpp/spider/black_widow.cpp \
+            -o /tmp/dmc-black-widow-test
+          /tmp/dmc-black-widow-test
 
       - name: Build and run MOD spatial adapter regression
         run: |
@@ -179,20 +195,10 @@ jobs:
             -o /tmp/dmc-render-scene-test
           /tmp/dmc-render-scene-test
 
-      - name: Build and run capability UI policy regression
-        run: |
-          set -euxo pipefail
-          rm -rf /tmp/dmc-ui-policy-test
-          mkdir -p /tmp/dmc-ui-policy-test
-          javac -d /tmp/dmc-ui-policy-test \
-            app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
-            app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java
-          java -cp /tmp/dmc-ui-policy-test com.dmcrengine.nativeviewer.ResourceUiStateTest
-
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify APK core-only module surface
+      - name: Verify APK modular core surface
         run: |
           set -euxo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -203,7 +209,8 @@ jobs:
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
           strings /tmp/libdmcviewer.so | grep -Fq 'formats.texture.spider-reader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'spider.native-executor'
+          strings /tmp/libdmcviewer.so | grep -Fq 'spider.crusader'
+          strings /tmp/libdmcviewer.so | grep -Fq 'native.texture-set'
           strings /tmp/libdmcviewer.so | grep -Fq 'native.uv-projection'
 
           for legacy in \
@@ -226,6 +233,7 @@ jobs:
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" | grep -Fq "package: name='com.dmcrengine.nativereader'"
+          "$AAPT2" dump badging "$APK" | grep -Fq "versionCode='23' versionName='1.0'"
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
