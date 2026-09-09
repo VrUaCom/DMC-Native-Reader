@@ -17,6 +17,7 @@ add_library(dmcviewer SHARED
     inspection_format.cpp
     adapters/mod_adapter.cpp
     adapters/scm_adapter.cpp
+    modules/model_texture_binding.cpp
     modules/module_registry.cpp
     modules/module_model.cpp
     modules/module_texture.cpp
