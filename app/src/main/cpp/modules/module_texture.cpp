@@ -12,23 +12,23 @@
 
 #include "dmc_rengine/codecs/dds_bc.hpp"
 #include "dmc_rengine/profiles/dmc3/texture_slot_framing.hpp"
-#include "dmc_rengine/spider/native_executor.hpp"
 #include "dmcresource/child_resource.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/spider/crusader.h"
 
 namespace dmcresource {
 namespace {
 
 namespace dds_bc = dmc::rengine::codecs::dds_bc;
 namespace dmc3 = dmc::rengine::profiles::dmc3;
-namespace spider = dmc::rengine::spider;
+namespace crusader = dmcresource::spider::crusader;
 
 constexpr std::uint64_t kMaxPtxGalleryPreviewPixels =
     4ULL * 1024ULL * 1024ULL;
 
-constexpr spider::NativeOperationId kTextureFramePtx = 1U;
-constexpr spider::NativeOperationId kTextureProject = 2U;
+constexpr crusader::OperationId kTextureFramePtx = 1U;
+constexpr crusader::OperationId kTextureProject = 2U;
 
 [[nodiscard]] std::span<const std::byte> as_bytes(
     const std::uint8_t* bytes,
@@ -394,7 +394,7 @@ bool project_texture_operation(void* raw, std::uint32_t) noexcept {
             state->framing.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
             state->result = module_support::reject(
                 *state->probe, state->module_id,
-                "PTX rejected: Spider framing dependency is unavailable");
+                "PTX rejected: Crusader framing dependency is unavailable");
             return false;
         }
         state->result = run_framed_ptx(
@@ -414,38 +414,38 @@ bool project_texture_operation(void* raw, std::uint32_t) noexcept {
     return false;
 }
 
-const spider::NativePlan& direct_dds_plan() {
-    static const spider::NativePlan plan = [] {
-        spider::NativePlan out;
-        out.instructions.push_back(spider::NativeInstruction{
+const crusader::Plan& direct_dds_plan() {
+    static const crusader::Plan plan = [] {
+        crusader::Plan out;
+        out.instructions.push_back(crusader::Instruction{
             .operation = kTextureProject,
             .operand = 0U,
             .dependency_begin = 0U,
             .dependency_count = 0U,
-            .domain = spider::ExecutionDomain::cpu,
+            .domain = crusader::Domain::cpu,
         });
         return out;
     }();
     return plan;
 }
 
-const spider::NativePlan& ptx_plan() {
-    static const spider::NativePlan plan = [] {
-        spider::NativePlan out;
+const crusader::Plan& ptx_plan() {
+    static const crusader::Plan plan = [] {
+        crusader::Plan out;
         out.dependencies.push_back(0U);
-        out.instructions.push_back(spider::NativeInstruction{
+        out.instructions.push_back(crusader::Instruction{
             .operation = kTextureFramePtx,
             .operand = 0U,
             .dependency_begin = 0U,
             .dependency_count = 0U,
-            .domain = spider::ExecutionDomain::cpu,
+            .domain = crusader::Domain::cpu,
         });
-        out.instructions.push_back(spider::NativeInstruction{
+        out.instructions.push_back(crusader::Instruction{
             .operation = kTextureProject,
             .operand = 0U,
             .dependency_begin = 0U,
             .dependency_count = 1U,
-            .domain = spider::ExecutionDomain::cpu,
+            .domain = crusader::Domain::cpu,
         });
         return out;
     }();
@@ -466,17 +466,17 @@ PipelineResult run_texture_module(
     };
 
     static const std::array bindings{
-        spider::NativeOperationBinding{
+        crusader::OperationBinding{
             .operation = kTextureFramePtx,
             .execute = &frame_ptx_operation,
         },
-        spider::NativeOperationBinding{
+        crusader::OperationBinding{
             .operation = kTextureProject,
             .execute = &project_texture_operation,
         },
     };
 
-    const spider::NativePlan* plan = nullptr;
+    const crusader::Plan* plan = nullptr;
     if (module.format == Format::Dds) {
         plan = &direct_dds_plan();
     } else if (module.format == Format::Ptx) {
@@ -488,15 +488,15 @@ PipelineResult run_texture_module(
             probe, module.id, "Texture pipeline rejected: invalid module route");
     }
 
-    const auto report = spider::execute_native_plan(*plan, bindings, &state);
+    const auto report = crusader::execute(*plan, bindings, &state);
     if (!report.ok()) {
         if (!state.result.detail.empty()) return state.result;
-        std::string detail = "Spider texture execution failed: ";
-        detail += spider::to_string(report.status);
+        std::string detail = "Crusader texture execution failed: ";
+        detail += crusader::to_string(report.status);
         return module_support::reject(probe, module.id, std::move(detail));
     }
 
-    state.result.modules.push_back({"spider.native-executor", true});
+    state.result.modules.push_back({"spider.crusader", true});
     return state.result;
 }
 
