@@ -42,10 +42,6 @@ struct HierarchyEdge final {
     std::uint32_t child{};
 };
 
-// Format-agnostic spatial projection of RenderScene nodes. It is materialized
-// once when a resource opens and reused by the UI renderer. A format adapter
-// only needs to publish valid RenderNode world matrices; no format knowledge is
-// allowed in the overlay renderer.
 struct HierarchyOverlay final {
     std::vector<Vec3> points;
     std::vector<RenderNodeKind> kinds;
@@ -57,28 +53,23 @@ struct HierarchyOverlay final {
     }
 };
 
-// Materialize local-space scene primitives into one world-space render mesh
-// using the explicit MeshPrimitive -> RenderNode binding. Unbound primitives
-// remain in local space. Complete UV0 channels and per-primitive texture slots
-// are preserved unchanged because world transforms affect geometry, not
-// material coordinates/bindings.
 [[nodiscard]] bool materialize_render_scene(const RenderScene& scene,
                                             Mesh* out) noexcept;
 
-// Extract world-space node positions and parent-child edges from RenderScene.
-// Returns false only for malformed node/matrix data. A valid but non-spatial
-// hierarchy (for example hierarchy metadata without decoded transforms) returns
-// true with overlay.available() == false, so the UI can remain evidence-safe.
+// Material projection stays separate from Mesh ABI. One value per flattened
+// triangle, derived from RenderScene::TextureBinding. UINT32_MAX means no
+// canonical texture binding for that triangle.
+[[nodiscard]] bool materialize_triangle_texture_slots(
+    const RenderScene& scene,
+    std::vector<std::uint32_t>* out) noexcept;
+
 [[nodiscard]] bool materialize_hierarchy_overlay(const RenderScene& scene,
                                                  HierarchyOverlay* out) noexcept;
 
-// One generic CPU renderer. Normal mode consumes positions/indices and may use
-// a frontend-neutral companion texture set indexed by canonical texture slot.
-// UV Layout mode consumes only UV0 + topology and remains independent of
-// MOD/SCM parser details.
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,
                       const HierarchyOverlay* hierarchy = nullptr,
+                      const std::vector<std::uint32_t>* triangle_texture_slots = nullptr,
                       const std::vector<ImagePreview>* textures = nullptr);
 
 }  // namespace dmcresource
