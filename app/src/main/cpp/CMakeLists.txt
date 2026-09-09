@@ -22,6 +22,7 @@ add_library(dmcviewer SHARED
     modules/module_model.cpp
     modules/module_texture.cpp
     modules/texture_companion.cpp
+    modules/texture_set.cpp
     spider/black_widow.cpp
     view_renderer.cpp
 )
