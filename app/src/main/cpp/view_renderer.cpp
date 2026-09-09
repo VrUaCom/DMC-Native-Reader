@@ -71,6 +71,32 @@ void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
     image.pixels[o + 3] = 255;
 }
 
+void put_rgba(RgbaImage& image, int x, int y,
+              std::uint8_t r, std::uint8_t g,
+              std::uint8_t b, std::uint8_t a) {
+    if (x < 0 || y < 0 || x >= image.width || y >= image.height || a == 0U) return;
+    const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
+    if (a == 255U) {
+        image.pixels[o + 0U] = r;
+        image.pixels[o + 1U] = g;
+        image.pixels[o + 2U] = b;
+        image.pixels[o + 3U] = 255U;
+        return;
+    }
+    const std::uint32_t alpha = a;
+    const std::uint32_t inverse = 255U - alpha;
+    image.pixels[o + 0U] = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(r) * alpha +
+         static_cast<std::uint32_t>(image.pixels[o + 0U]) * inverse) / 255U);
+    image.pixels[o + 1U] = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(g) * alpha +
+         static_cast<std::uint32_t>(image.pixels[o + 1U]) * inverse) / 255U);
+    image.pixels[o + 2U] = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(b) * alpha +
+         static_cast<std::uint32_t>(image.pixels[o + 2U]) * inverse) / 255U);
+    image.pixels[o + 3U] = 255U;
+}
+
 void line(RgbaImage& image, P2 a, P2 b, std::uint8_t shade = 235) {
     int x0 = static_cast<int>(std::lround(a.x));
     int y0 = static_cast<int>(std::lround(a.y));
@@ -95,6 +121,41 @@ void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
         put_pixel(image, x + d, y, shade);
         put_pixel(image, x, y + d, shade);
     }
+}
+
+[[nodiscard]] float repeat_unit(float value) noexcept {
+    if (!std::isfinite(value)) return 0.0F;
+    const float repeated = value - std::floor(value);
+    return repeated < 0.0F ? repeated + 1.0F : repeated;
+}
+
+[[nodiscard]] bool sample_texture(const ImagePreview& texture,
+                                  float u, float v,
+                                  std::uint8_t* r,
+                                  std::uint8_t* g,
+                                  std::uint8_t* b,
+                                  std::uint8_t* a) noexcept {
+    if (!texture.available() || r == nullptr || g == nullptr ||
+        b == nullptr || a == nullptr) return false;
+
+    const float uu = repeat_unit(u);
+    const float vv = repeat_unit(v);
+    const auto x = std::min<std::uint32_t>(
+        texture.width - 1U,
+        static_cast<std::uint32_t>(uu * static_cast<float>(texture.width)));
+    const auto y = std::min<std::uint32_t>(
+        texture.height - 1U,
+        static_cast<std::uint32_t>(vv * static_cast<float>(texture.height)));
+    const auto offset =
+        (static_cast<std::size_t>(y) * texture.width + x) * 4U;
+    if (offset > texture.rgba8.size() || texture.rgba8.size() - offset < 4U) {
+        return false;
+    }
+    *r = texture.rgba8[offset + 0U];
+    *g = texture.rgba8[offset + 1U];
+    *b = texture.rgba8[offset + 2U];
+    *a = texture.rgba8[offset + 3U];
+    return true;
 }
 
 void render_uv_layout(const Mesh& mesh, const ViewState& view,
@@ -134,7 +195,6 @@ void render_uv_layout(const Mesh& mesh, const ViewState& view,
         };
     };
 
-    // Reference tile first, then actual UV topology on top.
     const P2 uv00 = map_uv(0.0F, 0.0F);
     const P2 uv10 = map_uv(1.0F, 0.0F);
     const P2 uv11 = map_uv(1.0F, 1.0F);
@@ -170,7 +230,8 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         bool complete_uv0 = !scene.meshes.empty();
         for (const auto& primitive : scene.meshes) {
             if (primitive.mesh.vertices.size() > kMaxSceneVertices - total_vertices ||
-                primitive.mesh.indices.size() > kMaxSceneIndices - total_indices) {
+                primitive.mesh.indices.size() > kMaxSceneIndices - total_indices ||
+                primitive.mesh.indices.size() % 3U != 0U) {
                 return false;
             }
             total_vertices += primitive.mesh.vertices.size();
@@ -179,14 +240,27 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         }
         materialized.vertices.reserve(total_vertices);
         materialized.indices.reserve(total_indices);
+        materialized.triangle_texture_slots.reserve(total_indices / 3U);
         if (complete_uv0) materialized.uv0.reserve(total_vertices);
 
-        for (const auto& primitive : scene.meshes) {
+        for (std::size_t primitive_index = 0U;
+             primitive_index < scene.meshes.size();
+             ++primitive_index) {
+            const auto& primitive = scene.meshes[primitive_index];
             const Matrix4* world = nullptr;
             if (primitive.node_index >= 0) {
                 const auto node_index = static_cast<std::size_t>(primitive.node_index);
                 if (node_index >= scene.nodes.size()) return false;
                 world = &scene.nodes[node_index].world;
+            }
+
+            std::uint32_t texture_slot = Mesh::kNoTextureSlot;
+            bool binding_seen = false;
+            for (const auto& binding : scene.textures) {
+                if (binding.mesh_primitive != primitive_index) continue;
+                if (binding_seen && texture_slot != binding.texture_slot) return false;
+                texture_slot = binding.texture_slot;
+                binding_seen = true;
             }
 
             const std::size_t base = materialized.vertices.size();
@@ -217,6 +291,10 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
                 }
                 materialized.indices.push_back(base32 + index);
             }
+            const auto triangle_count = primitive.mesh.indices.size() / 3U;
+            materialized.triangle_texture_slots.insert(
+                materialized.triangle_texture_slots.end(),
+                triangle_count, texture_slot);
         }
 
         *out = std::move(materialized);
@@ -254,9 +332,6 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
             }
         }
 
-        // Parent indices may all be in range while still forming a cycle.
-        // Bound every ancestry walk by node count so malformed resources fail
-        // closed without recursion or unbounded temporary storage.
         for (std::size_t start = 0U; start < scene.nodes.size(); ++start) {
             std::size_t current = start;
             std::size_t hops = 0U;
@@ -276,11 +351,7 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
             }
         }
 
-        // Spatial availability is an evidence property, not a coordinate
-        // heuristic. A fully authoritative hierarchy may legitimately place a
-        // root or multiple nodes at exactly the same model-space position.
         overlay.spatial = spatial_authority;
-
         *out = std::move(overlay);
         return true;
     } catch (const std::bad_alloc&) {
@@ -292,7 +363,8 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
 
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,
-                      const HierarchyOverlay* hierarchy) {
+                      const HierarchyOverlay* hierarchy,
+                      const std::vector<ImagePreview>* textures) {
     RgbaImage image;
     image.width = std::clamp(width, 1, 2048);
     image.height = std::clamp(height, 1, 2048);
@@ -336,6 +408,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                      r.z});
     }
 
+    const bool textured = textures != nullptr && mesh.has_uv0() &&
+                          mesh.has_triangle_texture_slots();
     std::vector<float> depth(static_cast<std::size_t>(image.width * image.height),
                              std::numeric_limits<float>::infinity());
 
@@ -347,6 +421,17 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             line(image, a, b); line(image, b, c); line(image, c, a);
             continue;
         }
+
+        const ImagePreview* texture = nullptr;
+        if (textured) {
+            const auto triangle = t / 3U;
+            const auto slot = mesh.triangle_texture_slots[triangle];
+            if (slot != Mesh::kNoTextureSlot && slot < textures->size() &&
+                (*textures)[slot].available()) {
+                texture = &(*textures)[slot];
+            }
+        }
+
         const float area = edge(a, b, c.x, c.y);
         if (std::fabs(area) < 1e-6f) continue;
         const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x,b.x,c.x}))));
@@ -363,6 +448,22 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 const float z = w0*a.z + w1*b.z + w2*c.z;
                 const auto pi = static_cast<std::size_t>(y * image.width + x);
                 if (z >= depth[pi]) continue;
+
+                if (texture != nullptr) {
+                    const auto& uva = mesh.uv0[ia];
+                    const auto& uvb = mesh.uv0[ib];
+                    const auto& uvc = mesh.uv0[ic];
+                    const float u = w0 * uva.u + w1 * uvb.u + w2 * uvc.u;
+                    const float v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
+                    std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
+                    if (sample_texture(*texture, u, v, &tr, &tg, &tb, &ta)) {
+                        if (ta == 0U) continue;
+                        depth[pi] = z;
+                        put_rgba(image, x, y, tr, tg, tb, ta);
+                        continue;
+                    }
+                }
+
                 depth[pi] = z;
                 const float zn = 0.5f + 0.5f * std::tanh(-z / radius);
                 const auto shade = static_cast<std::uint8_t>(145 + 80 * zn);
