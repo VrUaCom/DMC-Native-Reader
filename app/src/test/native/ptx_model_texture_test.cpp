@@ -2,6 +2,8 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 #include "dmcresource/view_renderer.h"
 
@@ -34,9 +36,11 @@ int main() {
     Mesh materialized;
     assert(materialize_render_scene(scene, &materialized));
     assert(materialized.has_uv0());
-    assert(materialized.has_triangle_texture_slots());
-    assert(materialized.triangle_texture_slots.size() == 1U);
-    assert(materialized.triangle_texture_slots[0] == 1U);
+
+    std::vector<std::uint32_t> slots;
+    assert(materialize_triangle_texture_slots(scene, &slots));
+    assert(slots.size() == 1U);
+    assert(slots[0] == 1U);
 
     std::vector<ImagePreview> textures(2U);
     textures[1].width = 2U;
@@ -55,7 +59,7 @@ int main() {
     view.zoom = 1.0F;
 
     const auto image = render_view(
-        materialized, 128, 128, view, nullptr, &textures);
+        materialized, 128, 128, view, nullptr, &slots, &textures);
     assert(image.width == 128);
     assert(image.height == 128);
     assert(image.pixels.size() == 128U * 128U * 4U);
@@ -76,8 +80,9 @@ int main() {
     assert(saw_texture_colour);
 
     // Without a companion texture set the same geometry still renders through
-    // the legacy neutral shaded path instead of becoming invisible.
-    const auto fallback = render_view(materialized, 128, 128, view, nullptr, nullptr);
+    // the neutral shaded path instead of becoming invisible.
+    const auto fallback = render_view(
+        materialized, 128, 128, view, nullptr, nullptr, nullptr);
     assert(fallback.pixels.size() == image.pixels.size());
     assert(fallback.pixels != image.pixels);
 
