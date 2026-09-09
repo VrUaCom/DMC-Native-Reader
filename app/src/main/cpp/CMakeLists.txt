@@ -3,6 +3,8 @@ project(dmcviewer LANGUAGES CXX)
 
 set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 
+# Native Reader 1.0.1 exact-head gate: keep this shell linked only to the
+# canonical portable ReaderCore slice; format algorithms stay out of Android.
 # Canonical product slice owned by DMC Rengine. Android does not enumerate or
 # reimplement format parser sources; the same target is reusable by iOS,
 # Windows and Web/WASM shells.
