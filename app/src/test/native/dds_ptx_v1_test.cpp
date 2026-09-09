@@ -1,6 +1,7 @@
 #include "dmc_rengine/codecs/dds_bc.hpp"
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/resource_capabilities.h"
+#include "dmcresource/texture_set.h"
 
 #include <cassert>
 #include <bit>
@@ -14,6 +15,7 @@
 namespace {
 
 namespace dds_bc = dmc::rengine::codecs::dds_bc;
+namespace texture_set = dmcresource::texture_set;
 
 void put_u16(std::vector<std::uint8_t>& bytes, std::size_t offset,
              std::uint16_t value) {
@@ -39,9 +41,6 @@ std::vector<std::uint8_t> make_dds(bool dxt5 = false,
         128U + block_bytes * static_cast<std::size_t>(mip_count), 0U);
     bytes[0] = 'D'; bytes[1] = 'D'; bytes[2] = 'S'; bytes[3] = ' ';
     put_u32(bytes, 4U, 124U);
-    // DDSD_MIPMAPCOUNT must be present because this fixture explicitly carries
-    // mip_count levels. Without it the portable reader correctly treats the
-    // image as one mip and parse_exact_dds rejects the remaining payload bytes.
     put_u32(bytes, 8U, 0x000A1007U);
     put_u32(bytes, 12U, 4U);
     put_u32(bytes, 16U, 4U);
@@ -56,13 +55,13 @@ std::vector<std::uint8_t> make_dds(bool dxt5 = false,
     if (dxt5) {
         bytes[128U] = 255U;
         bytes[129U] = 0U;
-        put_u16(bytes, 136U, 0xF800U);  // red
-        put_u16(bytes, 138U, 0x07E0U);  // green
-        put_u32(bytes, 140U, 0U);       // all color index 0
+        put_u16(bytes, 136U, 0xF800U);
+        put_u16(bytes, 138U, 0x07E0U);
+        put_u32(bytes, 140U, 0U);
     } else {
-        put_u16(bytes, 128U, 0xF800U);  // red
-        put_u16(bytes, 130U, 0x07E0U);  // green
-        put_u32(bytes, 132U, 0U);       // all color index 0
+        put_u16(bytes, 128U, 0xF800U);
+        put_u16(bytes, 130U, 0x07E0U);
+        put_u32(bytes, 132U, 0U);
     }
     return bytes;
 }
@@ -152,6 +151,19 @@ void require_red_preview(const dmcresource::ImagePreview& image) {
     }
 }
 
+void require_texture_set_red(
+    const texture_set::ParseResult& set,
+    std::span<const std::byte> source,
+    std::uint32_t slot_index = 0U) {
+    assert(set.ok());
+    const auto* slot = texture_set::find_slot(set, slot_index);
+    assert(slot != nullptr);
+    dmcresource::ImagePreview preview;
+    std::string detail;
+    assert(texture_set::decode_base_mip(source, *slot, &preview, &detail));
+    require_red_preview(preview);
+}
+
 bool has_module(const dmcresource::PipelineResult& result, const char* name) {
     for (const auto& module : result.modules) {
         if (module.name != nullptr && std::strcmp(module.name, name) == 0) {
@@ -180,6 +192,11 @@ int main() {
             preview.image.height,
             preview.image.rgba8});
 
+        const auto set = texture_set::parse_dds(as_bytes(dds));
+        assert(set.kind == texture_set::Kind::standalone_dds);
+        assert(set.slots.size() == 1U);
+        require_texture_set_red(set, as_bytes(dds));
+
         const auto result = run_decode_pipeline(
             dxt5 ? "sample_dxt5.dds" : "sample_dxt1.dds",
             dds.data(), dds.size());
@@ -187,6 +204,7 @@ int main() {
         assert(!result.renderable);
         assert(has_capability(result.capabilities,
                               ResourceCapability::ImagePreview));
+        assert(has_module(result, "native.texture-set"));
         require_red_preview(result.image_preview);
 
         const auto capped = dds_bc::decode_base_mip_rgba8(
@@ -198,15 +216,23 @@ int main() {
     const auto partial_mips = make_dds(false, 1U);
     const auto partial_parse = dds_bc::parse(as_bytes(partial_mips));
     assert(partial_parse.ok());
+    const auto partial_set = texture_set::parse_dds(as_bytes(partial_mips));
+    assert(partial_set.kind == texture_set::Kind::standalone_dds);
+    require_texture_set_red(partial_set, as_bytes(partial_mips));
     const auto partial_result = run_decode_pipeline(
         "standalone_partial.dds", partial_mips.data(), partial_mips.size());
     assert(partial_result.accepted);
     require_red_preview(partial_result.image_preview);
 
     const auto wrapped = make_wrapped_dds(false);
+    const auto wrapped_set = texture_set::parse_dds(as_bytes(wrapped));
+    assert(wrapped_set.kind == texture_set::Kind::wrapped_dds);
+    assert(wrapped_set.slots.size() == 1U);
+    require_texture_set_red(wrapped_set, as_bytes(wrapped));
     const auto wrapped_result = run_decode_pipeline(
         "wrapped.dds", wrapped.data(), wrapped.size());
     assert(wrapped_result.accepted);
+    assert(has_module(wrapped_result, "native.texture-set"));
     require_red_preview(wrapped_result.image_preview);
     assert(wrapped_result.inspection.root.children.size() == 1U);
 
@@ -221,10 +247,16 @@ int main() {
     huge[84] = 'D'; huge[85] = 'X'; huge[86] = 'T'; huge[87] = '5';
     const auto huge_result = dds_bc::parse(as_bytes(huge));
     assert(!huge_result.ok());
+    assert(!texture_set::parse_dds(as_bytes(huge)).ok());
 
     const auto ptx = make_ptx_zero_final_span();
+    const auto ptx_set = texture_set::parse_ptx(as_bytes(ptx));
+    assert(ptx_set.kind == texture_set::Kind::ptx_bundle);
+    assert(ptx_set.slots.size() == 1U);
+    require_texture_set_red(ptx_set, as_bytes(ptx));
     const auto ptx_ok = run_decode_pipeline("sample.ptx", ptx.data(), ptx.size());
     assert(ptx_ok.accepted);
+    assert(has_module(ptx_ok, "native.texture-set"));
     assert(has_capability(ptx_ok.capabilities,
                           ResourceCapability::ChildResources));
     assert(!has_capability(ptx_ok.capabilities,
@@ -244,13 +276,14 @@ int main() {
     assert(child.inspection.root.title == "Texture 0");
     require_red_preview(child.image_preview);
 
-    // Retail em000 pattern: DXT1 is valid with auxiliary mode 2 and a non-zero
-    // auxiliary value. The pinned ReaderCore revision rejects this only because
-    // it still couples non-zero auxiliary mode to DXT5. Native Reader retries
-    // through the same canonical parser with that obsolete coupling neutralized.
     constexpr std::uint32_t retail_auxiliary_value = 0x1D308000U;
     const auto em000_like = make_ptx_zero_final_span(
         false, 2U, retail_auxiliary_value);
+    const auto em000_set = texture_set::parse_ptx(as_bytes(em000_like));
+    assert(em000_set.ok());
+    assert(em000_set.kind == texture_set::Kind::ptx_bundle);
+    assert(em000_set.ptx_aux_compat_used);
+    require_texture_set_red(em000_set, as_bytes(em000_like));
     const auto em000_like_result = run_decode_pipeline(
         "em000_000.ptx", em000_like.data(), em000_like.size());
     assert(em000_like_result.accepted);
@@ -258,11 +291,9 @@ int main() {
     assert(has_module(em000_like_result, "native.ptx-aux-compat"));
     require_red_preview(em000_like_result.children[0].image_preview);
 
-    // The real structural relation is still enforced: mode and value must be
-    // zero together or non-zero together. Compatibility must not accept an
-    // unpaired auxiliary mode.
     auto unpaired_aux = em000_like;
     put_u32(unpaired_aux, 0x800U + 0x40U, 0U);
+    assert(!texture_set::parse_ptx(as_bytes(unpaired_aux)).ok());
     assert(!run_decode_pipeline(
         "unpaired_aux.ptx", unpaired_aux.data(), unpaired_aux.size()).accepted);
 
