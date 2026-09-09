@@ -20,6 +20,8 @@ namespace {
 
 constexpr std::size_t kMaxMappedBytes = 512u * 1024u * 1024u;
 constexpr std::uint32_t kMaxCompanionTextureSlot = 4095U;
+constexpr std::uint32_t kNoTextureSlot =
+    std::numeric_limits<std::uint32_t>::max();
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -69,23 +71,19 @@ private:
 
 struct Session {
     dmcresource::ProbeResult probe;
-
-    // Architecture v2 reusable session state. The same contracts are used for
-    // top-level resources and children opened from a container/browser.
     dmcresource::ResourceCapabilities capabilities{};
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
     dmcresource::ImagePreview image_preview;
     std::vector<dmcresource::ChildResource> children;
 
-    // Static viewer caches. World-space geometry and hierarchy positions are
-    // materialized once per session, never once per touch/rotation frame.
     dmcresource::Mesh render_mesh;
     dmcresource::HierarchyOverlay hierarchy_overlay;
+    std::vector<std::uint32_t> render_triangle_texture_slots;
 
-    // Companion textures stay frontend-neutral. Vector index == canonical
-    // texture slot; unavailable entries remain empty. PTX ownership/parsing is
-    // intentionally outside the renderer and Java UI.
+    // Vector index == canonical texture slot. Empty entries represent slots not
+    // required by the current model. PTX parsing/decoding stays in the native
+    // texture module + Spider route rather than Java or the renderer.
     std::vector<dmcresource::ImagePreview> attached_textures;
     std::string texture_attachment_detail;
 
@@ -120,12 +118,21 @@ void prepare_session_caches(Session* session) {
 
     if (session->renderable) {
         if (!session->scene.has_geometry() ||
-            !dmcresource::materialize_render_scene(session->scene,
-                                                   &session->render_mesh)) {
+            !dmcresource::materialize_render_scene(
+                session->scene, &session->render_mesh)) {
             session->renderable = false;
             if (!session->detail.empty()) session->detail += "\n";
             session->detail +=
                 "RenderScene projection rejected malformed or missing geometry";
+            return;
+        }
+
+        if (!dmcresource::materialize_triangle_texture_slots(
+                session->scene, &session->render_triangle_texture_slots)) {
+            session->render_triangle_texture_slots.clear();
+            if (!session->detail.empty()) session->detail += "\n";
+            session->detail +=
+                "Texture-slot projection unavailable: conflicting or malformed material bindings";
         }
     }
 }
@@ -202,13 +209,15 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
     required->clear();
     *max_slot = 0U;
     if (!session.renderable || !session.render_mesh.has_uv0() ||
-        !session.render_mesh.has_triangle_texture_slots()) {
+        session.render_mesh.indices.size() % 3U != 0U ||
+        session.render_triangle_texture_slots.size() !=
+            session.render_mesh.indices.size() / 3U) {
         return false;
     }
 
     try {
-        for (const auto slot : session.render_mesh.triangle_texture_slots) {
-            if (slot == dmcresource::Mesh::kNoTextureSlot) continue;
+        for (const auto slot : session.render_triangle_texture_slots) {
+            if (slot == kNoTextureSlot) continue;
             if (slot > kMaxCompanionTextureSlot) return false;
             if (std::find(required->begin(), required->end(), slot) == required->end()) {
                 required->push_back(slot);
@@ -543,11 +552,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
         session->hierarchy_overlay.available()
             ? &session->hierarchy_overlay
             : nullptr;
+    const auto* texture_slots = session->render_triangle_texture_slots.empty()
+        ? nullptr
+        : &session->render_triangle_texture_slots;
     const auto* textures = session->attached_textures.empty()
         ? nullptr
         : &session->attached_textures;
-    const auto image = dmcresource::render_view(session->render_mesh,
-                                                width, height, view,
-                                                hierarchy, textures);
+    const auto image = dmcresource::render_view(
+        session->render_mesh, width, height, view,
+        hierarchy, texture_slots, textures);
     return image_to_argb(env, image);
 }
