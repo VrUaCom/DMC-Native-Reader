@@ -240,6 +240,9 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
         .renderable = session->renderable,
         .render_mesh = &session->render_mesh,
         .triangle_texture_slots = session->render_triangle_texture_slots,
+        .hierarchy_available = session->hierarchy_overlay.available(),
+        .image_preview_available = session->image_preview.available(),
+        .child_resource_count = session->children.size(),
         .texture_companion_attached = session->texture_companion_attached,
     });
 }
