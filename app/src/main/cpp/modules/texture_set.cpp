@@ -69,17 +69,22 @@ ParseResult parse_dds(std::span<const std::byte> source) noexcept {
 
     const auto direct = parse_exact_dds(source);
     if (direct.ok()) {
-        out.kind = Kind::standalone_dds;
-        out.slots.push_back(Slot{
-            .index = 0U,
-            .descriptor_offset = 0U,
-            .dds_offset = 0U,
-            .dds_size = direct.document.total_size,
-            .sector_span = 0U,
-            .secondary_width = 0U,
-            .secondary_height = 0U,
-            .dds = direct.document,
-        });
+        try {
+            out.kind = Kind::standalone_dds;
+            out.slots.push_back(Slot{
+                .index = 0U,
+                .descriptor_offset = 0U,
+                .dds_offset = 0U,
+                .dds_size = direct.document.total_size,
+                .sector_span = 0U,
+                .secondary_width = 0U,
+                .secondary_height = 0U,
+                .dds = direct.document,
+            });
+        } catch (...) {
+            out = {};
+            out.detail = "DDS rejected: texture-set allocation failed";
+        }
         return out;
     }
 
