@@ -2,6 +2,8 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/resource_capabilities.h"
 #include "dmcresource/texture_set.h"
+#include "dmcresource/texture_companion.h"
+#include "dmcresource/view_renderer.h"
 
 #include <cassert>
 #include <bit>
@@ -316,6 +318,62 @@ int main() {
     nonzero_padding.back() = 1U;
     assert(!run_decode_pipeline("padding.ptx", nonzero_padding.data(),
                                 nonzero_padding.size()).accepted);
+
+    // Whole PTX -> required nonzero slots -> renderer, without gallery previews.
+    // Four physical slots have independent DDS colours; slot 0 is unused.
+    std::vector<std::uint8_t> bundle(5U * 0x800U, 0U);
+    put_u32(bundle, 0U, 4U);
+    const std::uint16_t colours[] = {0xF800U, 0x07E0U, 0xF800U, 0x001FU};
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        put_u32(bundle, 4U + i * 4U, 1U);
+        auto child = make_ptx_zero_final_span(false, 2U, 1U);
+        put_u16(child, 0x870U + 128U, colours[i]);
+        put_u16(child, 0x870U + 130U, 0U);
+        std::copy(child.begin() + 0x800U, child.end(),
+                  bundle.begin() + (i + 1U) * 0x800U);
+    }
+    const auto original_bundle = bundle;
+    dmcresource::Mesh mesh;
+    mesh.vertices = {{-1.0F, -1.0F, 0.0F}, {1.0F, -1.0F, 0.0F},
+                     {1.0F, 1.0F, 0.0F}, {-1.0F, 1.0F, 0.0F}};
+    mesh.indices = {0U, 1U, 2U, 0U, 2U, 3U};
+    mesh.uv0 = {{0.0F, 0.0F}, {1.0F, 0.0F}, {1.0F, 1.0F}, {0.0F, 1.0F}};
+    std::vector<std::uint32_t> slots{1U, 3U};
+    const dmcresource::texture_companion::ModelTextureView model{&mesh, slots};
+    const auto attachment = dmcresource::texture_companion::attach_ptx(
+        "four-slots.ptx", bundle.data(), bundle.size(), model);
+    assert(attachment.attached);
+    assert(attachment.required_slot_count == 2U);
+    assert(attachment.source_texture_count == 4U);
+    assert(attachment.textures.size() == 4U);
+    assert(!attachment.textures[0].available());
+    assert(!attachment.textures[2].available());
+    assert(attachment.textures[1].rgba8[1] == 255U);
+    assert(attachment.textures[3].rgba8[2] == 255U);
+    assert(bundle == original_bundle); // compatibility must not mutate source
+
+    dmcresource::ViewState view;
+    view.yaw_radians = 0.0F;
+    view.pitch_radians = 0.0F;
+    const auto rendered = dmcresource::render_view(
+        mesh, 128, 128, view, nullptr, &slots, &attachment.textures);
+    bool green = false, blue = false;
+    for (std::size_t i = 0U; i < rendered.pixels.size(); i += 4U) {
+        green |= rendered.pixels[i] == 0U && rendered.pixels[i + 1U] == 255U &&
+                 rendered.pixels[i + 2U] == 0U;
+        blue |= rendered.pixels[i] == 0U && rendered.pixels[i + 1U] == 0U &&
+                rendered.pixels[i + 2U] == 255U;
+    }
+    assert(green && blue);
+
+    slots[1] = 4U;
+    const auto missing = dmcresource::texture_companion::attach_ptx(
+        "missing.ptx", bundle.data(), bundle.size(), model);
+    assert(!missing.attached && missing.textures.empty());
+    slots[1] = std::numeric_limits<std::uint32_t>::max();
+    assert(!dmcresource::texture_companion::can_attach(model));
+    assert(!dmcresource::texture_companion::attach_ptx(
+        "incomplete.ptx", bundle.data(), bundle.size(), model).attached);
 
     return 0;
 }

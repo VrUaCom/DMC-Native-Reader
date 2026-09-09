@@ -1,6 +1,7 @@
 #include "dmcresource/model_texture_binding.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace dmcresource::model_texture_binding {
@@ -26,10 +27,17 @@ bool collect_required_slots(
         return false;
     }
 
+    for (const auto index : mesh.indices) {
+        if (index >= mesh.vertices.size()) return false;
+        const auto& uv = mesh.uv0[index];
+        if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) return false;
+    }
+    for (const auto slot : triangle_texture_slots) {
+        if (slot == kNoTextureSlot || slot > kMaxCompanionTextureSlot) return false;
+    }
+
     try {
         for (const auto slot : triangle_texture_slots) {
-            if (slot == kNoTextureSlot) continue;
-            if (slot > kMaxCompanionTextureSlot) return false;
             if (std::find(out->slots.begin(), out->slots.end(), slot) ==
                 out->slots.end()) {
                 out->slots.push_back(slot);

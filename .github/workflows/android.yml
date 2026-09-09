@@ -59,147 +59,19 @@ jobs:
             test ! -e "$path"
           done
 
-      - name: Build and run four-module registry regression
+      - name: Build and run native regressions through the product core
         run: |
           set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/module_registry_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/modules/ptx_framing_compat.cpp \
-            app/src/main/cpp/modules/texture_set.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-core-registry-test
-          /tmp/dmc-core-registry-test
-
-      - name: Build and run MOD SCM pipeline regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/core_model_pipeline_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/modules/ptx_framing_compat.cpp \
-            app/src/main/cpp/modules/texture_set.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-core-model-pipeline-test
-          /tmp/dmc-core-model-pipeline-test
-
-      - name: Build and run DDS PTX TextureSet regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/dds_ptx_v1_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/modules/ptx_framing_compat.cpp \
-            app/src/main/cpp/modules/texture_set.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/spider/native_executor.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/codecs/dds_bc.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/profiles/dmc3/texture_slot_framing.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-core-dds-ptx-test
-          /tmp/dmc-core-dds-ptx-test
-
-      - name: Build and run Black Widow state regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            app/src/test/native/black_widow_state_test.cpp \
-            app/src/main/cpp/modules/model_texture_binding.cpp \
-            app/src/main/cpp/spider/black_widow.cpp \
-            -o /tmp/dmc-black-widow-test
-          /tmp/dmc-black-widow-test
-
-      - name: Build and run MOD spatial adapter regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/mod_spatial_adapter_test.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            -o /tmp/dmc-mod-spatial-adapter-test
-          /tmp/dmc-mod-spatial-adapter-test
-
-      - name: Build and run RenderScene regression
-        run: |
-          set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            app/src/test/native/render_scene_test.cpp \
-            app/src/main/cpp/view_renderer.cpp \
-            -o /tmp/dmc-render-scene-test
-          /tmp/dmc-render-scene-test
+          cmake -S app/src/main/cpp -B build/host \
+            -DDMC_NATIVE_READER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/host --parallel 2
+          ctest --test-dir build/host --output-on-failure
 
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify device APK identity, signer, JNI and packaging
+        run: python3 tools/verify_device_apk.py app/build/outputs/apk/debug/app-debug.apk
 
       - name: Verify APK modular core surface
         run: |
@@ -208,13 +80,14 @@ jobs:
           test -f "$APK"
           unzip -t "$APK"
           unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
+          strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
 
-          strings /tmp/libdmcviewer.so | grep -Fq 'formats.mod.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'formats.scm.mesh-reader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'formats.texture.spider-reader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'spider.crusader'
-          strings /tmp/libdmcviewer.so | grep -Fq 'native.texture-set'
-          strings /tmp/libdmcviewer.so | grep -Fq 'native.uv-projection'
+          grep -Fq 'formats.mod.mesh-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
+          grep -Fq 'spider.crusader' /tmp/native-markers.txt
+          grep -Fq 'native.texture-set' /tmp/native-markers.txt
+          grep -Fq 'native.uv-projection' /tmp/native-markers.txt
 
           for legacy in \
             'formats.hits.collision-reader' \
@@ -228,15 +101,16 @@ jobs:
             'formats.mrp.family-adapter' \
             'formats.shw.family-adapter' \
             'formats.mot.recognition'; do
-            if strings /tmp/libdmcviewer.so | grep -Fq "$legacy"; then
+            if grep -Fq "$legacy" /tmp/native-markers.txt; then
               echo "legacy module leaked into core APK: $legacy"
               exit 1
             fi
           done
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
-          "$AAPT2" dump badging "$APK" | grep -Fq "package: name='com.dmcrengine.nativereader'"
-          "$AAPT2" dump badging "$APK" | grep -Fq "versionCode='23' versionName='1.0'"
+          "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
+          grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
+          grep -Fq "versionCode='23' versionName='1.0'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt

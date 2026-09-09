@@ -86,6 +86,25 @@ int main() {
         state, widow::StateFlag::TextureCompanionAttachable));
 
     slots[0] = 2U;
+    // A partially mapped model must not enable the whole-bundle action.
+    mesh.indices.insert(mesh.indices.end(), {0U, 1U, 2U});
+    slots.push_back(std::numeric_limits<std::uint32_t>::max());
+    model.triangle_texture_slots = slots;
+    state = widow::evaluate_model_session(model);
+    assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    slots.pop_back();
+    mesh.indices.resize(3U);
+    model.triangle_texture_slots = slots;
+
+    mesh.uv0[0].u = std::numeric_limits<float>::quiet_NaN();
+    state = widow::evaluate_model_session(model);
+    assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    mesh.uv0[0].u = 0.0F;
+    mesh.indices[0] = 99U;
+    state = widow::evaluate_model_session(model);
+    assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    mesh.indices[0] = 0U;
+
     model.capabilities &= ~capability(ResourceCapability::TextureBinding);
     state = widow::evaluate_model_session(model);
     assert(!widow::has_state(state, widow::StateFlag::HasTextureBindings));

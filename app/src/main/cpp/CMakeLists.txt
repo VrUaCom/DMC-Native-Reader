@@ -46,13 +46,34 @@ set_target_properties(dmc_native_reader_core PROPERTIES
 # Android is deliberately a thin shell. It owns JNI/FD/lifecycle integration
 # only; application decisions, resource parsing, texture attachment and render
 # contracts stay in DMCNativeReader::Core.
-add_library(dmcviewer SHARED
-    app_native.cpp
-)
+if(ANDROID)
+    add_library(dmcviewer SHARED
+        app_native.cpp
+    )
 
-target_link_libraries(dmcviewer PRIVATE
-    DMCNativeReader::Core
-)
+    target_link_libraries(dmcviewer PRIVATE
+        DMCNativeReader::Core
+    )
 
-target_compile_features(dmcviewer PRIVATE cxx_std_20)
-target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_features(dmcviewer PRIVATE cxx_std_20)
+    target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
+if(DMC_NATIVE_READER_BUILD_TESTS)
+    enable_testing()
+    foreach(test_name IN ITEMS
+        black_widow_state core_model_pipeline dds_ptx_v1
+        mod_spatial_adapter module_registry ptx_model_texture render_scene)
+        add_executable(${test_name}_test
+            ../../test/native/${test_name}_test.cpp)
+        target_link_libraries(${test_name}_test PRIVATE DMCNativeReader::Core)
+        # These regressions use assert; keep checks active in Release builds.
+        if(MSVC)
+            target_compile_options(${test_name}_test PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(${test_name}_test PRIVATE -UNDEBUG)
+        endif()
+        add_test(NAME ${test_name} COMMAND ${test_name}_test)
+    endforeach()
+endif()

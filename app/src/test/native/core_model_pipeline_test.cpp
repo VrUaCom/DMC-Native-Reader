@@ -1,5 +1,8 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/resource_capabilities.h"
+#include "dmcresource/model_texture_binding.h"
+#include "dmcresource/spider/black_widow.h"
+#include "dmcresource/view_renderer.h"
 
 #include <bit>
 #include <cassert>
@@ -265,6 +268,27 @@ int main() {
                           ResourceCapability::SkinWeights));
     assert(has_capability(mod_result.capabilities,
                           ResourceCapability::UvCoordinates));
+
+    // Both canonical adapters must preserve slots through render materialization
+    // and expose the native companion action (including MOD's nonzero slot 5).
+    for (const auto* result : {&scm_result, &mod_result}) {
+        dmcresource::Mesh mesh;
+        std::vector<std::uint32_t> slots;
+        assert(dmcresource::materialize_render_scene(result->scene, &mesh));
+        assert(dmcresource::materialize_triangle_texture_slots(result->scene, &slots));
+        dmcresource::model_texture_binding::RequiredSlots required;
+        assert(dmcresource::model_texture_binding::collect_required_slots(mesh, slots, &required));
+        assert(required.slots.size() == 1U);
+        assert(required.slots[0] == result->scene.textures[0].texture_slot);
+        namespace widow = dmcresource::spider::black_widow;
+        const auto state = widow::evaluate_model_session({
+            .capabilities = result->capabilities,
+            .renderable = result->renderable,
+            .render_mesh = &mesh,
+            .triangle_texture_slots = slots,
+        });
+        assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    }
 
     // A known old-family filename must remain outside the clean main surface.
     const std::uint8_t old_family[] = {'H', 'I', 'T', 'S'};
