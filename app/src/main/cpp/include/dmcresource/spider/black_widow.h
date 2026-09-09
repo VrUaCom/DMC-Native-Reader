@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 
@@ -9,10 +10,27 @@
 namespace dmcresource::spider::black_widow {
 
 // Black Widow owns platform-neutral application/UI decisions. Android/Java
-// consumes this typed state but must not reconstruct it from diagnostics.
+// consumes this typed state but must not reconstruct it from diagnostics or
+// raw ResourceCapabilities combinations.
 enum class StateFlag : std::uint64_t {
-    TextureCompanionAttachable = 1ULL << 0U,
-    TextureCompanionAttached   = 1ULL << 1U,
+    CanRender                  = 1ULL << 0U,
+    CanWireframe               = 1ULL << 1U,
+    CanInspect                 = 1ULL << 2U,
+    CanShowHierarchy           = 1ULL << 3U,
+    HasSkinning                = 1ULL << 4U,
+    HasSkinWeights             = 1ULL << 5U,
+    HasTextureBindings         = 1ULL << 6U,
+    CanPreviewImage            = 1ULL << 7U,
+    HasChildResources          = 1ULL << 8U,
+    IsText                     = 1ULL << 9U,
+    IsContainer                = 1ULL << 10U,
+    HasCollision               = 1ULL << 11U,
+    HasAdjacency               = 1ULL << 12U,
+    HasTransformSelectors      = 1ULL << 13U,
+    CanShowUv                  = 1ULL << 14U,
+    ChildBrowserMode           = 1ULL << 15U,
+    TextureCompanionAttachable = 1ULL << 16U,
+    TextureCompanionAttached   = 1ULL << 17U,
 };
 
 using StateBits = std::uint64_t;
@@ -31,11 +49,15 @@ struct ModelSessionView final {
     bool renderable{};
     const Mesh* render_mesh{};
     std::span<const std::uint32_t> triangle_texture_slots{};
+    bool hierarchy_available{};
+    bool image_preview_available{};
+    std::size_t child_resource_count{};
     bool texture_companion_attached{};
 };
 
-// Evaluates only platform-neutral state. UINT32_MAX is the neutral sentinel for
-// an unbound triangle; no PTX/MOD/SCM format knowledge lives here.
+// Evaluates only platform-neutral session state. UINT32_MAX is the neutral
+// sentinel for an unbound triangle; no PTX/MOD/SCM binary-format knowledge
+// lives here.
 [[nodiscard]] StateBits evaluate_model_session(
     const ModelSessionView& session) noexcept;
 
