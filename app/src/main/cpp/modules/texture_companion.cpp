@@ -1,58 +1,18 @@
 #include "dmcresource/texture_companion.h"
 
-#include <algorithm>
-#include <limits>
 #include <sstream>
 #include <utility>
 
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/model_texture_binding.h"
 
 namespace dmcresource::texture_companion {
-namespace {
-
-constexpr std::uint32_t kNoTextureSlot =
-    std::numeric_limits<std::uint32_t>::max();
-constexpr std::uint32_t kMaxCompanionTextureSlot = 4095U;
-
-[[nodiscard]] bool collect_required_slots(
-    const ModelTextureView& model,
-    std::vector<std::uint32_t>* required,
-    std::uint32_t* max_slot) {
-    if (required == nullptr || max_slot == nullptr || model.mesh == nullptr) {
-        return false;
-    }
-    required->clear();
-    *max_slot = 0U;
-
-    const auto& mesh = *model.mesh;
-    if (!mesh.has_uv0() || mesh.indices.size() < 3U ||
-        mesh.indices.size() % 3U != 0U ||
-        model.triangle_texture_slots.size() != mesh.indices.size() / 3U) {
-        return false;
-    }
-
-    try {
-        for (const auto slot : model.triangle_texture_slots) {
-            if (slot == kNoTextureSlot) continue;
-            if (slot > kMaxCompanionTextureSlot) return false;
-            if (std::find(required->begin(), required->end(), slot) == required->end()) {
-                required->push_back(slot);
-                *max_slot = std::max(*max_slot, slot);
-            }
-        }
-    } catch (...) {
-        return false;
-    }
-    return !required->empty();
-}
-
-}  // namespace
 
 bool can_attach(const ModelTextureView& model) noexcept {
-    std::vector<std::uint32_t> required;
-    std::uint32_t max_slot = 0U;
-    return collect_required_slots(model, &required, &max_slot);
+    if (model.mesh == nullptr) return false;
+    return model_texture_binding::can_attach_texture_companion(
+        *model.mesh, model.triangle_texture_slots);
 }
 
 AttachmentResult attach_ptx(
@@ -62,9 +22,15 @@ AttachmentResult attach_ptx(
     const ModelTextureView& model) noexcept {
     AttachmentResult out;
 
-    std::vector<std::uint32_t> required_slots;
-    std::uint32_t max_slot = 0U;
-    if (!collect_required_slots(model, &required_slots, &max_slot)) {
+    if (model.mesh == nullptr) {
+        out.detail =
+            "PTX companion rejected: current resource has no model texture projection";
+        return out;
+    }
+
+    model_texture_binding::RequiredSlots required;
+    if (!model_texture_binding::collect_required_slots(
+            *model.mesh, model.triangle_texture_slots, &required)) {
         out.detail =
             "PTX companion rejected: current resource has no complete UV + texture-slot render mapping";
         return out;
@@ -81,12 +47,13 @@ AttachmentResult attach_ptx(
         return out;
     }
 
-    out.required_slot_count = required_slots.size();
+    out.required_slot_count = required.slots.size();
     out.source_texture_count = pipeline.children.size();
 
     try {
-        std::vector<ImagePreview> textures(static_cast<std::size_t>(max_slot) + 1U);
-        for (const auto slot : required_slots) {
+        std::vector<ImagePreview> textures(
+            static_cast<std::size_t>(required.max_slot) + 1U);
+        for (const auto slot : required.slots) {
             const auto index = static_cast<std::size_t>(slot);
             if (index >= pipeline.children.size()) {
                 std::ostringstream detail;
@@ -111,7 +78,7 @@ AttachmentResult attach_ptx(
 
         std::ostringstream detail;
         detail << "PTX companion attached: " << filename
-               << " | requiredSlots=" << required_slots.size()
+               << " | requiredSlots=" << required.slots.size()
                << " | bundleTextures=" << pipeline.children.size()
                << " | route=Crusader/PTX->DDS->UV";
 
