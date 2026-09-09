@@ -69,7 +69,9 @@ std::vector<std::uint8_t> make_dds(bool dxt5 = false,
 
 std::vector<std::uint8_t> make_descriptor(
     const std::vector<std::uint8_t>& dds,
-    bool dxt5) {
+    bool dxt5,
+    std::uint32_t auxiliary_mode = 0U,
+    std::uint32_t auxiliary_value = 0U) {
     constexpr std::uint32_t width = 4U;
     constexpr std::uint32_t height = 4U;
     constexpr std::uint32_t mip_count = 3U;
@@ -84,6 +86,8 @@ std::vector<std::uint8_t> make_descriptor(
     put_u32(descriptor, 0x18U, width * (dxt5 ? 4U : 2U));
     put_u32(descriptor, 0x20U, 0x40U);
     put_u32(descriptor, 0x38U, payload_size);
+    put_u32(descriptor, 0x3CU, auxiliary_mode);
+    put_u32(descriptor, 0x40U, auxiliary_value);
     put_u32(descriptor, 0x44U, (height << 16U) | width);
     put_u32(descriptor, 0x48U,
             std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(width)));
@@ -104,9 +108,13 @@ std::vector<std::uint8_t> make_wrapped_dds(bool dxt5 = false) {
     return bytes;
 }
 
-std::vector<std::uint8_t> make_ptx_zero_final_span(bool dxt5 = false) {
+std::vector<std::uint8_t> make_ptx_zero_final_span(
+    bool dxt5 = false,
+    std::uint32_t auxiliary_mode = 0U,
+    std::uint32_t auxiliary_value = 0U) {
     const auto dds = make_dds(dxt5);
-    const auto descriptor = make_descriptor(dds, dxt5);
+    const auto descriptor = make_descriptor(
+        dds, dxt5, auxiliary_mode, auxiliary_value);
     std::vector<std::uint8_t> bytes(0x800U + descriptor.size() + dds.size(), 0U);
     put_u32(bytes, 0U, 1U);
     put_u32(bytes, 4U, 0U);
@@ -142,6 +150,15 @@ void require_red_preview(const dmcresource::ImagePreview& image) {
         assert(image.rgba8[o + 2U] == 0U);
         assert(image.rgba8[o + 3U] == 255U);
     }
+}
+
+bool has_module(const dmcresource::PipelineResult& result, const char* name) {
+    for (const auto& module : result.modules) {
+        if (module.name != nullptr && std::strcmp(module.name, name) == 0) {
+            return module.complete;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -226,6 +243,28 @@ int main() {
     assert(child.inspection.format == "DDS");
     assert(child.inspection.root.title == "Texture 0");
     require_red_preview(child.image_preview);
+
+    // Retail em000 pattern: DXT1 is valid with auxiliary mode 2 and a non-zero
+    // auxiliary value. The pinned ReaderCore revision rejects this only because
+    // it still couples non-zero auxiliary mode to DXT5. Native Reader retries
+    // through the same canonical parser with that obsolete coupling neutralized.
+    constexpr std::uint32_t retail_auxiliary_value = 0x1D308000U;
+    const auto em000_like = make_ptx_zero_final_span(
+        false, 2U, retail_auxiliary_value);
+    const auto em000_like_result = run_decode_pipeline(
+        "em000_000.ptx", em000_like.data(), em000_like.size());
+    assert(em000_like_result.accepted);
+    assert(em000_like_result.children.size() == 1U);
+    assert(has_module(em000_like_result, "native.ptx-aux-compat"));
+    require_red_preview(em000_like_result.children[0].image_preview);
+
+    // The real structural relation is still enforced: mode and value must be
+    // zero together or non-zero together. Compatibility must not accept an
+    // unpaired auxiliary mode.
+    auto unpaired_aux = em000_like;
+    put_u32(unpaired_aux, 0x800U + 0x40U, 0U);
+    assert(!run_decode_pipeline(
+        "unpaired_aux.ptx", unpaired_aux.data(), unpaired_aux.size()).accepted);
 
     auto bad_descriptor_size = ptx;
     put_u32(bad_descriptor_size, 0x800U + 0x64U, 1U);
