@@ -15,14 +15,12 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/texture_companion.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
 
 constexpr std::size_t kMaxMappedBytes = 512u * 1024u * 1024u;
-constexpr std::uint32_t kMaxCompanionTextureSlot = 4095U;
-constexpr std::uint32_t kNoTextureSlot =
-    std::numeric_limits<std::uint32_t>::max();
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -83,8 +81,8 @@ struct Session {
     std::vector<std::uint32_t> render_triangle_texture_slots;
 
     // Vector index == canonical texture slot. Empty entries represent slots not
-    // required by the current model. PTX parsing/decoding stays in the native
-    // texture module + Spider route rather than Java or the renderer.
+    // required by the current model. PTX parsing/decoding stays in native
+    // reusable modules rather than Java or the renderer.
     std::vector<dmcresource::ImagePreview> attached_textures;
     std::string texture_attachment_detail;
     bool texture_companion_attached{};
@@ -203,35 +201,6 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
                         image.rgba8);
 }
 
-[[nodiscard]] bool collect_required_texture_slots(
-        const Session& session,
-        std::vector<std::uint32_t>* required,
-        std::uint32_t* max_slot) {
-    if (required == nullptr || max_slot == nullptr) return false;
-    required->clear();
-    *max_slot = 0U;
-    if (!session.renderable || !session.render_mesh.has_uv0() ||
-        session.render_mesh.indices.size() % 3U != 0U ||
-        session.render_triangle_texture_slots.size() !=
-            session.render_mesh.indices.size() / 3U) {
-        return false;
-    }
-
-    try {
-        for (const auto slot : session.render_triangle_texture_slots) {
-            if (slot == kNoTextureSlot) continue;
-            if (slot > kMaxCompanionTextureSlot) return false;
-            if (std::find(required->begin(), required->end(), slot) == required->end()) {
-                required->push_back(slot);
-                *max_slot = std::max(*max_slot, slot);
-            }
-        }
-    } catch (...) {
-        return false;
-    }
-    return !required->empty();
-}
-
 [[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
         const Session* session) noexcept {
     if (session == nullptr) return 0U;
@@ -328,33 +297,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_capabilities(
-        JNIEnv*, jclass, jlong handle) {
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return 0;
-    return static_cast<jlong>(session->capabilities);
-}
-
-extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_blackWidowState(
         JNIEnv*, jclass, jlong handle) {
     return static_cast<jlong>(black_widow_state(from_handle(handle)));
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_hierarchyAvailable(
-        JNIEnv*, jclass, jlong handle) {
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    return session->hierarchy_overlay.available() ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreviewAvailable(
-        JNIEnv*, jclass, jlong handle) {
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    return session->image_preview.available() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -395,15 +340,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
     Session* session = from_handle(handle);
     if (session == nullptr || fd < 0) return JNI_FALSE;
 
-    session->texture_attachment_detail.clear();
-    std::vector<std::uint32_t> required_slots;
-    std::uint32_t max_slot = 0U;
-    if (!collect_required_texture_slots(*session, &required_slots, &max_slot)) {
-        session->texture_attachment_detail =
-            "PTX companion rejected: current resource has no complete UV + texture-slot render mapping";
-        return JNI_FALSE;
-    }
-
     ReadOnlyMap mapped(fd);
     if (!mapped.valid()) {
         session->texture_attachment_detail =
@@ -412,52 +348,20 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
     }
 
     const auto name = to_utf8(env, filename);
-    auto pipeline = dmcresource::run_decode_pipeline(name, mapped.data(), mapped.size());
-    if (!pipeline.accepted || pipeline.probe.format != dmcresource::Format::Ptx) {
-        session->texture_attachment_detail =
-            "PTX companion rejected: selected file did not pass the Native Reader PTX pipeline";
-        return JNI_FALSE;
-    }
+    auto attachment = dmcresource::texture_companion::attach_ptx(
+        name,
+        mapped.data(), mapped.size(),
+        {
+            .mesh = &session->render_mesh,
+            .triangle_texture_slots = session->render_triangle_texture_slots,
+        });
 
-    try {
-        std::vector<dmcresource::ImagePreview> textures(
-            static_cast<std::size_t>(max_slot) + 1U);
-        for (const auto slot : required_slots) {
-            const auto index = static_cast<std::size_t>(slot);
-            if (index >= pipeline.children.size()) {
-                std::ostringstream detail;
-                detail << "PTX companion rejected: model requests texture slot "
-                       << slot << " but PTX exposes only "
-                       << pipeline.children.size() << " texture entries";
-                session->texture_attachment_detail = detail.str();
-                return JNI_FALSE;
-            }
-            auto& child = pipeline.children[index];
-            if (!child.image_preview.available()) {
-                std::ostringstream detail;
-                detail << "PTX companion rejected: texture slot " << slot
-                       << " has no decoded base-mip image";
-                if (!child.detail.empty()) detail << " | " << child.detail;
-                session->texture_attachment_detail = detail.str();
-                return JNI_FALSE;
-            }
-            textures[index] = std::move(child.image_preview);
-        }
+    session->texture_attachment_detail = std::move(attachment.detail);
+    if (!attachment.attached) return JNI_FALSE;
 
-        session->attached_textures = std::move(textures);
-        session->texture_companion_attached = true;
-        std::ostringstream detail;
-        detail << "PTX companion attached: " << name
-               << " | requiredSlots=" << required_slots.size()
-               << " | bundleTextures=" << pipeline.children.size()
-               << " | route=Spider/PTX->DDS->UV";
-        session->texture_attachment_detail = detail.str();
-        return JNI_TRUE;
-    } catch (...) {
-        session->texture_attachment_detail =
-            "PTX companion rejected: texture attachment allocation failed";
-        return JNI_FALSE;
-    }
+    session->attached_textures = std::move(attachment.textures);
+    session->texture_companion_attached = true;
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
