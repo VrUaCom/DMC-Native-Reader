@@ -8,12 +8,14 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "dmc_rengine/codecs/dds_bc.hpp"
 #include "dmc_rengine/profiles/dmc3/texture_slot_framing.hpp"
 #include "dmc_rengine/spider/native_executor.hpp"
 #include "dmcresource/child_resource.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/ptx_framing_compat.h"
 
 namespace dmcresource {
 namespace {
@@ -344,6 +346,7 @@ struct TextureExecutionState final {
     const char* module_id{};
     dmc3::TextureSlotFramingResult framing{};
     PipelineResult result{};
+    bool ptx_aux_compat_used{};
 };
 
 bool frame_ptx_operation(void* raw, std::uint32_t) noexcept {
@@ -358,7 +361,8 @@ bool frame_ptx_operation(void* raw, std::uint32_t) noexcept {
     }
 
     const auto source = as_bytes(state->bytes, state->size);
-    state->framing = dmc3::TextureSlotFramingParser::parse(source);
+    state->framing = ptx_compat::parse_texture_bundle(
+        source, &state->ptx_aux_compat_used);
     if (!state->framing.ok() || state->framing.document.kind !=
             dmc3::TextureSlotFramingKind::texture_bundle) {
         std::string detail = "PTX rejected by canonical texture-slot framing";
@@ -396,6 +400,11 @@ bool project_texture_operation(void* raw, std::uint32_t) noexcept {
         state->result = run_framed_ptx(
             as_bytes(state->bytes, state->size), state->framing,
             *state->probe, state->module_id);
+        if (state->result.accepted && state->ptx_aux_compat_used) {
+            state->result.modules.push_back({"native.ptx-aux-compat", true});
+            state->result.detail +=
+                "\nPTX compatibility: retained corpus-confirmed DXT1 auxiliary mode without obsolete DXT5 coupling";
+        }
         return state->result.accepted;
     }
 
