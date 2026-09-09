@@ -57,9 +57,7 @@ public final class MainActivity extends Activity {
 
     private long session;
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
-    private ResourceUiState uiState = ResourceUiState.empty();
     private BlackWidowState blackWidowState = BlackWidowState.empty();
-    private boolean spatialHierarchyAvailable;
     private String infoText = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -127,13 +125,7 @@ public final class MainActivity extends Activity {
     }
 
     private void applyPrimaryPresentation() {
-        final boolean hasSession = session != 0;
-        final boolean childBrowserMode = hasSession
-                && uiState.hasChildResources
-                && !uiState.canRender
-                && !uiState.canPreviewImage
-                && NativeBridge.childResourceCount(session) > 0;
-
+        final boolean childBrowserMode = session != 0 && blackWidowState.childBrowserMode;
         if (childBrowserMode) {
             renderView.setVisibility(View.GONE);
             childBrowser.setVisibility(View.VISIBLE);
@@ -149,24 +141,22 @@ public final class MainActivity extends Activity {
         final boolean hasSession = session != 0;
         applyPrimaryPresentation();
 
-        // Back is a permanent top-left navigation control. Inside a child it
-        // returns to the parent resource; at the top level it leaves the viewer.
+        // Back is a permanent Android-shell navigation control. Black Widow
+        // owns resource/action availability; Java only projects that state.
         parentButton.setVisibility(View.VISIBLE);
 
-        // Spider Black Widow owns whether a companion action is available and
-        // whether it is active. Android only projects the returned typed state.
         final boolean ptxAvailable = canAttachPtx();
         ptxButton.setVisibility(ptxAvailable ? View.VISIBLE : View.GONE);
         syncToggleButton(ptxButton, ptxAvailable, hasAttachedPtx());
 
-        setToolAvailable(resetButton, hasSession && uiState.canRender);
+        setToolAvailable(resetButton, hasSession && blackWidowState.canRender);
         syncToggleButton(wireButton,
-                hasSession && uiState.canWireframe && !renderView.isUvLayoutVisible(),
+                hasSession && blackWidowState.canWireframe &&
+                        !renderView.isUvLayoutVisible(),
                 renderView.isWireframe());
 
         final boolean hierarchyAvailable = hasSession
-                && uiState.canShowHierarchy
-                && spatialHierarchyAvailable
+                && blackWidowState.canShowHierarchy
                 && !renderView.isUvLayoutVisible();
         renderView.setHierarchyAvailable(hierarchyAvailable);
         syncToggleButton(hierarchyButton,
@@ -174,11 +164,11 @@ public final class MainActivity extends Activity {
                 renderView.isHierarchyVisible());
 
         syncToggleButton(uvButton,
-                hasSession && uiState.canRender && uiState.hasUvCoordinates,
+                hasSession && blackWidowState.canShowUv,
                 renderView.isUvLayoutVisible());
 
         setToolAvailable(infoButton,
-                hasSession ? uiState.canInspect : !infoText.isEmpty());
+                hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -403,9 +393,7 @@ public final class MainActivity extends Activity {
 
     private void showIdleStatus() {
         titleView.setText("DMC Native Reader");
-        uiState = ResourceUiState.empty();
         blackWidowState = BlackWidowState.empty();
-        spatialHierarchyAvailable = false;
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
                 + "Unpromoted DMC families are intentionally excluded from main.\n\n"
@@ -439,9 +427,7 @@ public final class MainActivity extends Activity {
         session = handle;
         titleView.setText(name);
         renderView.setSession(session);
-        uiState = ResourceUiState.fromCapabilities(NativeBridge.capabilities(session));
         refreshBlackWidowState();
-        spatialHierarchyAvailable = NativeBridge.hierarchyAvailable(session);
         rebuildInfo(name);
         applyResourceUiState();
     }
@@ -503,7 +489,7 @@ public final class MainActivity extends Activity {
         }
 
         // Refresh typed application state after the native action. Diagnostic
-        // text below is presentation only and never controls the button state.
+        // text below is presentation only and never controls button state.
         refreshBlackWidowState();
         final String diagnostic = NativeBridge.textureAttachmentInfo(session);
         if (attached) {
@@ -563,9 +549,7 @@ public final class MainActivity extends Activity {
     private void closeAllSessions() {
         renderView.setSession(0);
         childBrowser.setSession(0);
-        uiState = ResourceUiState.empty();
         blackWidowState = BlackWidowState.empty();
-        spatialHierarchyAvailable = false;
 
         if (session != 0) {
             NativeBridge.close(session);
