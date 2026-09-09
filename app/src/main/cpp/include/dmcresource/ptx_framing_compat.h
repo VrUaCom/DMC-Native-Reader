@@ -74,8 +74,15 @@ inline void write_u32_le(
 // diagnostic do we make a temporary copy, neutralize only the affected
 // DXT1 auxiliary pairs, and run the same canonical parser again. All physical
 // framing, sector bounds, DDS sizes, mip chains and descriptor fields remain
-// canonical-parser authority. On success the original auxiliary values are
-// restored into the typed result.
+// canonical-parser authority.
+//
+// The old ReaderCore revision repeats the obsolete DXT5 coupling inside
+// TextureSlotEntry::valid(), so restoring the original auxiliary pair into the
+// typed result would make result.ok() false again. Native Reader does not use
+// those auxiliary fields for rendering, child extraction, inspection, or
+// texture routing; therefore the compatibility result intentionally keeps
+// those two fields validation-normalized while all source bytes remain
+// untouched. The module records native.ptx-aux-compat when this path is used.
 [[nodiscard]] inline dmc3::TextureSlotFramingResult parse_texture_bundle(
     std::span<const std::byte> source,
     bool* compatibility_used = nullptr) {
@@ -157,20 +164,6 @@ inline void write_u32_le(
     if (!retried.ok() ||
         retried.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
         return direct;
-    }
-
-    for (auto& entry : retried.document.textures) {
-        const auto descriptor = static_cast<std::size_t>(entry.descriptor_offset);
-        std::uint32_t auxiliary_mode = 0U;
-        std::uint32_t auxiliary_value = 0U;
-        if (!detail::read_u32_le(
-                source, descriptor + detail::kAuxModeOffset, &auxiliary_mode) ||
-            !detail::read_u32_le(
-                source, descriptor + detail::kAuxValueOffset, &auxiliary_value)) {
-            return direct;
-        }
-        entry.auxiliary_mode = auxiliary_mode;
-        entry.auxiliary_value = auxiliary_value;
     }
 
     if (compatibility_used != nullptr) *compatibility_used = true;
