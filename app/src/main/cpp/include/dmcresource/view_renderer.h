@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <span>
 
 #include "dmcresource/image_preview.h"
 #include "dmcresource/mesh.h"
@@ -36,6 +37,9 @@ struct ViewState {
     bool wireframe{false};
     bool uv_layout{false};
 };
+
+RgbaImage render_uv_map(std::span<const Vec2> coordinates,
+    std::span<const std::uint32_t> indices, int width, int height, float zoom);
 
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,

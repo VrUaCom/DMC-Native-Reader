@@ -71,8 +71,10 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .triangle_texture_slots = session->render_triangle_texture_slots,
         .hierarchy_available = session->hierarchy_overlay.available(),
         .image_preview_available = session->image_preview.available(),
-        .child_resource_count = session->children.size(),
+        .child_resource_count = session_child_count(session),
         .texture_companion_attached = session->texture_companion_attached,
+        .uv_map_view = session->uv_gallery && session->uv_map_index &&
+            *session->uv_map_index < session->uv_gallery->maps.size(),
     });
 }
 
@@ -145,7 +147,15 @@ bool attach_session_ptx(Session* session, std::string_view name,
 
 RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags) {
-    if (session == nullptr || !session->renderable) return {};
+    if (session == nullptr) return {};
+    if (session->uv_gallery && session->uv_map_index &&
+        *session->uv_map_index < session->uv_gallery->maps.size()) {
+        return render_uv_map(session->uv_gallery->coordinates,
+            session->uv_gallery->maps[*session->uv_map_index].indices,
+            std::clamp(requested_width, 64, 1024),
+            std::clamp(requested_height, 64, 1024), zoom);
+    }
+    if (!session->renderable) return {};
     const auto flags = static_cast<dmcresource::RenderFlags>(
         static_cast<std::uint32_t>(render_flags));
 

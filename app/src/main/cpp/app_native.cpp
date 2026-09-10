@@ -76,12 +76,6 @@ jlong to_handle(Session* session) noexcept {
     return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(session));
 }
 
-const dmcresource::ChildResource* child_at(const Session* session, jint index) noexcept {
-    if (session == nullptr || index < 0) return nullptr;
-    const auto i = static_cast<std::size_t>(index);
-    return i < session->children.size() ? &session->children[i] : nullptr;
-}
-
 jintArray rgba_to_argb(JNIEnv* env, std::size_t width, std::size_t height,
                        const std::vector<std::uint8_t>& rgba) {
     if (width == 0U || height == 0U) return nullptr;
@@ -233,70 +227,59 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_childResourceCount(
         JNIEnv*, jclass, jlong handle) {
     const Session* session = from_handle(handle);
     if (session == nullptr ||
-        session->children.size() > static_cast<std::size_t>(
+        dmcresource::session_child_count(session) > static_cast<std::size_t>(
             std::numeric_limits<jint>::max())) {
         return 0;
     }
-    return static_cast<jint>(session->children.size());
+    return static_cast<jint>(dmcresource::session_child_count(session));
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_childResourceTitle(
         JNIEnv* env, jclass, jlong handle, jint index) {
-    const auto* child = child_at(from_handle(handle), index);
-    return env->NewStringUTF(child == nullptr ? "" : child->title.c_str());
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreviewAvailable(
-        JNIEnv*, jclass, jlong handle, jint index) {
-    const auto* child = child_at(from_handle(handle), index);
-    return child != nullptr && child->image_preview.available() ? JNI_TRUE : JNI_FALSE;
+    return env->NewStringUTF(dmcresource::session_child_title(from_handle(handle), index).c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreviewWidth(
         JNIEnv*, jclass, jlong handle, jint index) {
-    const auto* child = child_at(from_handle(handle), index);
-    if (child == nullptr || !child->image_preview.available() ||
-        child->image_preview.width > static_cast<std::uint32_t>(
-            std::numeric_limits<jint>::max())) {
-        return 0;
-    }
-    return static_cast<jint>(child->image_preview.width);
+    const auto [w, h] = dmcresource::session_child_preview_size(from_handle(handle), index);
+    return w <= static_cast<std::uint32_t>(std::numeric_limits<jint>::max())
+        ? static_cast<jint>(w) : 0;
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreviewHeight(
         JNIEnv*, jclass, jlong handle, jint index) {
-    const auto* child = child_at(from_handle(handle), index);
-    if (child == nullptr || !child->image_preview.available() ||
-        child->image_preview.height > static_cast<std::uint32_t>(
-            std::numeric_limits<jint>::max())) {
-        return 0;
-    }
-    return static_cast<jint>(child->image_preview.height);
+    const auto [w, h] = dmcresource::session_child_preview_size(from_handle(handle), index);
+    return h <= static_cast<std::uint32_t>(std::numeric_limits<jint>::max())
+        ? static_cast<jint>(h) : 0;
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_childResourcePreview(
         JNIEnv* env, jclass, jlong handle, jint index) {
-    const auto* child = child_at(from_handle(handle), index);
-    if (child == nullptr) return nullptr;
-    return preview_to_argb(env, child->image_preview);
+    try {
+        dmcresource::ImagePreview scratch;
+        const auto* image = dmcresource::session_child_preview(from_handle(handle), index, &scratch);
+        return image ? preview_to_argb(env, *image) : nullptr;
+    } catch (...) { return nullptr; }
 }
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_openChild(
         JNIEnv*, jclass, jlong handle, jint index) {
-    const auto* child = child_at(from_handle(handle), index);
-    if (child == nullptr) return 0;
     try {
-        auto session = session_from_child(*child);
-        return to_handle(session.release());
-    } catch (...) {
-        return 0;
-    }
+        return to_handle(dmcresource::open_session_child(from_handle(handle), index).release());
+    } catch (...) { return 0; }
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_openUvGallery(
+        JNIEnv*, jclass, jlong handle) {
+    try {
+        return to_handle(dmcresource::open_uv_gallery(from_handle(handle)).release());
+    } catch (...) { return 0; }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -314,7 +297,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags) {
     const Session* session = from_handle(handle);
-    if (session == nullptr || !session->renderable) return nullptr;
+    if (session == nullptr) return nullptr;
 
     return image_to_argb(env, dmcresource::render_session(session,
         requested_width, requested_height, yaw, pitch, zoom,

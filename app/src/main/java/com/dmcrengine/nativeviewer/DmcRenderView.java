@@ -65,6 +65,9 @@ public final class DmcRenderView extends View {
         bitmap = null;
         invalidate();
         if (session == 0) return;
+        if (BlackWidowState.fromNative(NativeBridge.blackWidowState(session)).uvMapView) {
+            renderFlags = RENDER_UV_LAYOUT;
+        }
 
         if (canUseStaticImagePreview()) {
             loadStaticImagePreview();
@@ -151,15 +154,6 @@ public final class DmcRenderView extends View {
     public boolean isHierarchyVisible() {
         return !staticImagePreview && !isUvLayoutVisible() && hierarchyAvailable &&
                 (renderFlags & RENDER_HIERARCHY) != 0;
-    }
-
-    public void toggleUvLayout() {
-        if (staticImagePreview) return;
-        renderFlags ^= RENDER_UV_LAYOUT;
-        if (isUvLayoutVisible()) {
-            renderFlags &= ~RENDER_HIERARCHY;
-        }
-        renderNow();
     }
 
     public boolean isUvLayoutVisible() {

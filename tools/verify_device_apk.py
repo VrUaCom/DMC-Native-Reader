@@ -1,4 +1,4 @@
-"""Verify the 1.0/v24 device APK, not production signing or device behaviour."""
+"""Verify the 1.0/v25 device APK, not production signing or device behaviour."""
 import argparse
 import hashlib
 import json
@@ -29,7 +29,7 @@ def main():
     build_tools = Path(args.sdk) / "build-tools/36.0.0"
     badging = run(str(build_tools / "aapt2"), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging, "Wrong application ID")
-    require("versionCode='24' versionName='1.0'" in badging, "Wrong release identity")
+    require("versionCode='25' versionName='1.0'" in badging, "Wrong release identity")
     require("native-code: 'arm64-v8a'" in badging, "Wrong ABI")
     manifest = run(str(build_tools / "aapt2"), "dump", "xmltree", str(args.apk),
                    "--file", "AndroidManifest.xml")
@@ -77,7 +77,7 @@ def main():
             require(any(symbol == line.split()[-1] and " UND " not in line
                         for line in symbols.splitlines() if line.split()),
                     "Missing JNI export: " + method)
-    print(json.dumps({"apk": str(args.apk), "versionName": "1.0", "versionCode": 24,
+    print(json.dumps({"apk": str(args.apk), "versionName": "1.0", "versionCode": 25,
                       "abi": "arm64-v8a", "signer_sha256": expected,
                       "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
                       "jni_exports_checked": len(methods), "zip_integrity": "pass",

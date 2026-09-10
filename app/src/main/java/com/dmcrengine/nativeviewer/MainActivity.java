@@ -276,8 +276,12 @@ public final class MainActivity extends Activity {
 
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {
-            renderView.toggleUvLayout();
-            applyResourceUiState();
+            final long gallery = NativeBridge.openUvGallery(session);
+            if (gallery == 0) {
+                Toast.makeText(this, "UV maps unavailable: incomplete bindings", Toast.LENGTH_LONG).show();
+                return;
+            }
+            navigateToSession(gallery, titleView.getText() + " · UV");
         });
         addToolButton(bar, uvButton);
 
@@ -520,8 +524,12 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        navigateToSession(child, childTitle);
+    }
+
+    private void navigateToSession(long handle, String title) {
         navigation.push(new NavigationEntry(session, titleView.getText().toString()));
-        activateSession(child, childTitle);
+        activateSession(handle, title);
     }
 
     private boolean navigateToParent() {

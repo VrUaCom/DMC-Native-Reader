@@ -45,16 +45,16 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     const bool has_transform_selectors =
         has_capability(session.capabilities, ResourceCapability::TransformSelectors);
 
-    const bool can_show_uv = can_render && session.render_mesh->has_uv0() &&
-        has_capability(session.capabilities, ResourceCapability::UvCoordinates);
-    const bool child_browser_mode =
-        has_child_resources && !can_render && !can_preview_image;
-    const bool texture_companion_attachable = can_show_uv &&
-        has_texture_bindings &&
+    const bool complete_binding = can_render && has_texture_bindings &&
         model_texture_binding::can_attach_texture_companion(
             *session.render_mesh, session.triangle_texture_slots);
+    const bool can_show_uv = complete_binding &&
+        has_capability(session.capabilities, ResourceCapability::UvCoordinates);
+    const bool child_browser_mode =
+        has_child_resources && !can_render && !can_preview_image && !session.uv_map_view;
+    const bool texture_companion_attachable = can_show_uv;
 
-    set_if(&state, StateFlag::CanRender, can_render);
+    set_if(&state, StateFlag::CanRender, can_render || session.uv_map_view);
     set_if(&state, StateFlag::CanWireframe, can_wireframe);
     set_if(&state, StateFlag::CanInspect, can_inspect);
     set_if(&state, StateFlag::CanShowHierarchy, can_show_hierarchy);
@@ -75,6 +75,7 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::TextureCompanionAttached,
            texture_companion_attachable && session.texture_companion_attached);
 
+    set_if(&state, StateFlag::UvMapView, session.uv_map_view);
     return state;
 }
 

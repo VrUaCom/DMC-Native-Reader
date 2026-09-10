@@ -30,10 +30,10 @@ public final class NativeBridge {
     // children; Android does not know whether the parent is PTX/PAC/PNST/etc.
     public static native int childResourceCount(long handle);
     public static native String childResourceTitle(long handle, int index);
-    public static native boolean childResourcePreviewAvailable(long handle, int index);
     public static native int childResourcePreviewWidth(long handle, int index);
     public static native int childResourcePreviewHeight(long handle, int index);
     public static native int[] childResourcePreview(long handle, int index);
+    public static native long openUvGallery(long handle);
     public static native long openChild(long handle, int index);
 
     public static native int[] render(long handle, int width, int height,
