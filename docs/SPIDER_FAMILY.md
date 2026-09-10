@@ -1,126 +1,105 @@
 # Spider Family — Native Reader architecture
 
-Status: canonical naming and responsibility contract for DMC Native Reader 1.x.
+Last updated: 2026-09-10.
 
-This document defines three distinct Spider roles. They share the same general principle — compact C++20 orchestration over reusable native modules — but they solve different problems and must not collapse into one oversized abstraction.
+Status: canonical responsibility/naming contract for Native Reader 1.x. Spider names describe orchestration roles; they do **not** replace parsers, codecs or direct numerical C++.
 
-## Spider Black Widow
+## Spider Black Widow — active product role
 
-Purpose: progressively displace Java/Kotlin application business logic while keeping Android platform integration thin.
+Black Widow progressively moves application/business decisions out of the Android Java shell and into platform-neutral C++20 typed state.
 
-Black Widow owns decisions and state, not Android widgets or Android framework calls.
+Current responsibilities include:
 
-Black Widow responsibilities:
-
-- application/session state machine;
+- session/action state;
 - capability-derived UI policy;
 - companion-resource state;
-- action availability and action state;
-- navigation/application decisions that are platform-neutral;
-- typed status/error/result values for the platform shell;
-- orchestration entry points that the Android shell can invoke without understanding DMC formats.
+- action availability/state;
+- typed status/error/result transport;
+- product decisions that do not require Android framework APIs.
 
-The Android Java layer remains only a mechanical platform shell for:
+The Android Java layer remains responsible only for platform mechanics such as Activity lifecycle, SAF/Uri/ParcelFileDescriptor handling, View creation/event forwarding and presentation of already-resolved native state.
 
-- Activity lifecycle;
-- Storage Access Framework / Uri / ParcelFileDescriptor;
-- Android View creation and event forwarding;
-- showing already-resolved native state/results.
+Java must not infer application state from diagnostic strings and must not understand DMC offsets/layouts.
 
-Java must not infer business state from diagnostic strings. In particular, code such as:
+Candidate v26 extends Black Widow with independent focused-inspection availability for UV, mesh/object and hierarchy information. Information authority may exist even where a spatial render action is unavailable.
 
-`detail.startsWith("PTX companion attached:")`
+## Spider Crusader — orchestration role
 
-is forbidden as a long-term contract. Black Widow must publish a typed/bitmask state such as `TextureCompanionAttachable` and `TextureCompanionAttached`.
+Crusader is the compact C++20 dependency/execution role used when repeated multi-module flow would otherwise duplicate orchestration code.
 
-Target direction:
+Responsibilities:
 
-`Android event -> thin Java shell -> Black Widow -> native modules -> typed state/result -> thin Java shell`
+- compact native operation plans;
+- dependency ordering;
+- operation binding;
+- fail-closed execution;
+- reusable composition across product flows.
 
-The long-term goal is to make the Java layer replaceable by another platform shell without moving DMC or application business logic.
+Examples include texture framing/projection and model + texture companion workflows. Crusader never owns DDS, PTX, MOD, SCM, UV math, rendering or binary offsets; those stay in their canonical modules.
 
-## Spider Tarantula
+Do not introduce a second executor just to satisfy the Spider naming scheme. Use the existing reusable native execution primitive where it already solves the flow.
 
-Purpose: provide a compact C++20 workflow/scripting layer for tasks that would otherwise be written as Python orchestration.
+## Spider Tarantula — future workflow/scripting role
 
-Tarantula is not a parser and not a replacement for canonical C++ modules. It composes reusable operations into concise higher-level workflows.
+Tarantula is a planned compact C++20 workflow/scripting layer for higher-level tasks that might otherwise be implemented as Python orchestration.
 
-Candidate responsibilities:
+Candidate uses:
 
 - declarative resource-processing workflows;
 - batch pipelines;
 - reusable transformation/inspection scripts;
-- conditional execution and data-flow between modules;
-- tooling automation where direct handwritten C++ orchestration becomes repetitive.
+- conditional/data-flow composition;
+- tooling automation where direct handwritten orchestration becomes repetitive.
 
-Tarantula must not be placed in hot inner loops such as rasterization, barycentric interpolation, UV math, matrix math, or texture sampling. Those stay direct C++.
+Tarantula is **not required** for the accepted Native Reader v24 path and must not be inserted into hot inner loops or simple direct operations merely for symmetry.
 
-Tarantula is not required for Native Reader 1.0 PTX attachment and must not be introduced merely for naming symmetry.
+## Hot-path rule
 
-## Spider Crusader
+Rasterization, barycentric interpolation, vector/matrix math, UV math, texture sampling and similarly small/hot numerical operations remain direct C++20.
 
-Purpose: simplify C++ module orchestration and dependency execution without replacing the modules themselves.
+Spider is useful only when it reduces duplicated orchestration or platform/business coupling without obscuring ownership.
 
-Crusader is the role currently closest to the existing generic native executor used by the Native Reader texture route.
+## Current model + texture direction
 
-Crusader responsibilities:
+```text
+MOD/SCM canonical adapter
+  -> RenderScene (geometry + UV + texture slots)
 
-- compact native plans;
-- dependency ordering;
-- operation binding;
-- fail-closed execution;
-- reuse of the same operations across several product flows;
-- keeping orchestration code out of individual parsers/codecs/render loops.
+PTX / DDS native texture authority
+  -> TextureSet
 
-Current PTX example:
+Black Widow
+  -> typed attach/action/UI state
 
-`PTX framing -> DDS projection`
+Crusader / reusable orchestration where justified
+  -> dependency order / fail-closed composition
 
-Future companion example:
+model_texture_binding + scene_projection
+  -> validated per-triangle texture slot mapping
 
-`PTX framing -> TextureSet -> required-slot resolution -> decode required slots -> validate binding -> attach material set`
+view_renderer
+  -> direct C++ UV interpolation + RGBA sampling
+```
 
-Crusader does not own DDS, PTX, MOD, SCM, UV, rendering, or format offsets. Those remain in their canonical modules.
-
-The current pinned ReaderCore generic native executor is used as the underlying execution primitive. DMC Native Reader may expose the product-facing name "Crusader" without changing dmc-rengine-cpp.
+The same ownership rule applies to candidate UV/inspection work: `uv_gallery` and `session_inspection` consume already typed/canonical data; Spider publishes state, not binary semantics.
 
 ## Naming rule
 
-Use the names only for these roles:
+Use these names only for their defined roles:
 
-- **Black Widow** = Java/application-shell displacement.
-- **Tarantula** = Python/workflow displacement.
-- **Crusader** = C++ orchestration simplification.
+- **Black Widow** = application/platform-shell displacement through typed state;
+- **Crusader** = reusable C++ dependency/orchestration simplification;
+- **Tarantula** = higher-level C++20 workflow/scripting layer.
 
-Do not call every helper or parser a Spider. A normal reusable C++ function/module stays a normal module when Spider adds no value.
-
-## PTX -> MOD/SCM application
-
-The intended architecture is:
-
-`MOD/SCM canonical adapter -> RenderScene (geometry + UV + texture slots)`
-
-`PTX -> texture module -> TextureSet`
-
-`Black Widow -> exposes attach action/state to Android shell`
-
-`Crusader -> orchestrates PTX/TextureSet/slot-resolution attachment steps`
-
-`material projection -> per-triangle texture slot mapping`
-
-`renderer -> direct C++ UV interpolation + RGBA sampling`
-
-Black Widow must publish typed state for the `.PTX` button. Java must not inspect diagnostic strings or duplicate capability policy.
+A normal parser, codec, helper or mathematical function remains a normal module when Spider adds no architectural value.
 
 ## Duplication rule
 
-Before adding new code:
+Before adding code:
 
-1. Check whether a canonical parser/codec/module already owns the operation.
-2. If two call sites need the same logic, extract one reusable module instead of copying it.
-3. Use Crusader when repeated dependency/orchestration code is the duplication.
-4. Use Black Widow when repeated platform-shell state/business decisions are the duplication.
-5. Use Tarantula only when higher-level workflow/script repetition justifies it.
-6. Keep hot, simple numerical code as direct C++.
-
-This keeps Native Reader modular without turning modularity itself into overhead.
+1. check whether DMC Rengine/native canonical code already owns the operation;
+2. if two call sites need the same logic, extract one reusable module rather than copying it;
+3. use Crusader when repeated dependency/orchestration flow is the duplication;
+4. use Black Widow when platform-shell/business decisions are the duplication;
+5. use Tarantula only when higher-level workflow repetition justifies a scripting abstraction;
+6. keep direct hot/simple numerical code direct C++.

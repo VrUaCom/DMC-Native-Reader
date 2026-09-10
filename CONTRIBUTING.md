@@ -1,84 +1,104 @@
 # Contributing to DMC Native Reader
 
-DMC Native Reader is currently in the **v1 debug / corpus-validation phase**.
+DMC Native Reader currently has an accepted Android v1 baseline on `main` (versionName `1.0`, versionCode `24`) and evidence-gated development candidates. The production registry is intentionally limited to **MOD / SCM / DDS / PTX**.
 
-Contributions are welcome, especially when they improve real-file compatibility, Android routing, parser diagnostics, evidence quality or format-specific tests.
+Contributions are welcome when they improve correctness, safety, real-file compatibility, inspection/rendering quality, Android integration, evidence quality or a bounded format promotion.
 
 ## Ground rule: do not invent format semantics
 
-This project is evidence-aware.
+This project is evidence-aware. Distinguish between:
 
-A parser change should distinguish between:
-
-- extension/filename recognition;
+- filename/extension recognition;
 - content-confirmed identity;
 - structural parsing;
 - semantic interpretation;
-- rendering behavior;
+- presentation/rendering behavior;
 - original-game/runtime behavior.
 
-Do not promote a guess into a field name, offset meaning, geometry layout or runtime claim without evidence.
+Generated names, plausible guesses or UI convenience are not reverse-engineering evidence. If a field or relationship is unknown, keep it unknown/preserved until evidence supports promotion.
 
-If a field is unknown, preserve it as unknown.
+## Architecture rules
+
+A contribution must preserve the current direction:
+
+```text
+DMC Rengine / native canonical authority
+  -> NativeModuleRegistry
+  -> typed Architecture v2 projection
+  -> portable DMCNativeReader::Core
+  -> thin platform shell
+```
+
+Please do not:
+
+- add Java/Kotlin DMC binary parsers;
+- add renderer-owned format parsers;
+- reintroduce wildcard family decoding;
+- restore the old recognition-only production catalog;
+- duplicate MOD/SCM/DDS/PTX offsets or codecs already owned by DMC Rengine/native modules;
+- infer spatial hierarchy from mesh vertices or fabricate missing transforms;
+- parse diagnostic strings to make application/UI decisions;
+- add Android-only writers/repackers to the read-only product.
 
 ## High-value contributions
 
-- reproducible bugs using legally obtained user-owned DMC3 HD resources;
-- minimal failing fixtures or byte ranges that demonstrate a parser issue;
-- Android `Open with` / SAF / Samsung My Files routing diagnostics;
-- bounds-checking and malformed-input hardening;
-- format-specific unit/regression tests;
-- documentation corrections supported by code/corpus/executable evidence;
-- new family modules backed by sufficiently strong reverse evidence;
-- UI improvements that preserve parser/evidence distinctions.
+- reproducible failures using legally obtained user-owned DMC3 HD resources;
+- bounds/memory-safety hardening;
+- MOD/SCM geometry, hierarchy, UV, skin or texture-binding regressions backed by canonical evidence;
+- DDS/PTX decode/framing/gallery/companion fixes;
+- capability-driven UI/inspection improvements that reuse typed native contracts;
+- Android routing and real-device diagnostics;
+- documentation corrections tied to actual code/evidence;
+- a new family promotion backed by canonical DMC Rengine readiness and dedicated tests.
 
-## Before opening a pull request
+## New format promotion
 
-Please make sure that:
+Historical branches contain more resource families than production `main`. That does **not** make those families supported.
 
-1. the change stays inside the modular `NativeModuleRegistry` architecture;
-2. no wildcard or central family decoder is reintroduced;
-3. unknown families still fail closed;
-4. recognition-only families do not fabricate decoded semantics;
-5. non-renderable sessions cannot display stale geometry;
-6. file access remains read-only unless a future authoring milestone explicitly changes that contract;
-7. host/native tests are updated where applicable;
-8. Android build still completes.
+A new family should document:
 
-## Format work
-
-For a new or upgraded format module, document:
-
-- family name;
-- identity evidence;
-- parser maturity (`recognition`, `partial`, `structural`, `mesh/renderable`, etc.);
-- validated byte boundaries;
+- family identity and evidence;
+- canonical parser/read-side authority;
+- bounded byte/layout invariants;
+- typed projection contract;
 - unresolved fields/semantics;
-- test/corpus evidence used;
-- whether the implementation comes from or must be synchronized with `VrUaCom/dmc-rengine-cpp`.
+- malformed-input behavior;
+- regression/corpus evidence;
+- UI capabilities actually justified by that evidence.
+
+Prefer consuming the corresponding `VrUaCom/dmc-rengine-cpp` authority rather than rediscovering the format in Native Reader.
+
+## Testing and acceptance
+
+Before opening/promoting a PR:
+
+1. run the relevant portable/native regressions;
+2. keep unknown/unpromoted input fail-closed;
+3. verify a clean Android build when Android code/package behavior changes;
+4. update APK identity/module/JNI/signing checks when the interface changes;
+5. add a regression for the bug/feature rather than relying on visual inspection alone;
+6. for device-visible behavior, keep the PR draft until the required real-device/corpus acceptance succeeds;
+7. update repository documentation in the same promotion slice when accepted state changes.
+
+A hosted CI failure that executes no steps is infrastructure evidence, not proof that the source is broken; likewise it is not a green gate. Report exactly what did and did not execute.
 
 ## Bug reports
 
-Useful bug reports include:
+Useful reports include:
 
-- Native Reader version;
-- Android device / Android version;
-- file extension and detected family;
-- exact visible error/result;
-- whether the failure is routing, recognition, parsing or rendering;
-- file size and, when safe to share, a hash;
-- whether the same file is accepted by another known DMC Rengine tool.
+- Native Reader version/versionCode and commit when self-built;
+- device/Android version and file-opening path;
+- resource extension/family and size/hash when safe to share;
+- exact visible result;
+- whether the failure is routing, parse, inspection, render, hierarchy, texture/companion, gallery/navigation or memory-safety;
+- screenshots/logs or a minimal legally shareable fixture when available.
 
-Do **not** upload copyrighted game archives or proprietary executable files unless you have the right to redistribute them.
+Do not upload copyrighted game archives, proprietary executables or redistribution-restricted assets unless you have the right to do so.
 
 ## AI-assisted contributions
 
-AI-assisted development is allowed. The project itself uses AI-assisted implementation/review workflows.
-
-However, generated code or explanations do not count as reverse-engineering evidence by themselves. Contributors remain responsible for correctness, provenance, testing and licensing of submitted code.
+AI-assisted development is allowed, but generated code/explanations do not count as reverse-engineering evidence. Contributors remain responsible for correctness, provenance, testing and licensing.
 
 ## Legal boundary
 
-This repository is an independent fan-made interoperability/modding project and is not affiliated with Capcom.
-
-Do not submit proprietary Capcom source code, leaked materials, game binaries or redistribution-restricted assets.
+DMC Native Reader is an independent fan-made interoperability/modding project and is not affiliated with Capcom. Do not submit proprietary Capcom source code, leaked materials, game binaries or assets you cannot legally redistribute.

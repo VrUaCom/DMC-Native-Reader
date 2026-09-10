@@ -1,127 +1,122 @@
 # DMC Native Reader — Public Repository Opening Checklist
 
-This checklist separates **opening the source repository** from publishing an **official signed distribution APK**.
+Last updated: 2026-09-10.
 
-## Product baseline
+This checklist separates the **current private development repository**, a future **public source repository**, and any **official signed application distribution**. These are different milestones.
 
-- [x] Native Reader v1 debug-baseline milestone frozen.
-- [x] System-integrated Android file opening path documented.
-- [x] Native C++ `NativeModuleRegistry` architecture documented.
-- [x] 71 recognized DMC families represented by 71 explicit module contracts.
-- [x] Core modding readers documented: MOD, SCM, DDS, PTX, TXT and `.index`.
-- [x] Additional promoted readers documented: HITS, DCA, LIG/LIG2, PAC, PNST and NBZ.
-- [x] Partial/evidence-gated status is explicit for EFM, MRP and SHW.
-- [x] SO is not misrepresented as a completed v1 semantic reader.
-- [x] Unknown-family behavior is fail-closed.
-- [x] v1 exact-head CI / Android APK gate passed before entering debug phase.
+## Current product truth
+
+- [x] Accepted Android baseline is Native Reader `1.0` / versionCode `24` on `main`.
+- [x] Production `NativeModuleRegistry` contains exactly **MOD / SCM / DDS / PTX**.
+- [x] Unknown/unpromoted families fail closed.
+- [x] MOD/SCM use canonical DMC Rengine read-side authority through the pinned ReaderCore boundary.
+- [x] DDS/PTX use reusable native codec/framing/preview/TextureSet paths.
+- [x] Android is a thin shell; DMC format parsing and application decisions remain native/typed.
+- [x] Physical Samsung acceptance confirms all four supported families open and PTX model texture application works.
+- [x] v24 installed-size report is 2.32 MB, down from 6.27 MB before the size/module cleanup.
+- [x] Pre-cleanup wide-format work is preserved on `main.2` as backlog/reference rather than advertised as production support.
+- [x] Current v26 UV/focused-inspection work is clearly marked candidate/draft until device acceptance.
+
+Do **not** advertise HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW or a 71-family registry as current Native Reader production support. Those statements belong to historical pre-cleanup development only.
 
 ## Public-facing repository material
 
-- [x] Public README explains what the application is and why it exists.
-- [x] Architecture and evidence policy are visible from the repository front page.
-- [x] Format support is described by maturity instead of a misleading binary supported/unsupported claim.
+- [x] README describes the accepted v24 baseline and active v26 candidate separately.
+- [x] Current architecture and authority boundaries are documented.
+- [x] Status and roadmap distinguish completed work from pending candidate work.
+- [x] Changelog no longer presents obsolete development lines as current releases.
+- [x] Historical build documents are classified as historical evidence rather than current product instructions.
+- [x] Contribution/security guidance preserves evidence and read-only boundaries.
 - [x] Capcom / Devil May Cry affiliation disclaimer is present.
-- [x] Project contains no Capcom game archives, proprietary game files or game executable binaries.
-- [x] Contribution guide added.
-- [x] Security policy added.
-- [x] Bug / real-file debug issue templates added.
-- [x] Development signing-key boundary documented.
-- [x] Public roadmap and changelog added.
+- [x] Repository does not intentionally contain Capcom game archives, proprietary game assets, proprietary source code or DMC executable binaries.
 
-## Manual gates before switching repository visibility to Public
+## Open admin/product gates before Public
 
-### 1. Choose the source-code license
+### 1. Licensing decision
 
 **OPEN — owner decision required.**
 
-No license is currently selected. Do not label the project "open source" until a license is explicitly committed.
+There is currently no root `LICENSE` file on accepted `main`. Until explicit licensing terms are committed, do not describe the repository as open source merely because source may later become publicly visible.
 
-Possible directions to evaluate separately:
+If custom/source-available terms are selected, public copy must use that wording consistently. If an OSI-approved license is selected, update README/NOTICE/contribution material accordingly.
 
-- permissive open-source license;
-- copyleft open-source license;
-- source-available / custom terms;
-- public repository with all rights reserved.
+### 2. Repository About and topics
 
-This is a legal/product decision and is intentionally not selected by an implementation agent.
+Recommended GitHub About description:
 
-### 2. Repository About text
-
-Recommended GitHub **About** description:
-
-> System-integrated native Android reader for Devil May Cry 3 HD resources — modular C++ parsers for MOD, SCM, DDS, PTX, stage/config files, containers and more.
+> Native Android reader for Devil May Cry 3 HD resources — C++20 MOD/SCM 3D inspection, DDS/PTX previews and model texture attachment.
 
 Recommended topics:
 
-`devil-may-cry` `dmc3` `reverse-engineering` `modding` `android` `cpp` `file-format` `binary-analysis` `dds` `game-modding`
+`devil-may-cry` `dmc3` `reverse-engineering` `modding` `android` `cpp` `file-format` `binary-analysis` `dds` `3d-viewer`
 
-### 3. Review old branches before visibility change
+Recheck these immediately before public opening so metadata matches the then-accepted `main`, not an old milestone.
 
-**OPEN — owner/admin cleanup decision required.**
+### 3. Historical branches and stale PRs
 
-GitHub repository visibility applies to more than the current `main` branch. The repository currently also contains historical development branches such as:
+**OPEN — admin/history review required.**
 
-- `ci/standalone-actions-probe`;
-- `claude/mod-scm-file-opening-t93oeh`;
-- `feature/*`;
-- `fix/*`;
-- `integrate/*`;
-- `test/*`;
-- `release/native-reader-v1-debug-baseline`;
-- `public/opening-v1`.
+Repository visibility exposes historical refs that remain reachable. Review development/release/experiment branches before changing visibility. In particular:
 
-Before making the repository public, decide which historical branches are intentionally part of the public development record and prune branches that should not be public.
+- preserve `main.2` only if its pre-cleanup backlog/history is intentionally public;
+- treat PR #28 public-opening preparation as stale relative to current v24 unless it is rebuilt/rebased on current `main`;
+- keep PR #29 iOS/Windows work explicitly preview/experimental until its own build/device acceptance;
+- keep PR #32 v26 draft until Samsung/device acceptance.
 
-Do not assume that a clean `main` hides content reachable from another branch/ref.
+Do not merge an old public-prep branch simply because its documentation was once correct.
 
-### 4. Review commit metadata / personal-email exposure
+### 4. Commit metadata and privacy
 
 **OPEN — privacy review recommended.**
 
-Historical Git commits may contain author/committer email metadata. Before public visibility, review whether the existing history exposes a personal email address that should instead use a GitHub `noreply` identity.
+Review historical commit author/committer metadata and branch history before public visibility. If history sanitization is required, perform it before opening the repository; changing future Git settings does not rewrite old commits.
 
-If privacy cleanup is required, rewrite/sanitize history before opening the repository. Changing the account's future commit-email setting does not retroactively rewrite existing commits.
+### 5. Development and production signing
 
-### 5. Development signer
+The tracked `keys/dmc-native-reader-test.jks` is a **development/test-only** signer used for install-over continuity of internal/device-test APKs. It must not be represented as production trust material.
 
-The committed `keys/dmc-native-reader-test.jks` is intentionally a **disposable development-only key** used for update compatibility across internal/debug APKs.
+Before an official public APK:
 
-It is not a production secret and must **never** be used as the trust root for an official public release.
+- provision a separate production signing authority outside Git history;
+- keep private keys/passwords in protected release infrastructure;
+- preserve update-signing continuity for subsequent official releases;
+- record the production certificate digest and APK SHA-256 in release evidence;
+- decide whether the development test JKS should remain in a public repository or be removed as a hygiene/product decision even though it is not a production secret.
 
-Before publishing a production APK:
+### 6. GitHub repository controls
 
-- generate/provision a separate production signing key;
-- keep the production private key outside Git history;
-- store CI signing material in protected repository/environment secrets;
-- document the production certificate fingerprint;
-- decide the migration path from development-signed APKs (normally uninstall/reinstall unless a supported signing migration is configured).
+**OPEN — admin action.**
 
-Opening the source repository and publishing a production-signed APK are therefore two separate milestones.
+Before Public, review/configure:
 
-### 6. Visibility change
+- About text and topics;
+- default branch and branch/ruleset protection;
+- issue/contribution policy;
+- private security reporting / security features where available;
+- release permissions and protected production environment;
+- stale branches/PRs;
+- repository visibility itself.
 
-Keep the repository private until the owner has reviewed:
+### 7. Distribution surface
 
-- README wording;
-- license choice;
-- old branches/history;
-- commit metadata/privacy;
-- public issue policy;
-- public contribution policy;
-- development-vs-production signing distinction.
+Do not publish a canonical “latest stable” asset until the chosen release line has:
 
-After those are accepted, repository visibility can be changed to `Public` by the owner/admin.
+- source state tied to an accepted commit/tag;
+- required host/native/APK evidence;
+- real-device/corpus acceptance;
+- correct production signing authority;
+- release notes and artifact hashes matching the exact delivered binary.
 
-## First public-debug milestone
+## Correct first-public messaging
 
-The recommended first public phase is **Native Reader v1 / Debug & Corpus Validation**.
+A future public repository should state:
 
-Public messaging should be:
+- DMC Native Reader is a read-only native resource viewer/inspector for user-owned Devil May Cry 3 HD files;
+- Android is the accepted production shell;
+- current production modules are MOD, SCM, DDS and PTX;
+- DMC Rengine is the canonical reverse/read-side authority for promoted format logic;
+- semantic completeness is evidence-gated;
+- archived/experimental formats are not current support claims;
+- iOS/Windows/Web remain preview/future directions until separately accepted.
 
-- architecture milestone achieved;
-- core popular DMC3 modding formats have real native readers;
-- 71 known families have explicit registry contracts;
-- semantic completeness is still evidence-gated per format;
-- real-world device/corpus testing is now the primary goal.
-
-The project should not claim that every recognized family is fully reversed.
+This wording can expand only when the corresponding capability has actually been promoted to accepted `main`.

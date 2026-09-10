@@ -1,101 +1,99 @@
 # DMC Native Reader — Status
 
-## Current baseline
+Last updated: 2026-09-10.
 
-`1.0.0-core-cleanup` / versionCode `19`
+## Accepted baseline (`main`)
 
-Repository: `VrUaCom/DMC-Native-Reader`  
-Canonical reverse/evidence repository: `VrUaCom/dmc-rengine-cpp`  
-Archived pre-cleanup branch: `main.2` — **до опрацювання**
+- Product line: **Native Reader 1.0**
+- versionName: `1.0`
+- versionCode: `24`
+- accepted main commit: `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`
+- package: `com.dmcrengine.nativereader`
+- ABI: `arm64-v8a`
+- minSdk / targetSdk: `26 / 36`
+- production module registry: **4 modules — MOD, SCM, DDS, PTX**
+- canonical reverse/read-side authority: `VrUaCom/dmc-rengine-cpp` / pinned `ReaderCore`
+- archived pre-cleanup implementation: `main.2` — backlog/reference only
 
-## Main architecture
+## Acceptance evidence
 
-Production path:
+v24 was accepted on a physical Samsung device on 2026-09-10. The owner confirmed that all four supported file types open successfully and PTX texture application works. Android reported **2.32 MB installed size**, down from 6.27 MB before the v24 cleanup.
+
+Build-side evidence for v24 includes seven passing local/native regressions, verified arm64 APK identity/signature/ZIP/module gates, only 18 declared public JNI exports, and removal of the unintended Kotlin runtime dependency. GitHub-hosted Actions jobs on the tested revision failed before executing steps, so CI is **not** claimed green; the accepted evidence is local regression + APK verification + physical-device acceptance.
+
+See `SIZE_AND_MODULES_V24.md` for exact artifact measurements and hashes.
+
+## Current architecture
 
 ```text
-probe
-  -> NativeModuleRegistry
-      -> MOD | SCM | DDS | PTX
-          -> Architecture v2 projection
-              -> generic JNI Session
-                  -> capability-driven Android UI
+resource bytes
+  -> bounded probe / DMC Rengine ReaderCore
+  -> NativeModuleRegistry (MOD | SCM | DDS | PTX)
+  -> typed module/adapter projection
+  -> InspectionDocument / RenderScene / ImagePreview / ChildResource[]
+  -> DMCNativeReader::Core
+      -> resource_session
+      -> scene_projection
+      -> texture/material binding
+      -> Black Widow typed state
+      -> direct C++ rendering
+  -> thin Android JNI + Java shell
 ```
 
-Current registry size: **4**.
+Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts and the renderer does not own format parsers.
 
-There is no wildcard fallback and no recognition-only catalog in `main`. A file outside the four promoted families fails closed.
-
-## Supported core
+## Accepted capabilities
 
 ### MOD
 
-- renderable;
-- canonical `dmc-rengine-cpp` structural parser;
-- `RenderScene` geometry;
-- hierarchy/spatial projection when canonical authority is available;
+- canonical structural parsing;
+- renderable geometry;
+- rotate / zoom / wireframe;
+- typed inspection;
+- hierarchy/spatial projection when canonical authority is valid;
 - skin weights;
-- texture-slot state;
-- typed `InspectionDocument`.
+- canonical texture-slot and legacy GS state;
+- PTX companion attachment for valid model texture bindings.
 
 ### SCM
 
-- renderable;
-- canonical `dmc-rengine-cpp` structural parser;
-- `RenderScene` geometry;
-- scene hierarchy and transforms;
+- canonical structural parsing;
+- renderable geometry;
+- canonical scene hierarchy and transforms;
+- rotate / zoom / wireframe;
+- typed inspection;
 - texture-slot state;
-- typed `InspectionDocument`.
+- PTX companion attachment through the shared texture path.
 
 ### DDS
 
-- bounded DMC3 DXT1/DXT5 validation;
-- complete mip-chain checks;
-- generic `ImagePreview`;
+- bounded DXT1/DXT5 parsing/decoding;
+- generic RGBA image preview;
 - malformed/overflow rejection.
 
 ### PTX
 
-- bounded texture-bundle validation;
-- descriptor/DDS size coherence;
-- generic DDS `ChildResource[]`;
-- thumbnail/image previews through the generic image contract;
-- child -> parent navigation through generic sessions.
+- bounded texture-bundle framing;
+- generic DDS child resources;
+- thumbnail/gallery presentation;
+- child preview and parent-session navigation;
+- shared TextureSet path for model companion application.
 
-## Removed from main
+## Active development candidate
 
-The old multi-format surface is not part of the clean v1 core. HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ module, EFM/MRP/SHW and the broad recognition catalog are absent from the registry/build. Their pre-cleanup state is preserved on `main.2` for later canonical promotion.
+Draft PR #32 on `feature/dds-ptx-v1-acceptance` currently carries **v26** (`versionCode 26`, `versionName 1.0`). It adds:
 
-The old `DecodeResult` compatibility path, HITS decoder and text decoder are removed from `main`.
+- v25 per-texture-slot UV gallery with per-slot triangle grouping, zoom/reset and shared gallery infrastructure;
+- v26 long-press information for UV slots/triangle counts;
+- long-press object/mesh structure report;
+- long-press node/bone parent relationship report;
+- separate hierarchy-information authority from spatial-render authority;
+- 9 portable/native regressions and verified v26 APK gates.
 
-## CI gates
+v26 is **not yet accepted** because Samsung/device validation is still pending. Until that closes, `main` v24 remains the stable repository baseline.
 
-The push/PR core workflow must prove:
+## Not in production registry
 
-1. archived legacy source paths are absent;
-2. registry contains exactly MOD, SCM, DDS and PTX;
-3. archived families resolve to no module;
-4. MOD and SCM pass end-to-end synthetic pipeline projection tests;
-5. MOD spatial adapter regression passes;
-6. DDS and PTX pass valid, malformed, bounds and child-preview regressions;
-7. `RenderScene` regression passes;
-8. Java capability UI regression passes;
-9. ARM64 APK builds;
-10. the APK contains only the four promoted module IDs from the old module set;
-11. explicit DMC MIME exposure in the manifest is limited to MOD/SCM/DDS/PTX.
+HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and the previous wide recognition catalog are absent from the current `main` registry/build. Their existence in historical branches or reverse documentation does not make them supported Native Reader modules.
 
-## Device boundary
-
-The previously accepted Samsung behavior remains the practical UI target:
-
-- MOD opens/renders;
-- SCM opens/renders;
-- standalone DDS previews;
-- PTX opens as a child gallery;
-- DDS child preview opens;
-- `←` returns to the PTX parent.
-
-After the cleanup APK is green in CI it receives one short Samsung regression pass because the module routing surface and APK version changed.
-
-## Next promotion rule
-
-No archived family returns to `main` merely because old code exists. Each future format must enter through the same v2 module contracts and preferably reuse the corresponding canonical `dmc-rengine-cpp` parser/source authority. The `main.2` branch is backlog/reference, not a second production architecture.
+Future promotion requires a bounded Architecture v2 module, canonical/evidence-backed authority and regression/device evidence appropriate to the feature.
