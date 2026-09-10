@@ -1,0 +1,217 @@
+name: DMC Native Reader cross-platform previews
+
+on:
+  pull_request:
+    paths:
+      - "ios/**"
+      - "windows/**"
+      - "app/src/main/cpp/portable_session.cpp"
+      - "app/src/main/cpp/include/dmcresource/portable_session.h"
+      - "app/src/test/native/portable_session_test.cpp"
+      - ".github/workflows/platform-previews.yml"
+  workflow_dispatch:
+    inputs:
+      publish_previews:
+        description: Update the iOS/Windows preview releases after successful builds
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  runner_probe:
+    name: Ubuntu runner probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm Actions runner execution
+        run: |
+          echo "runner=ubuntu"
+          echo "sha=${GITHUB_SHA}"
+
+  portable_core:
+    name: Portable C++20 session regression
+    needs: runner_probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run PortableSession regression
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FLAGS=(
+            -std=c++20 -Wall -Wextra -Wpedantic
+            -Iapp/src/main/cpp/include
+            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include
+          )
+          COMMON=(
+            app/src/main/cpp/dmc_resource.cpp
+            app/src/main/cpp/decode_pipeline.cpp
+            app/src/main/cpp/inspection_format.cpp
+            app/src/main/cpp/portable_session.cpp
+            app/src/main/cpp/formats/dds.cpp
+            app/src/main/cpp/adapters/mod_adapter.cpp
+            app/src/main/cpp/adapters/scm_adapter.cpp
+            app/src/main/cpp/modules/module_registry.cpp
+            app/src/main/cpp/modules/module_model.cpp
+            app/src/main/cpp/modules/module_texture.cpp
+            app/src/main/cpp/view_renderer.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
+            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp
+          )
+          g++ "${FLAGS[@]}" app/src/test/native/portable_session_test.cpp \
+            "${COMMON[@]}" -o /tmp/dmc-portable-session-test
+          /tmp/dmc-portable-session-test
+
+  ios:
+    name: iOS unsigned preview
+    needs: portable_core
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Build unsigned iOS application
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project DMCNativeReader.xcodeproj \
+            -scheme DMCNativeReader \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build" \
+            build
+          test -d "build/DMC Native Reader.app"
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          rm -rf Payload
+          mkdir Payload
+          cp -R "build/DMC Native Reader.app" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload \
+            DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-iOS-v1.0.0-unsigned
+          path: ios/DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 90
+
+  windows:
+    name: Windows x64 preview (MinGW)
+    needs: portable_core
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 zip
+      - name: Configure Windows x64 cross build
+        run: |
+          cmake -S windows -B build/windows \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build Windows executable
+        run: cmake --build build/windows --parallel
+      - name: Package Windows preview
+        run: |
+          set -euo pipefail
+          OUT="dist/DMC-Native-Reader-Windows-v1.0.0-preview"
+          mkdir -p "$OUT"
+          test -f build/windows/DMC-Native-Reader.exe
+          test -f windows/Register-OpenWith.ps1
+          test -f windows/Unregister-OpenWith.ps1
+          cp build/windows/DMC-Native-Reader.exe "$OUT/DMC-Native-Reader.exe"
+          cp windows/Register-OpenWith.ps1 "$OUT/Register-OpenWith.ps1"
+          cp windows/Unregister-OpenWith.ps1 "$OUT/Unregister-OpenWith.ps1"
+          cp LICENSE "$OUT/LICENSE.txt"
+          cp THIRD_PARTY_NOTICES.md "$OUT/THIRD_PARTY_NOTICES.md"
+          (cd "$OUT" && zip -9 -r "../DMC-Native-Reader-Windows-v1.0.0-preview.zip" .)
+          test -f dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v1.0.0-preview
+          path: dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Update platform preview releases
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_previews }}
+    needs: [ios, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: DMC-Native-Reader-iOS-v1.0.0-unsigned
+          path: dist/ios
+      - uses: actions/download-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v1.0.0-preview
+          path: dist/windows
+
+      - name: Update existing iOS preview instead of deleting it
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/git/refs/tags/ios-unsigned-latest" \
+            -f sha="$GITHUB_SHA" -F force=true
+          gh release edit ios-unsigned-latest \
+            --title "DMC Native Reader for iOS — Preview" \
+            --notes-file docs/releases/ios-preview.md \
+            --prerelease
+          gh release delete-asset ios-unsigned-latest DMCReader-unsigned.ipa --yes || true
+          gh release upload ios-unsigned-latest \
+            dist/ios/DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa --clobber
+
+      - name: Create or update Windows preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=dist/windows/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+          if gh release view windows-preview-latest >/dev/null 2>&1; then
+            gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/git/refs/tags/windows-preview-latest" \
+              -f sha="$GITHUB_SHA" -F force=true
+            gh release edit windows-preview-latest \
+              --title "DMC Native Reader for Windows — Preview" \
+              --notes-file docs/releases/windows-preview.md \
+              --prerelease
+            gh release upload windows-preview-latest "$ZIP" --clobber
+          else
+            gh release create windows-preview-latest "$ZIP" \
+              --target "$GITHUB_SHA" \
+              --title "DMC Native Reader for Windows — Preview" \
+              --notes-file docs/releases/windows-preview.md \
+              --prerelease
+          fi

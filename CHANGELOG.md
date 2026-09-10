@@ -1,21 +1,37 @@
 # Changelog
 
-## Unreleased — public repository hardening
+## Unreleased — public repository hardening and platform previews
 
-Public-opening preparation after the accepted v1.0.0 binary. No v1 runtime/parser behavior is being expanded in this section.
+Public-opening preparation after the accepted Android v1.0.0 binary. The stable Android v1 runtime/parser contract remains MOD / SCM / DDS / PTX; additional platform shells are preview work over the same core rather than new format authorities.
 
-- separated public debug builds from the production package with `com.dmcrengine.nativereader.debug`;
+### Public/release preparation
+
+- separated public Android debug builds from the production package with `com.dmcrengine.nativereader.debug`;
 - retired the committed development test keystore from the current tree;
-- moved production signing to protected GitHub environment/repository secrets;
+- moved Android production signing to protected GitHub environment/repository secrets;
 - pinned the production signing certificate fingerprint in the release workflow;
 - removed production-key backup generation/uploads from the current release workflow;
 - added `DMC Native Reader Personal Non-Commercial License 1.0` with the Capcom Special Grant;
 - documented third-party licensing separately, including the MIT-licensed vendored DMC Rengine slice;
 - formalized the product mission: **Make DMC resources feel like ordinary files.**;
 - documented DMC Rengine as the central decompilation/reimplementation engine and C++20 modding foundation;
-- documented Android / iOS / Windows / Web product direction with Web semantics supplied through C++20/WebAssembly rather than a second JavaScript parser stack;
 - expanded README, release notes, contribution, support, security and public-opening guidance;
-- added canonical v1.0.0 release and APK download paths.
+- added canonical Android v1.0.0 release and APK download paths.
+
+### Cross-platform preview foundation
+
+- added platform-neutral C++20 `PortableSession` on top of the existing Architecture v2 `PipelineResult`;
+- added a current iOS SwiftUI + Objective-C++ shell that compiles the same MOD / SCM / DDS / PTX registry, DMC Rengine-backed readers, image/child contracts and CPU renderer;
+- upgraded the iOS project from the old pre-v1 C++17 / `0.10.1` experiment to the current C++20 / `1.0.0` product identity;
+- retired the old iOS HITS / stage TXT / `.index` product claims rather than reviving those removed modules;
+- added iOS Files/Share-sheet opening, MOD/SCM 3D viewing, Inspector, DDS image preview and PTX child gallery;
+- preserved `ios-unsigned-latest` as the moving iOS preview release line instead of deleting it;
+- defined replacement iOS asset `DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa` for publication only after a successful current build;
+- added a native Win32/x64 shell with file open, drag-and-drop, MOD/SCM rendering, DDS preview, PTX child navigation and Inspector output;
+- defined Windows preview package `DMC-Native-Reader-Windows-v1.0.0-preview.zip` and moving tag `windows-preview-latest`;
+- added macOS/iOS and Windows/MSVC preview build jobs plus an owner-triggered guarded publish stage;
+- documented that iOS and Windows remain **Preview** until real-corpus/device acceptance and platform signing/distribution gates are closed;
+- kept Web as the next shell direction with binary semantics supplied by C++20/WebAssembly rather than a second JavaScript parser stack.
 
 ## 1.0.0 — DMC Native Reader v1
 
@@ -119,7 +135,7 @@ Direct APK:
 
 `https://github.com/VrUaCom/DMC-Native-Reader/releases/download/v1.0.0/DMC-Native-Reader-v1.0.0.apk`
 
-These URLs are the canonical public distribution surface once the GitHub Release is published.
+These URLs are the canonical public distribution surface once the stable GitHub Release is published.
 
 ## Earlier development milestones
 

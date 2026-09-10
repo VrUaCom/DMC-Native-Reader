@@ -6,13 +6,13 @@
 
 DMC Native Reader is the viewing/accessibility product of the DMC Rengine tooling ecosystem. Its purpose is to open, recognize, inspect, visualize, navigate and explain promoted resources without requiring ordinary users to understand their binary formats.
 
-The current stable implementation is Android. The architecture is intended to preserve the same C++20 semantic truth across future Android, iOS, Windows and Web shells. The Web direction uses the C++20 core through WebAssembly rather than a second JavaScript/TypeScript parser stack.
+The current stable implementation is Android. Native iOS and Windows shells are now implemented as **preview** paths over the same C++20 semantic core. Web remains planned through C++20/WebAssembly rather than a second JavaScript/TypeScript parser stack.
 
 **DMC Rengine is the central decompilation/reimplementation engine and modding foundation.** Native Reader is one specialized product built on top of its capabilities. Pocket GDS is another specialized tool in the same ecosystem, focused on resource work and authoring workflows.
 
 Native Reader is not the primary archive-management, editing or repacking workspace. Those responsibilities belong to DMC Rengine-backed authoring/resource-management tooling such as Pocket GDS and to the central writer/resource architecture exposed by DMC Rengine.
 
-See [`PRODUCT_VISION.md`](PRODUCT_VISION.md).
+See [`PRODUCT_VISION.md`](PRODUCT_VISION.md) and [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md).
 
 ## Current stable baseline
 
@@ -25,9 +25,20 @@ See [`PRODUCT_VISION.md`](PRODUCT_VISION.md).
 - central engine/modding repository: `VrUaCom/dmc-rengine-cpp`;
 - frozen stable ref: `baseline/v1.0.0`.
 
+## Platform state
+
+| Platform | Status | Implementation |
+| --- | --- | --- |
+| Android | **stable v1.0.0** | Android UI + JNI over Architecture v2 |
+| iOS | **preview** | SwiftUI + Objective-C++ over `PortableSession` |
+| Windows | **preview** | native Win32/x64 over `PortableSession` |
+| Web | planned | browser shell over C++20/WebAssembly |
+
+The iOS and Windows source exists, but those platforms are not called stable until their platform CI and real-corpus/device acceptance passes complete.
+
 ## Canonical release surface
 
-Release page:
+Stable Android release page:
 
 `https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/v1.0.0`
 
@@ -43,7 +54,12 @@ Pinned production certificate SHA-256:
 
 `2d82bd3e77b2c1882d3f8143fe8760fc4c834aa65fc5e7b1b12082afcb7718d1`
 
-The URLs above are the canonical public distribution paths once the GitHub Release/tag is published and the accepted APK is attached.
+The URLs above are the canonical stable distribution paths once the GitHub Release/tag is published and the accepted APK is attached.
+
+Preview release lines:
+
+- iOS: `ios-unsigned-latest` — retained and converted in place to **DMC Native Reader for iOS — Preview** after a successful replacement build;
+- Windows: `windows-preview-latest` — created/updated only from a successful Windows preview build.
 
 ## Production architecture
 
@@ -52,8 +68,11 @@ DMC Rengine capability / resource authority
   -> NativeModuleRegistry
       -> MOD | SCM | DDS | PTX
           -> Architecture v2 projection
-              -> generic native Session
-                  -> Android v1 JNI / capability-driven UI
+              -> PipelineResult
+                  -> Android JNI Session
+                  -> PortableSession
+                       -> iOS SwiftUI bridge
+                       -> Windows Win32 shell
 ```
 
 Current production registry size: **4**.
@@ -94,46 +113,44 @@ There is no wildcard fallback and no broad recognition-only catalog in the suppo
 - descriptor/DDS size coherence;
 - generic DDS child resources;
 - real child image previews through the generic image contract;
-- child -> parent navigation through generic sessions.
+- child navigation through generic session data.
 
 ## Not in the supported v1 registry
 
 Earlier experiments included additional DMC families, but they are not part of the stable v1 product surface. HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and the broader recognition catalog must be re-promoted one by one through the same v2/canonical authority rules.
 
+The old iOS prerelease previously advertised HITS/TXT/index support. That claim is retired. The iOS preview is being rebuilt on the same MOD/SCM/DDS/PTX registry as the current product.
+
 Historical branches are development evidence, not supported release lines.
 
 ## CI gates
 
-Normal release/public-prep CI proves:
+Normal release/public-prep CI proves the Android v1 baseline and central Architecture v2 invariants.
 
-1. archived legacy source paths are absent;
-2. registry contains exactly MOD, SCM, DDS and PTX;
-3. retired families resolve to no module;
-4. MOD and SCM pass end-to-end native pipeline projection tests;
-5. MOD spatial/material adapter regression passes;
-6. DDS and PTX pass valid, malformed, bounds and child-preview regressions;
-7. `RenderScene` regression passes;
-8. Java capability UI regression passes for the Android v1 shell;
-9. ARM64 debug APK builds;
-10. the APK contains the four promoted module IDs and no retired module IDs;
-11. explicit DMC MIME exposure is limited to MOD/SCM/DDS/PTX;
-12. public-source debug package identity is isolated as `com.dmcrengine.nativereader.debug`;
-13. no signing/private-key material is tracked in the public tree;
-14. normal Gradle release output remains unsigned.
+The cross-platform preview workflow adds two independent build gates:
 
-Current public-prep GitHub Actions attempts are temporarily failing before runner execution with zero executed job steps. This is an execution/infrastructure gate and must be green again before PR #28 is merged; it is not being treated as a passed test.
+1. macOS/XcodeGen unsigned iOS build;
+2. Windows/MSVC x64 build.
+
+Only after both preview builds succeed may the optional publish stage replace the old iOS preview asset and create/update the Windows preview package.
+
+Current public-prep GitHub Actions attempts have recently failed before runner execution with zero executed job steps. This remains an execution/infrastructure gate and is not being treated as a passed test.
 
 ## Production signing
 
-Official production package: `com.dmcrengine.nativereader`.
+Official stable Android production package: `com.dmcrengine.nativereader`.
 
-Production signing is performed only through a protected release environment using secrets that are not committed or uploaded as artifacts by the current release workflow.
+Android production signing is performed only through a protected release environment using secrets that are not committed or uploaded as artifacts by the current release workflow.
 
-The accepted v1.0.0 production binary was signed and device-tested before public-prep documentation work.
+The accepted v1.0.0 Android production binary was signed and device-tested before public-prep documentation work.
 
-## Device boundary
+iOS preview CI intentionally produces an unsigned IPA. A signed/TestFlight/App Store path requires an Apple Developer identity and provisioning profile and is a separate future signing gate.
 
-The accepted Samsung/OEM behavior remains the practical v1 UI target:
+Windows preview packaging currently produces an unsigned x64 ZIP/EXE. A future stable Windows line should define Authenticode signing/installer identity before being called stable.
+
+## Accepted Android device boundary
+
+The accepted Samsung/OEM behavior remains the practical stable v1 UI target:
 
 - MOD opens/renders;
 - SCM opens/renders;
@@ -142,6 +159,18 @@ The accepted Samsung/OEM behavior remains the practical v1 UI target:
 - DDS child preview opens;
 - parent navigation returns to the PTX session;
 - malformed/unsupported inputs fail closed without stale geometry.
+
+## Preview acceptance still required
+
+Before iOS or Windows is promoted from preview to stable, each platform must independently prove:
+
+- MOD open/render against accepted corpus files;
+- SCM open/render against accepted corpus files;
+- DDS preview;
+- PTX child preview/navigation;
+- malformed/unsupported fail-closed behavior;
+- inspection parity with the central C++20 pipeline;
+- reproducible packaging and defined signing/distribution identity.
 
 ## Ecosystem boundary
 

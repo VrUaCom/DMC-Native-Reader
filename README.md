@@ -3,16 +3,17 @@
 [![Core architecture](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/android.yml/badge.svg)](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/android.yml)
 [![DDS/PTX gate](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/dds-ptx-v1.yml/badge.svg)](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/dds-ptx-v1.yml)
 [![v1 hardening](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/v1-hardening.yml/badge.svg)](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/v1-hardening.yml)
+[![Platform previews](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/platform-previews.yml/badge.svg)](https://github.com/VrUaCom/DMC-Native-Reader/actions/workflows/platform-previews.yml)
 
 > **Make DMC resources feel like ordinary files.**
 
 **DMC Native Reader** is the viewability/accessibility product of the DMC Rengine ecosystem. It turns promoted Devil May Cry 3 HD Collection resource files into familiar representations that can be opened and understood without first learning their binary layouts.
 
-The stable **v1.0.0** implementation targets Android. The architecture is designed so the same C++20 resource semantics can later serve Android, iOS, Windows and Web without reimplementing format logic per platform.
+The stable **v1.0.0** implementation targets Android. Native iOS and Windows shells are now under active preview implementation and compile the same C++20 Architecture v2 semantic core rather than carrying platform-specific format parsers. Web remains the next platform direction through C++20/WebAssembly.
 
 ## Download v1.0.0
 
-**Android / arm64-v8a**
+**Android / arm64-v8a — stable**
 
 [**Download DMC Native Reader v1.0.0 APK**](https://github.com/VrUaCom/DMC-Native-Reader/releases/download/v1.0.0/DMC-Native-Reader-v1.0.0.apk)
 
@@ -41,6 +42,46 @@ Production signing certificate SHA-256:
 ```
 
 Historical development/debug builds used a different signing authority. Android may require uninstalling a development build before installing the production-signed v1.0.0 APK.
+
+## Platform previews
+
+The cross-platform shells use the same promoted four-family C++20 core as Android, but they remain **preview** lines until platform CI and real-device/corpus acceptance are complete.
+
+### iOS preview
+
+The historical release/tag `ios-unsigned-latest` is intentionally **retained**, not deleted. It is being converted from the old pre-v1 `DMC Reader` experiment into:
+
+> **DMC Native Reader for iOS — Preview**
+
+Accepted replacement asset name:
+
+```text
+DMC-Native-Reader-iOS-v1.0.0-unsigned.ipa
+```
+
+The preview is SwiftUI + Objective-C++ over the shared C++20 Architecture v2 session. It supports MOD/SCM 3D viewing, DDS preview, PTX texture children and Inspector output. The IPA remains unsigned until an Apple Developer signing/provisioning path is configured.
+
+Release line:
+
+`https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/ios-unsigned-latest`
+
+### Windows preview
+
+The repository now contains a native Win32/x64 shell using the same C++20 core.
+
+Accepted preview package name:
+
+```text
+DMC-Native-Reader-Windows-v1.0.0-preview.zip
+```
+
+The Windows preview supports file opening and drag-and-drop, MOD/SCM 3D viewing, DDS preview, PTX child navigation and Inspector output.
+
+Intended release line:
+
+`https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/windows-preview-latest`
+
+The iOS and Windows release assets must be published only from successful platform-preview builds. Until that happens, older/missing preview assets must not be presented as accepted current binaries.
 
 ## v1.0.0 supported formats
 
@@ -136,26 +177,28 @@ Core rules:
 - new resource semantics that belong in the central engine are promoted in DMC Rengine first;
 - new formats extend shared module/capability contracts instead of adding standalone format viewers.
 
-See [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) and [`docs/V1_BASELINE.md`](docs/V1_BASELINE.md).
+The iOS and Windows preview shells use `PortableSession`, a thin C++20 owner over the same `PipelineResult` / `RenderScene` / `ImagePreview` / `ChildResource` contracts. This prevents the old iOS experiment from reviving retired format logic.
 
-## Cross-platform direction
+See [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md), [`docs/V1_BASELINE.md`](docs/V1_BASELINE.md), and [`docs/CROSS_PLATFORM.md`](docs/CROSS_PLATFORM.md).
 
-Android is the first stable product shell, not the semantic boundary.
+## Cross-platform status
 
-The intended platform model is one C++20 engine foundation with thin native presentation layers:
+Android remains the stable v1 product shell. iOS and Windows are active native previews; Web remains planned through WebAssembly.
 
 ```text
 DMC Rengine / Native Reader C++20 core
         |
-        +--> Android
-        +--> iOS
-        +--> Windows
-        `--> WebAssembly -> Web UI
+        +--> Android      stable v1.0.0
+        +--> iOS          native preview
+        +--> Windows      native x64 preview
+        `--> WebAssembly  planned
 ```
 
 For Web, parsing, validation, typed resource models, `InspectionDocument`, `RenderScene`, `ImagePreview`, `ChildResource`, capabilities and evidence remain in C++20 and are compiled to WebAssembly. JavaScript/TypeScript should remain a thin browser/presentation layer rather than a second DMC parser implementation.
 
 ## Build from source
+
+### Android
 
 Prerequisites:
 
@@ -187,6 +230,34 @@ gradle --no-daemon :app:assembleRelease
 ```
 
 Official production signing is performed separately through the protected release workflow. Production private-key material is not stored in the repository.
+
+### iOS
+
+Requires macOS + Xcode + XcodeGen:
+
+```bash
+brew install xcodegen
+cd ios
+xcodegen generate
+open DMCNativeReader.xcodeproj
+```
+
+For a device build, select your Apple signing team in Xcode. CI can build an unsigned technical-preview IPA with signing disabled.
+
+### Windows
+
+Requires Windows with Visual Studio C++ build tools and CMake:
+
+```powershell
+cmake -S windows -B build/windows -A x64
+cmake --build build/windows --config Release
+```
+
+Expected executable:
+
+```text
+build/windows/Release/DMC-Native-Reader.exe
+```
 
 ## Evidence policy
 
@@ -237,10 +308,11 @@ The Capcom Special Grant in the project license is a voluntary license from the 
 
 ## Status
 
-- stable release: **v1.0.0**
-- production registry: **MOD / SCM / DDS / PTX**
-- product role: direct resource viewing/accessibility
-- central engine/modding foundation: **DMC Rengine C++20**
-- next resource families are promoted one by one only after clean authority/evidence closure
+- stable release: **v1.0.0 Android**;
+- active platform previews: **iOS / Windows x64**;
+- production registry: **MOD / SCM / DDS / PTX**;
+- product role: direct resource viewing/accessibility;
+- central engine/modding foundation: **DMC Rengine C++20**;
+- next resource families are promoted one by one only after clean authority/evidence closure.
 
 See [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md).

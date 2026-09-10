@@ -1,0 +1,56 @@
+name: DMCNativeReader
+
+options:
+  bundleIdPrefix: com.dmcrengine
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  DMCNativeReader:
+    type: application
+    platform: iOS
+    sources:
+      - path: DMCNativeReader
+      - path: ../app/src/main/cpp/dmc_resource.cpp
+      - path: ../app/src/main/cpp/decode_pipeline.cpp
+      - path: ../app/src/main/cpp/inspection_format.cpp
+      - path: ../app/src/main/cpp/portable_session.cpp
+      - path: ../app/src/main/cpp/formats/dds.cpp
+      - path: ../app/src/main/cpp/adapters/mod_adapter.cpp
+      - path: ../app/src/main/cpp/adapters/scm_adapter.cpp
+      - path: ../app/src/main/cpp/modules/module_registry.cpp
+      - path: ../app/src/main/cpp/modules/module_model.cpp
+      - path: ../app/src/main/cpp/modules/module_texture.cpp
+      - path: ../app/src/main/cpp/view_renderer.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp
+      - path: ../app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dmcrengine.nativereader
+        PRODUCT_NAME: DMC Native Reader
+        PRODUCT_MODULE_NAME: DMCNativeReader
+        INFOPLIST_FILE: DMCNativeReader/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: DMCNativeReader/Bridge/DMCNativeReader-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/../app/src/main/cpp/include
+          - $(SRCROOT)/../app/src/main/cpp/vendor/dmc-rengine-cpp/include
+        CLANG_CXX_LANGUAGE_STANDARD: c++20
+        CLANG_CXX_LIBRARY: libc++
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "20"
+        GENERATE_INFOPLIST_FILE: NO
+        DEVELOPMENT_LANGUAGE: en
+        CODE_SIGN_STYLE: Automatic
