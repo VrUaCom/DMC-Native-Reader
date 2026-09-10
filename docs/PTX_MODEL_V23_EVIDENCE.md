@@ -67,9 +67,19 @@ Local Gradle 9.5.0 / full JDK 17 / NDK 28.2.13676358 build completed successfull
 
 This is local build evidence, not a claim that GitHub Actions passed.
 
-## Device acceptance still required
+## Device acceptance — user confirmed, 2026-09-10
 
-On Samsung, open MOD and SCM, select their corresponding whole PTX bundles,
-and verify correct UVs and multiple texture slots. Include em000 and pl000.
-Recheck standalone DDS/PTX opening and Back navigation. The earlier v22
-acceptance is user-reported baseline evidence, not a v23 device test.
+After receiving the v23 APK and the MOD/SCM + whole PTX test instructions,
+Victor reported: «Все чітко працює, можна виносити в мейн».
+This records user-reported v23 device acceptance and explicit authorization to
+merge into main. No per-file test log was supplied; individual em000/pl000
+results are not independently asserted here.
+
+The tested code is `f715973be9c0ece60705f7c0c75096741647a393`.
+The acceptance-record update changes documentation only.
+
+GitHub Actions for that code revision reported failures without executed job
+steps (core, DDS/PTX and hardening); the core job had runner_id=0. These are
+not successful CI results and provide no compile/test failure evidence.
+The merge evidence is the local seven-test pass, verified signed APK and
+user-confirmed device acceptance recorded above.
