@@ -5,7 +5,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 ## Current state
 
 **Accepted `main`: Native Reader 1.0 / versionCode 24**  
-**Main commit:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
+**Accepted v24 code baseline:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36  
 **Production module registry:** exactly **MOD / SCM / DDS / PTX**
 

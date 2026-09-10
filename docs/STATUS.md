@@ -7,13 +7,15 @@ Last updated: 2026-09-10.
 - Product line: **Native Reader 1.0**
 - versionName: `1.0`
 - versionCode: `24`
-- accepted main commit: `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`
+- accepted v24 code baseline: `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`
 - package: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
 - minSdk / targetSdk: `26 / 36`
 - production module registry: **4 modules — MOD, SCM, DDS, PTX**
 - canonical reverse/read-side authority: `VrUaCom/dmc-rengine-cpp` / pinned `ReaderCore`
 - archived pre-cleanup implementation: `main.2` — backlog/reference only
+
+Documentation commits may advance `main` beyond the accepted code-baseline SHA without changing the accepted v24 APK/code behavior.
 
 ## Acceptance evidence
 
@@ -90,7 +92,7 @@ Draft PR #32 on `feature/dds-ptx-v1-acceptance` currently carries **v26** (`vers
 - separate hierarchy-information authority from spatial-render authority;
 - 9 portable/native regressions and verified v26 APK gates.
 
-v26 is **not yet accepted** because Samsung/device validation is still pending. Until that closes, `main` v24 remains the stable repository baseline.
+v26 is **not yet accepted** because Samsung/device validation is still pending. Until that closes, v24 remains the stable code/product baseline in `main`.
 
 ## Not in production registry
 

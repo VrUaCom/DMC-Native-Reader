@@ -4,8 +4,10 @@ Last updated: 2026-09-10.
 
 **Accepted build:** Native Reader `1.0` / versionCode `24`  
 **Production branch:** `main`  
-**Accepted main commit:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
+**Accepted v24 code baseline:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
 **Archive/backlog branch:** `main.2` — reference only
+
+Documentation-only commits may advance `main` without changing the accepted v24 code/APK baseline.
 
 ## Baseline decision
 
