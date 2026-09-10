@@ -30,6 +30,7 @@ import java.util.ArrayDeque;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1001;
+    private static final int REQUEST_ATTACH_PTX = 1002;
     private static final int TOOL_SIZE_DP = 48;
     private static final int TOOL_GAP_DP = 4;
 
@@ -47,15 +48,16 @@ public final class MainActivity extends Activity {
     private ChildResourceBrowserView childBrowser;
     private TextView titleView;
     private Button parentButton;
+    private Button ptxButton;
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
+    private Button uvButton;
     private Button infoButton;
 
     private long session;
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
-    private ResourceUiState uiState = ResourceUiState.empty();
-    private boolean spatialHierarchyAvailable;
+    private BlackWidowState blackWidowState = BlackWidowState.empty();
     private String infoText = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -108,14 +110,22 @@ public final class MainActivity extends Activity {
         button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
     }
 
-    private void applyPrimaryPresentation() {
-        final boolean hasSession = session != 0;
-        final boolean childBrowserMode = hasSession
-                && uiState.hasChildResources
-                && !uiState.canRender
-                && !uiState.canPreviewImage
-                && NativeBridge.childResourceCount(session) > 0;
+    private void refreshBlackWidowState() {
+        blackWidowState = session == 0
+                ? BlackWidowState.empty()
+                : BlackWidowState.fromNative(NativeBridge.blackWidowState(session));
+    }
 
+    private boolean canAttachPtx() {
+        return session != 0 && blackWidowState.canAttachTextureCompanion;
+    }
+
+    private boolean hasAttachedPtx() {
+        return canAttachPtx() && blackWidowState.textureCompanionAttached;
+    }
+
+    private void applyPrimaryPresentation() {
+        final boolean childBrowserMode = session != 0 && blackWidowState.childBrowserMode;
         if (childBrowserMode) {
             renderView.setVisibility(View.GONE);
             childBrowser.setVisibility(View.VISIBLE);
@@ -131,22 +141,34 @@ public final class MainActivity extends Activity {
         final boolean hasSession = session != 0;
         applyPrimaryPresentation();
 
-        parentButton.setVisibility(navigation.isEmpty() ? View.GONE : View.VISIBLE);
-        setToolAvailable(resetButton, hasSession && uiState.canRender);
+        // Back is a permanent Android-shell navigation control. Black Widow
+        // owns resource/action availability; Java only projects that state.
+        parentButton.setVisibility(View.VISIBLE);
+
+        final boolean ptxAvailable = canAttachPtx();
+        ptxButton.setVisibility(ptxAvailable ? View.VISIBLE : View.GONE);
+        syncToggleButton(ptxButton, ptxAvailable, hasAttachedPtx());
+
+        setToolAvailable(resetButton, hasSession && blackWidowState.canRender);
         syncToggleButton(wireButton,
-                hasSession && uiState.canWireframe,
+                hasSession && blackWidowState.canWireframe &&
+                        !renderView.isUvLayoutVisible(),
                 renderView.isWireframe());
 
         final boolean hierarchyAvailable = hasSession
-                && uiState.canShowHierarchy
-                && spatialHierarchyAvailable;
+                && blackWidowState.canShowHierarchy
+                && !renderView.isUvLayoutVisible();
         renderView.setHierarchyAvailable(hierarchyAvailable);
         syncToggleButton(hierarchyButton,
                 hierarchyAvailable,
                 renderView.isHierarchyVisible());
 
+        syncToggleButton(uvButton,
+                hasSession && blackWidowState.canShowUv,
+                renderView.isUvLayoutVisible());
+
         setToolAvailable(infoButton,
-                hasSession ? uiState.canInspect : !infoText.isEmpty());
+                hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -184,9 +206,8 @@ public final class MainActivity extends Activity {
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
-        parentButton = makeSquareButton("←", "Back to parent resource", 28f);
-        parentButton.setVisibility(View.GONE);
-        parentButton.setOnClickListener(v -> navigateToParent());
+        parentButton = makeSquareButton("←", "Back", 28f);
+        parentButton.setOnClickListener(v -> navigateBack());
         header.addView(parentButton, new LinearLayout.LayoutParams(
                 dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
@@ -195,10 +216,16 @@ public final class MainActivity extends Activity {
         titleView.setTextSize(15f);
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
-        titleView.setPadding(dp(12), dp(8), dp(16), dp(6));
+        titleView.setPadding(dp(12), dp(8), dp(10), dp(6));
         titleView.setText("DMC Native Reader");
         header.addView(titleView, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        ptxButton = makeSquareButton(".PTX", "Attach PTX texture companion", 12f);
+        ptxButton.setVisibility(View.GONE);
+        ptxButton.setOnClickListener(v -> choosePtxCompanion());
+        header.addView(ptxButton, new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
         root.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -246,6 +273,13 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, hierarchyButton);
+
+        uvButton = makeSquareButton("UV", "UV layout", 14f);
+        uvButton.setOnClickListener(v -> {
+            renderView.toggleUvLayout();
+            applyResourceUiState();
+        });
+        addToolButton(bar, uvButton);
 
         infoButton = makeSquareButton("\u2139", "Resource information", 22f);
         infoButton.setOnClickListener(v -> showInfoDialog());
@@ -299,19 +333,35 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, REQUEST_OPEN);
     }
 
+    private void choosePtxCompanion() {
+        if (!canAttachPtx()) return;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "application/vnd.dmc.ptx",
+                "application/octet-stream",
+                "*/*"
+        });
+        startActivityForResult(intent, REQUEST_ATTACH_PTX);
+    }
+
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_OPEN || resultCode != RESULT_OK
-                || data == null || data.getData() == null) {
-            return;
-        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode != REQUEST_OPEN && requestCode != REQUEST_ATTACH_PTX) return;
 
         Uri uri = data.getData();
         final int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
         try {
             getContentResolver().takePersistableUriPermission(uri, flags);
         } catch (SecurityException ignored) {}
-        openUri(uri);
+
+        if (requestCode == REQUEST_ATTACH_PTX) {
+            attachPtxUri(uri);
+        } else {
+            openUri(uri);
+        }
     }
 
     private void handleIncomingIntent(Intent intent) {
@@ -343,8 +393,7 @@ public final class MainActivity extends Activity {
 
     private void showIdleStatus() {
         titleView.setText("DMC Native Reader");
-        uiState = ResourceUiState.empty();
-        spatialHierarchyAvailable = false;
+        blackWidowState = BlackWidowState.empty();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
                 + "Unpromoted DMC families are intentionally excluded from main.\n\n"
@@ -378,8 +427,7 @@ public final class MainActivity extends Activity {
         session = handle;
         titleView.setText(name);
         renderView.setSession(session);
-        uiState = ResourceUiState.fromCapabilities(NativeBridge.capabilities(session));
-        spatialHierarchyAvailable = NativeBridge.hierarchyAvailable(session);
+        refreshBlackWidowState();
         rebuildInfo(name);
         applyResourceUiState();
     }
@@ -419,13 +467,49 @@ public final class MainActivity extends Activity {
         }
 
         if (opened == 0) {
-            setInfo(name + "\nRejected: Native Reader main supports only MOD, SCM, DDS and PTX.");
+            setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX.");
             applyResourceUiState();
             Toast.makeText(this, "Unsupported or malformed DMC resource", Toast.LENGTH_LONG).show();
             return;
         }
 
         activateSession(opened, name);
+    }
+
+    private void attachPtxUri(Uri uri) {
+        if (!canAttachPtx()) return;
+        final String ptxName = displayName(uri);
+        final boolean attached;
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+            if (pfd == null) throw new FileNotFoundException("No file descriptor");
+            attached = NativeBridge.attachPtx(session, pfd.getFd(), ptxName);
+        } catch (Exception error) {
+            Toast.makeText(this, "Could not read PTX", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        // Refresh typed application state after the native action. Diagnostic
+        // text below is presentation only and never controls button state.
+        refreshBlackWidowState();
+        final String diagnostic = NativeBridge.textureAttachmentInfo(session);
+        if (attached) {
+            renderView.renderNow();
+            rebuildInfo(titleView.getText().toString());
+            applyResourceUiState();
+            Toast.makeText(this,
+                    diagnostic == null || diagnostic.isEmpty()
+                            ? "PTX textures attached"
+                            : diagnostic,
+                    Toast.LENGTH_LONG).show();
+        } else {
+            rebuildInfo(titleView.getText().toString());
+            applyResourceUiState();
+            Toast.makeText(this,
+                    diagnostic == null || diagnostic.isEmpty()
+                            ? "PTX could not be matched to this model"
+                            : diagnostic,
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     private void openChildResource(int index, String childTitle) {
@@ -453,16 +537,19 @@ public final class MainActivity extends Activity {
         return true;
     }
 
-    @Override public void onBackPressed() {
+    private void navigateBack() {
         if (navigateToParent()) return;
-        super.onBackPressed();
+        finish();
+    }
+
+    @Override public void onBackPressed() {
+        navigateBack();
     }
 
     private void closeAllSessions() {
         renderView.setSession(0);
         childBrowser.setSession(0);
-        uiState = ResourceUiState.empty();
-        spatialHierarchyAvailable = false;
+        blackWidowState = BlackWidowState.empty();
 
         if (session != 0) {
             NativeBridge.close(session);

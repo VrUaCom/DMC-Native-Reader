@@ -14,6 +14,8 @@
 
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/spider/black_widow.h"
+#include "dmcresource/texture_companion.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -68,19 +70,22 @@ private:
 
 struct Session {
     dmcresource::ProbeResult probe;
-
-    // Architecture v2 reusable session state. The same contracts are used for
-    // top-level resources and children opened from a container/browser.
     dmcresource::ResourceCapabilities capabilities{};
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
     dmcresource::ImagePreview image_preview;
     std::vector<dmcresource::ChildResource> children;
 
-    // Static viewer caches. World-space geometry and hierarchy positions are
-    // materialized once per session, never once per touch/rotation frame.
     dmcresource::Mesh render_mesh;
     dmcresource::HierarchyOverlay hierarchy_overlay;
+    std::vector<std::uint32_t> render_triangle_texture_slots;
+
+    // Vector index == canonical texture slot. Empty entries represent slots not
+    // required by the current model. PTX parsing/decoding stays in native
+    // reusable modules rather than Java or the renderer.
+    std::vector<dmcresource::ImagePreview> attached_textures;
+    std::string texture_attachment_detail;
+    bool texture_companion_attached{};
 
     std::string detail;
     std::string trace;
@@ -113,12 +118,21 @@ void prepare_session_caches(Session* session) {
 
     if (session->renderable) {
         if (!session->scene.has_geometry() ||
-            !dmcresource::materialize_render_scene(session->scene,
-                                                   &session->render_mesh)) {
+            !dmcresource::materialize_render_scene(
+                session->scene, &session->render_mesh)) {
             session->renderable = false;
             if (!session->detail.empty()) session->detail += "\n";
             session->detail +=
                 "RenderScene projection rejected malformed or missing geometry";
+            return;
+        }
+
+        if (!dmcresource::materialize_triangle_texture_slots(
+                session->scene, &session->render_triangle_texture_slots)) {
+            session->render_triangle_texture_slots.clear();
+            if (!session->detail.empty()) session->detail += "\n";
+            session->detail +=
+                "Texture-slot projection unavailable: conflicting or malformed material bindings";
         }
     }
 }
@@ -187,6 +201,21 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
                         image.rgba8);
 }
 
+[[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
+        const Session* session) noexcept {
+    if (session == nullptr) return 0U;
+    return dmcresource::spider::black_widow::evaluate_model_session({
+        .capabilities = session->capabilities,
+        .renderable = session->renderable,
+        .render_mesh = &session->render_mesh,
+        .triangle_texture_slots = session->render_triangle_texture_slots,
+        .hierarchy_available = session->hierarchy_overlay.available(),
+        .image_preview_available = session->image_preview.available(),
+        .child_resource_count = session->children.size(),
+        .texture_companion_attached = session->texture_companion_attached,
+    });
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -239,7 +268,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         << (session->probe.content_confirmed ? "content-confirmed" : "extension/name-only");
     if (session->renderable) {
         out << " | vertices=" << session->render_mesh.vertices.size()
-            << " | triangles=" << (session->render_mesh.indices.size() / 3u);
+            << " | triangles=" << (session->render_mesh.indices.size() / 3u)
+            << " | uv0=" << session->render_mesh.uv0.size();
     } else if (session->image_preview.available()) {
         out << " | imagePreview=" << session->image_preview.width
             << "x" << session->image_preview.height;
@@ -251,33 +281,25 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     }
     out << " | spatialHierarchy="
         << (session->hierarchy_overlay.available() ? "yes" : "no");
+    if (!session->attached_textures.empty()) {
+        std::size_t attached = 0U;
+        for (const auto& texture : session->attached_textures) {
+            if (texture.available()) ++attached;
+        }
+        out << " | companionTextures=" << attached;
+    }
     if (!session->detail.empty()) out << "\n" << session->detail;
+    if (!session->texture_attachment_detail.empty()) {
+        out << "\n" << session->texture_attachment_detail;
+    }
     if (!session->trace.empty()) out << "\n" << session->trace;
     return env->NewStringUTF(out.str().c_str());
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_capabilities(
+Java_com_dmcrengine_nativeviewer_NativeBridge_blackWidowState(
         JNIEnv*, jclass, jlong handle) {
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return 0;
-    return static_cast<jlong>(session->capabilities);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_hierarchyAvailable(
-        JNIEnv*, jclass, jlong handle) {
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    return session->hierarchy_overlay.available() ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreviewAvailable(
-        JNIEnv*, jclass, jlong handle) {
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    return session->image_preview.available() ? JNI_TRUE : JNI_FALSE;
+    return static_cast<jlong>(black_widow_state(from_handle(handle)));
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -310,6 +332,44 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreview(
     const Session* session = from_handle(handle);
     if (session == nullptr) return nullptr;
     return preview_to_argb(env, session->image_preview);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
+        JNIEnv* env, jclass, jlong handle, jint fd, jstring filename) {
+    Session* session = from_handle(handle);
+    if (session == nullptr || fd < 0) return JNI_FALSE;
+
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) {
+        session->texture_attachment_detail =
+            "PTX companion rejected: could not map selected file";
+        return JNI_FALSE;
+    }
+
+    const auto name = to_utf8(env, filename);
+    auto attachment = dmcresource::texture_companion::attach_ptx(
+        name,
+        mapped.data(), mapped.size(),
+        {
+            .mesh = &session->render_mesh,
+            .triangle_texture_slots = session->render_triangle_texture_slots,
+        });
+
+    session->texture_attachment_detail = std::move(attachment.detail);
+    if (!attachment.attached) return JNI_FALSE;
+
+    session->attached_textures = std::move(attachment.textures);
+    session->texture_companion_attached = true;
+    return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_textureAttachmentInfo(
+        JNIEnv* env, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return env->NewStringUTF("");
+    return env->NewStringUTF(session->texture_attachment_detail.c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -409,15 +469,25 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
     view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
     view.wireframe = dmcresource::has_render_flag(
         flags, dmcresource::RenderFlag::Wireframe);
+    view.uv_layout = dmcresource::has_render_flag(
+        flags, dmcresource::RenderFlag::UvLayout);
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
     const auto* hierarchy =
+        !view.uv_layout &&
         dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
         session->hierarchy_overlay.available()
             ? &session->hierarchy_overlay
             : nullptr;
-    const auto image = dmcresource::render_view(session->render_mesh,
-                                                width, height, view, hierarchy);
+    const auto* texture_slots = session->render_triangle_texture_slots.empty()
+        ? nullptr
+        : &session->render_triangle_texture_slots;
+    const auto* textures = session->attached_textures.empty()
+        ? nullptr
+        : &session->attached_textures;
+    const auto image = dmcresource::render_view(
+        session->render_mesh, width, height, view,
+        hierarchy, texture_slots, textures);
     return image_to_argb(env, image);
 }

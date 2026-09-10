@@ -13,6 +13,8 @@ namespace {
 
 constexpr std::size_t kMaxSceneVertices = 2U * 1024U * 1024U;
 constexpr std::size_t kMaxSceneIndices = 12U * 1024U * 1024U;
+constexpr std::uint32_t kNoTextureSlot =
+    std::numeric_limits<std::uint32_t>::max();
 
 struct P3 { float x, y, z; };
 struct P2 { float x, y, z; };
@@ -64,11 +66,37 @@ P3 rotate(const Vec3& v, float yaw, float pitch) {
 
 void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
     if (x < 0 || y < 0 || x >= image.width || y >= image.height) return;
-    const auto o = static_cast<std::size_t>(y * image.width + x) * 4;
-    image.pixels[o + 0] = shade;
-    image.pixels[o + 1] = shade;
-    image.pixels[o + 2] = static_cast<std::uint8_t>(std::min(255, shade + 10));
-    image.pixels[o + 3] = 255;
+    const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
+    image.pixels[o + 0U] = shade;
+    image.pixels[o + 1U] = shade;
+    image.pixels[o + 2U] = static_cast<std::uint8_t>(std::min(255, shade + 10));
+    image.pixels[o + 3U] = 255U;
+}
+
+void put_rgba(RgbaImage& image, int x, int y,
+              std::uint8_t r, std::uint8_t g,
+              std::uint8_t b, std::uint8_t a) {
+    if (x < 0 || y < 0 || x >= image.width || y >= image.height || a == 0U) return;
+    const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
+    if (a == 255U) {
+        image.pixels[o + 0U] = r;
+        image.pixels[o + 1U] = g;
+        image.pixels[o + 2U] = b;
+        image.pixels[o + 3U] = 255U;
+        return;
+    }
+    const std::uint32_t alpha = a;
+    const std::uint32_t inverse = 255U - alpha;
+    image.pixels[o + 0U] = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(r) * alpha +
+         static_cast<std::uint32_t>(image.pixels[o + 0U]) * inverse) / 255U);
+    image.pixels[o + 1U] = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(g) * alpha +
+         static_cast<std::uint32_t>(image.pixels[o + 1U]) * inverse) / 255U);
+    image.pixels[o + 2U] = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(b) * alpha +
+         static_cast<std::uint32_t>(image.pixels[o + 2U]) * inverse) / 255U);
+    image.pixels[o + 3U] = 255U;
 }
 
 void line(RgbaImage& image, P2 a, P2 b, std::uint8_t shade = 235) {
@@ -97,6 +125,102 @@ void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
     }
 }
 
+[[nodiscard]] float repeat_unit(float value) noexcept {
+    if (!std::isfinite(value)) return 0.0F;
+    const float repeated = value - std::floor(value);
+    return repeated < 0.0F ? repeated + 1.0F : repeated;
+}
+
+[[nodiscard]] bool sample_texture(const ImagePreview& texture,
+                                  float u, float v,
+                                  std::uint8_t* r,
+                                  std::uint8_t* g,
+                                  std::uint8_t* b,
+                                  std::uint8_t* a) noexcept {
+    if (!texture.available() || r == nullptr || g == nullptr ||
+        b == nullptr || a == nullptr) return false;
+
+    const float uu = repeat_unit(u);
+    const float vv = repeat_unit(v);
+    const auto x = std::min<std::uint32_t>(
+        texture.width - 1U,
+        static_cast<std::uint32_t>(uu * static_cast<float>(texture.width)));
+    const auto y = std::min<std::uint32_t>(
+        texture.height - 1U,
+        static_cast<std::uint32_t>(vv * static_cast<float>(texture.height)));
+    const auto offset =
+        (static_cast<std::size_t>(y) * texture.width + x) * 4U;
+    if (offset > texture.rgba8.size() || texture.rgba8.size() - offset < 4U) {
+        return false;
+    }
+    *r = texture.rgba8[offset + 0U];
+    *g = texture.rgba8[offset + 1U];
+    *b = texture.rgba8[offset + 2U];
+    *a = texture.rgba8[offset + 3U];
+    return true;
+}
+
+void render_uv_layout(const Mesh& mesh, const ViewState& view,
+                      RgbaImage* image) {
+    if (image == nullptr || !mesh.has_uv0() || mesh.indices.size() < 3U) return;
+
+    float min_u = 0.0F;
+    float min_v = 0.0F;
+    float max_u = 1.0F;
+    float max_v = 1.0F;
+    for (const auto& uv : mesh.uv0) {
+        if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) return;
+        min_u = std::min(min_u, uv.u);
+        min_v = std::min(min_v, uv.v);
+        max_u = std::max(max_u, uv.u);
+        max_v = std::max(max_v, uv.v);
+    }
+
+    const float span_u = std::max(1.0e-5F, max_u - min_u);
+    const float span_v = std::max(1.0e-5F, max_v - min_v);
+    const float padding = 0.08F * static_cast<float>(
+        std::min(image->width, image->height));
+    const float usable_w = std::max(
+        1.0F, static_cast<float>(image->width) - 2.0F * padding);
+    const float usable_h = std::max(
+        1.0F, static_cast<float>(image->height) - 2.0F * padding);
+    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float scale = std::min(usable_w / span_u, usable_h / span_v) * zoom;
+    const float center_u = (min_u + max_u) * 0.5F;
+    const float center_v = (min_v + max_v) * 0.5F;
+
+    const auto map_uv = [&](float u, float v) -> P2 {
+        return {
+            static_cast<float>(image->width) * 0.5F + (u - center_u) * scale,
+            static_cast<float>(image->height) * 0.5F - (v - center_v) * scale,
+            0.0F,
+        };
+    };
+
+    const P2 uv00 = map_uv(0.0F, 0.0F);
+    const P2 uv10 = map_uv(1.0F, 0.0F);
+    const P2 uv11 = map_uv(1.0F, 1.0F);
+    const P2 uv01 = map_uv(0.0F, 1.0F);
+    line(*image, uv00, uv10, 80);
+    line(*image, uv10, uv11, 80);
+    line(*image, uv11, uv01, 80);
+    line(*image, uv01, uv00, 80);
+
+    std::vector<P2> points;
+    points.reserve(mesh.uv0.size());
+    for (const auto& uv : mesh.uv0) points.push_back(map_uv(uv.u, uv.v));
+
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t + 0U];
+        const auto ib = mesh.indices[t + 1U];
+        const auto ic = mesh.indices[t + 2U];
+        if (ia >= points.size() || ib >= points.size() || ic >= points.size()) continue;
+        line(*image, points[ia], points[ib]);
+        line(*image, points[ib], points[ic]);
+        line(*image, points[ic], points[ia]);
+    }
+}
+
 }  // namespace
 
 bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
@@ -105,6 +229,7 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         Mesh materialized;
         std::size_t total_vertices = 0U;
         std::size_t total_indices = 0U;
+        bool complete_uv0 = !scene.meshes.empty();
         for (const auto& primitive : scene.meshes) {
             if (primitive.mesh.vertices.size() > kMaxSceneVertices - total_vertices ||
                 primitive.mesh.indices.size() > kMaxSceneIndices - total_indices) {
@@ -112,9 +237,11 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
             }
             total_vertices += primitive.mesh.vertices.size();
             total_indices += primitive.mesh.indices.size();
+            if (!primitive.mesh.has_uv0()) complete_uv0 = false;
         }
         materialized.vertices.reserve(total_vertices);
         materialized.indices.reserve(total_indices);
+        if (complete_uv0) materialized.uv0.reserve(total_vertices);
 
         for (const auto& primitive : scene.meshes) {
             const Matrix4* world = nullptr;
@@ -133,6 +260,12 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
                 }
                 materialized.vertices.push_back(projected);
             }
+            if (complete_uv0) {
+                materialized.uv0.insert(
+                    materialized.uv0.end(),
+                    primitive.mesh.uv0.begin(),
+                    primitive.mesh.uv0.end());
+            }
 
             if (base > static_cast<std::size_t>(
                            std::numeric_limits<std::uint32_t>::max())) {
@@ -149,6 +282,46 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         }
 
         *out = std::move(materialized);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool materialize_triangle_texture_slots(
+        const RenderScene& scene,
+        std::vector<std::uint32_t>* out) noexcept {
+    if (out == nullptr) return false;
+    try {
+        std::vector<std::uint32_t> slots;
+        std::size_t total_triangles = 0U;
+        for (const auto& primitive : scene.meshes) {
+            if (primitive.mesh.indices.size() % 3U != 0U) return false;
+            const auto triangles = primitive.mesh.indices.size() / 3U;
+            if (triangles > kMaxSceneIndices / 3U - total_triangles) return false;
+            total_triangles += triangles;
+        }
+        slots.reserve(total_triangles);
+
+        for (std::size_t primitive_index = 0U;
+             primitive_index < scene.meshes.size();
+             ++primitive_index) {
+            const auto& primitive = scene.meshes[primitive_index];
+            std::uint32_t slot = kNoTextureSlot;
+            bool binding_seen = false;
+            for (const auto& binding : scene.textures) {
+                if (binding.mesh_primitive != primitive_index) continue;
+                if (binding_seen && slot != binding.texture_slot) return false;
+                slot = binding.texture_slot;
+                binding_seen = true;
+            }
+            slots.insert(slots.end(), primitive.mesh.indices.size() / 3U, slot);
+        }
+
+        if (slots.size() != total_triangles) return false;
+        *out = std::move(slots);
         return true;
     } catch (const std::bad_alloc&) {
         return false;
@@ -183,9 +356,6 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
             }
         }
 
-        // Parent indices may all be in range while still forming a cycle.
-        // Bound every ancestry walk by node count so malformed resources fail
-        // closed without recursion or unbounded temporary storage.
         for (std::size_t start = 0U; start < scene.nodes.size(); ++start) {
             std::size_t current = start;
             std::size_t hops = 0U;
@@ -205,11 +375,7 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
             }
         }
 
-        // Spatial availability is an evidence property, not a coordinate
-        // heuristic. A fully authoritative hierarchy may legitimately place a
-        // root or multiple nodes at exactly the same model-space position.
         overlay.spatial = spatial_authority;
-
         *out = std::move(overlay);
         return true;
     } catch (const std::bad_alloc&) {
@@ -221,75 +387,133 @@ bool materialize_hierarchy_overlay(const RenderScene& scene,
 
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,
-                      const HierarchyOverlay* hierarchy) {
+                      const HierarchyOverlay* hierarchy,
+                      const std::vector<std::uint32_t>* triangle_texture_slots,
+                      const std::vector<ImagePreview>* textures) {
     RgbaImage image;
     image.width = std::clamp(width, 1, 2048);
     image.height = std::clamp(height, 1, 2048);
-    image.pixels.assign(static_cast<std::size_t>(image.width * image.height * 4), 0);
-    for (std::size_t i = 0; i < image.pixels.size(); i += 4) {
-        image.pixels[i + 0] = 18;
-        image.pixels[i + 1] = 18;
-        image.pixels[i + 2] = 22;
-        image.pixels[i + 3] = 255;
+    image.pixels.assign(
+        static_cast<std::size_t>(image.width * image.height * 4), 0U);
+    for (std::size_t i = 0U; i < image.pixels.size(); i += 4U) {
+        image.pixels[i + 0U] = 18U;
+        image.pixels[i + 1U] = 18U;
+        image.pixels[i + 2U] = 22U;
+        image.pixels[i + 3U] = 255U;
     }
-    if (mesh.vertices.empty() || mesh.indices.size() < 3) return image;
+    if (mesh.vertices.empty() || mesh.indices.size() < 3U) return image;
+
+    if (view.uv_layout) {
+        render_uv_layout(mesh, view, &image);
+        return image;
+    }
 
     Vec3 center{};
     for (const auto& v : mesh.vertices) {
-        center.x += v.x; center.y += v.y; center.z += v.z;
+        center.x += v.x;
+        center.y += v.y;
+        center.z += v.z;
     }
-    const float inv_n = 1.0f / static_cast<float>(mesh.vertices.size());
-    center.x *= inv_n; center.y *= inv_n; center.z *= inv_n;
+    const float inv_n = 1.0F / static_cast<float>(mesh.vertices.size());
+    center.x *= inv_n;
+    center.y *= inv_n;
+    center.z *= inv_n;
 
-    float radius = 1e-4f;
+    float radius = 1.0e-4F;
     for (const auto& v : mesh.vertices) {
-        const float dx = v.x - center.x, dy = v.y - center.y, dz = v.z - center.z;
-        radius = std::max(radius, std::sqrt(dx*dx + dy*dy + dz*dz));
+        const float dx = v.x - center.x;
+        const float dy = v.y - center.y;
+        const float dz = v.z - center.z;
+        radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz));
     }
 
-    const float zoom = std::clamp(view.zoom, 0.15f, 8.0f);
-    const float scale = 0.42f * static_cast<float>(std::min(image.width, image.height)) * zoom / radius;
+    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float scale = 0.42F *
+        static_cast<float>(std::min(image.width, image.height)) * zoom / radius;
 
     std::vector<P2> p;
     p.reserve(mesh.vertices.size());
     for (const auto& v : mesh.vertices) {
         const Vec3 local{v.x - center.x, v.y - center.y, v.z - center.z};
         const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-        p.push_back({image.width * 0.5f + r.x * scale,
-                     image.height * 0.5f - r.y * scale,
+        p.push_back({image.width * 0.5F + r.x * scale,
+                     image.height * 0.5F - r.y * scale,
                      r.z});
     }
 
-    std::vector<float> depth(static_cast<std::size_t>(image.width * image.height),
-                             std::numeric_limits<float>::infinity());
+    const bool textured = textures != nullptr && triangle_texture_slots != nullptr &&
+        mesh.has_uv0() && mesh.indices.size() % 3U == 0U &&
+        triangle_texture_slots->size() == mesh.indices.size() / 3U;
 
-    for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
-        const auto ia = mesh.indices[t], ib = mesh.indices[t + 1], ic = mesh.indices[t + 2];
+    std::vector<float> depth(
+        static_cast<std::size_t>(image.width * image.height),
+        std::numeric_limits<float>::infinity());
+
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t + 0U];
+        const auto ib = mesh.indices[t + 1U];
+        const auto ic = mesh.indices[t + 2U];
         if (ia >= p.size() || ib >= p.size() || ic >= p.size()) continue;
         const P2 a = p[ia], b = p[ib], c = p[ic];
         if (view.wireframe) {
-            line(image, a, b); line(image, b, c); line(image, c, a);
+            line(image, a, b);
+            line(image, b, c);
+            line(image, c, a);
             continue;
         }
+
+        const ImagePreview* texture = nullptr;
+        if (textured) {
+            const auto slot = (*triangle_texture_slots)[t / 3U];
+            if (slot != kNoTextureSlot && slot < textures->size() &&
+                (*textures)[slot].available()) {
+                texture = &(*textures)[slot];
+            }
+        }
+
         const float area = edge(a, b, c.x, c.y);
-        if (std::fabs(area) < 1e-6f) continue;
-        const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x,b.x,c.x}))));
-        const int y0 = std::max(0, static_cast<int>(std::floor(std::min({a.y,b.y,c.y}))));
-        const int x1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x,b.x,c.x}))));
-        const int y1 = std::min(image.height - 1, static_cast<int>(std::ceil(std::max({a.y,b.y,c.y}))));
+        if (std::fabs(area) < 1.0e-6F) continue;
+        const int x0 = std::max(
+            0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+        const int y0 = std::max(
+            0, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+        const int x1 = std::min(
+            image.width - 1,
+            static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+        const int y1 = std::min(
+            image.height - 1,
+            static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+
         for (int y = y0; y <= y1; ++y) {
             for (int x = x0; x <= x1; ++x) {
-                const float px = x + 0.5f, py = y + 0.5f;
+                const float px = static_cast<float>(x) + 0.5F;
+                const float py = static_cast<float>(y) + 0.5F;
                 const float w0 = edge(b, c, px, py) / area;
                 const float w1 = edge(c, a, px, py) / area;
                 const float w2 = edge(a, b, px, py) / area;
-                if (w0 < 0.f || w1 < 0.f || w2 < 0.f) continue;
-                const float z = w0*a.z + w1*b.z + w2*c.z;
+                if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
+                const float z = w0 * a.z + w1 * b.z + w2 * c.z;
                 const auto pi = static_cast<std::size_t>(y * image.width + x);
                 if (z >= depth[pi]) continue;
+
+                if (texture != nullptr) {
+                    const auto& uva = mesh.uv0[ia];
+                    const auto& uvb = mesh.uv0[ib];
+                    const auto& uvc = mesh.uv0[ic];
+                    const float u = w0 * uva.u + w1 * uvb.u + w2 * uvc.u;
+                    const float v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
+                    std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
+                    if (sample_texture(*texture, u, v, &tr, &tg, &tb, &ta)) {
+                        if (ta == 0U) continue;
+                        depth[pi] = z;
+                        put_rgba(image, x, y, tr, tg, tb, ta);
+                        continue;
+                    }
+                }
+
                 depth[pi] = z;
-                const float zn = 0.5f + 0.5f * std::tanh(-z / radius);
-                const auto shade = static_cast<std::uint8_t>(145 + 80 * zn);
+                const float zn = 0.5F + 0.5F * std::tanh(-z / radius);
+                const auto shade = static_cast<std::uint8_t>(145.0F + 80.0F * zn);
                 put_pixel(image, x, y, shade);
             }
         }
@@ -299,17 +523,18 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         std::vector<P2> hp;
         hp.reserve(hierarchy->points.size());
         for (const auto& point : hierarchy->points) {
-            const Vec3 local{point.x - center.x, point.y - center.y, point.z - center.z};
+            const Vec3 local{
+                point.x - center.x, point.y - center.y, point.z - center.z};
             const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-            hp.push_back({image.width * 0.5f + r.x * scale,
-                          image.height * 0.5f - r.y * scale,
+            hp.push_back({image.width * 0.5F + r.x * scale,
+                          image.height * 0.5F - r.y * scale,
                           r.z});
         }
         for (const auto& edge_value : hierarchy->edges) {
             if (edge_value.parent >= hp.size() || edge_value.child >= hp.size()) continue;
-            line(image, hp[edge_value.parent], hp[edge_value.child], 255);
+            line(image, hp[edge_value.parent], hp[edge_value.child], 255U);
         }
-        for (const auto& point : hp) marker(image, point, 255);
+        for (const auto& point : hp) marker(image, point, 255U);
     }
 
     return image;

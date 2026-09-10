@@ -20,6 +20,11 @@ dmcresource::Mesh triangle(float z = 0.0F) {
         {0.0F, 1.0F, z},
     };
     mesh.indices = {0U, 1U, 2U};
+    mesh.uv0 = {
+        {0.0F, 0.0F},
+        {1.0F, 0.0F},
+        {0.0F, 1.0F},
+    };
     return mesh;
 }
 
@@ -33,6 +38,7 @@ int main() {
     static_assert(render_flag(RenderFlag::Bounds) == (1U << 2U));
     static_assert(render_flag(RenderFlag::SkinDebug) == (1U << 3U));
     static_assert(render_flag(RenderFlag::Normals) == (1U << 4U));
+    static_assert(render_flag(RenderFlag::UvLayout) == (1U << 5U));
     const RenderFlags combined_flags = render_flag(RenderFlag::Wireframe) |
                                        render_flag(RenderFlag::Hierarchy);
     assert(has_render_flag(combined_flags, RenderFlag::Wireframe));
@@ -64,6 +70,14 @@ int main() {
     assert(materialize_render_scene(scene, &materialized));
     assert(materialized.vertices.size() == 6U);
     assert(materialized.indices.size() == 6U);
+    assert(materialized.has_uv0());
+    assert(materialized.uv0.size() == 6U);
+    assert(near(materialized.uv0[0].u, 0.0F));
+    assert(near(materialized.uv0[0].v, 0.0F));
+    assert(near(materialized.uv0[1].u, 1.0F));
+    assert(near(materialized.uv0[2].v, 1.0F));
+    assert(near(materialized.uv0[3].u, 0.0F));
+    assert(near(materialized.uv0[4].u, 1.0F));
 
     assert(near(materialized.vertices[0].x, 10.0F));
     assert(near(materialized.vertices[0].y, 20.0F));
@@ -102,6 +116,7 @@ int main() {
     Mesh rotated_mesh;
     assert(materialize_render_scene(rotated, &rotated_mesh));
     assert(rotated_mesh.vertices.size() == 1U);
+    assert(rotated_mesh.uv0.empty());
     assert(near(rotated_mesh.vertices[0].x, 5.0F));
     assert(near(rotated_mesh.vertices[0].y, 7.0F));
     assert(near(rotated_mesh.vertices[0].z, 7.0F));
@@ -203,6 +218,14 @@ int main() {
     assert(image.width == 64);
     assert(image.height == 64);
     assert(image.pixels.size() == 64U * 64U * 4U);
+
+    ViewState uv_view{};
+    uv_view.uv_layout = true;
+    const auto uv_image = render_view(materialized, 64, 64, uv_view);
+    assert(uv_image.width == 64);
+    assert(uv_image.height == 64);
+    assert(uv_image.pixels.size() == image.pixels.size());
+    assert(uv_image.pixels != image.pixels);
 
     const auto overlay_image = render_view(materialized, 64, 64, ViewState{}, &hierarchy);
     assert(overlay_image.width == 64);

@@ -31,7 +31,8 @@ NativeModule scm_module() noexcept {
         ResourceCapability::Geometry |
         ResourceCapability::Wireframe |
         ResourceCapability::NodeHierarchy |
-        ResourceCapability::TextureBinding;
+        ResourceCapability::TextureBinding |
+        ResourceCapability::UvCoordinates;
     return {"formats.scm.mesh-reader", "SCM", Format::Scm,
             ModuleKind::Mesh, true, run_scm, caps};
 }
@@ -43,7 +44,8 @@ NativeModule mod_module() noexcept {
         ResourceCapability::NodeHierarchy |
         ResourceCapability::SkeletalSkinning |
         ResourceCapability::SkinWeights |
-        ResourceCapability::TextureBinding;
+        ResourceCapability::TextureBinding |
+        ResourceCapability::UvCoordinates;
     return {"formats.mod.mesh-reader", "MOD", Format::Mod,
             ModuleKind::Mesh, true, run_mod, caps};
 }

@@ -14,33 +14,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Build DDS/PTX acceptance regression
+      - name: Build DDS/PTX and model texture regressions
         run: |
           set -euxo pipefail
-          g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            -Iapp/src/main/cpp/include \
-            -Iapp/src/main/cpp/vendor/dmc-rengine-cpp/include \
-            app/src/test/native/dds_ptx_v1_test.cpp \
-            app/src/main/cpp/dmc_resource.cpp \
-            app/src/main/cpp/decode_pipeline.cpp \
-            app/src/main/cpp/inspection_format.cpp \
-            app/src/main/cpp/formats/dds.cpp \
-            app/src/main/cpp/adapters/mod_adapter.cpp \
-            app/src/main/cpp/adapters/scm_adapter.cpp \
-            app/src/main/cpp/modules/module_registry.cpp \
-            app/src/main/cpp/modules/module_model.cpp \
-            app/src/main/cpp/modules/module_texture.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/binary/reader.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod_skin.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/transform_domain.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod/world_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/mod.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_layout.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_topology.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_validation.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_transform.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm_hierarchy.cpp \
-            app/src/main/cpp/vendor/dmc-rengine-cpp/src/formats/scm.cpp \
-            -o /tmp/dmc-dds-ptx-core-test
-          /tmp/dmc-dds-ptx-core-test
+          cmake -S app/src/main/cpp -B build/host \
+            -DDMC_NATIVE_READER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/host --parallel 2
+          ctest --test-dir build/host --output-on-failure \
+            -R 'dds_ptx_v1|ptx_model_texture|black_widow_state'

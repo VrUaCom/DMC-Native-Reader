@@ -11,6 +11,17 @@ android {
         buildConfig = true
     }
 
+    // Native Reader 1.0 recovery policy: package JNI libraries in the
+    // install-compatible legacy mode so Package Manager extracts them instead
+    // of requiring mmap-ready ZIP alignment from a manually recovered shell.
+    // This is a packaging decision only; native C++ module ownership and ABI
+    // remain unchanged.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     // Public repository test signer used only to keep debug/device-test APKs
     // upgrade-compatible across CI runs. It is not a production authority.
     signingConfigs {
@@ -29,8 +40,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.0.0"
+        versionCode = 23
+        versionName = "1.0"
 
         externalNativeBuild {
             cmake {

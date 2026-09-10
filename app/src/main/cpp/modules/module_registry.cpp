@@ -10,8 +10,8 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
     static const std::vector<NativeModule> registry{
         scm_module(),
         mod_module(),
-        dds_module(),
-        ptx_module(),
+        texture_module(Format::Dds),
+        texture_module(Format::Ptx),
     };
     return registry;
 }

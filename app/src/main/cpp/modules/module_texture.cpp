@@ -1,57 +1,74 @@
 #include "dmcresource/native_module.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
-#include "dmcresource/binary_reader.h"
+#include "dmc_rengine/codecs/dds_bc.hpp"
 #include "dmcresource/child_resource.h"
-#include "dmcresource/formats/dds.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/spider/crusader.h"
+#include "dmcresource/texture_set.h"
 
 namespace dmcresource {
 namespace {
 
-constexpr std::size_t kPtxHeaderBytes = 0x800U;
-constexpr std::size_t kPtxDescriptorBytes = 0x70U;
-constexpr std::size_t kSectorBytes = 0x800U;
-constexpr std::uint32_t kMaxTextureCount = 4096U;
-constexpr std::uint64_t kMaxPtxGalleryPreviewPixels = 4ULL * 1024ULL * 1024ULL;
+namespace dds_bc = dmc::rengine::codecs::dds_bc;
+namespace crusader = dmcresource::spider::crusader;
+namespace textures = dmcresource::texture_set;
 
-InspectionNode dds_inspection_node(const formats::dds::Document& dds,
-                                   std::string id,
-                                   std::string title,
-                                   std::size_t offset) {
+constexpr std::uint64_t kMaxPtxGalleryPreviewPixels =
+    4ULL * 1024ULL * 1024ULL;
+
+constexpr crusader::OperationId kTextureFramePtx = 1U;
+constexpr crusader::OperationId kTextureProject = 2U;
+
+[[nodiscard]] std::span<const std::byte> as_bytes(
+    const std::uint8_t* bytes,
+    std::size_t size) noexcept {
+    if (bytes == nullptr) return {};
+    return std::as_bytes(std::span<const std::uint8_t>{bytes, size});
+}
+
+InspectionNode dds_inspection_node(
+    const textures::Slot& slot,
+    std::string id,
+    std::string title) {
     InspectionNode node;
     node.id = std::move(id);
     node.title = std::move(title);
     node.kind = InspectionKind::Texture;
-    node.source_span = SourceSpan{offset, dds.total_size};
-    node.properties.push_back({"Compression",
-                               formats::dds::compression_name(dds.compression),
-                               EvidenceLevel::DataConfirmed});
-    node.properties.push_back({"Width", std::to_string(dds.width),
-                               EvidenceLevel::StructuralConfirmed});
-    node.properties.push_back({"Height", std::to_string(dds.height),
-                               EvidenceLevel::StructuralConfirmed});
-    node.properties.push_back({"MipCount", std::to_string(dds.mip_count),
-                               EvidenceLevel::StructuralConfirmed});
-    node.properties.push_back({"PayloadBytes", std::to_string(dds.payload_size),
-                               EvidenceLevel::StructuralConfirmed});
+    node.source_span = SourceSpan{slot.dds_offset, slot.dds.total_size};
+    node.properties.push_back({
+        "Compression", dds_bc::compression_name(slot.dds.compression),
+        EvidenceLevel::DataConfirmed});
+    node.properties.push_back({
+        "Width", std::to_string(slot.dds.width),
+        EvidenceLevel::StructuralConfirmed});
+    node.properties.push_back({
+        "Height", std::to_string(slot.dds.height),
+        EvidenceLevel::StructuralConfirmed});
+    node.properties.push_back({
+        "MipCount", std::to_string(slot.dds.mip_count),
+        EvidenceLevel::StructuralConfirmed});
+    node.properties.push_back({
+        "PayloadBytes", std::to_string(slot.dds.payload_size),
+        EvidenceLevel::StructuralConfirmed});
     return node;
 }
 
-std::string dds_detail(const formats::dds::Document& dds) {
+std::string dds_detail(const textures::Slot& slot) {
     std::ostringstream detail;
-    detail << "DDS " << formats::dds::compression_name(dds.compression)
-           << " " << dds.width << "x" << dds.height
-           << " mips=" << dds.mip_count
-           << " payload=" << dds.payload_size;
+    detail << "DDS " << dds_bc::compression_name(slot.dds.compression)
+           << " " << slot.dds.width << "x" << slot.dds.height
+           << " mips=" << slot.dds.mip_count
+           << " payload=" << slot.dds.payload_size;
     return detail.str();
 }
 
@@ -60,263 +77,380 @@ ProbeResult child_dds_probe() noexcept {
             "DATA_CONFIRMED", "image/vnd-ms.dds"};
 }
 
-PipelineResult run_dds(std::string_view,
-                       const std::uint8_t* bytes,
-                       std::size_t size,
-                       const ProbeResult& probe,
-                       const char* module_id) noexcept {
-    if (bytes == nullptr) {
-        return module_support::reject(probe, module_id, "DDS rejected: null input");
+[[nodiscard]] bool attach_preview(
+    PipelineResult* out,
+    std::span<const std::byte> source,
+    const textures::Slot& slot) {
+    if (out == nullptr) return false;
+    std::string detail;
+    if (!textures::decode_base_mip(source, slot, &out->image_preview, &detail)) {
+        out->modules.push_back({"formats.dds.base-mip-preview", false});
+        if (!out->detail.empty()) out->detail += "\n";
+        out->detail += "Image preview unavailable";
+        if (!detail.empty()) {
+            out->detail += ": ";
+            out->detail += detail;
+        }
+        return false;
     }
+    out->modules.push_back({"formats.dds.base-mip-preview", true});
+    return true;
+}
 
-    const auto span = std::span<const std::uint8_t>{bytes, size};
-    const auto parsed = formats::dds::parse(span);
-    if (!parsed.ok || parsed.document.total_size != size) {
+PipelineResult run_dds_set(
+    std::span<const std::byte> source,
+    const textures::ParseResult& set,
+    const ProbeResult& probe,
+    const char* module_id) {
+    if (!set.ok() || set.slots.size() != 1U) {
         return module_support::reject(
             probe, module_id,
-            "DDS rejected: expected a bounded complete DXT1/DXT5 full mip chain");
+            set.detail.empty() ? "DDS rejected by TextureSet" : set.detail);
     }
 
-    auto out = structural_pipeline(probe, module_id, dds_detail(parsed.document));
+    const auto& slot = set.slots.front();
+    if (set.kind == textures::Kind::standalone_dds) {
+        auto out = structural_pipeline(probe, module_id, dds_detail(slot));
+        out.modules.push_back({"native.texture-set", true});
+        out.inspection.format = "DDS";
+        out.inspection.root = dds_inspection_node(slot, "dds", "DDS");
+        out.inspection.root.kind = InspectionKind::Document;
+        static_cast<void>(attach_preview(&out, source, slot));
+        return out;
+    }
+
+    if (set.kind != textures::Kind::wrapped_dds) {
+        return module_support::reject(
+            probe, module_id, "DDS rejected: invalid TextureSet kind");
+    }
+
+    auto out = structural_pipeline(
+        probe, module_id, "DMC3 descriptor-wrapped " + dds_detail(slot));
+    out.modules.push_back({"native.texture-set", true});
+    out.modules.push_back({"profiles.dmc3.texture-slot-framing", true});
     out.inspection.format = "DDS";
-    out.inspection.root = dds_inspection_node(parsed.document, "dds", "DDS", 0U);
+    out.inspection.root.id = "wrapped-dds";
+    out.inspection.root.title = "Wrapped DDS";
     out.inspection.root.kind = InspectionKind::Document;
+    out.inspection.root.source_span = SourceSpan{0U, source.size()};
 
-    const auto preview = formats::dds::decode_preview(span, parsed.document);
-    if (preview.ok) {
-        out.image_preview = std::move(preview.image);
-        out.modules.push_back({"formats.dds.base-mip-preview", true});
-    } else {
-        out.modules.push_back({"formats.dds.base-mip-preview", false});
-        if (!out.detail.empty()) out.detail += "\n";
-        out.detail += "Image preview unavailable: " + preview.diagnostic;
-    }
+    auto texture = dds_inspection_node(slot, "texture-0", "Texture 0");
+    texture.properties.push_back({
+        "DescriptorOffset", std::to_string(slot.descriptor_offset),
+        EvidenceLevel::StructuralConfirmed});
+    texture.properties.push_back({
+        "SecondaryWidth", std::to_string(slot.secondary_width),
+        EvidenceLevel::StructuralConfirmed});
+    texture.properties.push_back({
+        "SecondaryHeight", std::to_string(slot.secondary_height),
+        EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.children.push_back(std::move(texture));
+
+    static_cast<void>(attach_preview(&out, source, slot));
     return out;
 }
 
-PipelineResult run_ptx(std::string_view,
-                       const std::uint8_t* bytes,
-                       std::size_t size,
-                       const ProbeResult& probe,
-                       const char* module_id) noexcept {
-    const BinaryReader reader(bytes, size);
-    if (!reader.range(0U, kPtxHeaderBytes)) {
+PipelineResult run_ptx_set(
+    std::span<const std::byte> source,
+    const textures::ParseResult& set,
+    const ProbeResult& probe,
+    const char* module_id) noexcept {
+    if (!set.ok() || set.kind != textures::Kind::ptx_bundle) {
         return module_support::reject(
             probe, module_id,
-            "PTX rejected: resource is shorter than the 0x800-byte bundle header");
+            set.detail.empty() ? "PTX rejected by TextureSet" : set.detail);
     }
 
-    std::uint32_t count = 0U;
-    if (!reader.read_le(0U, &count) || count == 0U || count > kMaxTextureCount ||
-        count > (kPtxHeaderBytes - 4U) / 4U) {
-        return module_support::reject(probe, module_id,
-                                      "PTX rejected: texture count is invalid");
-    }
-
-    InspectionNode textures;
-    textures.id = "textures";
-    textures.title = "Textures";
-    textures.kind = InspectionKind::Collection;
+    InspectionNode texture_nodes;
+    texture_nodes.id = "textures";
+    texture_nodes.title = "Textures";
+    texture_nodes.kind = InspectionKind::Collection;
 
     std::vector<ChildResource> child_resources;
     try {
-        child_resources.reserve(count);
+        child_resources.reserve(set.slots.size());
     } catch (...) {
-        return module_support::reject(probe, module_id,
-                                      "PTX rejected: child-resource allocation failed");
+        return module_support::reject(
+            probe, module_id,
+            "PTX rejected: child-resource allocation failed");
     }
 
-    std::size_t descriptor = kPtxHeaderBytes;
     std::uint64_t total_dds_bytes = 0U;
     std::uint64_t gallery_preview_pixels = 0U;
     std::uint32_t dxt1 = 0U;
     std::uint32_t dxt5 = 0U;
     std::uint32_t previewed = 0U;
 
-    for (std::uint32_t index = 0U; index < count; ++index) {
-        std::uint32_t sector_span = 0U;
-        if (!reader.read_le(4U + static_cast<std::size_t>(index) * 4U, &sector_span)) {
-            return module_support::reject(
-                probe, module_id, "PTX rejected: sector-span table is truncated");
-        }
-
-        const bool final = index + 1U == count;
-        std::size_t bounded_end = size;
-        if (!final || sector_span != 0U) {
-            if (sector_span == 0U ||
-                sector_span > std::numeric_limits<std::size_t>::max() / kSectorBytes) {
-                return module_support::reject(probe, module_id,
-                                              "PTX rejected: invalid sector span");
-            }
-            const auto span_bytes = static_cast<std::size_t>(sector_span) * kSectorBytes;
-            if (descriptor > size || span_bytes > size - descriptor) {
-                return module_support::reject(
-                    probe, module_id, "PTX rejected: sector span leaves resource bounds");
-            }
-            bounded_end = descriptor + span_bytes;
-            if (final && bounded_end != size) {
-                return module_support::reject(
-                    probe, module_id,
-                    "PTX rejected: final sector span does not terminate at EOF");
-            }
-        }
-
-        if (!reader.range(descriptor, kPtxDescriptorBytes)) {
-            return module_support::reject(probe, module_id,
-                                          "PTX rejected: descriptor is truncated");
-        }
-
-        const std::size_t dds_offset = descriptor + kPtxDescriptorBytes;
-        if (dds_offset > bounded_end) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: descriptor DDS offset leaves bounded span");
-        }
-
-        const auto dds_span = std::span<const std::uint8_t>{
-            bytes + dds_offset, bounded_end - dds_offset};
-        const auto dds = formats::dds::parse(dds_span);
-        if (!dds.ok) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: descriptor is not followed by a valid DXT1/DXT5 DDS");
-        }
-
-        std::uint32_t descriptor_payload = 0U;
-        std::uint32_t descriptor_dds_size = 0U;
-        if (!reader.read_le(descriptor + 0x38U, &descriptor_payload) ||
-            !reader.read_le(descriptor + 0x64U, &descriptor_dds_size) ||
-            descriptor_payload != dds.document.payload_size ||
-            descriptor_dds_size != dds.document.total_size) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: descriptor DDS sizes disagree with mip payload");
-        }
-
-        const std::size_t dds_end = dds_offset + dds.document.total_size;
-        if (dds_end > bounded_end) {
-            return module_support::reject(probe, module_id,
-                                          "PTX rejected: DDS escapes its descriptor span");
-        }
-        if (final && sector_span == 0U) {
-            if (dds_end != size) {
-                return module_support::reject(
-                    probe, module_id,
-                    "PTX rejected: zero-span final DDS does not end at EOF");
-            }
-        } else if (!module_support::zero_range(reader, dds_end, bounded_end)) {
-            return module_support::reject(
-                probe, module_id,
-                "PTX rejected: alignment padding contains non-zero data");
-        }
-
-        total_dds_bytes += dds.document.total_size;
-        if (dds.document.compression == formats::dds::Compression::Dxt1) {
+    for (const auto& slot : set.slots) {
+        total_dds_bytes += slot.dds.total_size;
+        if (slot.dds.compression == dds_bc::Compression::dxt1) {
             ++dxt1;
         } else {
             ++dxt5;
         }
 
         auto child_inspection = dds_inspection_node(
-            dds.document,
-            "texture-" + std::to_string(index),
-            "Texture " + std::to_string(index),
-            dds_offset);
-        child_inspection.properties.push_back({"DescriptorOffset", std::to_string(descriptor),
-                                               EvidenceLevel::StructuralConfirmed});
-        child_inspection.properties.push_back({"SectorSpan", std::to_string(sector_span),
-                                               EvidenceLevel::StructuralConfirmed});
-        textures.children.push_back(child_inspection);
+            slot,
+            "texture-" + std::to_string(slot.index),
+            "Texture " + std::to_string(slot.index));
+        child_inspection.properties.push_back({
+            "DescriptorOffset", std::to_string(slot.descriptor_offset),
+            EvidenceLevel::StructuralConfirmed});
+        child_inspection.properties.push_back({
+            "SectorSpan", std::to_string(slot.sector_span),
+            EvidenceLevel::StructuralConfirmed});
+        child_inspection.properties.push_back({
+            "SecondaryWidth", std::to_string(slot.secondary_width),
+            EvidenceLevel::StructuralConfirmed});
+        child_inspection.properties.push_back({
+            "SecondaryHeight", std::to_string(slot.secondary_height),
+            EvidenceLevel::StructuralConfirmed});
+        texture_nodes.children.push_back(child_inspection);
 
         ChildResource child;
-        child.id = "dds-" + std::to_string(index);
-        child.title = "DDS " + std::to_string(index);
-        child.suggested_filename = "texture_" + std::to_string(index) + ".dds";
-        child.source_span = SourceSpan{dds_offset, dds.document.total_size};
+        child.id = "dds-" + std::to_string(slot.index);
+        child.title = "DDS " + std::to_string(slot.index);
+        child.suggested_filename =
+            "texture_" + std::to_string(slot.index) + ".dds";
+        child.source_span = SourceSpan{slot.dds_offset, slot.dds_size};
         child.probe = child_dds_probe();
         child.capabilities = capability(ResourceCapability::Inspection) |
                              ResourceCapability::ImagePreview;
         child.inspection.format = "DDS";
         child.inspection.root = child_inspection;
         child.inspection.root.kind = InspectionKind::Document;
-        child.detail = dds_detail(dds.document);
-        child.trace = "[OK] formats.dds.child-validation";
+        child.detail = dds_detail(slot);
+        child.trace = "[OK] native.texture-set\n"
+                      "[OK] profiles.dmc3.texture-slot-framing\n"
+                      "[OK] formats.dds.child-validation";
 
-        const std::uint64_t pixels =
-            static_cast<std::uint64_t>(dds.document.width) * dds.document.height;
-        if (pixels <= kMaxPtxGalleryPreviewPixels - gallery_preview_pixels) {
-            const auto preview = formats::dds::decode_preview(
-                std::span<const std::uint8_t>{bytes + dds_offset,
-                                              dds.document.total_size},
-                dds.document);
-            if (preview.ok) {
-                child.image_preview = std::move(preview.image);
+        const auto pixels =
+            static_cast<std::uint64_t>(slot.dds.width) *
+            static_cast<std::uint64_t>(slot.dds.height);
+        if (pixels <= kMaxPtxGalleryPreviewPixels &&
+            gallery_preview_pixels <= kMaxPtxGalleryPreviewPixels - pixels) {
+            std::string decode_detail;
+            if (textures::decode_base_mip(
+                    source, slot, &child.image_preview, &decode_detail)) {
                 gallery_preview_pixels += pixels;
                 ++previewed;
             } else {
-                child.detail += "\nImage preview unavailable: " + preview.diagnostic;
+                child.detail += "\nImage preview unavailable";
+                if (!decode_detail.empty()) {
+                    child.detail += ": ";
+                    child.detail += decode_detail;
+                }
             }
         } else {
             child.detail += "\nImage preview omitted by PTX gallery memory budget";
         }
 
         child_resources.push_back(std::move(child));
-        if (!final) descriptor = bounded_end;
     }
 
     std::ostringstream detail;
-    detail << "PTX texture bundle | textures=" << count
-           << " dxt1=" << dxt1 << " dxt5=" << dxt5
+    detail << "PTX texture bundle | textures=" << set.slots.size()
+           << " dxt1=" << dxt1
+           << " dxt5=" << dxt5
            << " ddsBytes=" << total_dds_bytes
            << " galleryPreviews=" << previewed;
-    auto out = structural_pipeline(probe, module_id, detail.str());
-    out.modules.insert(out.modules.begin() + 3,
-                       {"formats.dds.child-validation", true});
 
+    auto out = structural_pipeline(probe, module_id, detail.str());
+    out.modules.push_back({"native.texture-set", true});
+    out.modules.push_back({"profiles.dmc3.texture-slot-framing", true});
+    out.modules.push_back({"formats.dds.child-validation", true});
+    if (set.ptx_aux_compat_used) {
+        out.modules.push_back({"native.ptx-aux-compat", true});
+        out.detail +=
+            "\nPTX compatibility: retained corpus-confirmed DXT1 auxiliary mode without obsolete DXT5 coupling";
+    }
     out.inspection.format = "PTX";
     out.inspection.root.id = "ptx";
     out.inspection.root.title = "PTX";
     out.inspection.root.kind = InspectionKind::Document;
-    out.inspection.root.source_span = SourceSpan{0U, size};
-    out.inspection.root.properties.push_back({"TextureCount", std::to_string(count),
-                                              EvidenceLevel::StructuralConfirmed});
-    out.inspection.root.properties.push_back({"DDSBytes", std::to_string(total_dds_bytes),
-                                              EvidenceLevel::StructuralConfirmed});
-    out.inspection.root.children.push_back(std::move(textures));
+    out.inspection.root.source_span = SourceSpan{0U, source.size()};
+    out.inspection.root.properties.push_back({
+        "TextureCount", std::to_string(set.slots.size()),
+        EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.properties.push_back({
+        "DDSBytes", std::to_string(total_dds_bytes),
+        EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.children.push_back(std::move(texture_nodes));
     out.children = std::move(child_resources);
     return out;
 }
 
-PipelineResult run_dds_module(const NativeModule& module,
-                              std::string_view filename,
-                              const std::uint8_t* bytes,
-                              std::size_t size,
-                              const ProbeResult& probe) noexcept {
-    return run_dds(filename, bytes, size, probe, module.id);
+struct TextureExecutionState final {
+    const std::uint8_t* bytes{};
+    std::size_t size{};
+    const ProbeResult* probe{};
+    const char* module_id{};
+    textures::ParseResult set{};
+    PipelineResult result{};
+};
+
+bool frame_ptx_operation(void* raw, std::uint32_t) noexcept {
+    auto* state = static_cast<TextureExecutionState*>(raw);
+    if (state == nullptr || state->probe == nullptr || state->module_id == nullptr) {
+        return false;
+    }
+    if (state->bytes == nullptr) {
+        state->result = module_support::reject(
+            *state->probe, state->module_id, "PTX rejected: null input");
+        return false;
+    }
+
+    state->set = textures::parse_ptx(as_bytes(state->bytes, state->size));
+    if (!state->set.ok() || state->set.kind != textures::Kind::ptx_bundle) {
+        state->result = module_support::reject(
+            *state->probe, state->module_id,
+            state->set.detail.empty()
+                ? "PTX rejected by TextureSet"
+                : state->set.detail);
+        return false;
+    }
+    return true;
 }
 
-PipelineResult run_ptx_module(const NativeModule& module,
-                              std::string_view filename,
-                              const std::uint8_t* bytes,
-                              std::size_t size,
-                              const ProbeResult& probe) noexcept {
-    return run_ptx(filename, bytes, size, probe, module.id);
+bool project_texture_operation(void* raw, std::uint32_t) noexcept {
+    auto* state = static_cast<TextureExecutionState*>(raw);
+    if (state == nullptr || state->probe == nullptr || state->module_id == nullptr) {
+        return false;
+    }
+
+    if (state->probe->format == Format::Dds) {
+        if (state->bytes == nullptr) {
+            state->result = module_support::reject(
+                *state->probe, state->module_id, "DDS rejected: null input");
+            return false;
+        }
+        state->set = textures::parse_dds(as_bytes(state->bytes, state->size));
+        state->result = run_dds_set(
+            as_bytes(state->bytes, state->size), state->set,
+            *state->probe, state->module_id);
+        return state->result.accepted;
+    }
+
+    if (state->probe->format == Format::Ptx) {
+        if (state->bytes == nullptr || !state->set.ok() ||
+            state->set.kind != textures::Kind::ptx_bundle) {
+            state->result = module_support::reject(
+                *state->probe, state->module_id,
+                "PTX rejected: Crusader TextureSet dependency is unavailable");
+            return false;
+        }
+        state->result = run_ptx_set(
+            as_bytes(state->bytes, state->size), state->set,
+            *state->probe, state->module_id);
+        return state->result.accepted;
+    }
+
+    state->result = module_support::reject(
+        *state->probe, state->module_id,
+        "Texture pipeline rejected: unsupported route");
+    return false;
 }
 
-}  // namespace
+const crusader::Plan& direct_dds_plan() {
+    static const crusader::Plan plan = [] {
+        crusader::Plan out;
+        out.instructions.push_back(crusader::Instruction{
+            .operation = kTextureProject,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 0U,
+            .domain = crusader::Domain::cpu,
+        });
+        return out;
+    }();
+    return plan;
+}
 
-NativeModule dds_module() noexcept {
+const crusader::Plan& ptx_plan() {
+    static const crusader::Plan plan = [] {
+        crusader::Plan out;
+        out.dependencies.push_back(0U);
+        out.instructions.push_back(crusader::Instruction{
+            .operation = kTextureFramePtx,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 0U,
+            .domain = crusader::Domain::cpu,
+        });
+        out.instructions.push_back(crusader::Instruction{
+            .operation = kTextureProject,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 1U,
+            .domain = crusader::Domain::cpu,
+        });
+        return out;
+    }();
+    return plan;
+}
+
+PipelineResult run_texture_module(
+    const NativeModule& module,
+    std::string_view,
+    const std::uint8_t* bytes,
+    std::size_t size,
+    const ProbeResult& probe) noexcept {
+    TextureExecutionState state{
+        .bytes = bytes,
+        .size = size,
+        .probe = &probe,
+        .module_id = module.id,
+    };
+
+    static const std::array bindings{
+        crusader::OperationBinding{
+            .operation = kTextureFramePtx,
+            .execute = &frame_ptx_operation,
+        },
+        crusader::OperationBinding{
+            .operation = kTextureProject,
+            .execute = &project_texture_operation,
+        },
+    };
+
+    const crusader::Plan* plan = nullptr;
+    if (module.format == Format::Dds) {
+        plan = &direct_dds_plan();
+    } else if (module.format == Format::Ptx) {
+        plan = &ptx_plan();
+    }
+
+    if (plan == nullptr) {
+        return module_support::reject(
+            probe, module.id, "Texture pipeline rejected: invalid module route");
+    }
+
+    const auto report = crusader::execute(*plan, bindings, &state);
+    if (!report.ok()) {
+        if (!state.result.detail.empty()) return state.result;
+        std::string detail = "Crusader texture execution failed: ";
+        detail += crusader::to_string(report.status);
+        return module_support::reject(probe, module.id, std::move(detail));
+    }
+
+    state.result.modules.push_back({"spider.crusader", true});
+    return state.result;
+}
+
+} // namespace
+
+NativeModule texture_module(Format format) noexcept {
+    if (format == Format::Ptx) {
+        const auto caps = capability(ResourceCapability::Inspection) |
+            ResourceCapability::ChildResources;
+        return {"formats.texture.spider-reader", "PTX", Format::Ptx,
+                ModuleKind::Structural, false, run_texture_module, caps};
+    }
+
     const auto caps = capability(ResourceCapability::Inspection) |
         ResourceCapability::ImagePreview;
-    return {"formats.dds.dmc3-reader", "DDS", Format::Dds,
-            ModuleKind::Structural, false, run_dds_module, caps};
+    return {"formats.texture.spider-reader", "DDS", Format::Dds,
+            ModuleKind::Structural, false, run_texture_module, caps};
 }
 
-NativeModule ptx_module() noexcept {
-    const auto caps = capability(ResourceCapability::Inspection) |
-        ResourceCapability::ChildResources;
-    return {"formats.ptx.bundle-reader", "PTX", Format::Ptx,
-            ModuleKind::Structural, false, run_ptx_module, caps};
-}
-
-}  // namespace dmcresource
+} // namespace dmcresource
