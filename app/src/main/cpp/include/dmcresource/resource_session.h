@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <optional>
+#include "dmcresource/uv_gallery.h"
 #include <string_view>
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/spider/black_widow.h"
@@ -31,12 +33,24 @@ struct Session {
     std::string detail;
     std::string trace;
     bool renderable{};
+
+    std::shared_ptr<const UvGallery> uv_gallery;
+    std::optional<std::size_t> uv_map_index;
 };
 
 
 [[nodiscard]] std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size);
 [[nodiscard]] std::unique_ptr<Session> session_from_child(const ChildResource& child);
+[[nodiscard]] std::unique_ptr<Session> open_uv_gallery(const Session* model);
+[[nodiscard]] std::size_t session_child_count(const Session* session) noexcept;
+[[nodiscard]] std::string session_child_title(const Session* session, int index);
+[[nodiscard]] std::pair<std::uint32_t, std::uint32_t> session_child_preview_size(
+    const Session* session, int index) noexcept;
+// PTX previews are borrowed. Generated previews use caller-owned scratch only.
+[[nodiscard]] const ImagePreview* session_child_preview(
+    const Session* session, int index, ImagePreview* scratch);
+[[nodiscard]] std::unique_ptr<Session> open_session_child(const Session* session, int index);
 [[nodiscard]] std::string describe_session(const Session* session);
 [[nodiscard]] spider::black_widow::StateBits black_widow_state(const Session* session) noexcept;
 [[nodiscard]] bool attach_session_ptx(Session* session, std::string_view name,

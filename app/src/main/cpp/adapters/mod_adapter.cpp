@@ -245,6 +245,7 @@ InspectionNode make_diagnostic_node(
         render_node.name = "Bone " + std::to_string(index);
         render_node.kind = RenderNodeKind::Bone;
         render_node.parent = hierarchy_mapping_valid ? parent_by_node[index] : -1;
+        render_node.parent_authority = hierarchy_mapping_valid;
         render_node.spatial_authority = spatial_authorized;
 
         if (spatial_authorized) {

@@ -5,142 +5,104 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.FrameLayout;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
-/**
- * Format-agnostic gallery for ResourceCapability.ChildResources.
- * Native child projections provide titles and optional image previews; the UI
- * does not branch on PTX/DDS/PAC/PNST/etc.
- */
-public final class ChildResourceBrowserView extends ScrollView {
+/** Format-agnostic, recycled gallery. Native sessions own entries and previews. */
+public final class ChildResourceBrowserView extends GridView {
     public interface Listener {
         void onChildSelected(int index, String title);
     }
 
-    private static final int COLUMNS = 2;
-    private final LinearLayout content;
+    private final GalleryAdapter adapter = new GalleryAdapter();
     private Listener listener;
     private long session;
 
     public ChildResourceBrowserView(Context context) {
         super(context);
-        setFillViewport(true);
+        setNumColumns(2);
+        setStretchMode(STRETCH_COLUMN_WIDTH);
+        setHorizontalSpacing(dp(8));
+        setVerticalSpacing(dp(8));
+        setPadding(dp(14), dp(12), dp(14), dp(16));
         setBackgroundColor(0xff121216);
-
-        content = new LinearLayout(context);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(10), dp(10), dp(10), dp(16));
-        addView(content, new ScrollView.LayoutParams(
-                LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        setAdapter(adapter);
+        setOnItemClickListener((parent, view, index, id) -> {
+            if (listener != null) listener.onChildSelected(index, title(index));
+        });
     }
 
-    public void setListener(Listener listener) {
-        this.listener = listener;
-    }
+    public void setListener(Listener listener) { this.listener = listener; }
 
     public void setSession(long newSession) {
         if (session == newSession) return;
         session = newSession;
-        rebuild();
+        adapter.notifyDataSetChanged();
+        setSelection(0);
     }
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private void rebuild() {
-        content.removeAllViews();
-        if (session == 0) return;
-
-        final int count = Math.max(0, NativeBridge.childResourceCount(session));
-        TextView summary = new TextView(getContext());
-        summary.setText(count + (count == 1 ? " resource" : " resources"));
-        summary.setTextColor(0xffd7d7dc);
-        summary.setTextSize(14f);
-        summary.setPadding(dp(4), dp(2), dp(4), dp(10));
-        content.addView(summary, new LinearLayout.LayoutParams(
-                LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-
-        for (int rowStart = 0; rowStart < count; rowStart += COLUMNS) {
-            LinearLayout row = new LinearLayout(getContext());
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            content.addView(row, new LinearLayout.LayoutParams(
-                    LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-
-            for (int column = 0; column < COLUMNS; ++column) {
-                final int index = rowStart + column;
-                if (index >= count) {
-                    View spacer = new View(getContext());
-                    row.addView(spacer, tileLayoutParams());
-                    continue;
-                }
-                row.addView(makeTile(index), tileLayoutParams());
-            }
-        }
+    private String title(int index) {
+        String value = NativeBridge.childResourceTitle(session, index);
+        return value == null || value.isEmpty() ? "Resource " + index : value;
     }
 
-    private LinearLayout.LayoutParams tileLayoutParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                0, dp(164), 1f);
-        params.setMargins(dp(4), dp(4), dp(4), dp(4));
-        return params;
-    }
-
-    private View makeTile(int index) {
-        String title = NativeBridge.childResourceTitle(session, index);
-        if (title == null || title.isEmpty()) title = "Resource " + index;
-        final String selectedTitle = title;
-
-        FrameLayout tile = new FrameLayout(getContext());
-        tile.setBackgroundColor(0xff24242b);
-        tile.setClickable(true);
-        tile.setFocusable(true);
-        tile.setContentDescription(selectedTitle);
-        tile.setOnClickListener(v -> {
-            if (listener != null) listener.onChildSelected(index, selectedTitle);
-        });
-
-        // Preview is the primary representation. The child title is rendered
-        // only as a visible fallback when no safe bitmap can be materialized.
-        if (!tryAddPreview(tile, index)) {
-            TextView fallback = new TextView(getContext());
-            fallback.setText(selectedTitle);
-            fallback.setTextColor(Color.WHITE);
-            fallback.setTextSize(17f);
-            fallback.setGravity(Gravity.CENTER);
-            fallback.setPadding(dp(8), dp(8), dp(8), dp(8));
-            tile.addView(fallback, new FrameLayout.LayoutParams(
-                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-        }
-        return tile;
-    }
-
-    private boolean tryAddPreview(FrameLayout tile, int index) {
-        if (!NativeBridge.childResourcePreviewAvailable(session, index)) return false;
-        final int width = NativeBridge.childResourcePreviewWidth(session, index);
-        final int height = NativeBridge.childResourcePreviewHeight(session, index);
-        if (width <= 0 || height <= 0) return false;
-        final long expected = (long) width * (long) height;
-        if (expected <= 0L || expected > Integer.MAX_VALUE) return false;
-
-        try {
-            final int[] pixels = NativeBridge.childResourcePreview(session, index);
-            if (pixels == null || pixels.length != (int) expected) return false;
-            Bitmap bitmap = Bitmap.createBitmap(
-                    pixels, width, height, Bitmap.Config.ARGB_8888);
-            ImageView image = new ImageView(getContext());
-            image.setImageBitmap(bitmap);
+    private final class Tile extends LinearLayout {
+        final ImageView image;
+        final TextView caption;
+        Tile() {
+            super(ChildResourceBrowserView.this.getContext());
+            setOrientation(VERTICAL);
+            setBackgroundColor(0xff24242b);
+            setLayoutParams(new GridView.LayoutParams(LayoutParams.MATCH_PARENT, dp(192)));
+            image = new ImageView(getContext());
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setBackgroundColor(0xff101014);
-            tile.addView(image, new FrameLayout.LayoutParams(
-                    LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-            return true;
-        } catch (OutOfMemoryError | RuntimeException ignored) {
-            return false;
+            addView(image, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f));
+            caption = new TextView(getContext());
+            caption.setTextColor(Color.WHITE);
+            caption.setTextSize(12f);
+            caption.setGravity(Gravity.CENTER);
+            caption.setMaxLines(2);
+            caption.setPadding(dp(4), dp(4), dp(4), dp(4));
+            addView(caption, new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(40)));
+        }
+    }
+
+    private final class GalleryAdapter extends BaseAdapter {
+        @Override public int getCount() {
+            return session == 0 ? 0 : Math.max(0, NativeBridge.childResourceCount(session));
+        }
+        @Override public Object getItem(int index) { return index; }
+        @Override public long getItemId(int index) { return index; }
+        @Override public View getView(int index, View recycled, ViewGroup parent) {
+            Tile tile = recycled instanceof Tile ? (Tile) recycled : new Tile();
+            tile.image.setImageDrawable(null);
+            final String label = title(index);
+            tile.caption.setText(label);
+            tile.setContentDescription(label);
+            try {
+                final int w = NativeBridge.childResourcePreviewWidth(session, index);
+                final int h = NativeBridge.childResourcePreviewHeight(session, index);
+                final long expected = (long) w * h;
+                if (w > 0 && h > 0 && expected <= Integer.MAX_VALUE) {
+                    final int[] pixels = NativeBridge.childResourcePreview(session, index);
+                    if (pixels != null && pixels.length == expected) {
+                        tile.image.setImageBitmap(Bitmap.createBitmap(
+                                pixels, w, h, Bitmap.Config.ARGB_8888));
+                    }
+                }
+            } catch (OutOfMemoryError | RuntimeException ignored) {
+                // The caption remains usable if a preview cannot be allocated.
+            }
+            return tile;
         }
     }
 }

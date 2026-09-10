@@ -122,15 +122,18 @@ void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
     return true;
 }
 
-void render_uv_layout(const Mesh& mesh, const ViewState& view,
-                      RgbaImage* image) {
-    if (image == nullptr || !mesh.has_uv0() || mesh.indices.size() < 3U) return;
+void draw_uv_layout(std::span<const Vec2> coordinates,
+                    std::span<const std::uint32_t> indices,
+                    const ViewState& view, RgbaImage* image) {
+    if (image == nullptr || coordinates.empty() || indices.size() < 3U) return;
 
     float min_u = 0.0F;
     float min_v = 0.0F;
     float max_u = 1.0F;
     float max_v = 1.0F;
-    for (const auto& uv : mesh.uv0) {
+    for (const auto index : indices) {
+        if (index >= coordinates.size()) return;
+        const auto& uv = coordinates[index];
         if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) return;
         min_u = std::min(min_u, uv.u);
         min_v = std::min(min_v, uv.v);
@@ -168,28 +171,20 @@ void render_uv_layout(const Mesh& mesh, const ViewState& view,
     line(*image, uv11, uv01, 80);
     line(*image, uv01, uv00, 80);
 
-    std::vector<P2> points;
-    points.reserve(mesh.uv0.size());
-    for (const auto& uv : mesh.uv0) points.push_back(map_uv(uv.u, uv.v));
-
-    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
-        const auto ia = mesh.indices[t + 0U];
-        const auto ib = mesh.indices[t + 1U];
-        const auto ic = mesh.indices[t + 2U];
-        if (ia >= points.size() || ib >= points.size() || ic >= points.size()) continue;
-        line(*image, points[ia], points[ib]);
-        line(*image, points[ib], points[ic]);
-        line(*image, points[ic], points[ia]);
+    for (std::size_t t = 0U; t + 2U < indices.size(); t += 3U) {
+        const auto a = coordinates[indices[t]];
+        const auto b = coordinates[indices[t + 1U]];
+        const auto c = coordinates[indices[t + 2U]];
+        const auto pa = map_uv(a.u, a.v);
+        const auto pb = map_uv(b.u, b.v);
+        const auto pc = map_uv(c.u, c.v);
+        line(*image, pa, pb);
+        line(*image, pb, pc);
+        line(*image, pc, pa);
     }
 }
 
-}  // namespace
-
-RgbaImage render_view(const Mesh& mesh, int width, int height,
-                      const ViewState& view,
-                      const HierarchyOverlay* hierarchy,
-                      const std::vector<std::uint32_t>* triangle_texture_slots,
-                      const std::vector<ImagePreview>* textures) {
+RgbaImage make_canvas(int width, int height) {
     RgbaImage image;
     image.width = std::clamp(width, 1, 2048);
     image.height = std::clamp(height, 1, 2048);
@@ -201,10 +196,30 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         image.pixels[i + 2U] = 22U;
         image.pixels[i + 3U] = 255U;
     }
+    return image;
+}
+
+}  // namespace
+
+RgbaImage render_uv_map(std::span<const Vec2> coordinates,
+    std::span<const std::uint32_t> indices, int width, int height, float zoom) {
+    auto image = make_canvas(width, height);
+    ViewState view;
+    view.zoom = zoom;
+    draw_uv_layout(coordinates, indices, view, &image);
+    return image;
+}
+
+RgbaImage render_view(const Mesh& mesh, int width, int height,
+                      const ViewState& view,
+                      const HierarchyOverlay* hierarchy,
+                      const std::vector<std::uint32_t>* triangle_texture_slots,
+                      const std::vector<ImagePreview>* textures) {
+    auto image = make_canvas(width, height);
     if (mesh.vertices.empty() || mesh.indices.size() < 3U) return image;
 
     if (view.uv_layout) {
-        render_uv_layout(mesh, view, &image);
+        if (mesh.has_uv0()) draw_uv_layout(mesh.uv0, mesh.indices, view, &image);
         return image;
     }
 

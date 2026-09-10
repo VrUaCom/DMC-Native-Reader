@@ -31,6 +31,10 @@ enum class StateFlag : std::uint64_t {
     ChildBrowserMode           = 1ULL << 15U,
     TextureCompanionAttachable = 1ULL << 16U,
     TextureCompanionAttached   = 1ULL << 17U,
+    UvMapView                  = 1ULL << 18U,
+    CanInspectUv               = 1ULL << 19U,
+    CanInspectMeshes           = 1ULL << 20U,
+    CanInspectHierarchy        = 1ULL << 21U,
 };
 
 using StateBits = std::uint64_t;
@@ -53,6 +57,10 @@ struct ModelSessionView final {
     bool image_preview_available{};
     std::size_t child_resource_count{};
     bool texture_companion_attached{};
+    bool uv_map_view{};
+    bool uv_data_available{};
+    std::size_t object_count{};
+    std::size_t hierarchy_node_count{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral

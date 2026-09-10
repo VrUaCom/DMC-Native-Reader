@@ -92,6 +92,7 @@ int main() {
     model.triangle_texture_slots = slots;
     state = widow::evaluate_model_session(model);
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    assert(!widow::has_state(state, widow::StateFlag::CanShowUv));
     slots.pop_back();
     mesh.indices.resize(3U);
     model.triangle_texture_slots = slots;
@@ -99,10 +100,12 @@ int main() {
     mesh.uv0[0].u = std::numeric_limits<float>::quiet_NaN();
     state = widow::evaluate_model_session(model);
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    assert(!widow::has_state(state, widow::StateFlag::CanShowUv));
     mesh.uv0[0].u = 0.0F;
     mesh.indices[0] = 99U;
     state = widow::evaluate_model_session(model);
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    assert(!widow::has_state(state, widow::StateFlag::CanShowUv));
     mesh.indices[0] = 0U;
 
     model.capabilities &= ~capability(ResourceCapability::TextureBinding);

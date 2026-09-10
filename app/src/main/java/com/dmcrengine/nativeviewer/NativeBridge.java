@@ -19,6 +19,10 @@ public final class NativeBridge {
     public static native int imagePreviewHeight(long handle);
     public static native int[] imagePreview(long handle);
     public static native String inspection(long handle);
+    public static final int INSPECT_UV = 1;
+    public static final int INSPECT_MESHES = 2;
+    public static final int INSPECT_HIERARCHY = 3;
+    public static native String inspectionTopic(long handle, int topic);
 
     // Companion-resource orchestration. Java only supplies a file descriptor;
     // native Spider/framing/DDS modules validate PTX and bind its decoded
@@ -30,10 +34,10 @@ public final class NativeBridge {
     // children; Android does not know whether the parent is PTX/PAC/PNST/etc.
     public static native int childResourceCount(long handle);
     public static native String childResourceTitle(long handle, int index);
-    public static native boolean childResourcePreviewAvailable(long handle, int index);
     public static native int childResourcePreviewWidth(long handle, int index);
     public static native int childResourcePreviewHeight(long handle, int index);
     public static native int[] childResourcePreview(long handle, int index);
+    public static native long openUvGallery(long handle);
     public static native long openChild(long handle, int index);
 
     public static native int[] render(long handle, int width, int height,

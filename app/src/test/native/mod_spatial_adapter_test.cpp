@@ -199,6 +199,7 @@ int main() {
     assert(spatial.accepted);
     assert(spatial.renderable);
     assert(spatial.scene.nodes.size() == 3U);
+    for (const auto& node : spatial.scene.nodes) assert(node.parent_authority);
     assert(spatial.scene.nodes[0].parent == -1);
     assert(spatial.scene.nodes[2].parent == 0);
     assert(spatial.scene.nodes[1].parent == 2);
@@ -237,6 +238,7 @@ int main() {
     assert(non_spatial.accepted);
     assert(non_spatial.renderable);
     assert(non_spatial.scene.nodes.size() == 3U);
+    for (const auto& node : non_spatial.scene.nodes) assert(node.parent_authority);
     assert(non_spatial.scene.nodes[2].parent == 0);
     assert(non_spatial.scene.nodes[1].parent == 2);
     for (const auto& node : non_spatial.scene.nodes) {

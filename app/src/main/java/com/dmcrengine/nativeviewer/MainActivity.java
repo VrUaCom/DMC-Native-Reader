@@ -151,8 +151,7 @@ public final class MainActivity extends Activity {
 
         setToolAvailable(resetButton, hasSession && blackWidowState.canRender);
         syncToggleButton(wireButton,
-                hasSession && blackWidowState.canWireframe &&
-                        !renderView.isUvLayoutVisible(),
+                hasSession && (blackWidowState.canWireframe || blackWidowState.canInspectMeshes),
                 renderView.isWireframe());
 
         final boolean hierarchyAvailable = hasSession
@@ -160,11 +159,11 @@ public final class MainActivity extends Activity {
                 && !renderView.isUvLayoutVisible();
         renderView.setHierarchyAvailable(hierarchyAvailable);
         syncToggleButton(hierarchyButton,
-                hierarchyAvailable,
+                hierarchyAvailable || blackWidowState.canInspectHierarchy,
                 renderView.isHierarchyVisible());
 
         syncToggleButton(uvButton,
-                hasSession && blackWidowState.canShowUv,
+                hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
                 renderView.isUvLayoutVisible());
 
         setToolAvailable(infoButton,
@@ -262,6 +261,7 @@ public final class MainActivity extends Activity {
 
         wireButton = makeSquareButton("W", "Wireframe", 18f);
         wireButton.setOnClickListener(v -> {
+            if (!blackWidowState.canWireframe) return;
             renderView.toggleWireframe();
             applyResourceUiState();
         });
@@ -269,6 +269,7 @@ public final class MainActivity extends Activity {
 
         hierarchyButton = makeSquareButton("🦴", "Bones / hierarchy", 20f);
         hierarchyButton.setOnClickListener(v -> {
+            if (!blackWidowState.canShowHierarchy) return;
             renderView.toggleHierarchy();
             applyResourceUiState();
         });
@@ -276,10 +277,18 @@ public final class MainActivity extends Activity {
 
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {
-            renderView.toggleUvLayout();
-            applyResourceUiState();
+            if (!blackWidowState.canShowUv) return;
+            final long gallery = NativeBridge.openUvGallery(session);
+            if (gallery == 0) {
+                Toast.makeText(this, "UV maps unavailable: incomplete bindings", Toast.LENGTH_LONG).show();
+                return;
+            }
+            navigateToSession(gallery, titleView.getText() + " · UV");
         });
         addToolButton(bar, uvButton);
+        bindInspectionHold(uvButton, NativeBridge.INSPECT_UV);
+        bindInspectionHold(wireButton, NativeBridge.INSPECT_MESHES);
+        bindInspectionHold(hierarchyButton, NativeBridge.INSPECT_HIERARCHY);
 
         infoButton = makeSquareButton("\u2139", "Resource information", 22f);
         infoButton.setOnClickListener(v -> showInfoDialog());
@@ -296,9 +305,21 @@ public final class MainActivity extends Activity {
         infoText = text == null ? "" : text;
     }
 
+    private void bindInspectionHold(Button button, int topic) {
+        button.setOnLongClickListener(v -> {
+            if (session == 0) return false;
+            showInfoDialog(NativeBridge.inspectionTopic(session, topic));
+            return true;
+        });
+    }
+
     private void showInfoDialog() {
+        showInfoDialog(infoText);
+    }
+
+    private void showInfoDialog(String text) {
         TextView details = new TextView(this);
-        details.setText(infoText.isEmpty() ? "No resource information yet." : infoText);
+        details.setText(text == null || text.isEmpty() ? "No resource information available." : text);
         details.setTextColor(Color.WHITE);
         details.setTextSize(13f);
         details.setTypeface(Typeface.MONOSPACE);
@@ -520,8 +541,12 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        navigateToSession(child, childTitle);
+    }
+
+    private void navigateToSession(long handle, String title) {
         navigation.push(new NavigationEntry(session, titleView.getText().toString()));
-        activateSession(child, childTitle);
+        activateSession(handle, title);
     }
 
     private boolean navigateToParent() {

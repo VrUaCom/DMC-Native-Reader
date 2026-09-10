@@ -27,6 +27,12 @@ public final class BlackWidowState {
     private static final long TEXTURE_COMPANION_ATTACHABLE = 1L << 16;
     private static final long TEXTURE_COMPANION_ATTACHED = 1L << 17;
 
+    private static final long UV_MAP_VIEW = 1L << 18;
+
+    public final boolean canInspectUv;
+    public final boolean canInspectMeshes;
+    public final boolean canInspectHierarchy;
+    public final boolean uvMapView;
     public final long bits;
     public final boolean canRender;
     public final boolean canWireframe;
@@ -49,6 +55,10 @@ public final class BlackWidowState {
 
     private BlackWidowState(long bits) {
         this.bits = bits;
+        canInspectUv = has(bits, 1L << 19);
+        canInspectMeshes = has(bits, 1L << 20);
+        canInspectHierarchy = has(bits, 1L << 21);
+        uvMapView = has(bits, UV_MAP_VIEW);
         canRender = has(bits, CAN_RENDER);
         canWireframe = has(bits, CAN_WIREFRAME);
         canInspect = has(bits, CAN_INSPECT);

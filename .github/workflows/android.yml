@@ -110,7 +110,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='24' versionName='1.0'" /tmp/core-badging.txt
+          grep -Fq "versionCode='26' versionName='1.0'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt

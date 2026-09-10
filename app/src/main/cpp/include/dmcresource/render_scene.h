@@ -37,6 +37,8 @@ struct RenderNode final {
     // authority for this concrete document. Identity matrices alone must never
     // be interpreted as decoded spatial transforms.
     bool spatial_authority{false};
+    // Parent relation authority is independent of decoded spatial transforms.
+    bool parent_authority{false};
 
     Matrix4 local;
     Matrix4 world;

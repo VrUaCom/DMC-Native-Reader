@@ -46,6 +46,12 @@ void append_node(std::ostringstream& out,
 
 }  // namespace
 
+std::size_t count_inspection_nodes(const InspectionNode& node, InspectionKind kind) noexcept {
+    std::size_t count = node.kind == kind ? 1U : 0U;
+    for (const auto& child : node.children) count += count_inspection_nodes(child, kind);
+    return count;
+}
+
 std::string format_inspection_tree(const InspectionDocument& document) {
     if (document.empty()) return {};
 

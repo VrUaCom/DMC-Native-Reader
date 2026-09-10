@@ -380,6 +380,17 @@ int main() {
                            widow::StateFlag::TextureCompanionAttached));
     assert(dmcresource::render_session(&session, 128, 128, 0.0F, 0.0F, view.zoom, 0U).pixels
            == rendered.pixels);
+    {
+        auto uv_gallery = dmcresource::open_uv_gallery(&session);
+        assert(uv_gallery && dmcresource::session_child_count(uv_gallery.get()) == 2);
+        assert(uv_gallery->uv_gallery->maps[0].texture_slot == 1U);
+        assert(uv_gallery->uv_gallery->maps[1].texture_slot == 3U);
+        auto uv_map = dmcresource::open_session_child(uv_gallery.get(), 1);
+        assert(uv_map && !dmcresource::render_session(
+            uv_map.get(),128,128,0,0,1,0).pixels.empty());
+    }
+    assert(dmcresource::render_session(&session,128,128,0,0,view.zoom,0).pixels
+           == rendered.pixels);
     assert(!dmcresource::attach_session_ptx(&session, "bad.ptx", nullptr, 0U));
     assert(session.texture_companion_attached);
     assert(session.attached_textures[3].rgba8 == attachment.textures[3].rgba8);

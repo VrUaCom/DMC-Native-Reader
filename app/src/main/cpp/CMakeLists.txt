@@ -17,6 +17,9 @@ add_library(dmc_native_reader_core STATIC
     adapters/scm_adapter.cpp
     modules/model_texture_binding.cpp
     modules/resource_session.cpp
+    modules/session_gallery.cpp
+    modules/session_inspection.cpp
+    modules/uv_gallery.cpp
     modules/scene_projection.cpp
     modules/module_registry.cpp
     modules/module_model.cpp
@@ -72,7 +75,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
     enable_testing()
     foreach(test_name IN ITEMS
         black_widow_state core_model_pipeline dds_ptx_v1
-        mod_spatial_adapter module_registry ptx_model_texture render_scene)
+        mod_spatial_adapter module_registry ptx_model_texture render_scene uv_gallery session_inspection)
         add_executable(${test_name}_test
             ../../test/native/${test_name}_test.cpp)
         target_link_libraries(${test_name}_test PRIVATE DMCNativeReader::Core)

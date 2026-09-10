@@ -4,6 +4,8 @@
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/session_inspection.h"
+#include "dmcresource/inspection_format.h"
 
 #include <bit>
 #include <cassert>
@@ -306,6 +308,25 @@ int main() {
             view.yaw_radians, view.pitch_radians, view.zoom, 0U);
         assert(via_session.pixels == direct.pixels);
         assert(!dmcresource::describe_session(session.get()).empty());
+        const auto mesh_info = dmcresource::inspect_session(session.get(), dmcresource::InspectionTopic::Meshes);
+        assert(dmcresource::count_inspection_nodes(mesh_info.root, dmcresource::InspectionKind::Object) == 1);
+        assert(dmcresource::count_inspection_nodes(mesh_info.root, dmcresource::InspectionKind::Mesh) == 1);
+        assert(!dmcresource::inspect_session(session.get(), dmcresource::InspectionTopic::Uv).empty());
+        // This minimal MOD fixture has no complete hierarchy permutation;
+        // the SCM fixture has a validated root relation.
+        for (const auto& node : session->scene.nodes) assert(node.parent_authority == (bytes == &scm));
+        const auto hierarchy_info = dmcresource::format_inspection_tree(
+            dmcresource::inspect_session(session.get(), dmcresource::InspectionTopic::Hierarchy));
+        assert(hierarchy_info.find(bytes == &scm ? "Parent: Root" : "Parent: Unconfirmed") != std::string::npos);
+
+        auto gallery = dmcresource::open_uv_gallery(session.get());
+        assert(gallery && dmcresource::session_child_count(gallery.get()) == 1);
+        assert(gallery->uv_gallery->maps[0].texture_slot == (bytes == &scm ? 0U : 5U));
+        auto uv = dmcresource::open_session_child(gallery.get(), 0);
+        assert(uv && widow::has_state(dmcresource::black_widow_state(uv.get()),
+                                      widow::StateFlag::UvMapView));
+        assert(dmcresource::render_session(uv.get(),128,128,0,0,1,0).pixels.size() == 128U*128U*4U);
+
     }
 
     const std::uint8_t old_family[] = {'H', 'I', 'T', 'S'};
