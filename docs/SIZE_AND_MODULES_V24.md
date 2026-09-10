@@ -20,8 +20,9 @@ not estimates of Android Settings storage accounting.
 APK reduction: approximately 62.3%. The user's 6.27 MB figure refers to the
 installed application. APK retention, extracted native code and Android's
 compiled-code accounting mean this figure cannot be replaced with the ZIP
-entry total. Measure v24 on the same phone after updating; no exact installed
-size is claimed here. The earlier 2.4 MB installed baseline was not reproduced.
+entry total. The user subsequently reported 2.32 MB installed for v24, down
+from 6.27 MB (approximately 63.0%). This is user-reported device evidence,
+not a measurement taken by the build environment.
 
 ## Confirmed dependency cause and fix
 
@@ -69,7 +70,16 @@ parser, texture-binding algorithm or Java DMC logic was introduced.
 - ZIP integrity, v2 signature, all 18 JNI exports, module markers,
   `extractNativeLibs=true` and compressed legacy JNI packaging passed.
 
-v23 has user-confirmed device acceptance. v24 requires a new phone smoke test:
-update the app, open MOD/SCM with their PTX companions, verify gallery/Back,
-and report installed application size using the same Android Settings view.
-Local build and host-test evidence do not assert a green GitHub Actions run.
+## User-confirmed v24 acceptance
+
+On 2026-09-10, after receiving the v24 APK and test instructions, Victor
+reported: «Є все працює і вага 2.32», then explicitly requested that the latest
+version be merged into main. Record this as user-confirmed device acceptance
+and 2.32 MB installed size; no individual per-file test log was supplied.
+
+The tested code is `98153b7a1130d4f87492f883154a8acd2367d459`.
+This acceptance update changes documentation only. GitHub Actions on the tested
+revision reported failed core, DDS/PTX and hardening jobs with no executed
+steps or available job logs; these results do not demonstrate a code failure
+and are not claimed green. Merge evidence is the seven local test passes,
+verified APK and user-confirmed device acceptance above.
