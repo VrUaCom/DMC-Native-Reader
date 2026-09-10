@@ -1,4 +1,5 @@
 #include "dmcresource/model_texture_binding.h"
+#include "dmcresource/render_scene.h"
 
 #include <algorithm>
 #include <cmath>
@@ -7,8 +8,6 @@
 namespace dmcresource::model_texture_binding {
 namespace {
 
-constexpr std::uint32_t kNoTextureSlot =
-    std::numeric_limits<std::uint32_t>::max();
 constexpr std::uint32_t kMaxCompanionTextureSlot = 4095U;
 
 }  // namespace

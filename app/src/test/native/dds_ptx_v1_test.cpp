@@ -4,6 +4,7 @@
 #include "dmcresource/texture_set.h"
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/resource_session.h"
 
 #include <cassert>
 #include <bit>
@@ -365,6 +366,30 @@ int main() {
                 rendered.pixels[i + 2U] == 255U;
     }
     assert(green && blue);
+
+    // Portable session owns attachment publication and survives child navigation.
+    dmcresource::Session session;
+    session.renderable = true;
+    session.capabilities = dmcresource::capability(ResourceCapability::Geometry) |
+        ResourceCapability::TextureBinding | ResourceCapability::UvCoordinates;
+    session.render_mesh = mesh;
+    session.render_triangle_texture_slots = slots;
+    assert(dmcresource::attach_session_ptx(&session, "bundle.ptx", bundle.data(), bundle.size()));
+    namespace widow = dmcresource::spider::black_widow;
+    assert(widow::has_state(dmcresource::black_widow_state(&session),
+                           widow::StateFlag::TextureCompanionAttached));
+    assert(dmcresource::render_session(&session, 128, 128, 0.0F, 0.0F, view.zoom, 0U).pixels
+           == rendered.pixels);
+    assert(!dmcresource::attach_session_ptx(&session, "bad.ptx", nullptr, 0U));
+    assert(session.texture_companion_attached);
+    assert(session.attached_textures[3].rgba8 == attachment.textures[3].rgba8);
+
+    auto gallery = dmcresource::open_session("bundle.ptx", bundle.data(), bundle.size());
+    assert(gallery && gallery->children.size() == 4U);
+    auto child_session = dmcresource::session_from_child(gallery->children[1]);
+    gallery.reset();
+    assert(child_session->image_preview.available());
+    assert(child_session->image_preview.rgba8[1] == 255U);
 
     slots[1] = 4U;
     const auto missing = dmcresource::texture_companion::attach_ptx(

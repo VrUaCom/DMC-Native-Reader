@@ -77,7 +77,7 @@ jobs:
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='23'" "$BADGING"
+            grep -q "versionCode='24'" "$BADGING"
             grep -q "versionName='1.0'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
