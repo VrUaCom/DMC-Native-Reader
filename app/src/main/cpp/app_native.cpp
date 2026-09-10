@@ -13,6 +13,7 @@
 
 #include "dmcresource/resource_session.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
 
@@ -302,4 +303,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
     return image_to_argb(env, dmcresource::render_session(session,
         requested_width, requested_height, yaw, pitch, zoom,
         static_cast<std::uint32_t>(render_flags)));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
+        JNIEnv* env, jclass, jlong handle, jint topic) {
+    try {
+        const auto document = dmcresource::inspect_session(from_handle(handle),
+            static_cast<dmcresource::InspectionTopic>(topic));
+        return env->NewStringUTF(dmcresource::format_inspection_tree(document).c_str());
+    } catch (...) { return env->NewStringUTF("Information unavailable"); }
 }

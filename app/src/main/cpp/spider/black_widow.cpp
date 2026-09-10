@@ -76,6 +76,9 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
            texture_companion_attachable && session.texture_companion_attached);
 
     set_if(&state, StateFlag::UvMapView, session.uv_map_view);
+    set_if(&state, StateFlag::CanInspectUv, session.uv_data_available);
+    set_if(&state, StateFlag::CanInspectMeshes, session.object_count != 0U);
+    set_if(&state, StateFlag::CanInspectHierarchy, session.hierarchy_node_count != 0U);
     return state;
 }
 

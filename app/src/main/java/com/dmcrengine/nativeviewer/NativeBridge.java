@@ -19,6 +19,10 @@ public final class NativeBridge {
     public static native int imagePreviewHeight(long handle);
     public static native int[] imagePreview(long handle);
     public static native String inspection(long handle);
+    public static final int INSPECT_UV = 1;
+    public static final int INSPECT_MESHES = 2;
+    public static final int INSPECT_HIERARCHY = 3;
+    public static native String inspectionTopic(long handle, int topic);
 
     // Companion-resource orchestration. Java only supplies a file descriptor;
     // native Spider/framing/DDS modules validate PTX and bind its decoded

@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/inspection_format.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/texture_companion.h"
 #include <algorithm>
@@ -75,6 +76,10 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .texture_companion_attached = session->texture_companion_attached,
         .uv_map_view = session->uv_gallery && session->uv_map_index &&
             *session->uv_map_index < session->uv_gallery->maps.size(),
+        .uv_data_available = session->render_mesh.has_uv0() ||
+            (session->uv_gallery && !session->uv_gallery->maps.empty()),
+        .object_count = count_inspection_nodes(session->inspection.root, InspectionKind::Object),
+        .hierarchy_node_count = session->scene.nodes.size(),
     });
 }
 

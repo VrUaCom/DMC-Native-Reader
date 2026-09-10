@@ -224,6 +224,7 @@ struct SceneProjection final {
         render_node.name = "SCM Node " + std::to_string(node_index);
         render_node.kind = RenderNodeKind::Scene;
         render_node.parent = parent_by_node[node_index];
+        render_node.parent_authority = true;
         render_node.spatial_authority = true;
         render_node.local = to_matrix4(scm::build_local_transform(transform));
         render_node.world = to_matrix4((*world)[node_index]);
