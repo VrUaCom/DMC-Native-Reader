@@ -1,69 +1,64 @@
-# Samsung My Files routing boundary
+# Samsung / Android file-opening boundary
 
-## Device evidence through v6
+Last updated: 2026-09-10.
 
-Physical Samsung testing established the following sequence:
+## Current resolved product status
 
-1. v6 installs successfully under the canonical package identity `com.dmcrengine.nativereader`.
-2. Launching the app directly succeeds.
-3. Runtime `PackageManager` probes report that this package resolves constructed VIEW intents for:
-   - `application/octet-stream`
-   - `audio/x-mod`
-   - arbitrary provider MIME
-   - untyped `content://`
-   - untyped `file://`
-4. Tapping the real `.mod` or `.scm` in Samsung My Files does **not** launch the app and does not show the normal Android chooser. My Files directly shows its "Search in Play Store?" unsupported-file dialog.
-5. Because `MainActivity` remains at `ACTION_MAIN` after the tap, there is no evidence that a VIEW intent reached the package.
+This document began as a v6/v7 investigation of Samsung My Files behavior. Those sections are preserved below as **historical routing evidence**; they are no longer the current unresolved product status.
 
-This classifies the unresolved boundary above the native decoder and above normal Android package resolution: Samsung My Files is performing a custom unsupported-file decision before, or instead of, the normal resolver for these extensions.
+By the accepted Native Reader v24 baseline, physical Samsung testing confirms that the supported production families **MOD, SCM, DDS and PTX open successfully in Native Reader**, and PTX model texture application works. The owner accepted v24 on 2026-09-10 and Android reported 2.32 MB installed size.
 
-## v7 final APK-level hardening
+Therefore:
 
-v7 exercises the strongest practical APK-only registration path:
+- do not describe Samsung routing for supported v24 files as generally unresolved;
+- keep the earlier v6/v7 evidence because it documents an OEM/file-manager boundary encountered during development;
+- treat any new routing regression as device/Android/file-manager specific and reproduce it against the current build before changing manifest policy.
 
-- concrete exported `DmcOpenActivity` rather than an `activity-alias`;
+The current production package remains `com.dmcrengine.nativereader`.
+
+## Historical evidence — v6 routing investigation
+
+Physical Samsung testing established the following sequence at that stage:
+
+1. v6 installed successfully under `com.dmcrengine.nativereader`.
+2. Direct app launch succeeded.
+3. Runtime `PackageManager` probes resolved constructed VIEW intents for several fallback MIME/URI combinations.
+4. Tapping the real `.mod` or `.scm` in that Samsung My Files build did not launch the app or show the normal chooser; My Files displayed its own unsupported-file/Play Store path.
+5. `MainActivity` remained at `ACTION_MAIN`, so there was no evidence that a VIEW intent reached Native Reader.
+
+At that time this correctly classified the failure above the native decoder and above ordinary package resolution: the OEM file manager appeared to make its own unsupported-file decision.
+
+## Historical evidence — v7 APK-level hardening
+
+v7 exercised a stronger package-registration surface:
+
+- concrete exported `DmcOpenActivity`;
 - canonical and fallback MIME handlers;
-- typed and untyped `content://` / `file://` routes;
-- explicit `.mod` / `.scm` `pathPattern` routes including dotted-path variants;
-- runtime verification that `DmcOpenActivity` itself is returned by PackageManager;
-- framework `MimeTypeMap` diagnostics for `mod` and `scm`;
-- provider authority / MIME / path diagnostics when a file is opened through SAF.
+- typed/untyped `content://` and `file://` routes;
+- explicit `.mod` / `.scm` path-pattern routes;
+- runtime verification of the resolved handler;
+- framework MIME diagnostics;
+- provider authority/MIME/path diagnostics for SAF/opened resources.
 
-If a physical Samsung still goes directly to the My Files Play Store fallback while all v7 PackageManager probes return OK, do not add more equivalent manifest filters. That result proves the stock My Files application is not consulting the standard resolver for the unsupported extension path on that build.
+The important lesson remains valid: if an OEM file manager bypasses Android's standard resolver before dispatch, adding equivalent manifest filters repeatedly is not a parser fix and may not change behavior.
 
-## System-level/native correction
+## System-level integration research
 
-The original product goal is stronger than an APK association: teach Android itself that DMC SCM/MOD are first-class file types.
+The stronger historical product question was whether Android itself could learn custom DMC SCM/MOD MIME mappings. A controlled Android/system-image profile can map custom extensions at the framework MIME layer, which is qualitatively different from an application intent filter.
 
-In AOSP the framework MIME map is built from `frameworks/base/mime/java-res/android.mime.types`. `DefaultMimeMapFactory` loads Debian mappings, Android mappings, then vendor mappings. Android mappings can intentionally override earlier extension mappings; vendor mappings are generated as put-if-absent entries and cannot override an Android override.
+This remains research for controlled deployments, not a requirement for the accepted v24 Android app. `.mod` is overloaded by other ecosystems, so a global system mapping must be used only under an explicit DMC-aware deployment policy.
 
-Canonical DMC mappings for a custom system image:
+## Current regression procedure
 
-```text
-application/vnd.dmc.scm scm
-application/vnd.dmc.mod mod
-```
+If file opening fails on a modern build:
 
-Because `.mod` is overloaded by other ecosystems, this override is appropriate only for a dedicated DMC-aware Android image or another explicitly controlled deployment profile. A general-purpose production Android distribution would need a different disambiguation policy rather than globally stealing `.mod`.
+1. record Native Reader version/versionCode and commit;
+2. record device, Android version and file manager/provider;
+3. test direct app launch;
+4. test Android system file picker / SAF when applicable;
+5. record the incoming intent/provider MIME/path if Native Reader receives one;
+6. distinguish routing failure from parser/session failure;
+7. retest MOD, SCM, DDS and PTX separately rather than assuming one extension represents the whole routing surface;
+8. only change manifest/system routing when evidence identifies that layer as the failure.
 
-A framework/system-image patch is qualitatively different from an APK intent filter: it changes the extension-to-MIME decision used by Android framework code before a file manager chooses a viewer. It therefore matches the project's original native-integration goal.
-
-## Acceptance ladder
-
-### APK v7
-- install over v6;
-- direct launch succeeds;
-- real-handler path probes all PASS;
-- record `system MIME: mod=... scm=...`;
-- tap real `.mod/.scm` in Samsung My Files;
-- if routed, capture actual incoming Intent and provider diagnostics;
-- confirm decoder + geometry render.
-
-### System integration
-If Samsung bypass persists:
-- patch framework MIME map;
-- build/boot a controlled Android image or equivalent system-level deployment;
-- confirm `MimeTypeMap.getMimeTypeFromExtension("scm") == application/vnd.dmc.scm`;
-- confirm MOD mapping according to selected policy;
-- confirm My Files / DocumentsUI no longer classifies the file as unsupported;
-- confirm DMC reader/viewer consumes the resource.
+Historical v6/v7 behavior must not override newer physical-device acceptance evidence.

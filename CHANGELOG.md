@@ -1,98 +1,81 @@
 # Changelog
 
-## 1.0.1 — ReaderCore DDS/PTX bugfix release
+This changelog distinguishes accepted `main` history from development candidates. Historical build/evidence documents remain useful provenance but are not current support claims.
 
-**Status:** active bugfix release on the 1.0.x line. This is not a new 1.1 feature milestone.
+## Unreleased — Native Reader 1.0 v26 candidate
 
-### Architecture
+**Status:** draft PR #32 on `feature/dds-ptx-v1-acceptance`; device acceptance pending; not yet part of accepted `main`.
 
-- Native Reader consumes the canonical DMC Rengine reader slice instead of maintaining duplicate format knowledge in the Android product;
-- introduced the `DMCRengine::ReaderCore` link boundary for the minimal cross-platform C++20 read-side used by product shells;
-- pinned `dmc-rengine-cpp` as the canonical source authority rather than manually copying and enumerating parser implementation files;
-- kept Android-specific work as projection into generic `InspectionDocument`, `ChildResource`, `ImagePreview`, and render contracts;
-- preserved the rule that format algorithms belong to DMC Rengine while orchestration belongs to Spider and platform presentation belongs to Native Reader.
+### v25 — UV slot gallery
 
-### DDS / PTX bugfix
+- UV inspection is grouped by canonical texture slot instead of overlaying all model UV triangles in one view;
+- each texture slot gets its own gallery entry and zoomable UV map with triangle count;
+- PTX and generated UV children share the same native gallery/session infrastructure;
+- model texture binding remains the single required-slot validation authority;
+- invalid/incomplete bindings fail closed instead of guessing slot ownership;
+- all eight portable/native regressions for the v25 slice pass.
 
-- standalone bounded DXT1/DXT5 DDS parsing and base-mip RGBA8 preview now use the shared Rengine `codecs::dds_bc` codec;
-- standalone DDS may use a bounded partial mip chain without weakening the strict DMC3 authoring/evidence profile;
-- descriptor-backed DDS and PTX texture bundles use the canonical `TextureSlotFramingParser`;
-- removed Native Reader-local `formats/dds.cpp/.h` parser/decoder duplication;
-- removed raw app-side `0x70`, `+0x38`, and `+0x64` descriptor parsing from the texture module;
-- PTX children continue to project through the generic child-resource and image-preview contracts.
+### v26 — focused tool information
 
-### Build / validation
+- long-press UV shows texture slots and triangle counts;
+- long-press wireframe/model structure shows objects, nested mesh groups and counts;
+- long-press bones/hierarchy shows explicit parent relationships, roots and invalid/unknown references without fabricating hierarchy;
+- hierarchy information availability is separated from spatial hierarchy authority;
+- focused reports reuse the typed `InspectionDocument` path rather than reparsing model bytes;
+- all nine portable/native regressions pass;
+- verified candidate APK: versionName `1.0`, versionCode `26`, arm64-v8a, 597,665 bytes, 19 declared JNI exports, no Kotlin runtime;
+- candidate APK SHA-256: `b80be422197ff8270f67049dbdd596603b0ebcf4f41884f6b22a5936fedf4596`.
 
-- bugfix build uses `versionCode 21` / `versionName 1.0.1` with the existing package identity;
-- Rengine upstream build for the portable DDS codec and ReaderCore slice is green;
-- Native Reader PR validation remains gated by GitHub-hosted runner availability before promotion from draft;
-- production 1.0.1 must reuse the same release signing authority as 1.0.0 so Android accepts it as an update.
+Promotion remains blocked only by the required physical-device/corpus acceptance pass.
 
-### Remaining release gates
+## Native Reader 1.0 v24 — accepted `main`
 
-- finish Native Reader host + Android gates on the canonical ReaderCore path;
-- build the 1.0.1 APK;
-- device-test SCM, MOD, standalone DDS, wrapped DDS, and PTX on Android;
-- sign the production APK with the existing v1 release authority.
+**Accepted:** 2026-09-10  
+**Main commit:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
+**versionName / versionCode:** `1.0` / `24`
 
-## 1.0.0-debug-baseline — Native Reader v1
+### Size and module-boundary cleanup
 
-**Milestone:** initial architecture/build-out complete; project enters device and real-corpus debugging.
+- removed the unintended Kotlin runtime dependency from the Java-only Android shell;
+- reduced the APK from 1,488,118 bytes (v23) to 560,703 bytes (v24), approximately 62.3%;
+- physical Samsung installed-size report dropped from 6.27 MB to 2.32 MB;
+- reduced the public native dynamic-symbol surface from 2,951 symbols to the 18 declared JNI entry points;
+- moved portable session ownership out of JNI into `resource_session`;
+- moved scene materialization out of rasterization into `scene_projection`;
+- centralized shared vector math and resource limits;
+- kept the production module registry exactly MOD / SCM / DDS / PTX.
 
-### Architecture
+### Acceptance
 
-- replaced central format dispatch with `NativeModuleRegistry`;
-- 71 known resource families represented by 71 explicit module contracts;
-- removed wildcard structural fallback;
-- unknown families fail closed;
-- module contract owns family identity, format authority, kind, renderability and runner;
-- kept shared Model Family implementation for SCM/MOD without reintroducing a shared dispatcher.
+- seven local/native regressions passed;
+- arm64 APK identity, ZIP, signing, module markers and JNI export gates passed;
+- owner confirmed on Samsung that all four supported file families open and PTX model texture application works;
+- GitHub-hosted jobs on the tested revision failed before executing any steps and produced no useful job logs, so CI is not claimed green.
 
-### Core modding readers
+See `docs/SIZE_AND_MODULES_V24.md`.
 
-- MOD structural / renderable reader;
-- SCM structural / renderable reader;
-- DDS bounded DXT1/DXT5 texture reader;
-- PTX bundle reader with DDS-child validation;
-- stage TXT lexer / bounded structural text reading;
-- `.index` manifest reader with text-vs-PNST/PAC precedence fix.
+## Native Reader 1.0 v23 — PTX model texturing
 
-### Additional promoted readers
+- completed the shared DDS/PTX texture path over DMC Rengine read-side codec/framing authority;
+- model + PTX companion attachment validates required canonical texture slots before applying textures;
+- MOD/SCM UV streams remain typed canonical inputs;
+- failed texture replacement preserves the previously valid companion state;
+- seven local/native regressions and verified APK gates passed;
+- physical-device acceptance was confirmed before promotion to `main`.
 
-- HITS collision;
-- DCA structural records;
-- LIG/LIG2 structural lighting records;
-- PAC / PNST container inspection;
-- NBZ top-level inspection boundary.
+See `docs/PTX_MODEL_V23_EVIDENCE.md`.
 
-### Evidence-gated modules
+## Native Reader v1 clean-core transition
 
-- EFM, MRP and SHW have explicit family adapters without claims of complete semantics;
-- SO remains outside the closed v1 semantic-reader set;
-- remaining known families use explicit recognition-only contracts rather than a generic parser.
+The repository deliberately replaced the earlier broad multi-format/recognition surface with a four-module production core:
 
-### Android
+- MOD;
+- SCM;
+- DDS;
+- PTX.
 
-- system `Open with` / SAF integration;
-- OEM/Samsung file-manager routing surface;
-- explicit DDS/PTX and DMC format routes;
-- read-only file handling;
-- stale geometry prevention for non-renderable sessions;
-- ARM64 native build.
+The old HITS/TXT/index/DCA/LIG/PAC/PNST/NBZ/partial-adapter surface was removed from the production registry/build and preserved on `main.2` as backlog/reference. Future families must be promoted individually through Architecture v2 with canonical/evidence-backed authority and regressions.
 
-### Validation
+## Historical development milestones
 
-The v1 exact-head build passed:
-
-- host modular-reader regression;
-- Android NDK build;
-- APK build/integrity checks;
-- package/version verification;
-- native module-ID verification;
-- wildcard-absence check;
-- signing verification;
-- APK SHA-256 evidence generation.
-
-## Earlier development milestones
-
-The project previously used internal v4-v9 development/test APK lines while format support and architecture were being stabilized. v1 is the first milestone intentionally frozen as the public-debug baseline.
+Earlier v4-v9 and pre-cleanup debug builds established Android routing, packaging, modular-reader and device-testing foundations. Their build identities, module counts and unresolved routing notes are historical evidence only; consult `docs/STATUS.md` for the current accepted state.

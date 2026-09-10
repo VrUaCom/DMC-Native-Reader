@@ -1,65 +1,88 @@
-# DMC Native Reader v1.0 release gates
+# DMC Native Reader v1.x — Promotion and Release Gates
 
-This document defines the minimum gates for promoting a development build to the first stable v1.0 release.
+Last updated: 2026-09-10.
 
-## Architecture
+This document defines the minimum evidence required to promote a change into the accepted Native Reader v1 line. The current accepted `main` baseline is versionName `1.0`, versionCode `24`.
 
-- Native format data is parsed once in the C++20 canonical module path.
-- Android/Java contains no MOD/SCM binary-layout parsing.
-- `InspectionDocument` is the inspection authority.
-- `RenderScene` is the geometry/hierarchy render authority.
-- UI availability comes from `ResourceCapabilities` / `ResourceUiState`.
-- Overlays use `RenderFlags`; no per-format renderer/JNI APIs are introduced.
+## Architecture gates
 
-## Evidence
+- DMC resource bytes are parsed in the canonical/native C++20 path, never in Android Java/Kotlin.
+- `NativeModuleRegistry` is the family-routing authority.
+- `InspectionDocument` is the typed inspection presentation authority.
+- `RenderScene` is the geometry/hierarchy/material projection authority.
+- `ImagePreview` and `ChildResource` are generic image/nested-resource contracts.
+- `resource_session` owns portable session state rather than JNI.
+- UI availability and application state come from typed capabilities / Black Widow state, not diagnostic-string parsing.
+- Renderers consume prepared data; they do not own MOD/SCM/DDS/PTX parsers.
+- A new family must not reintroduce wildcard or recognition-only production routing.
 
-- Unknown fields stay unknown or preserved undecoded.
-- MOD spatial hierarchy is enabled only for documents passing canonical `supports_spatial_hierarchy()`.
-- MOD node positions come from canonical model-space world matrices, never mesh vertices.
-- MOD texture slot / GS CLAMP state comes only from typed canonical `dmc-rengine-cpp` fields.
-- Unresolved MOD bitmap/companion mapping must not be invented.
+## Evidence gates
 
-## Reader acceptance
+- Unknown fields remain unknown/preserved until promoted by evidence.
+- MOD spatial hierarchy is enabled only when canonical spatial authority is valid.
+- Known structural parent relationships must not be converted into fabricated 3D transforms.
+- MOD/SCM texture slots and legacy render state come from typed canonical fields.
+- Texture companion application must validate required slots and fail closed on incomplete/conflicting bindings.
+- A failed replacement companion must preserve the previously valid attached state.
+- Product documentation must identify candidate/experimental capability separately from accepted `main` capability.
 
-Before v1.0, real-device tests must cover at least:
+## Reader/device acceptance
 
-- MOD: open, rotate, zoom, wireframe, Inspector, hierarchy overlay, skin/weights, texture-slot/GS-state inspection.
-- SCM: open, placement, rotate, zoom, wireframe, scene hierarchy overlay, texture-slot/GS-state inspection.
-- DDS: inspection and image capability path without requiring 3D rendering.
-- PTX: inspection, child DDS discovery and safe handling without 3D rendering.
-- rejected/malformed resources: fail closed without crashes or unbounded allocation.
+For a change affecting an existing supported family, test the relevant real-resource path. The accepted v24 surface includes:
 
-## Android identity and routing
+- MOD: open, render, rotate, zoom, wireframe, inspection, hierarchy when valid, skin/weights, texture state and PTX companion application;
+- SCM: open, render, rotate, zoom, wireframe, scene hierarchy/transforms, inspection, texture state and PTX companion application;
+- DDS: bounded parse/decode and image preview;
+- PTX: bundle/gallery, DDS child preview, parent navigation and model companion use;
+- malformed/unsupported input: fail closed without stale state, crash or unbounded allocation.
 
-- Package id: `com.dmcrengine.nativereader`.
-- User-visible application label: `DMC Native Reader` with no legacy internal version suffix.
-- Samsung My Files / SAF Open with routing remains device-tested.
-- System-bar, display-cutout and navigation-bar insets remain correct.
+Visible interaction features that depend on real device/UI behavior remain draft until a physical-device/corpus pass succeeds. This applies to the current v26 UV gallery and long-press inspection candidate.
 
-## Signing
+## Android identity and packaging
 
-- Repository test/debug signing material is not a production release authority.
-- Debug APKs may use the Android development signer.
-- The normal Gradle `release` build remains unsigned until a protected production signing key is injected by a dedicated release pipeline.
-- Production key material, passwords and signing secrets must not be committed to the repository.
-- The final v1.0 release artifact must be signed by the production authority and its certificate digest recorded with the release evidence.
+Current accepted production identity:
 
-## CI / artifact evidence
+- package: `com.dmcrengine.nativereader`;
+- application label: `DMC Native Reader`;
+- versionName: `1.0`;
+- accepted versionCode: `24`;
+- ABI: `arm64-v8a`;
+- minSdk: `26`;
+- targetSdk: `36`.
 
-The release candidate must pass:
+Every promoted APK must verify package/version/ABI, manifest routes, ZIP integrity, expected native module markers and the exact declared JNI export boundary for that revision.
 
-- canonical vendor provenance checks;
-- native modular-reader regression;
-- MOD spatial/material regression;
-- capability/UI policy regression;
-- RenderScene/overlay regression;
-- Android NDK/APK build;
-- package/version/manifest checks;
-- native module marker checks;
-- signer verification appropriate to the build type;
-- APK SHA-256 recording;
-- diff audit confirming no accidental canonical vendor edits or retired decoder reintroduction.
+## Signing boundary
+
+- The repository test JKS is development/test-only and is not a production trust authority.
+- Normal Gradle release output must remain unsigned unless protected production signing material is explicitly injected by the release pipeline.
+- Production keys/passwords must not be committed to repository history.
+- Any official update APK must preserve the intended production signing continuity and record its certificate digest with release evidence.
+
+## Native and APK regression gates
+
+A promotion candidate should run the relevant portable/native regressions plus Android verification. At minimum, the maintained gates should cover:
+
+- module registry/fail-closed behavior;
+- canonical MOD/SCM adapter and model pipeline behavior;
+- render-scene/hierarchy projection;
+- DDS/PTX texture path;
+- model texture binding/companion behavior;
+- Black Widow typed UI state;
+- feature-specific regressions (for example UV gallery or focused session inspection);
+- clean Android NDK/Gradle build;
+- APK identity, signer appropriate to build type, ZIP and JNI/module checks;
+- diff/provenance audit preventing accidental parser duplication or retired decoder reintroduction.
+
+## Hosted CI classification
+
+A GitHub Actions job that fails before executing any steps and provides no build/test log is an infrastructure/execution-path failure. It is neither a green gate nor evidence of a source-code regression. Record it explicitly and rely only on evidence that actually executed.
+
+When hosted jobs do execute, failures must be investigated before promotion unless an evidence-based reason demonstrates that the job itself is invalid.
 
 ## Merge policy
 
-Feature PRs stay draft until their specific device acceptance is complete. A green CI run alone is not sufficient for features whose correctness is visible only on real resources/device rendering.
+- Do not create a new branch when the work belongs to an existing active technical line.
+- Keep visible feature PRs draft until their specific device/corpus acceptance is complete.
+- Do not merge a candidate merely because its host tests pass when the unverified behavior is device-visible.
+- After acceptance, update `README.md`, `docs/STATUS.md`, `docs/ROADMAP.md` and `CHANGELOG.md` in the same promotion slice so repository documentation never lags the accepted product state.

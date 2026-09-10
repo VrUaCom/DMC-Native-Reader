@@ -1,86 +1,87 @@
-# DMC Native Reader v1 — Clean Baseline
+# DMC Native Reader v1 — Accepted Baseline
 
-**Build:** `1.0.0-core-cleanup`  
-**versionCode:** `19`  
+Last updated: 2026-09-10.
+
+**Accepted build:** Native Reader `1.0` / versionCode `24`  
 **Production branch:** `main`  
-**Archive/backlog branch:** `main.2` — до опрацювання
+**Accepted main commit:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
+**Archive/backlog branch:** `main.2` — reference only
 
 ## Baseline decision
 
-The v1 baseline is deliberately narrow. It contains only four promoted format families:
+The accepted v1 production surface is deliberately narrow. It contains only four promoted format families:
 
 - MOD;
 - SCM;
 - DDS;
 - PTX.
 
-This is a structural decision, not a claim that other DMC3 formats do not matter. Other readers were removed from `main` because their current implementation did not meet the same Architecture v2/canonical-authority standard. Their old state is preserved on `main.2`.
+This is an architecture/evidence decision, not a claim that other DMC3 resource families are unimportant. Previous wider readers were removed from production `main` because they did not meet the current canonical-authority and Architecture v2 promotion standard. Their historical implementation remains recoverable from `main.2`.
 
 ## Required architecture
 
 ```text
 resource bytes
-  -> bounded probe
+  -> bounded probe / DMC Rengine ReaderCore
   -> four-entry NativeModuleRegistry
   -> format module / canonical adapter
   -> InspectionDocument / RenderScene / ImagePreview / ChildResource[]
-  -> generic JNI Session
-  -> capability-driven Android UI
+  -> portable DMCNativeReader::Core session/state/render path
+  -> thin Android JNI + Java presentation shell
 ```
 
-Forbidden in the v1 main baseline:
+Forbidden in the accepted v1 production baseline:
 
-- wildcard format dispatcher;
-- broad recognition-only registry;
-- Java format parsers;
-- renderer-owned binary parsers;
-- legacy `DecodeResult -> Mesh -> RenderScene` bridge;
-- archived HITS/TXT/DCA/PAC/PNST/etc. module translation units in the main build.
+- wildcard family parsing;
+- broad recognition-only registry presented as product support;
+- Java/Kotlin DMC binary parsers;
+- renderer-owned format parsers;
+- legacy `DecodeResult -> Mesh -> RenderScene` compatibility bridges;
+- duplicated canonical MOD/SCM/DDS/PTX layout logic in UI/product layers;
+- invented hierarchy transforms or material semantics;
+- Android-only write/repack implementations.
 
 ## Accepted format contracts
 
 ### MOD
 
-Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into geometry, hierarchy, skin/weight and texture-slot presentation contracts.
+Canonical DMC Rengine structural read -> Architecture v2 projection into geometry, typed inspection, hierarchy evidence, skin weights and canonical texture-slot/legacy GS state. Spatial hierarchy is exposed only when canonical transform authority is valid.
 
 ### SCM
 
-Canonical `dmc-rengine-cpp` reader with Architecture v2 projection into scene hierarchy, transforms, geometry and texture-slot presentation contracts.
+Canonical DMC Rengine structural read -> Architecture v2 projection into scene hierarchy, transforms, geometry, typed inspection and texture-slot state.
 
 ### DDS
 
-Bounded DMC3 DXT1/DXT5 reader with strict mip/payload validation and generic RGBA image preview.
+Bounded DXT1/DXT5 read/decode -> generic RGBA `ImagePreview`, with malformed/overflow rejection.
 
 ### PTX
 
-Bounded texture-bundle reader with descriptor validation and generic DDS child resources. Child previews and parent navigation use the same generic session/UI contracts as top-level resources.
+Bounded texture-bundle framing -> generic DDS children and preview/gallery sessions. The same native texture path can build a validated `TextureSet` for MOD/SCM companion attachment.
 
-## Completion gate
+## Accepted v24 behavior
 
-A v1 core candidate is acceptable only when CI proves:
+The 2026-09-10 Samsung acceptance confirms the production baseline at the device level:
 
-1. registry size is exactly four;
-2. MOD/SCM/DDS/PTX modules are present;
-3. removed families do not resolve to modules;
-4. MOD and SCM execute end-to-end through the pipeline and publish valid `RenderScene`/inspection state;
-5. DDS accepts valid DXT1/DXT5 and rejects malformed/overflow cases;
-6. PTX validates children, bounds and padding and publishes a generic DDS child preview;
-7. no archived source path is present in the main build tree;
-8. Android UI policy remains capability-driven;
-9. ARM64 APK builds and contains the four expected module IDs;
-10. archived module IDs are absent from `libdmcviewer.so`;
-11. explicit DMC MIME exposure is limited to MOD, SCM, DDS and PTX;
-12. debug signing remains test-only and release output remains unsigned until production authority is provisioned.
+- MOD opens/renders;
+- SCM opens/renders;
+- DDS opens/previews;
+- PTX opens as a texture gallery with child navigation;
+- PTX texture application works for supported model bindings;
+- Android reported 2.32 MB installed size after the v24 cleanup.
 
-## Device regression
+Build-side evidence also confirms seven passing local/native regressions, verified arm64 APK gates, no Kotlin runtime dependency in the Java-only shell and only the declared 18 public JNI exports.
 
-After CI is green, the cleanup build receives a short Samsung pass:
+GitHub-hosted jobs on the tested revision failed before executing steps; therefore v24 acceptance is based on local/native regression, verified APK and physical-device evidence rather than a claim of green hosted CI.
 
-- MOD render;
-- SCM render;
-- DDS preview;
-- PTX gallery;
-- PTX -> DDS child preview;
-- child `←` parent navigation.
+## Promotion rule after v24
 
-This device pass verifies the cleaned routing surface. It is not an invitation to restore removed formats before they are properly promoted.
+A new format or visible feature does not become part of the baseline merely because code exists. Promotion requires:
+
+1. canonical/evidence-backed authority;
+2. bounded implementation through existing Architecture v2 contracts;
+3. regression coverage;
+4. Android/APK verification where relevant;
+5. real device/corpus acceptance for visible behavior that cannot be established by host tests alone.
+
+The current v26 UV/focused-inspection work follows this rule and remains a draft candidate until device acceptance closes.
