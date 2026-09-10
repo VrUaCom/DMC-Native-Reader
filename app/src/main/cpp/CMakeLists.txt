@@ -16,6 +16,8 @@ add_library(dmc_native_reader_core STATIC
     adapters/mod_adapter.cpp
     adapters/scm_adapter.cpp
     modules/model_texture_binding.cpp
+    modules/resource_session.cpp
+    modules/scene_projection.cpp
     modules/module_registry.cpp
     modules/module_model.cpp
     modules/module_texture.cpp
@@ -57,6 +59,12 @@ if(ANDROID)
 
     target_compile_features(dmcviewer PRIVATE cxx_std_20)
     target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)
+    # This DSO is an Android JNI boundary, not a public C++ plugin ABI.
+    # Keep every declared JNI entry point while hiding implementation symbols.
+    target_link_options(dmcviewer PRIVATE
+        "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map")
+    set_property(TARGET dmcviewer APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map")
 endif()
 
 option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)

@@ -2,12 +2,16 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
 #include "dmcresource/mesh.h"
 
 namespace dmcresource {
+
+inline constexpr std::uint32_t kNoTextureSlot =
+    std::numeric_limits<std::uint32_t>::max();
 
 struct Matrix4 final {
     std::array<float, 16> values{

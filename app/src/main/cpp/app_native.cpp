@@ -1,26 +1,24 @@
+#include "dmcresource/resource_limits.h"
 #include <jni.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "dmcresource/decode_pipeline.h"
+#include "dmcresource/resource_session.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/spider/black_widow.h"
-#include "dmcresource/texture_companion.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
 
-constexpr std::size_t kMaxMappedBytes = 512u * 1024u * 1024u;
+constexpr auto kMaxMappedBytes = dmcresource::resource_limits::kMaxResourceBytes;
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -68,29 +66,7 @@ private:
     bool valid_{};
 };
 
-struct Session {
-    dmcresource::ProbeResult probe;
-    dmcresource::ResourceCapabilities capabilities{};
-    dmcresource::InspectionDocument inspection;
-    dmcresource::RenderScene scene;
-    dmcresource::ImagePreview image_preview;
-    std::vector<dmcresource::ChildResource> children;
-
-    dmcresource::Mesh render_mesh;
-    dmcresource::HierarchyOverlay hierarchy_overlay;
-    std::vector<std::uint32_t> render_triangle_texture_slots;
-
-    // Vector index == canonical texture slot. Empty entries represent slots not
-    // required by the current model. PTX parsing/decoding stays in native
-    // reusable modules rather than Java or the renderer.
-    std::vector<dmcresource::ImagePreview> attached_textures;
-    std::string texture_attachment_detail;
-    bool texture_companion_attached{};
-
-    std::string detail;
-    std::string trace;
-    bool renderable{};
-};
+using dmcresource::Session;
 
 Session* from_handle(jlong handle) noexcept {
     return reinterpret_cast<Session*>(static_cast<std::uintptr_t>(handle));
@@ -104,52 +80,6 @@ const dmcresource::ChildResource* child_at(const Session* session, jint index) n
     if (session == nullptr || index < 0) return nullptr;
     const auto i = static_cast<std::size_t>(index);
     return i < session->children.size() ? &session->children[i] : nullptr;
-}
-
-void prepare_session_caches(Session* session) {
-    if (session == nullptr) return;
-
-    if (!dmcresource::materialize_hierarchy_overlay(
-            session->scene, &session->hierarchy_overlay)) {
-        session->hierarchy_overlay = {};
-        if (!session->detail.empty()) session->detail += "\n";
-        session->detail += "Hierarchy overlay rejected malformed node/matrix data";
-    }
-
-    if (session->renderable) {
-        if (!session->scene.has_geometry() ||
-            !dmcresource::materialize_render_scene(
-                session->scene, &session->render_mesh)) {
-            session->renderable = false;
-            if (!session->detail.empty()) session->detail += "\n";
-            session->detail +=
-                "RenderScene projection rejected malformed or missing geometry";
-            return;
-        }
-
-        if (!dmcresource::materialize_triangle_texture_slots(
-                session->scene, &session->render_triangle_texture_slots)) {
-            session->render_triangle_texture_slots.clear();
-            if (!session->detail.empty()) session->detail += "\n";
-            session->detail +=
-                "Texture-slot projection unavailable: conflicting or malformed material bindings";
-        }
-    }
-}
-
-std::unique_ptr<Session> session_from_child(const dmcresource::ChildResource& child) {
-    auto session = std::make_unique<Session>();
-    session->probe = child.probe;
-    session->capabilities = child.capabilities;
-    session->inspection = child.inspection;
-    session->scene = child.scene;
-    session->image_preview = child.image_preview;
-    session->children = child.children;
-    session->detail = child.detail;
-    session->trace = child.trace;
-    session->renderable = child.renderable;
-    prepare_session_caches(session.get());
-    return session;
 }
 
 jintArray rgba_to_argb(JNIEnv* env, std::size_t width, std::size_t height,
@@ -201,20 +131,6 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
                         image.rgba8);
 }
 
-[[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
-        const Session* session) noexcept {
-    if (session == nullptr) return 0U;
-    return dmcresource::spider::black_widow::evaluate_model_session({
-        .capabilities = session->capabilities,
-        .renderable = session->renderable,
-        .render_mesh = &session->render_mesh,
-        .triangle_texture_slots = session->render_triangle_texture_slots,
-        .hierarchy_available = session->hierarchy_overlay.available(),
-        .image_preview_available = session->image_preview.available(),
-        .child_resource_count = session->children.size(),
-        .texture_companion_attached = session->texture_companion_attached,
-    });
-}
 
 }  // namespace
 
@@ -226,25 +142,11 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     if (!mapped.valid()) return 0;
 
     const auto name = to_utf8(env, filename);
-    auto pipeline = dmcresource::run_decode_pipeline(name, mapped.data(), mapped.size());
-    if (!pipeline.accepted) return 0;
-
     try {
-        auto session = std::make_unique<Session>();
-        session->probe = pipeline.probe;
-        session->capabilities = pipeline.capabilities;
-        session->inspection = std::move(pipeline.inspection);
-        session->scene = std::move(pipeline.scene);
-        session->image_preview = std::move(pipeline.image_preview);
-        session->children = std::move(pipeline.children);
-        session->detail = std::move(pipeline.detail);
-        session->trace = dmcresource::pipeline_trace(pipeline);
-        session->renderable = pipeline.renderable;
-        prepare_session_caches(session.get());
+        auto session = dmcresource::open_session(name, mapped.data(), mapped.size());
         return to_handle(session.release());
-    } catch (...) {
-        return 0;
-    }
+    } catch (...) { return 0; }
+
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -259,41 +161,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
     const Session* session = from_handle(handle);
     if (session == nullptr) return env->NewStringUTF("no session");
 
-    std::ostringstream out;
-    out << session->probe.family
-        << " | domain=" << session->probe.domain
-        << " | support=" << session->probe.support
-        << " | evidence=" << session->probe.evidence
-        << " | identity="
-        << (session->probe.content_confirmed ? "content-confirmed" : "extension/name-only");
-    if (session->renderable) {
-        out << " | vertices=" << session->render_mesh.vertices.size()
-            << " | triangles=" << (session->render_mesh.indices.size() / 3u)
-            << " | uv0=" << session->render_mesh.uv0.size();
-    } else if (session->image_preview.available()) {
-        out << " | imagePreview=" << session->image_preview.width
-            << "x" << session->image_preview.height;
-    } else {
-        out << " | preview=inspection";
-    }
-    if (!session->children.empty()) {
-        out << " | children=" << session->children.size();
-    }
-    out << " | spatialHierarchy="
-        << (session->hierarchy_overlay.available() ? "yes" : "no");
-    if (!session->attached_textures.empty()) {
-        std::size_t attached = 0U;
-        for (const auto& texture : session->attached_textures) {
-            if (texture.available()) ++attached;
-        }
-        out << " | companionTextures=" << attached;
-    }
-    if (!session->detail.empty()) out << "\n" << session->detail;
-    if (!session->texture_attachment_detail.empty()) {
-        out << "\n" << session->texture_attachment_detail;
-    }
-    if (!session->trace.empty()) out << "\n" << session->trace;
-    return env->NewStringUTF(out.str().c_str());
+    return env->NewStringUTF(dmcresource::describe_session(session).c_str());
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -348,20 +216,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
     }
 
     const auto name = to_utf8(env, filename);
-    auto attachment = dmcresource::texture_companion::attach_ptx(
-        name,
-        mapped.data(), mapped.size(),
-        {
-            .mesh = &session->render_mesh,
-            .triangle_texture_slots = session->render_triangle_texture_slots,
-        });
-
-    session->texture_attachment_detail = std::move(attachment.detail);
-    if (!attachment.attached) return JNI_FALSE;
-
-    session->attached_textures = std::move(attachment.textures);
-    session->texture_companion_attached = true;
-    return JNI_TRUE;
+    return dmcresource::attach_session_ptx(session, name, mapped.data(), mapped.size())
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -460,34 +316,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
     const Session* session = from_handle(handle);
     if (session == nullptr || !session->renderable) return nullptr;
 
-    const auto flags = static_cast<dmcresource::RenderFlags>(
-        static_cast<std::uint32_t>(render_flags));
-
-    dmcresource::ViewState view;
-    view.yaw_radians = static_cast<float>(yaw);
-    view.pitch_radians = std::clamp(static_cast<float>(pitch), -1.55f, 1.55f);
-    view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
-    view.wireframe = dmcresource::has_render_flag(
-        flags, dmcresource::RenderFlag::Wireframe);
-    view.uv_layout = dmcresource::has_render_flag(
-        flags, dmcresource::RenderFlag::UvLayout);
-
-    const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
-    const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
-    const auto* hierarchy =
-        !view.uv_layout &&
-        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
-        session->hierarchy_overlay.available()
-            ? &session->hierarchy_overlay
-            : nullptr;
-    const auto* texture_slots = session->render_triangle_texture_slots.empty()
-        ? nullptr
-        : &session->render_triangle_texture_slots;
-    const auto* textures = session->attached_textures.empty()
-        ? nullptr
-        : &session->attached_textures;
-    const auto image = dmcresource::render_view(
-        session->render_mesh, width, height, view,
-        hierarchy, texture_slots, textures);
-    return image_to_argb(env, image);
+    return image_to_argb(env, dmcresource::render_session(session,
+        requested_width, requested_height, yaw, pitch, zoom,
+        static_cast<std::uint32_t>(render_flags)));
 }

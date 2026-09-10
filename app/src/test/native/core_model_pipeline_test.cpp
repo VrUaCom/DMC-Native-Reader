@@ -3,6 +3,7 @@
 #include "dmcresource/model_texture_binding.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/resource_session.h"
 
 #include <bit>
 #include <cassert>
@@ -291,6 +292,22 @@ int main() {
     }
 
     // A known old-family filename must remain outside the clean main surface.
+    for (const auto* bytes : {&scm, &mod}) {
+        const auto session = dmcresource::open_session(
+            bytes == &scm ? "sample.scm" : "sample.mod", bytes->data(), bytes->size());
+        assert(session && session->renderable);
+        namespace widow = dmcresource::spider::black_widow;
+        assert(widow::has_state(dmcresource::black_widow_state(session.get()),
+                               widow::StateFlag::TextureCompanionAttachable));
+        assert(session->render_triangle_texture_slots[0] == (bytes == &scm ? 0U : 5U));
+        const dmcresource::ViewState view;
+        const auto direct = dmcresource::render_view(session->render_mesh, 128, 128, view);
+        const auto via_session = dmcresource::render_session(session.get(), 128, 128,
+            view.yaw_radians, view.pitch_radians, view.zoom, 0U);
+        assert(via_session.pixels == direct.pixels);
+        assert(!dmcresource::describe_session(session.get()).empty());
+    }
+
     const std::uint8_t old_family[] = {'H', 'I', 'T', 'S'};
     const auto rejected = run_decode_pipeline(
         "sample.hits", old_family, sizeof(old_family));

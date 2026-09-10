@@ -1,0 +1,6 @@
+{
+    global:
+        Java_com_dmcrengine_nativeviewer_NativeBridge_*;
+    local:
+        *;
+};

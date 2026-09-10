@@ -1,3 +1,5 @@
+#include "dmcresource/vector_math.h"
+#include "dmcresource/resource_limits.h"
 #include "dmcresource/adapters/mod_adapter.h"
 
 #include <algorithm>
@@ -19,41 +21,14 @@
 namespace dmcresource::adapters {
 namespace {
 
-constexpr std::size_t kMaxResourceBytes = 512U * 1024U * 1024U;
-constexpr std::size_t kMaxVertices = 2U * 1024U * 1024U;
-constexpr std::size_t kMaxIndices = 12U * 1024U * 1024U;
+using namespace dmcresource::resource_limits;
 
 using CanonicalParseResult = dmc::rengine::formats::mod::ParseResult;
 using CanonicalMesh = dmc::rengine::formats::mod::InnerMesh;
 using ParseSeverity = dmc::rengine::formats::ParseSeverity;
 namespace CanonicalWorld = dmc::rengine::formats::mod::world_transform;
 
-[[nodiscard]] Vec3 add(Vec3 a, Vec3 b) noexcept {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-[[nodiscard]] Vec3 sub(Vec3 a, Vec3 b) noexcept {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-[[nodiscard]] Vec3 cross(Vec3 a, Vec3 b) noexcept {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
-
-[[nodiscard]] float dot(Vec3 a, Vec3 b) noexcept {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-[[nodiscard]] Vec3 normalize(Vec3 v) noexcept {
-    const float len2 = dot(v, v);
-    if (!std::isfinite(len2) || len2 <= 1.0e-12F) return {};
-    const float inv = 1.0F / std::sqrt(len2);
-    return {v.x * inv, v.y * inv, v.z * inv};
-}
+using namespace dmcresource::vector_math;
 
 [[nodiscard]] bool append_legacy_compatible_topology(const CanonicalMesh& source,
                                                      Mesh* out) {

@@ -1,4 +1,4 @@
-"""Verify the 1.0/v23 device APK, not production signing or device behaviour."""
+"""Verify the 1.0/v24 device APK, not production signing or device behaviour."""
 import argparse
 import hashlib
 import json
@@ -29,7 +29,7 @@ def main():
     build_tools = Path(args.sdk) / "build-tools/36.0.0"
     badging = run(str(build_tools / "aapt2"), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging, "Wrong application ID")
-    require("versionCode='23' versionName='1.0'" in badging, "Wrong release identity")
+    require("versionCode='24' versionName='1.0'" in badging, "Wrong release identity")
     require("native-code: 'arm64-v8a'" in badging, "Wrong ABI")
     manifest = run(str(build_tools / "aapt2"), "dump", "xmltree", str(args.apk),
                    "--file", "AndroidManifest.xml")
@@ -49,6 +49,10 @@ def main():
         native = archive.getinfo("lib/arm64-v8a/libdmcviewer.so")
         require(native.compress_type == zipfile.ZIP_DEFLATED, "Expected legacy JNI packaging")
         require("classes.dex" in archive.namelist(), "Java shell missing")
+        dex_files = [i for i in archive.infolist() if i.filename.endswith(".dex")]
+        dex_bytes = sum(i.file_size for i in dex_files)
+        require(not any(b"Lkotlin/" in archive.read(i) for i in dex_files),
+                "Unexpected Kotlin runtime in the Java-only shell")
         library = archive.read(native)
     for marker in ("spider.crusader", "native.texture-set", "native.uv-projection",
                    "formats.mod.mesh-reader", "formats.scm.mesh-reader",
@@ -63,15 +67,23 @@ def main():
         symbols = run("readelf", "--dyn-syms", "--wide", str(path))
         header = run("readelf", "-h", str(path))
         require("AArch64" in header, "Native library is not AArch64")
+        exports = {line.split()[-1] for line in symbols.splitlines()
+                   if len(line.split()) >= 8 and line.split()[4] in ("GLOBAL", "WEAK")
+                   and line.split()[5] == "DEFAULT" and line.split()[6] != "UND"}
+        expected_exports = {"Java_com_dmcrengine_nativeviewer_NativeBridge_" + m for m in methods}
+        require(exports == expected_exports, "Native public ABI must contain only declared JNI exports")
         for method in methods:
             symbol = "Java_com_dmcrengine_nativeviewer_NativeBridge_" + method
             require(any(symbol == line.split()[-1] and " UND " not in line
                         for line in symbols.splitlines() if line.split()),
                     "Missing JNI export: " + method)
-    print(json.dumps({"apk": str(args.apk), "versionName": "1.0", "versionCode": 23,
+    print(json.dumps({"apk": str(args.apk), "versionName": "1.0", "versionCode": 24,
                       "abi": "arm64-v8a", "signer_sha256": expected,
                       "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
                       "jni_exports_checked": len(methods), "zip_integrity": "pass",
+                      "apk_bytes": args.apk.stat().st_size,
+                      "native_bytes": len(library), "dex_bytes": dex_bytes,
+                      "public_native_exports": len(exports), "kotlin_runtime": "absent",
                       "legacy_packaging": "pass", "device_test": "pending"}, indent=2))
 
 

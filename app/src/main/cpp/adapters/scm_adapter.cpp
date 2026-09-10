@@ -1,3 +1,5 @@
+#include "dmcresource/vector_math.h"
+#include "dmcresource/resource_limits.h"
 #include "dmcresource/adapters/scm_adapter.h"
 
 #include <cmath>
@@ -24,36 +26,9 @@ namespace {
 
 namespace scm = dmc::rengine::formats::scm;
 
-constexpr std::size_t kMaxResourceBytes = 512U * 1024U * 1024U;
-constexpr std::size_t kMaxVertices = 2U * 1024U * 1024U;
-constexpr std::size_t kMaxIndices = 12U * 1024U * 1024U;
+using namespace dmcresource::resource_limits;
 
-[[nodiscard]] Vec3 add(Vec3 a, Vec3 b) noexcept {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-[[nodiscard]] Vec3 sub(Vec3 a, Vec3 b) noexcept {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-[[nodiscard]] Vec3 cross(Vec3 a, Vec3 b) noexcept {
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
-
-[[nodiscard]] float dot(Vec3 a, Vec3 b) noexcept {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-[[nodiscard]] Vec3 normalize(Vec3 value) noexcept {
-    const float len2 = dot(value, value);
-    if (!(len2 > 1.0e-12F) || !std::isfinite(len2)) return {};
-    const float inv = 1.0F / std::sqrt(len2);
-    return {value.x * inv, value.y * inv, value.z * inv};
-}
+using namespace dmcresource::vector_math;
 
 [[nodiscard]] std::string first_error(const scm::ParseResult& parsed) {
     for (const auto& diagnostic : parsed.diagnostics) {
