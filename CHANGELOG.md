@@ -31,7 +31,7 @@ Promotion remains blocked only by the required physical-device/corpus acceptance
 ## Native Reader 1.0 v24 — accepted `main`
 
 **Accepted:** 2026-09-10  
-**Main commit:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
+**Accepted v24 code baseline:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
 **versionName / versionCode:** `1.0` / `24`
 
 ### Size and module-boundary cleanup
