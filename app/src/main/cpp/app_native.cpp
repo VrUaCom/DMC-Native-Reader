@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -20,6 +21,7 @@
 namespace {
 
 constexpr auto kMaxMappedBytes = dmcresource::resource_limits::kMaxResourceBytes;
+constexpr std::size_t kArgbChunkPixels = 4096U;
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -92,21 +94,38 @@ jintArray rgba_to_argb(JNIEnv* env, std::size_t width, std::size_t height,
     jintArray result = env->NewIntArray(count);
     if (result == nullptr) return nullptr;
 
-    std::vector<jint> argb;
-    try {
-        argb.resize(count64);
-    } catch (...) {
-        return nullptr;
+    // Keep native peak memory bounded. The old path allocated a second full
+    // width*height ARGB frame beside the native RGBA frame and Java int[].
+    // Conversion now uses one fixed-size stack chunk and streams directly into
+    // the destination Java array.
+    std::array<jint, kArgbChunkPixels> chunk{};
+    std::size_t base = 0U;
+    while (base < count64) {
+        const std::size_t remaining = count64 - base;
+        const std::size_t chunk_count = remaining < kArgbChunkPixels
+            ? remaining
+            : kArgbChunkPixels;
+        for (std::size_t i = 0U; i < chunk_count; ++i) {
+            const std::size_t pixel = base + i;
+            const std::size_t o = pixel * 4U;
+            const std::uint32_t r = rgba[o + 0U];
+            const std::uint32_t g = rgba[o + 1U];
+            const std::uint32_t b = rgba[o + 2U];
+            const std::uint32_t a = rgba[o + 3U];
+            chunk[i] = static_cast<jint>(
+                (a << 24U) | (r << 16U) | (g << 8U) | b);
+        }
+        env->SetIntArrayRegion(
+            result,
+            static_cast<jsize>(base),
+            static_cast<jsize>(chunk_count),
+            chunk.data());
+        if (env->ExceptionCheck()) {
+            env->DeleteLocalRef(result);
+            return nullptr;
+        }
+        base += chunk_count;
     }
-    for (std::size_t i = 0; i < count64; ++i) {
-        const std::size_t o = i * 4u;
-        const std::uint32_t r = rgba[o + 0U];
-        const std::uint32_t g = rgba[o + 1U];
-        const std::uint32_t b = rgba[o + 2U];
-        const std::uint32_t a = rgba[o + 3U];
-        argb[i] = static_cast<jint>((a << 24U) | (r << 16U) | (g << 8U) | b);
-    }
-    env->SetIntArrayRegion(result, 0, count, argb.data());
     return result;
 }
 
