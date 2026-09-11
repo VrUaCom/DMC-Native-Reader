@@ -15,13 +15,19 @@ import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.StyleSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -31,12 +37,35 @@ import java.io.FileNotFoundException;
 import java.io.OutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Locale;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_OPEN = 1001;
     private static final int REQUEST_ATTACH_PTX = 1002;
     private static final int REQUEST_EXPORT_SINGLE_PNG = 1003;
     private static final int REQUEST_EXPORT_GALLERY_TREE = 1004;
+    private static final int REQUEST_ADD_MOD_PARTS = 1005;
+    private static final int REQUEST_STAGE_MOTION = 1006;
+    private static final int REQUEST_STAGE_TEXTURE = 1007;
+    private static final int REQUEST_STAGE_PHYSICS = 1008;
+    private static final int REQUEST_STAGE_CLOTH = 1009;
+    private static final int REQUEST_STAGE_OTHER = 1010;
+
+    private static final int MENU_OPEN = 1;
+    private static final int MENU_ADD_MOD = 2;
+    private static final int MENU_ATTACH_PTX = 3;
+    private static final int MENU_ADD_MOTION = 4;
+    private static final int MENU_ADD_TEXTURE = 5;
+    private static final int MENU_ADD_PHYSICS = 6;
+    private static final int MENU_ADD_CLOTH = 7;
+    private static final int MENU_ADD_OTHER = 8;
+
+    private static final String ROLE_MOTION = "motion";
+    private static final String ROLE_TEXTURE = "texture";
+    private static final String ROLE_PHYSICS = "physics";
+    private static final String ROLE_CLOTH = "cloth";
+    private static final String ROLE_OTHER = "other";
+
     private static final int TOOL_SIZE_DP = 48;
     private static final int TOOL_GAP_DP = 4;
     private static final int UV_EXPORT_SIZE = 1024;
@@ -51,21 +80,41 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class StagedAsset {
+        final Uri uri;
+        final String name;
+        final String role;
+
+        StagedAsset(Uri uri, String name, String role) {
+            this.uri = uri;
+            this.name = name;
+            this.role = role;
+        }
+    }
+
     private DmcRenderView renderView;
     private ChildResourceBrowserView childBrowser;
     private TextView titleView;
     private Button parentButton;
-    private Button ptxButton;
+    private Button moreButton;
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
     private Button uvButton;
     private Button infoButton;
+    private HorizontalScrollView motionScroll;
+    private LinearLayout motionBar;
 
     private long session;
     private long pendingExportSession;
     private int pendingPtxPart = -1;
+    private int selectedMotionIndex = -1;
+
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
+    private final ArrayList<Uri> modelPartUris = new ArrayList<>();
+    private final ArrayList<Uri> modelPartPtxUris = new ArrayList<>();
+    private final ArrayList<StagedAsset> stagedAssets = new ArrayList<>();
+
     private BlackWidowState blackWidowState = BlackWidowState.empty();
     private String infoText = "";
 
@@ -133,6 +182,14 @@ public final class MainActivity extends Activity {
         return canAttachPtx() && blackWidowState.textureCompanionAttached;
     }
 
+    private boolean isRootScene() {
+        return session != 0 && navigation.isEmpty();
+    }
+
+    private boolean hasModCompositionContext() {
+        return isRootScene() && !modelPartUris.isEmpty();
+    }
+
     private void applyPrimaryPresentation() {
         final boolean childBrowserMode = session != 0 && blackWidowState.childBrowserMode;
         if (childBrowserMode) {
@@ -150,13 +207,8 @@ public final class MainActivity extends Activity {
         final boolean hasSession = session != 0;
         applyPrimaryPresentation();
 
-        // Back is a permanent Android-shell navigation control. Black Widow
-        // owns resource/action availability; Java only projects that state.
         parentButton.setVisibility(View.VISIBLE);
-
-        final boolean ptxAvailable = canAttachPtx();
-        ptxButton.setVisibility(ptxAvailable ? View.VISIBLE : View.GONE);
-        syncToggleButton(ptxButton, ptxAvailable, hasAttachedPtx());
+        setToolAvailable(moreButton, true);
 
         if (hasSession && blackWidowState.canExportPng) {
             resetButton.setText("↓");
@@ -189,6 +241,7 @@ public final class MainActivity extends Activity {
 
         setToolAvailable(infoButton,
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
+        refreshMotionStrip();
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -241,10 +294,9 @@ public final class MainActivity extends Activity {
         header.addView(titleView, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        ptxButton = makeSquareButton(".PTX", "Attach PTX texture companion", 12f);
-        ptxButton.setVisibility(View.GONE);
-        ptxButton.setOnClickListener(v -> choosePtxForCurrentSession());
-        header.addView(ptxButton, new LinearLayout.LayoutParams(
+        moreButton = makeSquareButton("⋮", "Add or attach DMC resource", 28f);
+        moreButton.setOnClickListener(this::showCompanionMenu);
+        header.addView(moreButton, new LinearLayout.LayoutParams(
                 dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
         root.addView(header, new LinearLayout.LayoutParams(
@@ -266,6 +318,21 @@ public final class MainActivity extends Activity {
 
         root.addView(viewport, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        motionScroll = new HorizontalScrollView(this);
+        motionScroll.setHorizontalScrollBarEnabled(false);
+        motionScroll.setFillViewport(false);
+        motionScroll.setVisibility(View.GONE);
+        motionBar = new LinearLayout(this);
+        motionBar.setOrientation(LinearLayout.HORIZONTAL);
+        motionBar.setGravity(Gravity.CENTER_VERTICAL);
+        motionBar.setPadding(dp(8), dp(2), dp(8), dp(2));
+        motionScroll.addView(motionBar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        root.addView(motionScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(TOOL_SIZE_DP + 8)));
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -322,6 +389,116 @@ public final class MainActivity extends Activity {
         showIdleStatus();
     }
 
+    private void showCompanionMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(0, MENU_OPEN, 0, "Open / replace resource");
+        if (hasModCompositionContext()) {
+            menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
+        }
+        if (isRootScene() && canAttachPtx()) {
+            menu.getMenu().add(0, MENU_ATTACH_PTX, 2, "Attach .PTX texture");
+        }
+        if (isRootScene()) {
+            menu.getMenu().add(0, MENU_ADD_MOTION, 3, "Add animation / motion…");
+            menu.getMenu().add(0, MENU_ADD_TEXTURE, 4, "Add texture asset (.TM2 / .DDS / …)");
+            menu.getMenu().add(0, MENU_ADD_PHYSICS, 5, "Add physics resource…");
+            menu.getMenu().add(0, MENU_ADD_CLOTH, 6, "Add cloth resource…");
+            menu.getMenu().add(0, MENU_ADD_OTHER, 7, "Add other companion…");
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case MENU_OPEN:
+                    chooseFile();
+                    return true;
+                case MENU_ADD_MOD:
+                    chooseAdditionalMods();
+                    return true;
+                case MENU_ATTACH_PTX:
+                    choosePtxForCurrentSession();
+                    return true;
+                case MENU_ADD_MOTION:
+                    chooseStagedAssets(REQUEST_STAGE_MOTION, true);
+                    return true;
+                case MENU_ADD_TEXTURE:
+                    chooseStagedAssets(REQUEST_STAGE_TEXTURE, true);
+                    return true;
+                case MENU_ADD_PHYSICS:
+                    chooseStagedAssets(REQUEST_STAGE_PHYSICS, true);
+                    return true;
+                case MENU_ADD_CLOTH:
+                    chooseStagedAssets(REQUEST_STAGE_CLOTH, true);
+                    return true;
+                case MENU_ADD_OTHER:
+                    chooseStagedAssets(REQUEST_STAGE_OTHER, true);
+                    return true;
+                default:
+                    return false;
+            }
+        });
+        menu.show();
+    }
+
+    private void refreshMotionStrip() {
+        if (motionBar == null || motionScroll == null) return;
+        motionBar.removeAllViews();
+        ArrayList<StagedAsset> motions = motionAssets();
+        if (motions.isEmpty() || !isRootScene()) {
+            motionScroll.setVisibility(View.GONE);
+            if (motions.isEmpty()) selectedMotionIndex = -1;
+            return;
+        }
+        if (selectedMotionIndex < 0 || selectedMotionIndex >= motions.size()) {
+            selectedMotionIndex = 0;
+        }
+        for (int index = 0; index < motions.size(); ++index) {
+            final int motionIndex = index;
+            StagedAsset asset = motions.get(index);
+            Button button = makeSquareButton("", "Select animation " + asset.name, 11f);
+            button.setText(motionCardLabel(asset.name));
+            button.setActivated(index == selectedMotionIndex);
+            button.setAlpha(index == selectedMotionIndex ? 1.0f : 0.72f);
+            button.setOnClickListener(v -> selectMotion(motionIndex));
+            addToolButton(motionBar, button);
+        }
+        motionScroll.setVisibility(View.VISIBLE);
+    }
+
+    private CharSequence motionCardLabel(String name) {
+        String stem = withoutExtension(name).toUpperCase(Locale.ROOT);
+        if (stem.length() > 7) stem = stem.substring(0, 7);
+        String extension = "MOT";
+        if (name != null) {
+            int dot = name.lastIndexOf('.');
+            if (dot >= 0 && dot + 1 < name.length()) {
+                extension = name.substring(dot + 1).toUpperCase(Locale.ROOT);
+                if (extension.length() > 4) extension = extension.substring(0, 4);
+            }
+        }
+        SpannableStringBuilder text = new SpannableStringBuilder(extension + "\n" + stem);
+        int split = extension.length() + 1;
+        text.setSpan(new StyleSpan(Typeface.BOLD), 0, extension.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        text.setSpan(new RelativeSizeSpan(0.70f), split, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return text;
+    }
+
+    private ArrayList<StagedAsset> motionAssets() {
+        ArrayList<StagedAsset> result = new ArrayList<>();
+        for (StagedAsset asset : stagedAssets) {
+            if (ROLE_MOTION.equals(asset.role)) result.add(asset);
+        }
+        return result;
+    }
+
+    private void selectMotion(int index) {
+        ArrayList<StagedAsset> motions = motionAssets();
+        if (index < 0 || index >= motions.size()) return;
+        selectedMotionIndex = index;
+        refreshMotionStrip();
+        Toast.makeText(this,
+                motions.get(index).name + " selected · playback runtime is not promoted yet",
+                Toast.LENGTH_LONG).show();
+    }
+
     private void setInfo(String text) {
         infoText = text == null ? "" : text;
     }
@@ -374,6 +551,36 @@ public final class MainActivity extends Activity {
                 "*/*"
         });
         startActivityForResult(intent, REQUEST_OPEN);
+    }
+
+    private void chooseAdditionalMods() {
+        if (!hasModCompositionContext()) {
+            Toast.makeText(this, "Open a MOD scene first", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "application/vnd.dmc.mod",
+                "application/octet-stream",
+                "*/*"
+        });
+        startActivityForResult(intent, REQUEST_ADD_MOD_PARTS);
+    }
+
+    private void chooseStagedAssets(int requestCode, boolean allowMultiple) {
+        if (!isRootScene()) return;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "application/octet-stream",
+                "*/*"
+        });
+        startActivityForResult(intent, requestCode);
     }
 
     private void choosePtxForCurrentSession() {
@@ -474,7 +681,25 @@ public final class MainActivity extends Activity {
             pendingPtxPart = -1;
             if (uri == null) return;
             persistUriPermission(uri, data.getFlags(), false);
-            attachPtxUri(uri, targetPart);
+            attachPtxUri(uri, targetPart, true);
+            return;
+        }
+
+        if (requestCode == REQUEST_ADD_MOD_PARTS) {
+            ArrayList<Uri> added = selectedUris(data);
+            if (added.isEmpty()) return;
+            for (Uri uri : added) persistUriPermission(uri, data.getFlags(), false);
+            ArrayList<Uri> combined = new ArrayList<>(modelPartUris);
+            for (Uri uri : added) if (!combined.contains(uri)) combined.add(uri);
+            openCompositeUris(combined, true);
+            return;
+        }
+
+        if (isStagedAssetRequest(requestCode)) {
+            ArrayList<Uri> uris = selectedUris(data);
+            if (uris.isEmpty()) return;
+            for (Uri uri : uris) persistUriPermission(uri, data.getFlags(), false);
+            stageAssets(uris, stagedRoleForRequest(requestCode));
             return;
         }
 
@@ -485,8 +710,50 @@ public final class MainActivity extends Activity {
         if (uris.size() == 1) {
             openUri(uris.get(0));
         } else {
-            openCompositeUris(uris);
+            openCompositeUris(uris, false);
         }
+    }
+
+    private boolean isStagedAssetRequest(int requestCode) {
+        return requestCode == REQUEST_STAGE_MOTION
+                || requestCode == REQUEST_STAGE_TEXTURE
+                || requestCode == REQUEST_STAGE_PHYSICS
+                || requestCode == REQUEST_STAGE_CLOTH
+                || requestCode == REQUEST_STAGE_OTHER;
+    }
+
+    private String stagedRoleForRequest(int requestCode) {
+        switch (requestCode) {
+            case REQUEST_STAGE_MOTION: return ROLE_MOTION;
+            case REQUEST_STAGE_TEXTURE: return ROLE_TEXTURE;
+            case REQUEST_STAGE_PHYSICS: return ROLE_PHYSICS;
+            case REQUEST_STAGE_CLOTH: return ROLE_CLOTH;
+            default: return ROLE_OTHER;
+        }
+    }
+
+    private void stageAssets(ArrayList<Uri> uris, String role) {
+        int added = 0;
+        for (Uri uri : uris) {
+            boolean duplicate = false;
+            for (StagedAsset asset : stagedAssets) {
+                if (asset.uri.equals(uri) && asset.role.equals(role)) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+            stagedAssets.add(new StagedAsset(uri, displayName(uri), role));
+            ++added;
+        }
+        if (ROLE_MOTION.equals(role) && selectedMotionIndex < 0 && !motionAssets().isEmpty()) {
+            selectedMotionIndex = 0;
+        }
+        rebuildInfo(titleView.getText().toString());
+        applyResourceUiState();
+        Toast.makeText(this,
+                added + " " + role + " resource(s) staged",
+                Toast.LENGTH_LONG).show();
     }
 
     private ArrayList<Uri> selectedUris(Intent data) {
@@ -527,7 +794,7 @@ public final class MainActivity extends Activity {
                 if (item != null && !uris.contains(item)) uris.add(item);
             }
             if (uris.size() > 1) {
-                openCompositeUris(uris);
+                openCompositeUris(uris, false);
                 return;
             }
         }
@@ -550,16 +817,25 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void resetCompositionState() {
+        modelPartUris.clear();
+        modelPartPtxUris.clear();
+        stagedAssets.clear();
+        selectedMotionIndex = -1;
+    }
+
     private void showIdleStatus() {
         titleView.setText("DMC Native Reader");
         blackWidowState = BlackWidowState.empty();
         pendingPtxPart = -1;
         pendingExportSession = 0;
+        resetCompositionState();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
                 + "Unpromoted DMC families are intentionally excluded from main.\n\n"
                 + "Open a supported resource from My Files or use ↑.\n"
-                + "Select multiple canonical MOD files to compose them in one scene.");
+                + "Select multiple canonical MOD files to compose them in one scene.\n"
+                + "Use ⋮ for model parts, PTX, animations and staged future companions.");
         applyResourceUiState();
     }
 
@@ -575,6 +851,10 @@ public final class MainActivity extends Activity {
         }
         String path = uri.getPath();
         return path == null ? "resource.bin" : new File(path).getName();
+    }
+
+    private boolean isModName(String name) {
+        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".mod");
     }
 
     private ParcelFileDescriptor openReadOnlyDescriptor(Uri uri) throws FileNotFoundException {
@@ -595,8 +875,8 @@ public final class MainActivity extends Activity {
     }
 
     private void rebuildInfo(String name) {
-        final String inspection = NativeBridge.inspection(session);
-        final String nativeInfo = NativeBridge.info(session);
+        final String inspection = session == 0 ? "" : NativeBridge.inspection(session);
+        final String nativeInfo = session == 0 ? "" : NativeBridge.info(session);
 
         StringBuilder details = new StringBuilder();
         details.append(name).append("\n\nSTRUCTURE\n");
@@ -609,11 +889,20 @@ public final class MainActivity extends Activity {
                     .append("Depth: ").append(navigation.size()).append("\n")
                     .append("Back returns to: ").append(navigation.peek().title).append("\n");
         }
+        if (!stagedAssets.isEmpty()) {
+            details.append("\nSTAGED COMPANIONS\n");
+            for (StagedAsset asset : stagedAssets) {
+                details.append("- ").append(asset.role).append(": ")
+                        .append(asset.name).append("\n");
+            }
+            details.append("Playback / physics application remains disabled until the corresponding native runtime is promoted.\n");
+        }
         setInfo(details.toString());
     }
 
     private void openUri(Uri uri) {
         closeAllSessions();
+        resetCompositionState();
         String name = displayName(uri);
         titleView.setText(name);
 
@@ -635,16 +924,22 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        if (isModName(name)) {
+            modelPartUris.add(uri);
+            modelPartPtxUris.add(null);
+        }
         activateSession(opened, name);
     }
 
-    private void openCompositeUris(ArrayList<Uri> uris) {
+    private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets) {
         if (uris.size() < 2) {
-            if (!uris.isEmpty()) openUri(uris.get(0));
+            if (!uris.isEmpty() && !preserveAssets) openUri(uris.get(0));
             return;
         }
 
-        closeAllSessions();
+        ArrayList<Uri> previousPtx = preserveAssets
+                ? new ArrayList<>(modelPartPtxUris)
+                : new ArrayList<>();
         long[] handles = new long[uris.size()];
         String[] names = new String[uris.size()];
         long composite = 0;
@@ -678,23 +973,59 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
-            titleView.setText("DMC Native Reader");
-            blackWidowState = BlackWidowState.empty();
-            setInfo(failure == null ? "MOD composition failed" : failure);
-            applyResourceUiState();
             Toast.makeText(this,
                     failure == null ? "MOD composition failed" : failure,
                     Toast.LENGTH_LONG).show();
             return;
         }
 
+        closeAllSessions();
+        if (!preserveAssets) resetCompositionState();
+        modelPartUris.clear();
+        modelPartUris.addAll(uris);
+        modelPartPtxUris.clear();
+        for (int index = 0; index < uris.size(); ++index) {
+            modelPartPtxUris.add(index < previousPtx.size() ? previousPtx.get(index) : null);
+        }
+
         activateSession(composite, "MOD scene · " + uris.size() + " parts");
+        reattachSavedPtxToComposite();
         Toast.makeText(this,
                 uris.size() + " MOD parts composed in source coordinates",
                 Toast.LENGTH_LONG).show();
     }
 
-    private void attachPtxUri(Uri uri, int partIndex) {
+    private void reattachSavedPtxToComposite() {
+        if (session == 0 || NativeBridge.compositePartCount(session) <= 0) return;
+        int restored = 0;
+        for (int index = 0; index < modelPartPtxUris.size(); ++index) {
+            Uri uri = modelPartPtxUris.get(index);
+            if (uri == null) continue;
+            final String ptxName = displayName(uri);
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+                if (pfd != null && NativeBridge.attachPtxToPart(
+                        session, index, pfd.getFd(), ptxName)) {
+                    ++restored;
+                }
+            } catch (Exception ignored) {}
+        }
+        if (restored > 0) {
+            refreshBlackWidowState();
+            renderView.renderNow();
+            rebuildInfo(titleView.getText().toString());
+            applyResourceUiState();
+        }
+    }
+
+    private void rememberPtxForPart(Uri uri, int partIndex) {
+        if (modelPartUris.isEmpty()) return;
+        int target = partIndex >= 0 ? partIndex : 0;
+        if (target < 0 || target >= modelPartUris.size()) return;
+        while (modelPartPtxUris.size() < modelPartUris.size()) modelPartPtxUris.add(null);
+        modelPartPtxUris.set(target, uri);
+    }
+
+    private void attachPtxUri(Uri uri, int partIndex, boolean remember) {
         if (!canAttachPtx()) return;
         final String ptxName = displayName(uri);
         final boolean attached;
@@ -708,11 +1039,10 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        // Refresh typed application state after the native action. Diagnostic
-        // text below is presentation only and never controls button state.
         refreshBlackWidowState();
         final String diagnostic = NativeBridge.textureAttachmentInfo(session);
         if (attached) {
+            if (remember) rememberPtxForPart(uri, partIndex);
             renderView.renderNow();
             rebuildInfo(titleView.getText().toString());
             applyResourceUiState();
@@ -880,7 +1210,6 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "Could not open child resource", Toast.LENGTH_LONG).show();
             return;
         }
-
         navigateToSession(child, childTitle);
     }
 
