@@ -3,6 +3,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "dmcresource/adapters/mod_adapter.h"
 #include "dmcresource/adapters/scm_adapter.h"
