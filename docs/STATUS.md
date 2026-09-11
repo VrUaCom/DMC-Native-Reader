@@ -101,7 +101,7 @@ the renderer does not own format parsers.
 ## Active development candidate
 
 Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
-(`versionCode 27`, `versionName 1.0`). It adds two bounded capabilities:
+(`versionCode 27`, `versionName 1.0`). It now contains three bounded layers:
 
 1. **PNG export**
    - `↓` replaces the shared reset button only on exportable UV/image sessions;
@@ -120,8 +120,26 @@ Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
    - remap only the top-level render projection into non-overlapping texture-slot
      ranges;
    - PTX attachment requires explicit MOD-part selection;
-   - no inferred cape/weapon/bone attachment;
-   - animation and physics are deliberately deferred to later canonical work.
+   - adding more MOD parts rebuilds the composite while preserving/restoring known
+     per-part PTX URI attachments in the Android shell;
+   - no inferred cape/weapon/bone attachment.
+
+3. **Companion / animation UI foundation**
+   - a top-right `⋮` menu replaces the single-purpose PTX header button;
+   - the menu can add MOD parts, attach PTX, and stage motion, texture, physics,
+     cloth or other companion resources;
+   - staged motion files create a second horizontal 48 dp card row directly above
+     the main bottom toolbar;
+   - each card presents format/extension on top and a compact source stem below
+     (for example `MOT` + `EM000`);
+   - the strip scrolls left/right and tracks selected motion state;
+   - the strip is root-scene UI and is hidden while browsing UV/PTX child sessions;
+   - animation playback, retargeting, root motion, physics and cloth simulation
+     remain disabled until canonical native runtimes are promoted.
+
+The distinction is deliberate: **animation/physics execution is deferred, but the
+attachment and selection foundation is already part of v27.** Unpromoted companion
+formats are staged without fabricated parsing or runtime semantics.
 
 Portable regression targets added for the slice are
 `composite_mod_scene_test` and `png_export_session_test`, with Black Widow export
