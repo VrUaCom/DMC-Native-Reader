@@ -36,6 +36,8 @@ enum class StateFlag : std::uint64_t {
     CanInspectMeshes           = 1ULL << 20U,
     CanInspectHierarchy        = 1ULL << 21U,
     CanExportPng               = 1ULL << 22U,
+    CanAddModelPart            = 1ULL << 23U,
+    CanStageCompanion          = 1ULL << 24U,
 };
 
 using StateBits = std::uint64_t;
@@ -70,7 +72,8 @@ struct ModelSessionView final {
 // sentinel for an unbound triangle; no PTX/MOD/SCM binary-format knowledge
 // lives here. Composite sessions may explicitly advertise that at least one
 // retained part has a complete local PTX binding even when the merged scene is
-// not globally complete.
+// not globally complete. Model-part/companion actions are exposed from typed
+// model capabilities, never reconstructed from file-name or URI state in Java.
 [[nodiscard]] StateBits evaluate_model_session(
     const ModelSessionView& session) noexcept;
 
