@@ -179,7 +179,9 @@ Before v27 promotion, at minimum keep these passing:
 - `session_inspection_test`
 
 `black_widow_state_test` must cover the companion-action flags as well as PNG and
-existing model/image/container policy.
+existing model/image/container policy. `spider_model_execution_test` also protects
+the typed MOD-vs-SCM capability distinction used by Black Widow, so Android never
+needs filename policy.
 
 Physical-device acceptance remains required for Android picker/export/menu/motion
 strip behavior.
@@ -191,9 +193,10 @@ particular, a run with `runner_id: 0`, an empty runner name and `steps: []` has 
 executed checkout, CMake, Gradle or tests and must not be reported as either a code
 regression or a successful build.
 
-A v27 APK is accepted only after a real build executes the native regressions,
-produces the arm64 APK, passes package/signing/JNI/module-marker verification, and
-is then physically exercised on the Samsung device.
+No APK built from an older accepted revision may be relabeled as v27. A v27 APK is
+accepted only after a real build of the current v27 head executes the native
+regressions, produces the arm64 APK, passes package/signing/JNI/module-marker
+verification, and is then physically exercised on the Samsung device.
 
 ## 11. Non-negotiable rule for later work
 
