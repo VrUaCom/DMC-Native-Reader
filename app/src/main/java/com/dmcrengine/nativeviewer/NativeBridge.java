@@ -1,5 +1,7 @@
 package com.dmcrengine.nativeviewer;
 
+import android.graphics.Bitmap;
+
 public final class NativeBridge {
     static {
         System.loadLibrary("dmcviewer");
@@ -21,7 +23,7 @@ public final class NativeBridge {
 
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
-    public static native int[] imagePreview(long handle);
+    public static native boolean imagePreview(long handle, Bitmap target);
     public static native String inspection(long handle);
     public static final int INSPECT_UV = 1;
     public static final int INSPECT_MESHES = 2;
@@ -43,11 +45,13 @@ public final class NativeBridge {
     public static native String childResourceTitle(long handle, int index);
     public static native int childResourcePreviewWidth(long handle, int index);
     public static native int childResourcePreviewHeight(long handle, int index);
-    public static native int[] childResourcePreview(long handle, int index);
+    public static native boolean childResourcePreview(long handle, int index, Bitmap target);
     public static native long openUvGallery(long handle);
     public static native long openChild(long handle, int index);
 
-    public static native int[] render(long handle, int width, int height,
-                                      float yaw, float pitch, float zoom,
-                                      int renderFlags);
+    // Android allocates/reuses the destination Bitmap. JNI writes native RGBA
+    // pixels directly into it, avoiding an intermediate Java int[] frame.
+    public static native boolean render(long handle, int width, int height,
+                                        float yaw, float pitch, float zoom,
+                                        int renderFlags, Bitmap target);
 }
