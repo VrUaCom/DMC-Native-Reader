@@ -5,7 +5,8 @@ package com.dmcrengine.nativeviewer;
  *
  * Business decisions are evaluated in native C++ Black Widow. This class only
  * decodes a stable bitmask for Android widget presentation; it must not infer
- * state from diagnostics, file formats, or ResourceCapabilities combinations.
+ * state from diagnostics, file formats, filenames, retained URIs, or raw
+ * ResourceCapabilities combinations.
  */
 public final class BlackWidowState {
     private static final long CAN_RENDER = 1L << 0;
