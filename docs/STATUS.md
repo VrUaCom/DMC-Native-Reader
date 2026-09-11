@@ -1,13 +1,14 @@
 # DMC Native Reader — Status
 
-Last updated: 2026-09-10.
+Last updated: 2026-09-11.
 
 ## Accepted baseline (`main`)
 
 - Product line: **Native Reader 1.0**
 - versionName: `1.0`
-- versionCode: `24`
-- accepted v24 code baseline: `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`
+- versionCode: `26`
+- accepted v26 main: `0148f0bd1b384fa1d2b43124b88423fd7b66c379`
+- accepted through: PR #32
 - package: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
 - minSdk / targetSdk: `26 / 36`
@@ -15,15 +16,26 @@ Last updated: 2026-09-10.
 - canonical reverse/read-side authority: `VrUaCom/dmc-rengine-cpp` / pinned `ReaderCore`
 - archived pre-cleanup implementation: `main.2` — backlog/reference only
 
-Documentation commits may advance `main` beyond the accepted code-baseline SHA without changing the accepted v24 APK/code behavior.
-
 ## Acceptance evidence
 
-v24 was accepted on a physical Samsung device on 2026-09-10. The owner confirmed that all four supported file types open successfully and PTX texture application works. Android reported **2.32 MB installed size**, down from 6.27 MB before the v24 cleanup.
+The owner confirmed the required physical Samsung/device checks for v26 on
+2026-09-10 and explicitly approved PR #32 for promotion to `main`. The accepted
+v26 line therefore includes the v24 architecture/size cleanup, v25 UV slot
+gallery and v26 focused long-press inspection tools.
 
-Build-side evidence for v24 includes seven passing local/native regressions, verified arm64 APK identity/signature/ZIP/module gates, only 18 declared public JNI exports, and removal of the unintended Kotlin runtime dependency. GitHub-hosted Actions jobs on the tested revision failed before executing steps, so CI is **not** claimed green; the accepted evidence is local regression + APK verification + physical-device acceptance.
+Build-side evidence carried by the accepted candidate includes the portable
+native regressions and verified arm64 APK/package gates documented in the v25/v26
+evidence files. The v26 candidate APK was versionName `1.0`, versionCode `26`,
+597,665 bytes, with SHA-256
+`b80be422197ff8270f67049dbdd596603b0ebcf4f41884f6b22a5936fedf4596`.
 
-See `SIZE_AND_MODULES_V24.md` for exact artifact measurements and hashes.
+GitHub-hosted Actions remain affected by the known runner/pre-step failure where
+a job can terminate before checkout with `steps: []`; CI is not claimed green on
+that basis. Physical-device acceptance and the verified build/regression evidence
+remain the promotion authority for the accepted v26 merge.
+
+See `SIZE_AND_MODULES_V24.md`, `UV_GALLERY_V25.md` and
+`TOOL_INSPECTION_V26.md` for the bounded evidence slices.
 
 ## Current architecture
 
@@ -42,7 +54,8 @@ resource bytes
   -> thin Android JNI + Java shell
 ```
 
-Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts and the renderer does not own format parsers.
+Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts and
+the renderer does not own format parsers.
 
 ## Accepted capabilities
 
@@ -55,7 +68,9 @@ Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts a
 - hierarchy/spatial projection when canonical authority is valid;
 - skin weights;
 - canonical texture-slot and legacy GS state;
-- PTX companion attachment for valid model texture bindings.
+- PTX companion attachment for valid model texture bindings;
+- per-texture-slot UV gallery;
+- focused UV/mesh/hierarchy information views.
 
 ### SCM
 
@@ -65,7 +80,9 @@ Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts a
 - rotate / zoom / wireframe;
 - typed inspection;
 - texture-slot state;
-- PTX companion attachment through the shared texture path.
+- PTX companion attachment through the shared texture path;
+- per-texture-slot UV gallery;
+- focused UV/mesh/hierarchy information views.
 
 ### DDS
 
@@ -83,19 +100,44 @@ Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts a
 
 ## Active development candidate
 
-Draft PR #32 on `feature/dds-ptx-v1-acceptance` currently carries **v26** (`versionCode 26`, `versionName 1.0`). It adds:
+Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
+(`versionCode 27`, `versionName 1.0`). It adds two bounded capabilities:
 
-- v25 per-texture-slot UV gallery with per-slot triangle grouping, zoom/reset and shared gallery infrastructure;
-- v26 long-press information for UV slots/triangle counts;
-- long-press object/mesh structure report;
-- long-press node/bone parent relationship report;
-- separate hierarchy-information authority from spatial-render authority;
-- 9 portable/native regressions and verified v26 APK gates.
+1. **PNG export**
+   - `↓` replaces the shared reset button only on exportable UV/image sessions;
+   - UV gallery exports all maps to a selected system folder;
+   - opened UV exports one 1024×1024 PNG through the system save dialog;
+   - PTX gallery exports every DDS texture as an individual PNG;
+   - opened PTX/DDS texture exports one PNG;
+   - ordinary 3D MOD/SCM keeps `🔄` reset;
+   - large PTX children omitted from resident RGBA gallery memory can be lazily
+     materialized from retained encoded DDS bytes through the canonical decoder.
 
-v26 is **not yet accepted** because Samsung/device validation is still pending. Until that closes, v24 remains the stable code/product baseline in `main`.
+2. **Multi-MOD scene composition**
+   - multi-select canonical MOD files into one render session;
+   - retain every source as a separate `CompositePart` with its own scene,
+     node namespace, mesh, texture-slot projection and PTX state;
+   - remap only the top-level render projection into non-overlapping texture-slot
+     ranges;
+   - PTX attachment requires explicit MOD-part selection;
+   - no inferred cape/weapon/bone attachment;
+   - animation and physics are deliberately deferred to later canonical work.
+
+Portable regression targets added for the slice are
+`composite_mod_scene_test` and `png_export_session_test`, with Black Widow export
+coverage extended as well. Hosted PR jobs currently hit the same repository
+pre-step infrastructure failure, so a real build/test pass is still required.
+
+See `PNG_EXPORT_MULTI_MOD_V27.md`. Keep PR #33 draft until the physical-device
+acceptance checklist is completed.
 
 ## Not in production registry
 
-HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and the previous wide recognition catalog are absent from the current `main` registry/build. Their existence in historical branches or reverse documentation does not make them supported Native Reader modules.
+HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and the previous
+wide recognition catalog are absent from the current `main` registry/build. Their
+existence in historical branches or reverse documentation does not make them
+supported Native Reader modules.
 
-Future promotion requires a bounded Architecture v2 module, canonical/evidence-backed authority and regression/device evidence appropriate to the feature.
+Future promotion requires a bounded Architecture v2 module,
+canonical/evidence-backed authority and regression/device evidence appropriate to
+the feature.
