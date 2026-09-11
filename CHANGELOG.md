@@ -25,7 +25,18 @@ This changelog distinguishes accepted `main` history from development candidates
 - the flattened render projection safely offsets node/mesh references and remaps texture slots into non-overlapping global ranges;
 - source coordinates are preserved; no weapon/cape/bone attachment is fabricated;
 - PTX attachment requires explicit MOD-part selection and validates against that part's local binding;
-- animation and physics are intentionally deferred.
+- adding more MOD parts preserves the staged scene context and restores remembered per-part PTX attachments where possible.
+
+### Companion / animation foundation
+
+- the dedicated PTX header button is replaced by a top-right `⋮` companion menu;
+- the menu supports adding MOD parts, attaching PTX, and staging motion, texture, physics, cloth or other future companion resources;
+- staged animation/motion files create a second horizontal 48 dp card row above the main toolbar;
+- motion cards show the file extension on top and compact source stem below, e.g. `MOT` + `EM000`;
+- the motion row scrolls horizontally and tracks the selected staged animation;
+- the motion row is root-scene UI and hides while browsing UV/PTX children;
+- animation playback, retargeting, root motion, physics coupling and cloth simulation remain disabled until matching canonical native runtimes are promoted;
+- unpromoted companion formats are staged without fabricated parsing, binding or simulation semantics.
 
 ### v27 evidence
 
@@ -33,7 +44,8 @@ This changelog distinguishes accepted `main` history from development candidates
 - added `png_export_session_test`;
 - extended Black Widow regression coverage for PNG export;
 - versionName remains `1.0`; Android candidate versionCode is `27`;
-- hosted PR jobs currently hit the repository's known pre-step infrastructure failure (`steps: []`), so no hosted green build is claimed yet.
+- hosted PR jobs currently hit the repository's known pre-step infrastructure failure (`steps: []`), so no hosted green build is claimed yet;
+- device acceptance now also covers the `⋮` companion menu, motion strip, staged-resource behavior and preservation of evidence boundaries.
 
 See `docs/PNG_EXPORT_MULTI_MOD_V27.md`.
 
@@ -117,7 +129,3 @@ The repository deliberately replaced the earlier broad multi-format/recognition 
 - PTX.
 
 The old HITS/TXT/index/DCA/LIG/PAC/PNST/NBZ/partial-adapter surface was removed from the production registry/build and preserved on `main.2` as backlog/reference. Future families must be promoted individually through Architecture v2 with canonical/evidence-backed authority and regressions.
-
-## Historical development milestones
-
-Earlier v4-v9 and pre-cleanup debug builds established Android routing, packaging, modular-reader and device-testing foundations. Their build identities, module counts and unresolved routing notes are historical evidence only; consult `docs/STATUS.md` for the current accepted state.
