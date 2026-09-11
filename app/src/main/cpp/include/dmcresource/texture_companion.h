@@ -9,11 +9,13 @@
 
 #include "dmcresource/image_preview.h"
 #include "dmcresource/mesh.h"
+#include "dmcresource/render_scene.h"
 
 namespace dmcresource::texture_companion {
 
 struct ModelTextureView final {
     const Mesh* mesh{};
+    const RenderScene* scene{};
     std::span<const std::uint32_t> triangle_texture_slots{};
 };
 
@@ -26,7 +28,8 @@ struct AttachmentResult final {
 };
 
 // Platform-neutral attachment gate shared by Black Widow and platform bridges.
-// The renderer and Java shell never need PTX/DDS-specific slot rules.
+// The renderer and Java shell never need PTX/DDS-specific slot rules. A caller
+// may provide either a flattened Mesh or an authoritative source-local scene.
 [[nodiscard]] bool can_attach(const ModelTextureView& model) noexcept;
 
 // Attach a complete PTX companion to a neutral model texture-slot projection.
