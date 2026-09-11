@@ -62,12 +62,15 @@ struct ModelSessionView final {
     bool uv_data_available{};
     std::size_t object_count{};
     std::size_t hierarchy_node_count{};
+    bool part_texture_attachment_available{};
     bool png_export_available{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral
 // sentinel for an unbound triangle; no PTX/MOD/SCM binary-format knowledge
-// lives here.
+// lives here. Composite sessions may explicitly advertise that at least one
+// retained part has a complete local PTX binding even when the merged scene is
+// not globally complete.
 [[nodiscard]] StateBits evaluate_model_session(
     const ModelSessionView& session) noexcept;
 
