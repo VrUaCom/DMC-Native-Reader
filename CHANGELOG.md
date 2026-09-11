@@ -4,7 +4,7 @@ This changelog distinguishes accepted `main` history from development candidates
 
 ## Unreleased — Native Reader 1.0 v27 candidate
 
-**Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; host/device acceptance pending; not yet part of accepted `main`.
+**Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; real build/device acceptance pending; not yet part of accepted `main`.
 
 ### PNG export
 
@@ -38,16 +38,35 @@ This changelog distinguishes accepted `main` history from development candidates
 - animation playback, retargeting, root motion, physics coupling and cloth simulation remain disabled until matching canonical native runtimes are promoted;
 - unpromoted companion formats are staged without fabricated parsing, binding or simulation semantics.
 
+### Modular + Spider architecture
+
+- `NativeModuleRegistry` remains the only production format entrance and still contains exactly MOD / SCM / DDS / PTX;
+- `DMCNativeReader::Core` remains the reusable platform-neutral C++20 product target;
+- MOD and SCM now share a Spider Crusader model execution plan while keeping separate canonical format adapters;
+- DDS and PTX continue through the Spider Crusader texture execution plan;
+- successful promoted model/texture routes publish `spider.crusader` in their module traces;
+- Black Widow now owns `CanAddModelPart` and `CanStageCompanion` in addition to render/UV/PTX/export/inspection policy;
+- Android no longer enables model/companion actions from a `.mod` filename or retained URI list; it consumes typed native Spider state;
+- future MOT/TM2/physics/cloth support must be promoted through bounded native modules, typed output and Spider execution instead of Java-side format logic;
+- the hard boundary is documented in `docs/MODULAR_SPIDER_V27.md`.
+
 ### v27 evidence
 
+- added `spider_model_execution_test` for the four-module registry and shared Spider model/texture entry points;
 - added `composite_mod_scene_test`;
 - added `png_export_session_test`;
-- extended Black Widow regression coverage for PNG export;
+- extended `black_widow_state_test` for PNG export and companion-action policy;
 - versionName remains `1.0`; Android candidate versionCode is `27`;
-- hosted PR jobs currently hit the repository's known pre-step infrastructure failure (`steps: []`), so no hosted green build is claimed yet;
-- device acceptance now also covers the `⋮` companion menu, motion strip, staged-resource behavior and preservation of evidence boundaries.
+- `tools/verify_device_apk.py` and APK verification gates target versionCode 27;
+- device acceptance covers PNG export, multi-MOD/PTX routing, the `⋮` companion menu, motion strip and preservation of evidence boundaries.
 
-See `docs/PNG_EXPORT_MULTI_MOD_V27.md`.
+### Current build boundary
+
+No v27 APK is accepted yet. GitHub-hosted jobs are currently terminating before runner assignment (`runner_id: 0`, empty runner name, `steps: []`), including probes using different hosted runner labels. Checkout, CMake, Gradle and tests therefore did not execute, so those runs are neither green evidence nor code-regression evidence. Workflow runner labels were restored after the probe.
+
+PR #33 remains draft until a real build runs the native suite, produces/verifies the arm64 APK, and the Samsung device checklist is completed.
+
+See `docs/PNG_EXPORT_MULTI_MOD_V27.md` and `docs/MODULAR_SPIDER_V27.md`.
 
 ## Native Reader 1.0 v26 — accepted `main`
 
