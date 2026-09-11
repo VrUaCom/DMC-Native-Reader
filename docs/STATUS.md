@@ -43,19 +43,30 @@ See `SIZE_AND_MODULES_V24.md`, `UV_GALLERY_V25.md` and
 resource bytes
   -> bounded probe / DMC Rengine ReaderCore
   -> NativeModuleRegistry (MOD | SCM | DDS | PTX)
-  -> typed module/adapter projection
+  -> Spider Crusader execution plan
+      -> model route: MOD | SCM -> separate canonical adapters
+      -> texture route: DDS | PTX -> TextureSet / framing / DDS codec
+  -> typed module projection
   -> InspectionDocument / RenderScene / ImagePreview / ChildResource[]
   -> DMCNativeReader::Core
       -> resource_session
       -> scene_projection
       -> texture/material binding
-      -> Black Widow typed state
+      -> Spider Black Widow typed application state
       -> direct C++ rendering
   -> thin Android JNI + Java shell
 ```
 
 Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts and
-the renderer does not own format parsers.
+the renderer does not own format parsers. MOD and SCM now share one Spider Crusader
+model execution entry point while retaining separate format adapters. DDS and PTX
+continue to share the Spider-backed texture execution route. Successful model and
+texture pipelines publish `spider.crusader` in their module trace.
+
+`DMCNativeReader::Core` remains the portable C++20 product target. Android owns
+file descriptors, URIs, Storage Access Framework dialogs, lifecycle and widget
+presentation only. DMC parsing, composition, texture binding and runtime semantic
+rules remain native. See `MODULAR_SPIDER_V27.md` for the hard architecture contract.
 
 ## Accepted capabilities
 
@@ -139,15 +150,23 @@ Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
 
 The distinction is deliberate: **animation/physics execution is deferred, but the
 attachment and selection foundation is already part of v27.** Unpromoted companion
-formats are staged without fabricated parsing or runtime semantics.
+formats are staged without fabricated parsing or runtime semantics. Future MOT,
+TM2, physics and cloth promotion must enter through a native module and Spider
+execution plan rather than adding parsing logic to Android.
 
-Portable regression targets added for the slice are
-`composite_mod_scene_test` and `png_export_session_test`, with Black Widow export
-coverage extended as well. Hosted PR jobs currently hit the same repository
-pre-step infrastructure failure, so a real build/test pass is still required.
+Portable regression targets added for the slice now include
+`composite_mod_scene_test`, `png_export_session_test` and
+`spider_model_execution_test`, with Black Widow export coverage extended as well.
+The Spider regression verifies that the registry still contains exactly the four
+promoted families, MOD/SCM share the Spider-backed model entry point, DDS/PTX share
+the Spider-backed texture entry point, and a canonical MOD pipeline publishes a
+successful `spider.crusader` trace marker.
 
-See `PNG_EXPORT_MULTI_MOD_V27.md`. Keep PR #33 draft until the physical-device
-acceptance checklist is completed.
+Hosted PR jobs currently hit the same repository pre-step infrastructure failure,
+so a real build/test pass is still required.
+
+See `PNG_EXPORT_MULTI_MOD_V27.md` and `MODULAR_SPIDER_V27.md`. Keep PR #33 draft
+until the physical-device acceptance checklist is completed.
 
 ## Not in production registry
 
