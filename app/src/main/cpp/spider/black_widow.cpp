@@ -52,7 +52,8 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
         has_capability(session.capabilities, ResourceCapability::UvCoordinates);
     const bool child_browser_mode =
         has_child_resources && !can_render && !can_preview_image && !session.uv_map_view;
-    const bool texture_companion_attachable = can_show_uv;
+    const bool texture_companion_attachable =
+        can_show_uv || session.part_texture_attachment_available;
 
     set_if(&state, StateFlag::CanRender, can_render || session.uv_map_view);
     set_if(&state, StateFlag::CanWireframe, can_wireframe);
