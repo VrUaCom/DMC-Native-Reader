@@ -53,6 +53,7 @@ resource bytes
       -> Spider Black Widow typed application state
       -> direct C++ rendering
   -> thin Android JNI + Java shell
+      -> direct native RGBA -> Android Bitmap pixel transport
 ```
 
 Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts and
@@ -104,7 +105,7 @@ the renderer does not own format parsers.
 Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
 (`versionCode 27`, `versionName 1.0`). It contains four connected layers:
 
-1. **PNG export**
+1. **PNG export + direct Bitmap transport**
    - `↓` replaces the shared reset button only on exportable UV/image sessions;
    - UV gallery exports all maps to a selected system folder;
    - opened UV exports one 1024×1024 PNG through the system save dialog;
@@ -112,15 +113,25 @@ Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
    - opened PTX/DDS texture exports one PNG;
    - ordinary 3D MOD/SCM keeps `🔄` reset;
    - large PTX children omitted from resident RGBA gallery memory can be lazily
-     materialized from retained encoded DDS bytes through the canonical decoder.
+     materialized from retained encoded DDS bytes through the canonical decoder;
+   - Java no longer receives image frames as `int[]`: Android allocates/reuses an
+     `ARGB_8888` Bitmap and JNI copies native RGBA rows directly into locked pixels;
+   - `jnigraphics` is linked only to the Android JNI target, never to portable Core;
+   - APK verification gates the Java/C++ direct-Bitmap ABI and rejects legacy
+     `int[]` image declarations.
 
-2. **Multi-MOD scene composition**
+2. **Low-copy multi-MOD scene composition**
    - multi-select canonical MOD files into one render session;
-   - retain every source as a separate `CompositePart` with its own scene,
-     node namespace, mesh, texture-slot projection and PTX state;
-   - remap only the top-level render projection into non-overlapping texture-slot
+   - retain every source as a separate `CompositePart` with an authoritative
+     source-local `RenderScene`, node namespace, local texture-slot projection,
+     texture-slot base/span and PTX state;
+   - do not retain a second per-part flattened `Mesh`;
+   - top level retains merged hierarchy nodes plus one flattened `render_mesh`;
+   - do not duplicate composite geometry in top-level `RenderScene.meshes`;
+   - remap only the flattened render projection into non-overlapping texture-slot
      ranges;
-   - PTX attachment requires explicit MOD-part selection;
+   - PTX attachment requires explicit MOD-part selection and validates directly
+     against that part's local `RenderScene`;
    - adding more MOD parts rebuilds the composite while preserving/restoring known
      per-part PTX URI attachments in the Android shell;
    - no inferred cape/weapon/bone attachment.
@@ -158,25 +169,24 @@ The distinction is deliberate: **animation/physics execution is deferred, but th
 attachment and selection foundation is already part of v27.** Unpromoted companion
 formats are staged without fabricated parsing or runtime semantics.
 
-Portable regression targets include `spider_model_execution_test`, which protects
-the exact four-module registry, the shared model/texture Spider entry points, MOD's
-typed skeletal capability and successful `spider.crusader` tracing;
-`composite_mod_scene_test`; `png_export_session_test`; and extended
-`black_widow_state_test` coverage, alongside the existing model/texture/UV and
-inspection suite.
+Portable regression targets include `module_registry_test`,
+`spider_model_execution_test`, `core_model_pipeline_test`, `dds_ptx_v1_test`,
+`black_widow_state_test`, `composite_mod_scene_test`, `png_export_session_test`,
+`ptx_model_texture_test`, `render_scene_test`, `uv_gallery_test`,
+`session_inspection_test` and `mod_spatial_adapter_test`. The APK verifier also
+checks the direct-Bitmap source/ABI boundary in addition to package/signature/JNI
+export/module-marker gates.
 
 ## v27 build state
 
-No v27 APK has been accepted or published yet. The current GitHub-hosted jobs are
-failing before runner assignment: observed jobs report `runner_id: 0`, empty
-runner name and `steps: []`, including probes with multiple hosted runner labels.
-Therefore checkout, CMake, Gradle and tests did not execute, and these failures are
-not code-regression evidence.
+No v27 APK has been accepted or published yet. The GitHub-hosted jobs observed on
+this development line have failed before runner assignment: jobs report no executed
+steps, so checkout, CMake, Gradle and tests did not run. These failures are not
+code-regression evidence and are not green evidence either.
 
-The workflow files have been restored to the normal hosted-runner configuration
-after the probes. PR #33 stays draft until a real build executes the native suite,
-produces and verifies the arm64 APK, and the resulting APK passes the Samsung
-device checklist.
+PR #33 stays draft until a real build of the exact current head executes the native
+suite, produces and verifies the arm64 APK, and the resulting APK passes the Samsung
+device checklist including rotate/zoom direct-Bitmap behavior.
 
 See `PNG_EXPORT_MULTI_MOD_V27.md` and `MODULAR_SPIDER_V27.md`.
 
