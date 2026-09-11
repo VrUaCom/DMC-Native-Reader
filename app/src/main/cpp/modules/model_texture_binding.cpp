@@ -10,6 +10,20 @@ namespace {
 
 constexpr std::uint32_t kMaxCompanionTextureSlot = 4095U;
 
+[[nodiscard]] bool append_required_slot(std::uint32_t slot,
+                                        RequiredSlots* out) {
+    if (out == nullptr || slot == kNoTextureSlot ||
+        slot > kMaxCompanionTextureSlot) {
+        return false;
+    }
+    if (std::find(out->slots.begin(), out->slots.end(), slot) ==
+        out->slots.end()) {
+        out->slots.push_back(slot);
+        out->max_slot = std::max(out->max_slot, slot);
+    }
+    return true;
+}
+
 }  // namespace
 
 bool collect_required_slots(
@@ -31,18 +45,55 @@ bool collect_required_slots(
         const auto& uv = mesh.uv0[index];
         if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) return false;
     }
-    for (const auto slot : triangle_texture_slots) {
-        if (slot == kNoTextureSlot || slot > kMaxCompanionTextureSlot) return false;
-    }
 
     try {
         for (const auto slot : triangle_texture_slots) {
-            if (std::find(out->slots.begin(), out->slots.end(), slot) ==
-                out->slots.end()) {
-                out->slots.push_back(slot);
-                out->max_slot = std::max(out->max_slot, slot);
-            }
+            if (!append_required_slot(slot, out)) return false;
         }
+    } catch (...) {
+        out->slots.clear();
+        out->max_slot = 0U;
+        return false;
+    }
+
+    return !out->slots.empty();
+}
+
+bool collect_required_slots(
+    const RenderScene& scene,
+    std::span<const std::uint32_t> triangle_texture_slots,
+    RequiredSlots* out) noexcept {
+    if (out == nullptr) return false;
+    out->slots.clear();
+    out->max_slot = 0U;
+
+    std::size_t expected_triangles = 0U;
+    for (const auto& primitive : scene.meshes) {
+        if (primitive.mesh.indices.size() % 3U != 0U) return false;
+        const std::size_t triangles = primitive.mesh.indices.size() / 3U;
+        if (triangles > std::numeric_limits<std::size_t>::max() - expected_triangles) {
+            return false;
+        }
+        expected_triangles += triangles;
+    }
+    if (expected_triangles == 0U || triangle_texture_slots.size() != expected_triangles) {
+        return false;
+    }
+
+    try {
+        std::size_t slot_offset = 0U;
+        RequiredSlots local;
+        for (const auto& primitive : scene.meshes) {
+            const std::size_t triangles = primitive.mesh.indices.size() / 3U;
+            if (triangles == 0U) continue;
+            const auto local_slots = triangle_texture_slots.subspan(slot_offset, triangles);
+            if (!collect_required_slots(primitive.mesh, local_slots, &local)) return false;
+            for (const auto slot : local.slots) {
+                if (!append_required_slot(slot, out)) return false;
+            }
+            slot_offset += triangles;
+        }
+        if (slot_offset != triangle_texture_slots.size()) return false;
     } catch (...) {
         out->slots.clear();
         out->max_slot = 0U;
@@ -57,6 +108,13 @@ bool can_attach_texture_companion(
     std::span<const std::uint32_t> triangle_texture_slots) noexcept {
     RequiredSlots required;
     return collect_required_slots(mesh, triangle_texture_slots, &required);
+}
+
+bool can_attach_texture_companion(
+    const RenderScene& scene,
+    std::span<const std::uint32_t> triangle_texture_slots) noexcept {
+    RequiredSlots required;
+    return collect_required_slots(scene, triangle_texture_slots, &required);
 }
 
 }  // namespace dmcresource::model_texture_binding
