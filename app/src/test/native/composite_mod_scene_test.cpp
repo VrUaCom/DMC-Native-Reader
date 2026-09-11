@@ -1,5 +1,7 @@
 #include <cassert>
+#include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "dmcresource/resource_capabilities.h"
@@ -115,12 +117,23 @@ int main() {
     assert(composite->render_mesh.vertices[0].x == 0.0F);
     assert(composite->render_mesh.vertices[3].x == 10.0F);
 
-    const auto state = black_widow_state(composite.get());
+    auto state = black_widow_state(composite.get());
     assert(widow::has_state(state, widow::StateFlag::CanRender));
     assert(widow::has_state(state, widow::StateFlag::CanShowUv));
     assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
+
+    // Even if the merged scene becomes globally incomplete, a retained part
+    // with a complete local binding still keeps explicit per-part PTX attach
+    // available. The UV gallery remains correctly disabled for that incomplete
+    // merged projection.
+    composite->render_triangle_texture_slots[1] =
+        std::numeric_limits<std::uint32_t>::max();
+    state = black_widow_state(composite.get());
+    assert(!widow::has_state(state, widow::StateFlag::CanShowUv));
+    assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    composite->render_triangle_texture_slots[1] = 1U;
 
     // A composite PTX must always target one explicit part; global automatic
     // slot matching is intentionally refused because each MOD owns its slots.
