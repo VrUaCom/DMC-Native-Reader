@@ -1,4 +1,4 @@
-# Native Reader 1.0 v27 — PNG export + multi-MOD scenes + companion foundation
+# Native Reader 1.0 v27 — PNG export + multi-MOD scenes
 
 Base main: `0148f0bd1b384fa1d2b43124b88423fd7b66c379` (accepted v26 merge).
 Work branch: `feature/png-export-multi-mod-v27`.
@@ -7,8 +7,8 @@ Android identity: versionName `1.0`, versionCode `27`, arm64-v8a.
 
 ## PNG export behavior
 
-The existing shared `🔄` tool is capability-driven by Spider Black Widow.
-It remains `🔄` in ordinary 3D model rendering. It changes to `↓` only when the
+The existing shared `🔄` tool is capability-driven by Spider Black Widow. It
+remains `🔄` in ordinary 3D model rendering and changes to `↓` only when the
 current native session exposes `CanExportPng`.
 
 | Current surface | `↓` action |
@@ -52,20 +52,20 @@ Each input is retained as a native `CompositePart` with its own:
 
 The top-level session creates one flattened render projection for the shared
 camera. Mesh/node references are offset safely and part names are prefixed in the
-flattened view. Texture slots are remapped into non-overlapping global ranges;
-the retained `CompositePart` data is not rewritten.
+flattened view. Texture slots are remapped into non-overlapping global ranges; the
+retained `CompositePart` data is not rewritten.
 
 Placement uses each MOD's canonical source coordinates. The reader does **not**
 infer weapon-to-bone, cape-to-skeleton, or other cross-file attachments. That
-boundary is deliberate: automatic attachment rules require canonical authority.
+boundary is deliberate: animation/physics attachment rules remain disabled until
+canonical authority exists.
 
 ### PTX in composite scenes
 
-Automatic PTX-to-part matching is forbidden. Choosing PTX from the top-right
-`⋮` menu in a composite scene first asks which MOD part owns the companion.
-Native attachment then validates the selected part against its own local UV and
-texture-slot mapping before publishing its textures into that part's remapped
-global slot range.
+Automatic PTX-to-part matching is forbidden. Pressing the PTX action in a
+composite scene first asks which MOD part owns the companion. Native attachment
+then validates the selected part against its own local UV and texture-slot mapping
+before publishing its textures into that part's remapped global slot range.
 
 Partial texturing is allowed for rendering. PTX attachment remains available when
 at least one retained part has a complete local binding even if the merged scene
@@ -77,10 +77,21 @@ all texture-requiring parts have valid companions.
 v27 also establishes a UI-level companion layer without pretending that unpromoted
 formats are already decoded or simulated.
 
+### Spider ownership
+
+Companion action availability is not inferred in Java. Spider Black Widow exposes
+`CanAddModelPart` and `CanStageCompanion` for promoted renderable MOD-model sessions.
+The Android shell may additionally require root-scene navigation state, but it does
+not infer model semantics from `.mod` filenames, titles or retained URI lists.
+
+A user-selected URI is storage/lifecycle state only. It becomes a semantic model
+part only after the native pipeline accepts it and native composition validates it.
+
 ### Top-right `⋮` companion menu
 
 The former dedicated PTX header button is replaced by a single top-right `⋮`
-entry point. On a root scene it provides context-aware actions for:
+entry point. On a Black-Widow-approved root MOD scene it provides context-aware
+actions for:
 
 - opening/replacing the current resource;
 - adding one or more `.MOD` parts to the current composite scene;
@@ -117,22 +128,46 @@ remain disabled until the matching native/canonical runtime is promoted.
 This distinction is intentional: v27 creates the attachment and selection UX that
 future animation/physics work can plug into, while preserving evidence boundaries.
 
+## Modular + Spider execution
+
+The production path remains:
+
+`probe -> NativeModuleRegistry -> Spider Crusader -> format adapter/TextureSet -> typed session`
+
+The registry still exposes exactly MOD / SCM / DDS / PTX. MOD/SCM share the
+Spider Crusader model entry point but keep separate canonical adapters. DDS/PTX
+share the Spider texture entry point. Successful promoted routes publish
+`spider.crusader` in the module trace.
+
+Future MOT/TM2/physics/cloth support must be added as bounded native modules and
+Spider execution plans before any staged resource gains runtime semantics. See
+`MODULAR_SPIDER_V27.md` for the hard boundary.
+
 ## Regression coverage added
 
+- `spider_model_execution_test`: exact four-module registry, shared Spider
+  model/texture entry points and successful MOD `spider.crusader` trace;
 - `composite_mod_scene_test`: source-local ownership, source-coordinate placement,
   unique texture namespaces, Black Widow state, partial composite PTX routing,
-  explicit-part requirement, and non-MOD rejection.
+  explicit-part requirement, and non-MOD rejection;
 - `png_export_session_test`: Black Widow export state and lazy canonical DDS child
-  materialization from retained encoded bytes.
-- `black_widow_state_test`: `CanExportPng` projection for gallery/image sessions.
+  materialization from retained encoded bytes;
+- `black_widow_state_test`: PNG export plus `CanAddModelPart` /
+  `CanStageCompanion` policy and negative non-model cases.
 
-The companion menu and motion strip are Android shell/UI foundation and therefore
-require device acceptance in addition to the portable native regression suite.
+These tests are registered in the portable CMake suite.
 
-These tests are registered in the portable CMake suite. GitHub-hosted PR jobs are
-currently affected by the repository's known runner/pre-step failure: the job can
-terminate with `steps: []` before checkout. Such a run is not counted as a code
-regression pass or failure.
+## Current hosted build state
+
+The current v27 GitHub-hosted jobs are failing before runner assignment. Observed
+jobs report `runner_id: 0`, an empty runner name and `steps: []`; the same behavior
+persisted while probing different hosted runner labels. Those runs did not execute
+checkout, CMake, Gradle or tests and therefore are not treated as either green
+build evidence or code-regression failures. The workflow runner labels were
+restored after the probes.
+
+No v27 APK is accepted or published until a real build executes and passes the
+gates below.
 
 ## Device acceptance required before merge
 
@@ -158,7 +193,10 @@ On the Samsung device:
    Info as staged and do not silently activate unsupported native behavior.
 10. Enter UV/PTX child navigation and confirm the motion strip is hidden there,
     then returns on the root scene.
-11. Confirm no inferred weapon/bone/cape placement, animation playback, physics,
+11. Confirm SCM/DDS/PTX views do not expose MOD-only add-model/staging actions
+    merely because of filenames or picker state.
+12. Confirm no inferred weapon/bone/cape placement, animation playback, physics,
     or cloth simulation is introduced.
 
-Keep PR #33 draft until this physical-device pass is confirmed.
+Keep PR #33 draft until a real build/regression run produces a verified arm64 APK
+and this physical-device pass is confirmed.
