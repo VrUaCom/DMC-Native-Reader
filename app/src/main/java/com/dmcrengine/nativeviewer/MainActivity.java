@@ -187,7 +187,7 @@ public final class MainActivity extends Activity {
     }
 
     private boolean hasModCompositionContext() {
-        return isRootScene() && !modelPartUris.isEmpty();
+        return isRootScene() && blackWidowState.canAddModelPart;
     }
 
     private void applyPrimaryPresentation() {
@@ -398,7 +398,7 @@ public final class MainActivity extends Activity {
         if (isRootScene() && canAttachPtx()) {
             menu.getMenu().add(0, MENU_ATTACH_PTX, 2, "Attach .PTX texture");
         }
-        if (isRootScene()) {
+        if (isRootScene() && blackWidowState.canStageCompanion) {
             menu.getMenu().add(0, MENU_ADD_MOTION, 3, "Add animation / motion…");
             menu.getMenu().add(0, MENU_ADD_TEXTURE, 4, "Add texture asset (.TM2 / .DDS / …)");
             menu.getMenu().add(0, MENU_ADD_PHYSICS, 5, "Add physics resource…");
@@ -571,7 +571,7 @@ public final class MainActivity extends Activity {
     }
 
     private void chooseStagedAssets(int requestCode, boolean allowMultiple) {
-        if (!isRootScene()) return;
+        if (!isRootScene() || !blackWidowState.canStageCompanion) return;
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
@@ -853,10 +853,6 @@ public final class MainActivity extends Activity {
         return path == null ? "resource.bin" : new File(path).getName();
     }
 
-    private boolean isModName(String name) {
-        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".mod");
-    }
-
     private ParcelFileDescriptor openReadOnlyDescriptor(Uri uri) throws FileNotFoundException {
         if ("file".equals(uri.getScheme()) && uri.getPath() != null) {
             return ParcelFileDescriptor.open(
@@ -924,11 +920,11 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        if (isModName(name)) {
+        activateSession(opened, name);
+        if (blackWidowState.canAddModelPart) {
             modelPartUris.add(uri);
             modelPartPtxUris.add(null);
         }
-        activateSession(opened, name);
     }
 
     private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets) {
