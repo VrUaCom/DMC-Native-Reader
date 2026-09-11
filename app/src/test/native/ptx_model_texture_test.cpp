@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "dmcresource/model_texture_binding.h"
 #include "dmcresource/view_renderer.h"
 
 int main() {
@@ -41,6 +42,17 @@ int main() {
     assert(materialize_triangle_texture_slots(scene, &slots));
     assert(slots.size() == 1U);
     assert(slots[0] == 1U);
+
+    // Composite parts retain RenderScene authority and deliberately do not keep
+    // a second per-part flattened Mesh. The scene-native validation route must
+    // therefore accept exactly the same canonical triangle-slot projection.
+    model_texture_binding::RequiredSlots scene_required;
+    assert(model_texture_binding::collect_required_slots(
+        scene, slots, &scene_required));
+    assert(scene_required.slots.size() == 1U);
+    assert(scene_required.slots[0] == 1U);
+    assert(scene_required.max_slot == 1U);
+    assert(model_texture_binding::can_attach_texture_companion(scene, slots));
 
     std::vector<ImagePreview> textures(2U);
     textures[1].width = 2U;
