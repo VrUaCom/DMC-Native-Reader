@@ -25,7 +25,9 @@ int main() {
         ResourceCapability::Wireframe |
         ResourceCapability::NodeHierarchy |
         ResourceCapability::TextureBinding |
-        ResourceCapability::UvCoordinates;
+        ResourceCapability::UvCoordinates |
+        ResourceCapability::SkeletalSkinning |
+        ResourceCapability::SkinWeights;
 
     std::vector<std::uint32_t> slots{2U};
     widow::ModelSessionView model{
@@ -51,6 +53,8 @@ int main() {
         state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::ChildBrowserMode));
     assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
+    assert(widow::has_state(state, widow::StateFlag::CanAddModelPart));
+    assert(widow::has_state(state, widow::StateFlag::CanStageCompanion));
 
     // PNG export is a typed native application-state decision, independent of
     // generic model rendering. Android only changes the shared button when this
@@ -86,6 +90,8 @@ int main() {
         state, widow::StateFlag::TextureCompanionAttachable));
     assert(!widow::has_state(
         state, widow::StateFlag::TextureCompanionAttached));
+    assert(!widow::has_state(state, widow::StateFlag::CanAddModelPart));
+    assert(!widow::has_state(state, widow::StateFlag::CanStageCompanion));
 
     model.renderable = true;
     slots[0] = std::numeric_limits<std::uint32_t>::max();
@@ -123,6 +129,15 @@ int main() {
     assert(!widow::has_state(
         state, widow::StateFlag::TextureCompanionAttachable));
 
+    // Removing MOD's skeletal-model capability removes model-part/companion
+    // actions even though generic geometry can still render. Android must consume
+    // these Spider flags instead of inferring a MOD context from file names.
+    model.capabilities &= ~capability(ResourceCapability::SkeletalSkinning);
+    state = widow::evaluate_model_session(model);
+    assert(widow::has_state(state, widow::StateFlag::CanRender));
+    assert(!widow::has_state(state, widow::StateFlag::CanAddModelPart));
+    assert(!widow::has_state(state, widow::StateFlag::CanStageCompanion));
+
     // Structural PTX-like sessions are native child-browser state, not a Java
     // combination of capabilities and child count.
     widow::ModelSessionView container{
@@ -142,6 +157,8 @@ int main() {
     assert(widow::has_state(state, widow::StateFlag::HasChildResources));
     assert(widow::has_state(state, widow::StateFlag::ChildBrowserMode));
     assert(widow::has_state(state, widow::StateFlag::CanExportPng));
+    assert(!widow::has_state(state, widow::StateFlag::CanAddModelPart));
+    assert(!widow::has_state(state, widow::StateFlag::CanStageCompanion));
 
     // A direct DDS/texture preview is not a child browser and can still expose
     // the same PNG export action.
@@ -161,6 +178,8 @@ int main() {
     assert(widow::has_state(state, widow::StateFlag::CanPreviewImage));
     assert(!widow::has_state(state, widow::StateFlag::ChildBrowserMode));
     assert(widow::has_state(state, widow::StateFlag::CanExportPng));
+    assert(!widow::has_state(state, widow::StateFlag::CanAddModelPart));
+    assert(!widow::has_state(state, widow::StateFlag::CanStageCompanion));
 
     return 0;
 }
