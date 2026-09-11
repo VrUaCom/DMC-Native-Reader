@@ -6,7 +6,7 @@ This changelog distinguishes accepted `main` history from development candidates
 
 **Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; real build/device acceptance pending; not yet part of accepted `main`.
 
-### PNG export
+### PNG export + direct Bitmap transport
 
 - the shared `🔄` control becomes `↓` only when native Black Widow exposes `CanExportPng`;
 - ordinary 3D MOD/SCM keeps `🔄` reset behavior;
@@ -16,15 +16,22 @@ This changelog distinguishes accepted `main` history from development candidates
 - an opened PTX/DDS image exports one PNG through the system save dialog;
 - filenames preserve the root source identity plus native child/slot title;
 - large PTX children outside the resident RGBA gallery budget can be lazily decoded from retained encoded DDS bytes, without removing the memory cap;
-- all writes use Android Storage Access Framework rather than broad storage permissions.
+- all writes use Android Storage Access Framework rather than broad storage permissions;
+- Android image transport no longer returns Java `int[]` frames: Java allocates/reuses an `ARGB_8888` Bitmap and JNI copies native RGBA rows into locked Bitmap pixels;
+- successful `AndroidBitmap_lockPixels` calls are paired with `AndroidBitmap_unlockPixels`, including the defensive null-pixel case;
+- `jnigraphics` is linked only by the Android `dmcviewer` target and is not a dependency of `DMCNativeReader::Core`;
+- `tools/verify_device_apk.py` gates the direct-Bitmap Java/C++ ABI and rejects a return to legacy `int[]` image declarations.
 
 ### Multi-MOD scenes
 
 - the open picker supports multi-select canonical MOD resources;
-- each input remains a native `CompositePart` with source-local scene, nodes, mesh, texture-slot projection, name and PTX state;
-- the flattened render projection safely offsets node/mesh references and remaps texture slots into non-overlapping global ranges;
+- each input remains a native `CompositePart` with an authoritative source-local `RenderScene`, local node namespace, triangle texture-slot projection, texture-slot base/span, name and PTX state;
+- a second per-part flattened `Mesh` is deliberately not retained;
+- the top-level session retains merged hierarchy nodes plus one flattened `render_mesh` for the shared camera/render path;
+- top-level `RenderScene.meshes` is not used as a duplicate composite geometry store;
+- the flattened render projection offsets vertex/index references safely and remaps texture slots into non-overlapping global ranges;
 - source coordinates are preserved; no weapon/cape/bone attachment is fabricated;
-- PTX attachment requires explicit MOD-part selection and validates against that part's local binding;
+- PTX attachment requires explicit MOD-part selection and validates directly against that part's local `RenderScene` binding;
 - adding more MOD parts preserves the staged scene context and restores remembered per-part PTX attachments where possible.
 
 ### Companion / animation foundation
@@ -53,18 +60,19 @@ This changelog distinguishes accepted `main` history from development candidates
 ### v27 evidence
 
 - added `spider_model_execution_test` for the four-module registry and shared Spider model/texture entry points;
-- added `composite_mod_scene_test`;
+- added `composite_mod_scene_test` for source-local ownership and one flattened top-level render projection;
 - added `png_export_session_test`;
+- extended `ptx_model_texture_test` for direct `RenderScene` texture-binding validation;
 - extended `black_widow_state_test` for PNG export and companion-action policy;
 - versionName remains `1.0`; Android candidate versionCode is `27`;
-- `tools/verify_device_apk.py` and APK verification gates target versionCode 27;
-- device acceptance covers PNG export, multi-MOD/PTX routing, the `⋮` companion menu, motion strip and preservation of evidence boundaries.
+- `tools/verify_device_apk.py` targets versionCode 27 and now checks direct-Bitmap Java/JNI signatures plus Android-only `jnigraphics` linkage;
+- device acceptance covers PNG export, multi-MOD/PTX routing, the `⋮` companion menu, motion strip, direct-Bitmap rotate/zoom behavior and preservation of evidence boundaries.
 
 ### Current build boundary
 
-No v27 APK is accepted yet. GitHub-hosted jobs are currently terminating before runner assignment (`runner_id: 0`, empty runner name, `steps: []`), including probes using different hosted runner labels. Checkout, CMake, Gradle and tests therefore did not execute, so those runs are neither green evidence nor code-regression evidence. Workflow runner labels were restored after the probe.
+No v27 APK is accepted yet. GitHub-hosted jobs observed on this development line have terminated before runner assignment with no executed steps. Checkout, CMake, Gradle and tests therefore did not execute, so those runs are neither green evidence nor code-regression evidence.
 
-PR #33 remains draft until a real build runs the native suite, produces/verifies the arm64 APK, and the Samsung device checklist is completed.
+PR #33 remains draft until a real build of the exact current head runs the native suite, produces/verifies the arm64 APK, and the Samsung device checklist is completed.
 
 See `docs/PNG_EXPORT_MULTI_MOD_V27.md` and `docs/MODULAR_SPIDER_V27.md`.
 
@@ -88,7 +96,7 @@ See `docs/PNG_EXPORT_MULTI_MOD_V27.md` and `docs/MODULAR_SPIDER_V27.md`.
 - long-press UV shows texture slots and triangle counts;
 - long-press wireframe/model structure shows objects, nested mesh groups and counts;
 - long-press bones/hierarchy shows explicit parent relationships, roots and invalid/unknown references without fabricating hierarchy;
-- hierarchy information availability is separated from spatial hierarchy authority;
+- hierarchy information availability is separated from spatial-render authority;
 - focused reports reuse the typed `InspectionDocument` path rather than reparsing model bytes;
 - verified candidate APK: versionName `1.0`, versionCode `26`, arm64-v8a, 597,665 bytes, 19 declared JNI exports, no Kotlin runtime;
 - candidate APK SHA-256: `b80be422197ff8270f67049dbdd596603b0ebcf4f41884f6b22a5936fedf4596`.
