@@ -59,16 +59,60 @@ std::unique_ptr<Session> make_session(Source&& source, std::string trace) {
     return session;
 }
 
+void retain_lazy_child_sources(Session* session,
+                               const std::uint8_t* bytes,
+                               std::size_t size) noexcept {
+    if (session == nullptr || bytes == nullptr || size == 0U) return;
+    bool allocation_failed = false;
+    for (auto& child : session->children) {
+        if (child.image_preview.available() ||
+            !has_capability(child.capabilities, ResourceCapability::ImagePreview)) {
+            continue;
+        }
+        const auto offset64 = child.source_span.offset;
+        const auto size64 = child.source_span.size;
+        if (offset64 > static_cast<std::uint64_t>(size) ||
+            size64 > static_cast<std::uint64_t>(size) - offset64) {
+            continue;
+        }
+        const auto offset = static_cast<std::size_t>(offset64);
+        const auto child_size = static_cast<std::size_t>(size64);
+        try {
+            child.source_bytes.assign(bytes + offset, bytes + offset + child_size);
+        } catch (...) {
+            child.source_bytes.clear();
+            allocation_failed = true;
+        }
+    }
+    if (allocation_failed) {
+        if (!session->detail.empty()) session->detail += "\n";
+        session->detail +=
+            "Lazy child source retention unavailable for one or more image children";
+    }
+}
+
+[[nodiscard]] bool update_max_texture_slot(std::uint32_t slot,
+                                           bool* seen,
+                                           std::uint32_t* max_slot) noexcept {
+    if (seen == nullptr || max_slot == nullptr) return false;
+    if (slot == kNoTextureSlot) return true;
+    *seen = true;
+    *max_slot = std::max(*max_slot, slot);
+    return true;
+}
+
 [[nodiscard]] bool compute_texture_slot_span(
+        const RenderScene& scene,
         const std::vector<std::uint32_t>& slots,
         std::uint32_t* out_span) noexcept {
     if (out_span == nullptr) return false;
     bool seen = false;
     std::uint32_t max_slot = 0U;
     for (const auto slot : slots) {
-        if (slot == kNoTextureSlot) continue;
-        seen = true;
-        max_slot = std::max(max_slot, slot);
+        if (!update_max_texture_slot(slot, &seen, &max_slot)) return false;
+    }
+    for (const auto& binding : scene.textures) {
+        if (!update_max_texture_slot(binding.texture_slot, &seen, &max_slot)) return false;
     }
     if (!seen) {
         *out_span = 0U;
@@ -178,6 +222,19 @@ std::unique_ptr<Session> make_session(Source&& source, std::string trace) {
     return false;
 }
 
+[[nodiscard]] bool has_attachable_composite_part(const Session* session) noexcept {
+    if (session == nullptr) return false;
+    for (const auto& part : session->composite_parts) {
+        if (texture_companion::can_attach({
+                .mesh = &part.render_mesh,
+                .triangle_texture_slots = part.render_triangle_texture_slots,
+            })) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void refresh_composite_texture_completion(Session* session) noexcept {
     if (session == nullptr || session->composite_parts.empty()) return;
     bool complete = true;
@@ -193,18 +250,21 @@ void refresh_composite_texture_completion(Session* session) noexcept {
 [[nodiscard]] bool session_png_export_available(const Session* session) noexcept {
     if (session == nullptr) return false;
     if (session->image_preview.available()) return true;
-    if (session->uv_gallery && session->uv_map_index &&
-        *session->uv_map_index < session->uv_gallery->maps.size()) {
-        return true;
+    if (session->uv_gallery) {
+        if (session->uv_map_index &&
+            *session->uv_map_index < session->uv_gallery->maps.size()) {
+            return true;
+        }
+        return !session->uv_gallery->maps.empty();
     }
-
-    const auto count = session_child_count(session);
-    if (count == 0U) return false;
-    for (std::size_t index = 0U; index < count; ++index) {
-        if (index > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
-        const auto [width, height] = session_child_preview_size(
-            session, static_cast<int>(index));
-        if (width == 0U || height == 0U) return false;
+    if (session->children.empty()) return false;
+    for (const auto& child : session->children) {
+        if (!has_capability(child.capabilities, ResourceCapability::ImagePreview)) {
+            return false;
+        }
+        if (!child.image_preview.available() && child.source_bytes.empty()) {
+            return false;
+        }
     }
     return true;
 }
@@ -233,6 +293,20 @@ InspectionNode make_composite_inspection_part(const Session& source,
 }  // namespace
 
 std::unique_ptr<Session> session_from_child(const ChildResource& child) {
+    if (!child.image_preview.available() &&
+        has_capability(child.capabilities, ResourceCapability::ImagePreview) &&
+        !child.source_bytes.empty()) {
+        const std::string filename = child.suggested_filename.empty()
+            ? child.title
+            : child.suggested_filename;
+        auto materialized = open_session(
+            filename, child.source_bytes.data(), child.source_bytes.size());
+        if (materialized && materialized->image_preview.available()) {
+            if (!materialized->detail.empty()) materialized->detail += "\n";
+            materialized->detail += "Lazy child materialized from retained container payload";
+            return materialized;
+        }
+    }
     return make_session(child, child.trace);
 }
 
@@ -254,6 +328,7 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
             (session->uv_gallery && !session->uv_gallery->maps.empty()),
         .object_count = count_inspection_nodes(session->inspection.root, InspectionKind::Object),
         .hierarchy_node_count = session->scene.nodes.size(),
+        .part_texture_attachment_available = has_attachable_composite_part(session),
         .png_export_available = session_png_export_available(session),
     });
 }
@@ -264,7 +339,9 @@ std::unique_ptr<Session> open_session(std::string_view name,
     if (!pipeline.accepted) return nullptr;
 
     auto trace = pipeline_trace(pipeline);
-    return make_session(std::move(pipeline), std::move(trace));
+    auto session = make_session(std::move(pipeline), std::move(trace));
+    retain_lazy_child_sources(session.get(), bytes, size);
+    return session;
 }
 
 std::unique_ptr<Session> compose_mod_sessions(
@@ -302,8 +379,9 @@ std::unique_ptr<Session> compose_mod_sessions(
             part.scene = source->scene;
             part.render_mesh = source->render_mesh;
             part.render_triangle_texture_slots = source->render_triangle_texture_slots;
-            if (!compute_texture_slot_span(part.render_triangle_texture_slots,
-                                           &part.texture_slot_span)) {
+            if (!compute_texture_slot_span(
+                    part.scene, part.render_triangle_texture_slots,
+                    &part.texture_slot_span)) {
                 return nullptr;
             }
             if (next_slot_base >= static_cast<std::uint64_t>(kNoTextureSlot)) return nullptr;
