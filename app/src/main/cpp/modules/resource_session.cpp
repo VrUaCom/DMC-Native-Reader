@@ -1,5 +1,6 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/texture_companion.h"
 
@@ -153,61 +154,70 @@ void retain_lazy_child_sources(Session* session,
     return true;
 }
 
-[[nodiscard]] bool append_composite_scene_part(RenderScene* merged,
-                                                const CompositePart& part) {
-    if (merged == nullptr) return false;
-    const std::size_t node_base = merged->nodes.size();
-    const std::size_t mesh_base = merged->meshes.size();
+[[nodiscard]] bool append_composite_projection(
+        Session* merged,
+        const Session& source,
+        const CompositePart& part,
+        bool* uv_complete,
+        bool* slots_complete) {
+    if (merged == nullptr || uv_complete == nullptr || slots_complete == nullptr) {
+        return false;
+    }
+
+    const std::size_t node_base = merged->scene.nodes.size();
+    const std::size_t vertex_base = merged->render_mesh.vertices.size();
+    const auto& source_mesh = source.render_mesh;
+    if (source_mesh.indices.size() % 3U != 0U) return false;
 
     try {
         for (const auto& source_node : part.scene.nodes) {
             auto node = source_node;
             if (!add_i32_offset(source_node.parent, node_base, &node.parent)) return false;
             if (!part.name.empty()) node.name = part.name + " / " + source_node.name;
-            merged->nodes.push_back(std::move(node));
+            merged->scene.nodes.push_back(std::move(node));
         }
 
-        for (const auto& source_mesh : part.scene.meshes) {
-            auto mesh = source_mesh;
-            if (!add_i32_offset(source_mesh.node_index, node_base, &mesh.node_index)) {
-                return false;
+        merged->render_mesh.vertices.insert(
+            merged->render_mesh.vertices.end(),
+            source_mesh.vertices.begin(), source_mesh.vertices.end());
+
+        if (*uv_complete) {
+            if (!source_mesh.has_uv0()) {
+                merged->render_mesh.uv0.clear();
+                *uv_complete = false;
+            } else {
+                merged->render_mesh.uv0.insert(
+                    merged->render_mesh.uv0.end(),
+                    source_mesh.uv0.begin(), source_mesh.uv0.end());
             }
-            if (!part.name.empty()) mesh.name = part.name + " / " + source_mesh.name;
-            merged->meshes.push_back(std::move(mesh));
         }
 
-        for (const auto& source_skin : part.scene.skins) {
-            auto skin = source_skin;
-            if (!add_u32_offset(source_skin.mesh_primitive, mesh_base,
-                                &skin.mesh_primitive)) {
-                return false;
-            }
-            for (auto& vertex : skin.vertices) {
-                for (auto& influence : vertex.influences) {
-                    std::uint32_t adjusted = 0U;
-                    if (!add_u32_offset(influence.node_index, node_base, &adjusted)) {
-                        return false;
+        for (const auto index : source_mesh.indices) {
+            if (index >= source_mesh.vertices.size()) return false;
+            std::uint32_t adjusted = 0U;
+            if (!add_u32_offset(index, vertex_base, &adjusted)) return false;
+            merged->render_mesh.indices.push_back(adjusted);
+        }
+
+        if (*slots_complete) {
+            const std::size_t triangles = source_mesh.indices.size() / 3U;
+            if (source.render_triangle_texture_slots.size() != triangles) {
+                merged->render_triangle_texture_slots.clear();
+                *slots_complete = false;
+            } else {
+                for (const auto slot : source.render_triangle_texture_slots) {
+                    if (slot == kNoTextureSlot) {
+                        merged->render_triangle_texture_slots.push_back(kNoTextureSlot);
+                        continue;
                     }
-                    influence.node_index = adjusted;
+                    const std::uint64_t remapped =
+                        static_cast<std::uint64_t>(slot) +
+                        static_cast<std::uint64_t>(part.texture_slot_base);
+                    if (remapped >= static_cast<std::uint64_t>(kNoTextureSlot)) return false;
+                    merged->render_triangle_texture_slots.push_back(
+                        static_cast<std::uint32_t>(remapped));
                 }
             }
-            merged->skins.push_back(std::move(skin));
-        }
-
-        for (const auto& source_texture : part.scene.textures) {
-            auto texture = source_texture;
-            if (!add_u32_offset(source_texture.mesh_primitive, mesh_base,
-                                &texture.mesh_primitive)) {
-                return false;
-            }
-            if (source_texture.texture_slot != kNoTextureSlot) {
-                const std::uint64_t remapped =
-                    static_cast<std::uint64_t>(source_texture.texture_slot) +
-                    static_cast<std::uint64_t>(part.texture_slot_base);
-                if (remapped >= static_cast<std::uint64_t>(kNoTextureSlot)) return false;
-                texture.texture_slot = static_cast<std::uint32_t>(remapped);
-            }
-            merged->textures.push_back(std::move(texture));
         }
         return true;
     } catch (...) {
@@ -290,6 +300,56 @@ InspectionNode make_composite_inspection_part(const Session& source,
     return node;
 }
 
+[[nodiscard]] bool prepare_composite_capacity(
+        Session* composite,
+        const std::vector<const Session*>& sources,
+        bool* uv_complete,
+        bool* slots_complete) {
+    if (composite == nullptr || uv_complete == nullptr || slots_complete == nullptr) {
+        return false;
+    }
+
+    std::size_t total_vertices = 0U;
+    std::size_t total_indices = 0U;
+    std::size_t total_nodes = 0U;
+    std::size_t total_triangles = 0U;
+    *uv_complete = true;
+    *slots_complete = true;
+
+    for (const Session* source : sources) {
+        if (source == nullptr || source->render_mesh.indices.size() % 3U != 0U) return false;
+        if (source->render_mesh.vertices.size() > resource_limits::kMaxVertices - total_vertices ||
+            source->render_mesh.indices.size() > resource_limits::kMaxIndices - total_indices) {
+            return false;
+        }
+        total_vertices += source->render_mesh.vertices.size();
+        total_indices += source->render_mesh.indices.size();
+        const std::size_t triangles = source->render_mesh.indices.size() / 3U;
+        if (triangles > resource_limits::kMaxIndices / 3U - total_triangles) return false;
+        total_triangles += triangles;
+        if (source->scene.nodes.size() >
+            std::numeric_limits<std::size_t>::max() - total_nodes) {
+            return false;
+        }
+        total_nodes += source->scene.nodes.size();
+        *uv_complete = *uv_complete && source->render_mesh.has_uv0();
+        *slots_complete = *slots_complete &&
+            source->render_triangle_texture_slots.size() == triangles;
+    }
+
+    try {
+        composite->composite_parts.reserve(sources.size());
+        composite->scene.nodes.reserve(total_nodes);
+        composite->render_mesh.vertices.reserve(total_vertices);
+        composite->render_mesh.indices.reserve(total_indices);
+        if (*uv_complete) composite->render_mesh.uv0.reserve(total_vertices);
+        if (*slots_complete) composite->render_triangle_texture_slots.reserve(total_triangles);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 }  // namespace
 
 std::unique_ptr<Session> session_from_child(const ChildResource& child) {
@@ -361,17 +421,25 @@ std::unique_ptr<Session> compose_mod_sessions(
         "placement", "source coordinates; no inferred bone or weapon attachment",
         EvidenceLevel::StructuralConfirmed});
 
+    for (const Session* source : sources) {
+        if (source == nullptr || source->probe.format != Format::Mod ||
+            !source->probe.content_confirmed || !source->renderable ||
+            !source->scene.has_geometry()) {
+            return nullptr;
+        }
+    }
+
+    bool uv_complete = true;
+    bool slots_complete = true;
+    if (!prepare_composite_capacity(
+            composite.get(), sources, &uv_complete, &slots_complete)) {
+        return nullptr;
+    }
+
     std::uint64_t next_slot_base = 0U;
     try {
-        composite->composite_parts.reserve(sources.size());
         for (std::size_t index = 0U; index < sources.size(); ++index) {
             const Session* source = sources[index];
-            if (source == nullptr || source->probe.format != Format::Mod ||
-                !source->probe.content_confirmed || !source->renderable ||
-                !source->scene.has_geometry()) {
-                return nullptr;
-            }
-
             CompositePart part;
             part.name = names[index].empty()
                 ? "MOD part " + std::to_string(index + 1U)
@@ -394,24 +462,29 @@ std::unique_ptr<Session> compose_mod_sessions(
             composite->capabilities |= source->capabilities;
             composite->inspection.root.children.push_back(
                 make_composite_inspection_part(*source, part, index));
+            if (!append_composite_projection(
+                    composite.get(), *source, part, &uv_complete, &slots_complete)) {
+                return nullptr;
+            }
             composite->composite_parts.push_back(std::move(part));
-        }
-
-        for (const auto& part : composite->composite_parts) {
-            if (!append_composite_scene_part(&composite->scene, part)) return nullptr;
         }
     } catch (...) {
         return nullptr;
     }
 
-    composite->renderable = true;
+    composite->renderable = !composite->render_mesh.vertices.empty() &&
+        composite->render_mesh.indices.size() >= 3U;
+    if (!composite->renderable) return nullptr;
+
+    if (!materialize_hierarchy_overlay(composite->scene, &composite->hierarchy_overlay)) {
+        composite->hierarchy_overlay = {};
+    }
     composite->detail = "Composite MOD scene: " +
         std::to_string(composite->composite_parts.size()) +
-        " canonical parts; each source scene/node namespace is retained; "
+        " canonical parts; source-local scenes retained once; one flattened render projection; "
         "placement uses source coordinates only; inferred bone/weapon attachments are disabled";
-    composite->trace = "route=MOD[]->CompositePart[]->RenderScene; animation/physics=deferred";
-    prepare_session_caches(composite.get());
-    if (!composite->renderable) return nullptr;
+    composite->trace =
+        "route=MOD[]->CompositePart[source-scene][]->RenderMesh; animation/physics=deferred";
     refresh_composite_texture_completion(composite.get());
     return composite;
 }
