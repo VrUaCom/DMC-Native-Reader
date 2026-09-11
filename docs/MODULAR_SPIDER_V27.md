@@ -100,12 +100,19 @@ A diagnostic string is never authority for enabling an action.
 
 Android can select several URIs and open file descriptors. It does not merge
 models itself. `compose_mod_sessions` validates canonical MOD sessions and retains
-each source as a `CompositePart` with its own scene, nodes, mesh, texture namespace,
+each source as a `CompositePart` with an authoritative source-local `RenderScene`,
+node namespace, local triangle texture-slot projection, texture-slot base/span,
 name and PTX state.
 
-Only the top-level render projection is flattened. Texture slots are remapped to
-non-overlapping ranges. Source coordinates are preserved. Cross-file weapon,
-cape, cloth or bone attachment is not inferred.
+A `CompositePart` intentionally does **not** retain a second flattened `Mesh`.
+PTX validation uses the source-local `RenderScene` directly. At top level the
+session retains the merged hierarchy namespace plus one flattened `render_mesh`
+projection for the shared render path. It does not duplicate all part geometry in
+`Session::scene.meshes`.
+
+Texture slots are remapped to non-overlapping ranges only in the top-level render
+projection. Source coordinates are preserved. Cross-file weapon, cape, cloth or
+bone attachment is not inferred.
 
 Android retains source URIs only so explicitly user-selected resources can be
 reopened if a composite scene is rebuilt. The URI list is storage/lifecycle state,
@@ -151,15 +158,42 @@ selected motion FD
 
 The same pattern applies to future physics and cloth modules.
 
-## 7. JNI rule
+## 7. JNI rule and direct Bitmap transport
 
 `app_native.cpp` is transport and ownership glue only. It may map a file descriptor,
-translate JNI primitive/string/array values, and call portable core APIs. It must
-not implement DMC parsing algorithms or duplicate module policy.
+translate JNI primitive/string/object values, fill Android-owned Bitmaps, and call
+portable core APIs. It must not implement DMC parsing algorithms or duplicate
+module policy.
 
-JNI must also avoid avoidable full-frame copies. Image transfer should use bounded
-chunks or another measured low-copy path instead of allocating a second full-size
-native ARGB buffer beside the native RGBA frame and Java destination array.
+The v27 image ABI is direct-Bitmap:
+
+```text
+native RgbaImage / ImagePreview
+  -> Java-owned ARGB_8888 Bitmap
+  -> AndroidBitmap_getInfo
+  -> AndroidBitmap_lockPixels
+  -> bounded row copies respecting Bitmap stride
+  -> AndroidBitmap_unlockPixels
+```
+
+The old Java `int[]` frame ABI is forbidden. JNI fails closed on null Bitmaps,
+wrong dimensions, non-RGBA_8888 format, insufficient stride, source-size mismatch,
+or lock failure. Every successful lock must be paired with an unlock, including a
+defensive success-with-null-pixel case.
+
+`jnigraphics` is an Android JNI-shell dependency only. It is linked to `dmcviewer`
+inside the `if(ANDROID)` CMake boundary and must never become a dependency of
+`DMCNativeReader::Core`.
+
+`DmcRenderView` should reuse a writable Bitmap while dimensions remain unchanged;
+static image preview/export paths use the same native fill contract. This removes
+the avoidable Java `int[]` transport and repeated per-frame Bitmap construction
+without moving format semantics into Java.
+
+`tools/verify_device_apk.py` protects this boundary by checking the Java direct-
+Bitmap declarations, matching JNI `jboolean`/`jobject` entry points, the absence of
+legacy `int[]` image declarations, and Android-only `jnigraphics` linkage in
+addition to the exported JNI symbol set.
 
 ## 8. C++ standard and performance policy
 
@@ -195,6 +229,9 @@ identity.
 that target instead of enumerating parser sources itself. Future Windows, iOS/macOS
 or Web/WASM shells must link the same core so format behavior remains identical.
 
+Android-only libraries such as `jnigraphics` belong to the Android shell target,
+never the portable Core.
+
 ## 10. Required regression gates
 
 Before v27 promotion, at minimum keep these passing:
@@ -207,16 +244,22 @@ Before v27 promotion, at minimum keep these passing:
 - `composite_mod_scene_test`
 - `png_export_session_test`
 - `ptx_model_texture_test`
+- `render_scene_test`
 - `uv_gallery_test`
 - `session_inspection_test`
+- `mod_spatial_adapter_test`
 
 `black_widow_state_test` must cover the companion-action flags as well as PNG and
 existing model/image/container policy. `spider_model_execution_test` also protects
 the typed MOD-vs-SCM capability distinction used by Black Widow, so Android never
-needs filename policy.
+needs filename policy. `ptx_model_texture_test` protects the scene-native texture
+binding route required by low-copy `CompositePart` storage.
+
+APK verification must also pass the source/ABI direct-Bitmap checks in
+`tools/verify_device_apk.py`.
 
 Physical-device acceptance remains required for Android picker/export/menu/motion
-strip behavior.
+strip and rotate/zoom Bitmap-reuse behavior.
 
 ## 11. Build evidence boundary
 
@@ -227,8 +270,8 @@ regression or a successful build.
 
 No APK built from an older accepted revision may be relabeled as v27. A v27 APK is
 accepted only after a real build of the current v27 head executes the native
-regressions, produces the arm64 APK, passes package/signing/JNI/module-marker
-verification, and is then physically exercised on the Samsung device.
+regressions, produces the arm64 APK, passes package/signing/JNI/module-marker and
+direct-Bitmap verification, and is then physically exercised on the Samsung device.
 
 ## 12. Non-negotiable rule for later work
 
