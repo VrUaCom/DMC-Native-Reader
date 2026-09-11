@@ -226,7 +226,7 @@ void retain_lazy_child_sources(Session* session,
     if (session == nullptr) return false;
     for (const auto& part : session->composite_parts) {
         if (texture_companion::can_attach({
-                .mesh = &part.render_mesh,
+                .scene = &part.scene,
                 .triangle_texture_slots = part.render_triangle_texture_slots,
             })) {
             return true;
@@ -277,10 +277,10 @@ InspectionNode make_composite_inspection_part(const Session& source,
     node.title = part.name;
     node.kind = InspectionKind::Collection;
     node.properties.push_back({"source_format", "MOD", EvidenceLevel::DataConfirmed});
-    node.properties.push_back({"vertices", std::to_string(part.render_mesh.vertices.size()),
+    node.properties.push_back({"vertices", std::to_string(source.render_mesh.vertices.size()),
                                EvidenceLevel::DataConfirmed});
     node.properties.push_back({"triangles",
-                               std::to_string(part.render_mesh.indices.size() / 3U),
+                               std::to_string(source.render_mesh.indices.size() / 3U),
                                EvidenceLevel::DataConfirmed});
     node.properties.push_back({"texture_slot_base", std::to_string(part.texture_slot_base),
                                EvidenceLevel::StructuralConfirmed});
@@ -377,7 +377,6 @@ std::unique_ptr<Session> compose_mod_sessions(
                 ? "MOD part " + std::to_string(index + 1U)
                 : names[index];
             part.scene = source->scene;
-            part.render_mesh = source->render_mesh;
             part.render_triangle_texture_slots = source->render_triangle_texture_slots;
             if (!compute_texture_slot_span(
                     part.scene, part.render_triangle_texture_slots,
@@ -516,7 +515,7 @@ bool attach_session_part_ptx(Session* session, int part_index,
     auto attachment = dmcresource::texture_companion::attach_ptx(
         name, bytes, size,
         {
-            .mesh = &part.render_mesh,
+            .scene = &part.scene,
             .triangle_texture_slots = part.render_triangle_texture_slots,
         });
 
