@@ -35,6 +35,7 @@ enum class StateFlag : std::uint64_t {
     CanInspectUv               = 1ULL << 19U,
     CanInspectMeshes           = 1ULL << 20U,
     CanInspectHierarchy        = 1ULL << 21U,
+    CanExportPng               = 1ULL << 22U,
 };
 
 using StateBits = std::uint64_t;
@@ -61,6 +62,7 @@ struct ModelSessionView final {
     bool uv_data_available{};
     std::size_t object_count{};
     std::size_t hierarchy_node_count{};
+    bool png_export_available{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral
