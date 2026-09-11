@@ -58,8 +58,59 @@ def main():
                    "formats.mod.mesh-reader", "formats.scm.mesh-reader",
                    "formats.texture.spider-reader"):
         require(marker.encode() in library, "Missing native module: " + marker)
+
     root = Path(__file__).resolve().parents[1]
     bridge = (root / "app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java").read_text()
+    native_cpp = (root / "app/src/main/cpp/app_native.cpp").read_text()
+    cmake = (root / "app/src/main/cpp/CMakeLists.txt").read_text()
+
+    # v27 image transport is a source/API contract, not merely a JNI symbol-name
+    # contract. Fail if the old Java int[] frame ABI returns or if Java/C++ drift.
+    require("import android.graphics.Bitmap;" in bridge,
+            "NativeBridge must use android.graphics.Bitmap for image transport")
+    direct_bitmap_java = {
+        "imagePreview": (
+            r"public\s+static\s+native\s+boolean\s+imagePreview\s*\(\s*"
+            r"long\s+\w+\s*,\s*Bitmap\s+\w+\s*\)\s*;"),
+        "childResourcePreview": (
+            r"public\s+static\s+native\s+boolean\s+childResourcePreview\s*\(\s*"
+            r"long\s+\w+\s*,\s*int\s+\w+\s*,\s*Bitmap\s+\w+\s*\)\s*;"),
+        "render": (
+            r"public\s+static\s+native\s+boolean\s+render\s*\(\s*"
+            r"long\s+\w+\s*,\s*int\s+\w+\s*,\s*int\s+\w+\s*,\s*"
+            r"float\s+\w+\s*,\s*float\s+\w+\s*,\s*float\s+\w+\s*,\s*"
+            r"int\s+\w+\s*,\s*Bitmap\s+\w+\s*\)\s*;"),
+    }
+    for method, pattern in direct_bitmap_java.items():
+        require(re.search(pattern, bridge, re.DOTALL),
+                "Direct-Bitmap Java ABI mismatch: " + method)
+    require(not re.search(
+        r"public\s+static\s+native\s+int\s*\[\s*\]\s+"
+        r"(?:imagePreview|childResourcePreview|render)\s*\(", bridge),
+        "Legacy Java int[] image transport returned")
+
+    for method in direct_bitmap_java:
+        pattern = (
+            r"JNIEXPORT\s+jboolean\s+JNICALL\s+"
+            r"Java_com_dmcrengine_nativeviewer_NativeBridge_" + re.escape(method) +
+            r"\s*\([^)]*\bjobject\s+\w+[^)]*\)")
+        require(re.search(pattern, native_cpp, re.DOTALL),
+                "Direct-Bitmap JNI ABI mismatch: " + method)
+    require("AndroidBitmap_lockPixels" in native_cpp and
+            "AndroidBitmap_unlockPixels" in native_cpp,
+            "Direct-Bitmap JNI pixel lock/unlock path missing")
+
+    android_link = re.search(
+        r"target_link_libraries\s*\(\s*dmcviewer\s+PRIVATE(?P<body>.*?)\)",
+        cmake, re.DOTALL)
+    core_link = re.search(
+        r"target_link_libraries\s*\(\s*dmc_native_reader_core(?P<body>.*?)\)",
+        cmake, re.DOTALL)
+    require(android_link and "jnigraphics" in android_link.group("body"),
+            "Android JNI target must link jnigraphics")
+    require(core_link and "jnigraphics" not in core_link.group("body"),
+            "Portable Core must not link Android jnigraphics")
+
     methods = re.findall(r"public static native\s+\S+\s+(\w+)\(", bridge)
     with tempfile.TemporaryDirectory() as temp:
         path = Path(temp) / "libdmcviewer.so"
@@ -80,7 +131,8 @@ def main():
     print(json.dumps({"apk": str(args.apk), "versionName": "1.0", "versionCode": 27,
                       "abi": "arm64-v8a", "signer_sha256": expected,
                       "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
-                      "jni_exports_checked": len(methods), "zip_integrity": "pass",
+                      "jni_exports_checked": len(methods),
+                      "direct_bitmap_abi": "pass", "zip_integrity": "pass",
                       "apk_bytes": args.apk.stat().st_size,
                       "native_bytes": len(library), "dex_bytes": dex_bytes,
                       "public_native_exports": len(exports), "kotlin_runtime": "absent",
