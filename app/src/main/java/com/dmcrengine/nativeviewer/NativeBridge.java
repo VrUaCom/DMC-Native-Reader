@@ -8,12 +8,16 @@ public final class NativeBridge {
     private NativeBridge() {}
 
     public static native long open(int fd, String filename);
+    public static native long composeMods(long[] handles, String[] names);
     public static native void close(long handle);
     public static native String info(long handle);
 
     // Spider Black Widow is the single Android application/UI-state contract.
     // Java must not reconstruct policy from raw capabilities or diagnostics.
     public static native long blackWidowState(long handle);
+
+    public static native int compositePartCount(long handle);
+    public static native String compositePartName(long handle, int index);
 
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
@@ -25,9 +29,12 @@ public final class NativeBridge {
     public static native String inspectionTopic(long handle, int topic);
 
     // Companion-resource orchestration. Java only supplies a file descriptor;
-    // native Spider/framing/DDS modules validate PTX and bind its decoded
-    // texture slots to an already-open neutral RenderScene.
+    // native Spider/framing/DDS modules validate PTX and bind decoded texture
+    // slots. Composite scenes require an explicit part index, so Android never
+    // guesses which MOD owns a PTX companion.
     public static native boolean attachPtx(long handle, int fd, String filename);
+    public static native boolean attachPtxToPart(long handle, int partIndex,
+                                                  int fd, String filename);
     public static native String textureAttachmentInfo(long handle);
 
     // Generic nested-resource browser contract. Parent modules publish typed
