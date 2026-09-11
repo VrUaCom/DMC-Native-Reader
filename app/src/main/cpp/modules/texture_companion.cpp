@@ -17,12 +17,24 @@ namespace {
     return std::as_bytes(std::span<const std::uint8_t>{bytes, size});
 }
 
+[[nodiscard]] bool collect_required(const ModelTextureView& model,
+                                    model_texture_binding::RequiredSlots* out) noexcept {
+    if (model.mesh != nullptr) {
+        return model_texture_binding::collect_required_slots(
+            *model.mesh, model.triangle_texture_slots, out);
+    }
+    if (model.scene != nullptr) {
+        return model_texture_binding::collect_required_slots(
+            *model.scene, model.triangle_texture_slots, out);
+    }
+    return false;
+}
+
 }  // namespace
 
 bool can_attach(const ModelTextureView& model) noexcept {
-    if (model.mesh == nullptr) return false;
-    return model_texture_binding::can_attach_texture_companion(
-        *model.mesh, model.triangle_texture_slots);
+    model_texture_binding::RequiredSlots required;
+    return collect_required(model, &required);
 }
 
 AttachmentResult attach_ptx(
@@ -32,15 +44,14 @@ AttachmentResult attach_ptx(
     const ModelTextureView& model) noexcept {
     AttachmentResult out;
 
-    if (model.mesh == nullptr) {
+    if (model.mesh == nullptr && model.scene == nullptr) {
         out.detail =
             "PTX companion rejected: current resource has no model texture projection";
         return out;
     }
 
     model_texture_binding::RequiredSlots required;
-    if (!model_texture_binding::collect_required_slots(
-            *model.mesh, model.triangle_texture_slots, &required)) {
+    if (!collect_required(model, &required)) {
         out.detail =
             "PTX companion rejected: current resource has no complete UV + texture-slot render mapping";
         return out;
