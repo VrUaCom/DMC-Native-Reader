@@ -1111,29 +1111,36 @@ public final class MainActivity extends Activity {
     private Bitmap bitmapForSession(long handle) {
         if (handle == 0) return null;
         BlackWidowState state = BlackWidowState.fromNative(NativeBridge.blackWidowState(handle));
-        int width;
-        int height;
-        int[] pixels;
-
+        final int width;
+        final int height;
         if (state.uvMapView) {
             width = UV_EXPORT_SIZE;
             height = UV_EXPORT_SIZE;
-            pixels = NativeBridge.render(handle, width, height, 0.0f, 0.0f, 1.0f, 0);
         } else {
             width = NativeBridge.imagePreviewWidth(handle);
             height = NativeBridge.imagePreviewHeight(handle);
-            pixels = NativeBridge.imagePreview(handle);
         }
 
-        if (width <= 0 || height <= 0 || pixels == null
-                || (long) pixels.length != (long) width * (long) height) {
+        final long expected = (long) width * (long) height;
+        if (width <= 0 || height <= 0 || expected <= 0L || expected > Integer.MAX_VALUE) {
             return null;
         }
+
+        final Bitmap bitmap;
         try {
-            return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
-        } catch (RuntimeException error) {
+            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
             return null;
         }
+
+        final boolean filled = state.uvMapView
+                ? NativeBridge.render(handle, width, height, 0.0f, 0.0f, 1.0f, 0, bitmap)
+                : NativeBridge.imagePreview(handle, bitmap);
+        if (!filled) {
+            bitmap.recycle();
+            return null;
+        }
+        return bitmap;
     }
 
     private boolean saveBitmapToUri(Bitmap bitmap, Uri target) {
