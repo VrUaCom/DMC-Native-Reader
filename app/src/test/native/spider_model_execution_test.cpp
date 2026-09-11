@@ -7,6 +7,7 @@
 
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/native_module.h"
+#include "dmcresource/resource_capabilities.h"
 
 namespace {
 
@@ -118,6 +119,8 @@ bool trace_contains(const dmcresource::PipelineResult& result,
 
 int main() {
     using dmcresource::NativeModuleRegistry;
+    using dmcresource::ResourceCapability;
+    using dmcresource::has_capability;
 
     const auto& modules = NativeModuleRegistry::modules();
     assert(modules.size() == 4U);
@@ -133,6 +136,12 @@ int main() {
     assert(mod->run == scm->run);
     assert(dds->run == ptx->run);
     assert(mod->run != dds->run);
+
+    // Black Widow can distinguish the promoted skeletal MOD model family from
+    // SCM without Android inspecting filenames: the distinction is carried by
+    // typed module capabilities published by the registry.
+    assert(has_capability(mod->capabilities, ResourceCapability::SkeletalSkinning));
+    assert(!has_capability(scm->capabilities, ResourceCapability::SkeletalSkinning));
 
     const auto bytes = make_mod();
     const auto result = dmcresource::run_decode_pipeline(
