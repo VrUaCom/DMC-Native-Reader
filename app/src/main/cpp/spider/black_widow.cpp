@@ -79,6 +79,7 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::CanInspectUv, session.uv_data_available);
     set_if(&state, StateFlag::CanInspectMeshes, session.object_count != 0U);
     set_if(&state, StateFlag::CanInspectHierarchy, session.hierarchy_node_count != 0U);
+    set_if(&state, StateFlag::CanExportPng, session.png_export_available);
     return state;
 }
 
