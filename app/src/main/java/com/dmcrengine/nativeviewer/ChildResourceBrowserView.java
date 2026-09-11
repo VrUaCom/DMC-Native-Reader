@@ -3,6 +3,8 @@ package com.dmcrengine.nativeviewer;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -54,6 +56,15 @@ public final class ChildResourceBrowserView extends GridView {
         return value == null || value.isEmpty() ? "Resource " + index : value;
     }
 
+    private void clearImage(ImageView image) {
+        Drawable drawable = image.getDrawable();
+        image.setImageDrawable(null);
+        if (drawable instanceof BitmapDrawable) {
+            Bitmap old = ((BitmapDrawable) drawable).getBitmap();
+            if (old != null && !old.isRecycled()) old.recycle();
+        }
+    }
+
     private final class Tile extends LinearLayout {
         final ImageView image;
         final TextView caption;
@@ -84,7 +95,7 @@ public final class ChildResourceBrowserView extends GridView {
         @Override public long getItemId(int index) { return index; }
         @Override public View getView(int index, View recycled, ViewGroup parent) {
             Tile tile = recycled instanceof Tile ? (Tile) recycled : new Tile();
-            tile.image.setImageDrawable(null);
+            clearImage(tile.image);
             final String label = title(index);
             tile.caption.setText(label);
             tile.setContentDescription(label);
@@ -92,11 +103,12 @@ public final class ChildResourceBrowserView extends GridView {
                 final int w = NativeBridge.childResourcePreviewWidth(session, index);
                 final int h = NativeBridge.childResourcePreviewHeight(session, index);
                 final long expected = (long) w * h;
-                if (w > 0 && h > 0 && expected <= Integer.MAX_VALUE) {
-                    final int[] pixels = NativeBridge.childResourcePreview(session, index);
-                    if (pixels != null && pixels.length == expected) {
-                        tile.image.setImageBitmap(Bitmap.createBitmap(
-                                pixels, w, h, Bitmap.Config.ARGB_8888));
+                if (w > 0 && h > 0 && expected > 0L && expected <= Integer.MAX_VALUE) {
+                    Bitmap preview = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                    if (NativeBridge.childResourcePreview(session, index, preview)) {
+                        tile.image.setImageBitmap(preview);
+                    } else {
+                        preview.recycle();
                     }
                 }
             } catch (OutOfMemoryError | RuntimeException ignored) {
