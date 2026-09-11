@@ -36,6 +36,14 @@ preview budget, the parent session retains only that child's encoded DDS payload
 Opening/exporting it lazily routes those bytes back through the canonical DDS
 pipeline. This allows `↓ all` without keeping every large decoded texture in RAM.
 
+### JNI image-transfer memory
+
+RGBA -> Android ARGB transfer is bounded. The previous JNI path allocated one
+additional full-size native ARGB vector before copying to the Java `int[]`.
+The v27 path converts through a fixed 4096-pixel chunk (~16 KiB) and writes each
+chunk directly into the destination Java array. For a 1024x1024 image this removes
+an avoidable ~4 MiB native temporary allocation while preserving identical output.
+
 ## Multi-MOD composition
 
 The open picker supports multi-select. Two or more selected resources are composed
@@ -45,10 +53,14 @@ invalid selections fail closed.
 Each input is retained as a native `CompositePart` with its own:
 
 - source name;
-- source-local `RenderScene` and node namespace;
-- source-local render mesh;
+- source-local authoritative `RenderScene` and node namespace;
 - source-local triangle texture-slot projection;
 - PTX attachment state.
+
+A second per-part flattened `Mesh` is deliberately **not** retained. PTX validation
+runs directly against the authoritative source-local `RenderScene`, so adding body,
+cape, gear and weapon parts does not duplicate each part's vertices/indices/UV only
+for companion validation.
 
 The top-level session creates one flattened render projection for the shared
 camera. Mesh/node references are offset safely and part names are prefixed in the
@@ -65,7 +77,8 @@ canonical authority exists.
 Automatic PTX-to-part matching is forbidden. Pressing the PTX action in a
 composite scene first asks which MOD part owns the companion. Native attachment
 then validates the selected part against its own local UV and texture-slot mapping
-before publishing its textures into that part's remapped global slot range.
+directly from its retained `RenderScene`, before publishing textures into that
+part's remapped global slot range.
 
 Partial texturing is allowed for rendering. PTX attachment remains available when
 at least one retained part has a complete local binding even if the merged scene
@@ -148,8 +161,8 @@ Spider execution plans before any staged resource gains runtime semantics. See
 - `spider_model_execution_test`: exact four-module registry, shared Spider
   model/texture entry points and successful MOD `spider.crusader` trace;
 - `composite_mod_scene_test`: source-local ownership, source-coordinate placement,
-  unique texture namespaces, Black Widow state, partial composite PTX routing,
-  explicit-part requirement, and non-MOD rejection;
+  unique texture namespaces, scene-native local PTX validation, Black Widow state,
+  partial composite PTX routing, explicit-part requirement, and non-MOD rejection;
 - `png_export_session_test`: Black Widow export state and lazy canonical DDS child
   materialization from retained encoded bytes;
 - `black_widow_state_test`: PNG export plus `CanAddModelPart` /
