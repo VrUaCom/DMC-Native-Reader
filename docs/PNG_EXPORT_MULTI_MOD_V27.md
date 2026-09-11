@@ -36,13 +36,25 @@ preview budget, the parent session retains only that child's encoded DDS payload
 Opening/exporting it lazily routes those bytes back through the canonical DDS
 pipeline. This allows `↓ all` without keeping every large decoded texture in RAM.
 
-### JNI image-transfer memory
+### Direct Bitmap JNI transport
 
-RGBA -> Android ARGB transfer is bounded. The previous JNI path allocated one
-additional full-size native ARGB vector before copying to the Java `int[]`.
-The v27 path converts through a fixed 4096-pixel chunk (~16 KiB) and writes each
-chunk directly into the destination Java array. For a 1024x1024 image this removes
-an avoidable ~4 MiB native temporary allocation while preserving identical output.
+The v27 Android image ABI no longer returns Java `int[]` frames. Android allocates
+an `ARGB_8888` `Bitmap`, JNI validates its dimensions/format/stride, locks its pixel
+storage with the NDK `AndroidBitmap_*` API, and copies native RGBA rows directly
+into that destination. `jnigraphics` is linked only by the Android `dmcviewer` JNI
+target; `DMCNativeReader::Core` remains platform-neutral.
+
+This removes the former full-frame native ARGB conversion buffer and the Java
+`int[]` transport allocation. `DmcRenderView` also reuses the same writable Bitmap
+across rotate/zoom frames while its dimensions remain unchanged. Static DDS/PTX
+previews and PNG export use the same direct destination contract, while gallery
+export materializes/recycles one child Bitmap at a time.
+
+The JNI path fails closed on a null destination, invalid dimensions, wrong Bitmap
+format, insufficient stride, native RGBA size mismatch, or pixel-lock failure.
+Every successful pixel lock is paired with `AndroidBitmap_unlockPixels`, including
+the defensive null-pixel case. `tools/verify_device_apk.py` additionally gates the
+Java/C++ direct-Bitmap ABI and the Android-only `jnigraphics` link boundary.
 
 ## Multi-MOD composition
 
@@ -55,6 +67,7 @@ Each input is retained as a native `CompositePart` with its own:
 - source name;
 - source-local authoritative `RenderScene` and node namespace;
 - source-local triangle texture-slot projection;
+- texture-slot base/span;
 - PTX attachment state.
 
 A second per-part flattened `Mesh` is deliberately **not** retained. PTX validation
@@ -62,10 +75,11 @@ runs directly against the authoritative source-local `RenderScene`, so adding bo
 cape, gear and weapon parts does not duplicate each part's vertices/indices/UV only
 for companion validation.
 
-The top-level session creates one flattened render projection for the shared
-camera. Mesh/node references are offset safely and part names are prefixed in the
-flattened view. Texture slots are remapped into non-overlapping global ranges; the
-retained `CompositePart` data is not rewritten.
+The top-level session retains the merged hierarchy namespace plus **one** flattened
+`render_mesh` projection for the shared camera/render path. Vertex/index data is
+concatenated once into that projection, texture slots are remapped into
+non-overlapping global ranges, and source-local `RenderScene` data remains owned by
+its `CompositePart`. There is no second top-level `RenderScene.meshes` geometry copy.
 
 Placement uses each MOD's canonical source coordinates. The reader does **not**
 infer weapon-to-bone, cape-to-skeleton, or other cross-file attachments. That
@@ -161,14 +175,18 @@ Spider execution plans before any staged resource gains runtime semantics. See
 - `spider_model_execution_test`: exact four-module registry, shared Spider
   model/texture entry points and successful MOD `spider.crusader` trace;
 - `composite_mod_scene_test`: source-local ownership, source-coordinate placement,
-  unique texture namespaces, scene-native local PTX validation, Black Widow state,
-  partial composite PTX routing, explicit-part requirement, and non-MOD rejection;
+  unique texture namespaces, one flattened top-level render projection,
+  scene-native local PTX validation, Black Widow state, partial composite PTX
+  routing, explicit-part requirement, and non-MOD rejection;
 - `png_export_session_test`: Black Widow export state and lazy canonical DDS child
   materialization from retained encoded bytes;
 - `black_widow_state_test`: PNG export plus `CanAddModelPart` /
-  `CanStageCompanion` policy and negative non-model cases.
+  `CanStageCompanion` policy and negative non-model cases;
+- `tools/verify_device_apk.py`: exact public JNI export set plus direct-Bitmap
+  Java/C++ ABI and Android-only `jnigraphics` boundary checks.
 
-These tests are registered in the portable CMake suite.
+These tests/gates are registered for the v27 candidate, but they are not claimed
+passing until a real runner executes the current head.
 
 ## Current hosted build state
 
@@ -210,6 +228,8 @@ On the Samsung device:
     merely because of filenames or picker state.
 12. Confirm no inferred weapon/bone/cape placement, animation playback, physics,
     or cloth simulation is introduced.
+13. Rotate/zoom a 3D scene repeatedly and verify the direct-Bitmap path does not
+    create the previous per-frame Java `int[]`/Bitmap churn or visible corruption.
 
 Keep PR #33 draft until a real build/regression run produces a verified arm64 APK
 and this physical-device pass is confirmed.
