@@ -10,8 +10,8 @@
 namespace dmcresource::spider::black_widow {
 
 // Black Widow owns platform-neutral application/UI decisions. Android/Java
-// consumes this typed state but must not reconstruct it from diagnostics or
-// raw ResourceCapabilities combinations.
+// consumes this typed state but must not reconstruct it from diagnostics,
+// filenames, retained URIs, or raw ResourceCapabilities combinations.
 enum class StateFlag : std::uint64_t {
     CanRender                  = 1ULL << 0U,
     CanWireframe               = 1ULL << 1U,
