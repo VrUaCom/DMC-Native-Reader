@@ -163,7 +163,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_composeMods(
             if (part == nullptr) return 0;
             parts.push_back(part);
 
-            auto* value = static_cast<jstring>(env->GetObjectArrayElement(names, index));
+            jstring value = static_cast<jstring>(env->GetObjectArrayElement(names, index));
             if (env->ExceptionCheck()) return 0;
             part_names.push_back(to_utf8(env, value));
             if (value != nullptr) env->DeleteLocalRef(value);
