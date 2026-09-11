@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,7 @@
 namespace dmcresource {
 
 // Generic nested-resource projection used by container/bundle modules.
-// Android never needs to know whether the parent is PTX, PAC, PNST, SO, etc.
+// Android never needs to know whether the parent is PTX/PAC/PNST/etc.
 // A child may expose inspection, a static image, geometry, and more children
 // through the same Architecture v2 contracts as a top-level resource.
 struct ChildResource {
@@ -26,6 +27,14 @@ struct ChildResource {
     RenderScene scene;
     ImagePreview image_preview;
     std::vector<ChildResource> children;
+
+    // Optional bounded source payload for lazy child materialization. Containers
+    // use this only when a child cannot keep a decoded preview resident (for
+    // example a PTX slot beyond the gallery RGBA memory budget). The parent
+    // retains compressed/encoded bytes; opening/exporting the child routes them
+    // back through the canonical decoder rather than inventing a second codec.
+    std::vector<std::uint8_t> source_bytes;
+
     std::string detail;
     std::string trace;
     bool renderable{false};
