@@ -126,7 +126,6 @@ jintArray preview_to_argb(JNIEnv* env, const dmcresource::ImagePreview& image) {
                         image.rgba8);
 }
 
-
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -141,7 +140,38 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
         auto session = dmcresource::open_session(name, mapped.data(), mapped.size());
         return to_handle(session.release());
     } catch (...) { return 0; }
+}
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_composeMods(
+        JNIEnv* env, jclass, jlongArray handles, jobjectArray names) {
+    if (handles == nullptr || names == nullptr) return 0;
+    const jsize count = env->GetArrayLength(handles);
+    if (count < 2 || env->GetArrayLength(names) != count) return 0;
+
+    try {
+        std::vector<jlong> raw_handles(static_cast<std::size_t>(count));
+        env->GetLongArrayRegion(handles, 0, count, raw_handles.data());
+        if (env->ExceptionCheck()) return 0;
+
+        std::vector<const Session*> parts;
+        std::vector<std::string> part_names;
+        parts.reserve(static_cast<std::size_t>(count));
+        part_names.reserve(static_cast<std::size_t>(count));
+        for (jsize index = 0; index < count; ++index) {
+            const Session* part = from_handle(raw_handles[static_cast<std::size_t>(index)]);
+            if (part == nullptr) return 0;
+            parts.push_back(part);
+
+            auto* value = static_cast<jstring>(env->GetObjectArrayElement(names, index));
+            if (env->ExceptionCheck()) return 0;
+            part_names.push_back(to_utf8(env, value));
+            if (value != nullptr) env->DeleteLocalRef(value);
+        }
+
+        auto composite = dmcresource::compose_mod_sessions(parts, part_names);
+        return to_handle(composite.release());
+    } catch (...) { return 0; }
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -163,6 +193,21 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_blackWidowState(
         JNIEnv*, jclass, jlong handle) {
     return static_cast<jlong>(black_widow_state(from_handle(handle)));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartCount(
+        JNIEnv*, jclass, jlong handle) {
+    const auto count = dmcresource::session_composite_part_count(from_handle(handle));
+    if (count > static_cast<std::size_t>(std::numeric_limits<jint>::max())) return 0;
+    return static_cast<jint>(count);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartName(
+        JNIEnv* env, jclass, jlong handle, jint index) {
+    return env->NewStringUTF(
+        dmcresource::session_composite_part_name(from_handle(handle), index).c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -212,6 +257,26 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
 
     const auto name = to_utf8(env, filename);
     return dmcresource::attach_session_ptx(session, name, mapped.data(), mapped.size())
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtxToPart(
+        JNIEnv* env, jclass, jlong handle, jint part_index,
+        jint fd, jstring filename) {
+    Session* session = from_handle(handle);
+    if (session == nullptr || fd < 0) return JNI_FALSE;
+
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) {
+        session->texture_attachment_detail =
+            "PTX companion rejected: could not map selected file";
+        return JNI_FALSE;
+    }
+
+    const auto name = to_utf8(env, filename);
+    return dmcresource::attach_session_part_ptx(
+        session, part_index, name, mapped.data(), mapped.size())
         ? JNI_TRUE : JNI_FALSE;
 }
 
