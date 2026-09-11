@@ -17,11 +17,11 @@ namespace dmcresource {
 // One canonical source MOD inside a composite scene. The source RenderScene and
 // local texture-slot projection are retained intact so future animation / physics
 // work can address parts explicitly without reconstructing ownership from the
-// flattened render mesh.
+// flattened render projection. A second per-part flattened Mesh is intentionally
+// not retained: PTX validation operates directly on the authoritative scene.
 struct CompositePart final {
     std::string name;
     RenderScene scene;
-    Mesh render_mesh;
     std::vector<std::uint32_t> render_triangle_texture_slots;
     std::uint32_t texture_slot_base{};
     std::uint32_t texture_slot_span{};
