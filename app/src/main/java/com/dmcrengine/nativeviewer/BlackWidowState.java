@@ -31,6 +31,8 @@ public final class BlackWidowState {
     private static final long CAN_INSPECT_MESHES = 1L << 20;
     private static final long CAN_INSPECT_HIERARCHY = 1L << 21;
     private static final long CAN_EXPORT_PNG = 1L << 22;
+    private static final long CAN_ADD_MODEL_PART = 1L << 23;
+    private static final long CAN_STAGE_COMPANION = 1L << 24;
 
     public final long bits;
     public final boolean canRender;
@@ -56,6 +58,8 @@ public final class BlackWidowState {
     public final boolean canInspectMeshes;
     public final boolean canInspectHierarchy;
     public final boolean canExportPng;
+    public final boolean canAddModelPart;
+    public final boolean canStageCompanion;
 
     private BlackWidowState(long bits) {
         this.bits = bits;
@@ -82,6 +86,8 @@ public final class BlackWidowState {
         canInspectMeshes = has(bits, CAN_INSPECT_MESHES);
         canInspectHierarchy = has(bits, CAN_INSPECT_HIERARCHY);
         canExportPng = has(bits, CAN_EXPORT_PNG);
+        canAddModelPart = has(bits, CAN_ADD_MODEL_PART);
+        canStageCompanion = has(bits, CAN_STAGE_COMPANION);
     }
 
     public static BlackWidowState fromNative(long bits) {
