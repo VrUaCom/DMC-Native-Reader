@@ -27,7 +27,9 @@ dmcresource::Session make_mod_part(const char* name, float x_offset) {
         ResourceCapability::Geometry |
         ResourceCapability::Wireframe |
         ResourceCapability::TextureBinding |
-        ResourceCapability::UvCoordinates;
+        ResourceCapability::UvCoordinates |
+        ResourceCapability::SkeletalSkinning |
+        ResourceCapability::SkinWeights;
     session.renderable = true;
 
     Mesh mesh;
@@ -91,7 +93,8 @@ int main() {
     assert(session_composite_part_name(composite.get(), 0) == "body.mod");
     assert(session_composite_part_name(composite.get(), 1) == "cape.mod");
 
-    // Source-local ownership is retained for future animation / physics work.
+    // Source-local ownership is retained exactly once for future animation /
+    // physics work. Per-part flattened render_mesh copies are intentionally gone.
     assert(composite->composite_parts[0].scene.meshes[0].name == "body mesh");
     assert(composite->composite_parts[1].scene.meshes[0].name == "cape mesh");
     assert(composite->composite_parts[0].texture_slot_base == 0U);
@@ -99,21 +102,22 @@ int main() {
     assert(composite->composite_parts[1].texture_slot_base == 1U);
     assert(composite->composite_parts[1].texture_slot_span == 1U);
 
-    // The top-level render projection namespaces part names and texture slots
-    // without changing source coordinates or inventing cross-part bone links.
-    assert(composite->scene.meshes.size() == 2U);
-    assert(composite->scene.meshes[0].name == "body.mod / body mesh");
-    assert(composite->scene.meshes[1].name == "cape.mod / cape mesh");
-    assert(composite->scene.meshes[0].node_index == -1);
-    assert(composite->scene.meshes[1].node_index == -1);
-    assert(composite->scene.textures.size() == 2U);
-    assert(composite->scene.textures[0].texture_slot == 0U);
-    assert(composite->scene.textures[1].texture_slot == 1U);
+    // The top-level scene keeps only the merged hierarchy namespace. Geometry,
+    // skins and texture bindings remain in source-local scenes while one compact
+    // flattened Mesh is retained for the shared camera/render path.
+    assert(composite->scene.meshes.empty());
+    assert(composite->scene.skins.empty());
+    assert(composite->scene.textures.empty());
+    assert(composite->scene.nodes.size() == 2U);
+    assert(composite->scene.nodes[0].name == "body.mod / body root");
+    assert(composite->scene.nodes[1].name == "cape.mod / cape root");
+
     assert(composite->render_triangle_texture_slots.size() == 2U);
     assert(composite->render_triangle_texture_slots[0] == 0U);
     assert(composite->render_triangle_texture_slots[1] == 1U);
     assert(composite->render_mesh.vertices.size() == 6U);
     assert(composite->render_mesh.indices.size() == 6U);
+    assert(composite->render_mesh.uv0.size() == 6U);
     assert(composite->render_mesh.vertices[0].x == 0.0F);
     assert(composite->render_mesh.vertices[3].x == 10.0F);
 
@@ -121,13 +125,14 @@ int main() {
     assert(widow::has_state(state, widow::StateFlag::CanRender));
     assert(widow::has_state(state, widow::StateFlag::CanShowUv));
     assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    assert(widow::has_state(state, widow::StateFlag::CanAddModelPart));
+    assert(widow::has_state(state, widow::StateFlag::CanStageCompanion));
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
 
-    // Even if the merged scene becomes globally incomplete, a retained part
-    // with a complete local binding still keeps explicit per-part PTX attach
-    // available. The UV gallery remains correctly disabled for that incomplete
-    // merged projection.
+    // Even if the merged projection becomes globally incomplete, a retained part
+    // with a complete local scene binding still keeps explicit per-part PTX attach
+    // available. The UV gallery remains correctly disabled for that projection.
     composite->render_triangle_texture_slots[1] =
         std::numeric_limits<std::uint32_t>::max();
     state = black_widow_state(composite.get());
