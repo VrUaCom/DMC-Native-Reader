@@ -50,6 +50,15 @@ int main() {
     assert(!widow::has_state(
         state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::ChildBrowserMode));
+    assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
+
+    // PNG export is a typed native application-state decision, independent of
+    // generic model rendering. Android only changes the shared button when this
+    // flag is present.
+    model.png_export_available = true;
+    state = widow::evaluate_model_session(model);
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
+    model.png_export_available = false;
 
     model.texture_companion_attached = true;
     state = widow::evaluate_model_session(model);
@@ -126,13 +135,16 @@ int main() {
         .image_preview_available = false,
         .child_resource_count = 4U,
         .texture_companion_attached = false,
+        .png_export_available = true,
     };
     state = widow::evaluate_model_session(container);
     assert(widow::has_state(state, widow::StateFlag::CanInspect));
     assert(widow::has_state(state, widow::StateFlag::HasChildResources));
     assert(widow::has_state(state, widow::StateFlag::ChildBrowserMode));
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
 
-    // A direct DDS preview is not a child browser even when it is non-renderable.
+    // A direct DDS/texture preview is not a child browser and can still expose
+    // the same PNG export action.
     widow::ModelSessionView image{
         .capabilities = capability(ResourceCapability::Inspection) |
             ResourceCapability::ImagePreview,
@@ -143,10 +155,12 @@ int main() {
         .image_preview_available = true,
         .child_resource_count = 0U,
         .texture_companion_attached = false,
+        .png_export_available = true,
     };
     state = widow::evaluate_model_session(image);
     assert(widow::has_state(state, widow::StateFlag::CanPreviewImage));
     assert(!widow::has_state(state, widow::StateFlag::ChildBrowserMode));
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
 
     return 0;
 }
