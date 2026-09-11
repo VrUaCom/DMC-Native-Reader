@@ -25,6 +25,9 @@ struct ModelExecutionState final {
     PipelineResult result{};
 };
 
+// Spider owns execution/orchestration; the canonical adapters continue to own
+// MOD/SCM format projection. Keeping this switch inside the native operation
+// avoids duplicating the executor while preserving one bounded adapter per format.
 bool project_model_operation(void* raw, std::uint32_t) noexcept {
     auto* state = static_cast<ModelExecutionState*>(raw);
     if (state == nullptr || state->module == nullptr || state->probe == nullptr) {
