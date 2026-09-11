@@ -2,9 +2,47 @@
 
 This changelog distinguishes accepted `main` history from development candidates. Historical build/evidence documents remain useful provenance but are not current support claims.
 
-## Unreleased — Native Reader 1.0 v26 candidate
+## Unreleased — Native Reader 1.0 v27 candidate
 
-**Status:** draft PR #32 on `feature/dds-ptx-v1-acceptance`; device acceptance pending; not yet part of accepted `main`.
+**Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; host/device acceptance pending; not yet part of accepted `main`.
+
+### PNG export
+
+- the shared `🔄` control becomes `↓` only when native Black Widow exposes `CanExportPng`;
+- ordinary 3D MOD/SCM keeps `🔄` reset behavior;
+- UV gallery exports every texture-slot map as a separate PNG to a system-selected folder;
+- an opened UV map exports one 1024×1024 PNG through Android's create-document dialog;
+- PTX gallery exports every DDS child as a separate PNG;
+- an opened PTX/DDS image exports one PNG through the system save dialog;
+- filenames preserve the root source identity plus native child/slot title;
+- large PTX children outside the resident RGBA gallery budget can be lazily decoded from retained encoded DDS bytes, without removing the memory cap;
+- all writes use Android Storage Access Framework rather than broad storage permissions.
+
+### Multi-MOD scenes
+
+- the open picker supports multi-select canonical MOD resources;
+- each input remains a native `CompositePart` with source-local scene, nodes, mesh, texture-slot projection, name and PTX state;
+- the flattened render projection safely offsets node/mesh references and remaps texture slots into non-overlapping global ranges;
+- source coordinates are preserved; no weapon/cape/bone attachment is fabricated;
+- PTX attachment requires explicit MOD-part selection and validates against that part's local binding;
+- animation and physics are intentionally deferred.
+
+### v27 evidence
+
+- added `composite_mod_scene_test`;
+- added `png_export_session_test`;
+- extended Black Widow regression coverage for PNG export;
+- versionName remains `1.0`; Android candidate versionCode is `27`;
+- hosted PR jobs currently hit the repository's known pre-step infrastructure failure (`steps: []`), so no hosted green build is claimed yet.
+
+See `docs/PNG_EXPORT_MULTI_MOD_V27.md`.
+
+## Native Reader 1.0 v26 — accepted `main`
+
+**Accepted:** 2026-09-10  
+**Accepted main:** `0148f0bd1b384fa1d2b43124b88423fd7b66c379`  
+**Merged through:** PR #32  
+**versionName / versionCode:** `1.0` / `26`
 
 ### v25 — UV slot gallery
 
@@ -12,8 +50,7 @@ This changelog distinguishes accepted `main` history from development candidates
 - each texture slot gets its own gallery entry and zoomable UV map with triangle count;
 - PTX and generated UV children share the same native gallery/session infrastructure;
 - model texture binding remains the single required-slot validation authority;
-- invalid/incomplete bindings fail closed instead of guessing slot ownership;
-- all eight portable/native regressions for the v25 slice pass.
+- invalid/incomplete bindings fail closed instead of guessing slot ownership.
 
 ### v26 — focused tool information
 
@@ -22,13 +59,18 @@ This changelog distinguishes accepted `main` history from development candidates
 - long-press bones/hierarchy shows explicit parent relationships, roots and invalid/unknown references without fabricating hierarchy;
 - hierarchy information availability is separated from spatial hierarchy authority;
 - focused reports reuse the typed `InspectionDocument` path rather than reparsing model bytes;
-- all nine portable/native regressions pass;
 - verified candidate APK: versionName `1.0`, versionCode `26`, arm64-v8a, 597,665 bytes, 19 declared JNI exports, no Kotlin runtime;
 - candidate APK SHA-256: `b80be422197ff8270f67049dbdd596603b0ebcf4f41884f6b22a5936fedf4596`.
 
-Promotion remains blocked only by the required physical-device/corpus acceptance pass.
+### Acceptance
 
-## Native Reader 1.0 v24 — accepted `main`
+- the owner confirmed the required Samsung/device tests on 2026-09-10 and explicitly approved PR #32 for merge;
+- the bounded v25/v26 regression and APK evidence was accepted with that physical-device confirmation;
+- GitHub-hosted jobs on the accepted line can fail before running any step, so hosted CI is not claimed green.
+
+See `docs/UV_GALLERY_V25.md` and `docs/TOOL_INSPECTION_V26.md`.
+
+## Native Reader 1.0 v24 — accepted historical baseline
 
 **Accepted:** 2026-09-10  
 **Accepted v24 code baseline:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
