@@ -74,7 +74,7 @@ option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
 if(DMC_NATIVE_READER_BUILD_TESTS)
     enable_testing()
     foreach(test_name IN ITEMS
-        black_widow_state core_model_pipeline dds_ptx_v1
+        black_widow_state composite_mod_scene core_model_pipeline dds_ptx_v1
         mod_spatial_adapter module_registry ptx_model_texture render_scene uv_gallery session_inspection)
         add_executable(${test_name}_test
             ../../test/native/${test_name}_test.cpp)
