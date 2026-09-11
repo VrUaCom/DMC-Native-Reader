@@ -51,9 +51,32 @@ public final class DmcRenderView extends View {
         return state.canPreviewImage;
     }
 
+    private void releaseBitmap() {
+        if (bitmap != null) {
+            bitmap.recycle();
+            bitmap = null;
+        }
+    }
+
+    private Bitmap writableBitmap(int width, int height) {
+        if (width <= 0 || height <= 0) return null;
+        if (bitmap != null && !bitmap.isRecycled()
+                && bitmap.getWidth() == width && bitmap.getHeight() == height) {
+            return bitmap;
+        }
+        releaseBitmap();
+        try {
+            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            return bitmap;
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
+            bitmap = null;
+            return null;
+        }
+    }
+
     private void clearStaticImagePreview() {
         staticImagePreview = false;
-        bitmap = null;
+        releaseBitmap();
         invalidate();
     }
 
@@ -62,7 +85,7 @@ public final class DmcRenderView extends View {
         renderFlags = 0;
         hierarchyAvailable = false;
         staticImagePreview = false;
-        bitmap = null;
+        releaseBitmap();
         invalidate();
         if (session == 0) return;
         if (BlackWidowState.fromNative(NativeBridge.blackWidowState(session)).uvMapView) {
@@ -91,24 +114,12 @@ public final class DmcRenderView extends View {
             return;
         }
 
-        final int[] pixels;
-        try {
-            pixels = NativeBridge.imagePreview(session);
-        } catch (OutOfMemoryError error) {
-            clearStaticImagePreview();
-            return;
-        }
-        if (pixels == null || pixels.length != (int) expected) {
+        final Bitmap target = writableBitmap(width, height);
+        if (target == null || !NativeBridge.imagePreview(session, target)) {
             clearStaticImagePreview();
             return;
         }
 
-        try {
-            bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
-        } catch (IllegalArgumentException | OutOfMemoryError error) {
-            clearStaticImagePreview();
-            return;
-        }
         staticImagePreview = true;
         lastRenderMs = SystemClock.uptimeMillis();
         invalidate();
@@ -185,16 +196,15 @@ public final class DmcRenderView extends View {
             return;
         }
 
-        int rw = renderWidth();
-        int rh = renderHeight();
-        int[] pixels = NativeBridge.render(session, rw, rh, yaw, pitch, zoom,
-                renderFlags);
-        if (pixels == null || pixels.length != rw * rh) {
-            bitmap = null;
+        final int rw = renderWidth();
+        final int rh = renderHeight();
+        final Bitmap target = writableBitmap(rw, rh);
+        if (target == null || !NativeBridge.render(
+                session, rw, rh, yaw, pitch, zoom, renderFlags, target)) {
+            releaseBitmap();
             invalidate();
             return;
         }
-        bitmap = Bitmap.createBitmap(pixels, rw, rh, Bitmap.Config.ARGB_8888);
         lastRenderMs = SystemClock.uptimeMillis();
         invalidate();
     }
@@ -216,7 +226,7 @@ public final class DmcRenderView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        if (bitmap == null) return;
+        if (bitmap == null || bitmap.isRecycled()) return;
 
         if (!staticImagePreview) {
             canvas.drawBitmap(bitmap, null,
