@@ -145,8 +145,10 @@ Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
      canonical adapters separate;
    - DDS/PTX share the Spider Crusader texture execution plan;
    - successful promoted routes publish `spider.crusader` in the pipeline trace;
-   - Black Widow now owns not only render/UV/PTX/export policy but also
-     `CanAddModelPart` and `CanStageCompanion`;
+   - Black Widow owns render/UV/PTX/export policy plus `CanAddModelPart` and
+     `CanStageCompanion`;
+   - the registry's typed capabilities distinguish promoted MOD model sessions
+     (`SkeletalSkinning`) from SCM without Java checking filenames;
    - Android no longer infers model-part actions from `.mod` filenames or from its
      retained URI list; those lists are storage/lifecycle bookkeeping only;
    - future MOT/TM2/physics/cloth support must be promoted as native modules with
@@ -156,8 +158,10 @@ The distinction is deliberate: **animation/physics execution is deferred, but th
 attachment and selection foundation is already part of v27.** Unpromoted companion
 formats are staged without fabricated parsing or runtime semantics.
 
-Portable regression targets include `spider_model_execution_test`,
-`composite_mod_scene_test`, `png_export_session_test` and extended
+Portable regression targets include `spider_model_execution_test`, which protects
+the exact four-module registry, the shared model/texture Spider entry points, MOD's
+typed skeletal capability and successful `spider.crusader` tracing;
+`composite_mod_scene_test`; `png_export_session_test`; and extended
 `black_widow_state_test` coverage, alongside the existing model/texture/UV and
 inspection suite.
 
