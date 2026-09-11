@@ -49,8 +49,8 @@ set_target_properties(dmc_native_reader_core PROPERTIES
 )
 
 # Android is deliberately a thin shell. It owns JNI/FD/lifecycle integration
-# only; application decisions, resource parsing, texture attachment and render
-# contracts stay in DMCNativeReader::Core.
+# and direct Bitmap transport only; application decisions, resource parsing,
+# texture attachment and render contracts stay in DMCNativeReader::Core.
 if(ANDROID)
     add_library(dmcviewer SHARED
         app_native.cpp
@@ -58,6 +58,7 @@ if(ANDROID)
 
     target_link_libraries(dmcviewer PRIVATE
         DMCNativeReader::Core
+        jnigraphics
     )
 
     target_compile_features(dmcviewer PRIVATE cxx_std_20)
