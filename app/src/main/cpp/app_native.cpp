@@ -109,8 +109,12 @@ bool copy_rgba_to_bitmap(JNIEnv* env,
     }
 
     void* raw_pixels = nullptr;
-    if (AndroidBitmap_lockPixels(env, bitmap, &raw_pixels) != ANDROID_BITMAP_RESULT_SUCCESS ||
-        raw_pixels == nullptr) {
+    const int lock_result = AndroidBitmap_lockPixels(env, bitmap, &raw_pixels);
+    if (lock_result != ANDROID_BITMAP_RESULT_SUCCESS) {
+        return false;
+    }
+    if (raw_pixels == nullptr) {
+        (void)AndroidBitmap_unlockPixels(env, bitmap);
         return false;
     }
 
