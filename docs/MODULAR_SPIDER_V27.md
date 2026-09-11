@@ -8,7 +8,7 @@ This document is a hard architecture boundary for v27 and later work.
 Android / future platform shell
   -> file descriptors, URIs, lifecycle, save/open dialogs, widget presentation
   -> JNI / platform bridge
-  -> DMCNativeReader::Core (portable C++20)
+  -> DMCNativeReader::Core (portable native C++)
        -> bounded probe
        -> NativeModuleRegistry
             -> MOD module -> MOD adapter -> canonical DMC Rengine ReaderCore
@@ -157,13 +157,45 @@ The same pattern applies to future physics and cloth modules.
 translate JNI primitive/string/array values, and call portable core APIs. It must
 not implement DMC parsing algorithms or duplicate module policy.
 
-## 8. Build rule
+JNI must also avoid avoidable full-frame copies. Image transfer should use bounded
+chunks or another measured low-copy path instead of allocating a second full-size
+native ARGB buffer beside the native RGBA frame and Java destination array.
 
-`DMCNativeReader::Core` is the reusable static C++20 product target. Android links
+## 8. C++ standard and performance policy
+
+The language standard is a tool, not a product requirement. The current v27 build
+baseline may remain C++20 while optimization work is in flight, but newer standards
+are explicitly allowed when they produce a measurable or correctness benefit.
+
+Policy:
+
+- C++23 is approved for production modules when the pinned Android/desktop toolchains
+  compile the required feature and the change preserves all supported targets;
+- C++26 features are opt-in only behind compiler/library feature tests until the
+  required implementations are mature across our target toolchains;
+- no standard bump is accepted only because the standard is newer;
+- parser/read-path changes must prioritize evidence-correct decoding, bounded reads,
+  zero-copy or view-based access where ownership allows it, fewer allocations,
+  fewer full-buffer copies, lazy materialization, and deterministic fail-closed
+  behavior on malformed offsets/sizes;
+- performance claims require before/after measurements or a directly provable
+  memory reduction; code size and APK/native library size remain tracked constraints.
+
+Preferred parser/runtime techniques include `std::span`/views, memory mapping where
+safe, bounded endian readers, explicit ownership, pre-sized/reserved containers,
+lazy decode, and avoiding duplicate parse/materialization passes.
+
+Correctness outranks micro-optimization: no optimization may weaken structural
+validation, evidence boundaries, reversible format understanding, or exact resource
+identity.
+
+## 9. Build rule
+
+`DMCNativeReader::Core` is the reusable static native product target. Android links
 that target instead of enumerating parser sources itself. Future Windows, iOS/macOS
 or Web/WASM shells must link the same core so format behavior remains identical.
 
-## 9. Required regression gates
+## 10. Required regression gates
 
 Before v27 promotion, at minimum keep these passing:
 
@@ -186,7 +218,7 @@ needs filename policy.
 Physical-device acceptance remains required for Android picker/export/menu/motion
 strip behavior.
 
-## 10. Build evidence boundary
+## 11. Build evidence boundary
 
 A GitHub Actions job that never receives a runner is not build evidence. In
 particular, a run with `runner_id: 0`, an empty runner name and `steps: []` has not
@@ -198,7 +230,7 @@ accepted only after a real build of the current v27 head executes the native
 regressions, produces the arm64 APK, passes package/signing/JNI/module-marker
 verification, and is then physically exercised on the Samsung device.
 
-## 11. Non-negotiable rule for later work
+## 12. Non-negotiable rule for later work
 
 A new button is not a new format implementation. A recognized extension is not a
 new format implementation. A staged URI is not a new format implementation.
