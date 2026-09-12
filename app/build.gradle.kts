@@ -40,8 +40,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 27
-        versionName = "1.0"
+        versionCode = 29
+        versionName = "1.0.2"
 
         externalNativeBuild {
             cmake {
