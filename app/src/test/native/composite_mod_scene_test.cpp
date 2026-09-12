@@ -1,4 +1,8 @@
+#include <algorithm>
+#include <bit>
 #include <cassert>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
@@ -9,6 +13,76 @@
 #include "dmcresource/spider/black_widow.h"
 
 namespace {
+
+void put_u16(std::vector<std::uint8_t>& bytes,
+             std::size_t offset,
+             std::uint16_t value) {
+    assert(offset + 2U <= bytes.size());
+    bytes[offset + 0U] = static_cast<std::uint8_t>(value & 0xFFU);
+    bytes[offset + 1U] = static_cast<std::uint8_t>((value >> 8U) & 0xFFU);
+}
+
+void put_u32(std::vector<std::uint8_t>& bytes,
+             std::size_t offset,
+             std::uint32_t value) {
+    assert(offset + 4U <= bytes.size());
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        bytes[offset + i] = static_cast<std::uint8_t>(
+            (value >> (i * 8U)) & 0xFFU);
+    }
+}
+
+std::vector<std::uint8_t> make_shared_four_slot_ptx() {
+    constexpr std::uint32_t width = 4U;
+    constexpr std::uint32_t height = 4U;
+    constexpr std::uint32_t mip_count = 3U;
+    constexpr std::size_t dds_size = 128U + 8U * mip_count;
+
+    std::vector<std::uint8_t> dds(dds_size, 0U);
+    dds[0] = 'D'; dds[1] = 'D'; dds[2] = 'S'; dds[3] = ' ';
+    put_u32(dds, 4U, 124U);
+    put_u32(dds, 8U, 0x000A1007U);
+    put_u32(dds, 12U, height);
+    put_u32(dds, 16U, width);
+    put_u32(dds, 20U, 8U);
+    put_u32(dds, 28U, mip_count);
+    put_u32(dds, 76U, 32U);
+    put_u32(dds, 80U, 4U);
+    dds[84] = 'D'; dds[85] = 'X'; dds[86] = 'T'; dds[87] = '1';
+    put_u32(dds, 108U, 0x00401008U);
+    put_u16(dds, 128U, 0xF800U);
+    put_u16(dds, 130U, 0x07E0U);
+    put_u32(dds, 132U, 0U);
+
+    std::vector<std::uint8_t> descriptor(0x70U, 0U);
+    put_u32(descriptor, 0x08U, 0x20000U | (mip_count << 8U) | 0x86U);
+    put_u32(descriptor, 0x0CU, 0xAAE4U);
+    put_u32(descriptor, 0x10U, (height << 16U) | width);
+    put_u32(descriptor, 0x14U, 1U);
+    put_u32(descriptor, 0x18U, width * 2U);
+    put_u32(descriptor, 0x20U, 0x40U);
+    put_u32(descriptor, 0x38U, static_cast<std::uint32_t>(dds.size() - 128U));
+    put_u32(descriptor, 0x3CU, 2U);
+    put_u32(descriptor, 0x40U, 1U);
+    put_u32(descriptor, 0x44U, (height << 16U) | width);
+    put_u32(descriptor, 0x48U,
+            std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(width)));
+    put_u32(descriptor, 0x4CU,
+            std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(height)));
+    put_u32(descriptor, 0x60U, 0U);
+    put_u32(descriptor, 0x64U, static_cast<std::uint32_t>(dds.size()));
+    put_u32(descriptor, 0x68U, 8U);
+
+    std::vector<std::uint8_t> bundle(5U * 0x800U, 0U);
+    put_u32(bundle, 0U, 4U);
+    for (std::size_t slot = 0U; slot < 4U; ++slot) {
+        put_u32(bundle, 4U + slot * 4U, 1U);
+        const std::size_t base = (slot + 1U) * 0x800U;
+        std::memcpy(bundle.data() + base, descriptor.data(), descriptor.size());
+        std::memcpy(bundle.data() + base + 0x70U, dds.data(), dds.size());
+    }
+    return bundle;
+}
 
 dmcresource::Session make_mod_part(const char* name,
                                    float x_offset,
@@ -178,11 +252,32 @@ int main() {
     assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
     composite->render_triangle_texture_slots[2] = 5U;
 
-    // A composite PTX must always target one explicit part; global automatic
-    // slot matching is intentionally refused because each MOD owns its slots.
-    assert(!attach_session_ptx(composite.get(), "unknown.ptx", nullptr, 0U));
-    assert(composite->texture_attachment_detail.find("explicit composite MOD part")
+    // One canonical four-slot PTX can be an explicit shared texture bank for all
+    // four source-local MOD namespaces. The top-level renderer still consumes
+    // only globally remapped slots.
+    const auto shared_ptx = make_shared_four_slot_ptx();
+    assert(attach_session_ptx(
+        composite.get(), "em028_000.ptx", shared_ptx.data(), shared_ptx.size()));
+    assert(composite->texture_companion_attached);
+    for (const auto& part : composite->composite_parts) {
+        assert(part.texture_companion_attached);
+    }
+    assert(composite->attached_textures.size() == 10U);
+    for (const std::uint32_t slot : expected_global_slots) {
+        assert(composite->attached_textures[slot].available());
+    }
+    assert(composite->texture_attachment_detail.find("Shared PTX attached")
            != std::string::npos);
+
+    state = black_widow_state(composite.get());
+    assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttached));
+
+    // A failed replacement is transactional: the already attached shared bank
+    // must survive intact.
+    const auto retained_slot_9 = composite->attached_textures[9].rgba8;
+    assert(!attach_session_ptx(composite.get(), "bad.ptx", nullptr, 0U));
+    assert(composite->texture_companion_attached);
+    assert(composite->attached_textures[9].rgba8 == retained_slot_9);
 
     // Invalid/non-MOD mixtures are rejected rather than silently flattened.
     auto not_mod = tail;
