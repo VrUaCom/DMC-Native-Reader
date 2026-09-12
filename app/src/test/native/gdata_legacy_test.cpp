@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -107,7 +108,7 @@ void fill_common_descriptor(
     return out;
 }
 
-[[nodiscard]] std::vector<std::uint8_t> evt_table() {
+[[nodiscard]] std::vector<std::uint8_t> evt_single_stream_table() {
     std::vector<std::uint8_t> out(0x40U, 0U);
     out[0] = 'E'; out[1] = 'V'; out[2] = 'T'; out[3] = 0U;
     put_u32(out, 0x04U, 0x00010001U);
@@ -117,6 +118,38 @@ void fill_common_descriptor(
     put_u32(out, 0x2CU, 0x00000020U);
     put_u32(out, 0x08U, 0x2CU);
     return out;
+}
+
+[[nodiscard]] std::vector<std::uint8_t> evt_multi_stream_table() {
+    std::vector<std::uint8_t> out(0x40U, 0U);
+    out[0] = 'E'; out[1] = 'V'; out[2] = 'T'; out[3] = 0U;
+    put_u32(out, 0x04U, 0x00020001U); // revision 1, two streams
+    put_u32(out, 0x20U, 0x00000000U); // observed boundary before extra stream
+    put_u32(out, 0x24U, 0x00000157U); // observed extra-stream entry, one arg
+    put_u32(out, 0x28U, 0x1234U);
+    put_u32(out, 0x2CU, 0x0000000EU);
+    put_u32(out, 0x30U, 0x00000020U);
+    put_u32(out, 0x08U, 0x30U);
+    put_u32(out, 0x34U, 0x24U); // N-1 post-terminal stream-offset table
+    return out;
+}
+
+[[nodiscard]] const dmcresource::InspectionProperty* property(
+    const dmcresource::InspectionNode& node,
+    std::string_view key) {
+    for (const auto& item : node.properties) {
+        if (item.key == key) return &item;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] const dmcresource::InspectionNode* child(
+    const dmcresource::InspectionNode& node,
+    std::string_view title) {
+    for (const auto& item : node.children) {
+        if (item.title == title) return &item;
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -143,28 +176,43 @@ int main() {
     assert(has_capability(tm2_result.capabilities, ResourceCapability::ImagePreview));
     assert(tm2_result.inspection.root.title == "Wrapped DDS");
 
-    const auto event = evt_table();
-    const auto evt_probe = probe("EventTbl20.bin", event.data(), event.size());
+    const auto event = evt_single_stream_table();
+    const auto evt_probe = probe("EventTbl00.bin", event.data(), event.size());
     assert(evt_probe.recognized);
     assert(evt_probe.content_confirmed);
     assert(evt_probe.format == Format::Evt);
     const auto evt_result = run_decode_pipeline(
-        "EventTbl20.bin", event.data(), event.size());
+        "EventTbl00.bin", event.data(), event.size());
     assert(evt_result.accepted);
     assert(!evt_result.renderable);
     assert(evt_result.inspection.format == "EVT");
     assert(has_capability(evt_result.capabilities, ResourceCapability::Inspection));
-    assert(!evt_result.inspection.root.children.empty());
-    const auto& commands = evt_result.inspection.root.children.back();
-    assert(commands.title == "Commands");
-    assert(commands.children.size() == 3U);
-    assert(commands.children.front().properties[1].key == "Opcode");
-    assert(commands.children.front().properties[1].value == "0x02");
+    const auto* revision = property(evt_result.inspection.root, "Revision");
+    const auto* stream_count = property(evt_result.inspection.root, "StreamCount");
+    assert(revision != nullptr && revision->value == "1");
+    assert(stream_count != nullptr && stream_count->value == "1");
+    const auto* commands = child(evt_result.inspection.root, "Commands");
+    assert(commands != nullptr);
+    assert(commands->children.size() == 3U);
+    assert(commands->children.front().properties[1].key == "Opcode");
+    assert(commands->children.front().properties[1].value == "0x02");
 
-    auto malformed = event;
-    put_u32(malformed, 0x20U, 0x00010102U);
+    const auto multi = evt_multi_stream_table();
+    const auto multi_result = run_decode_pipeline(
+        "EventTbl07.bin", multi.data(), multi.size());
+    assert(multi_result.accepted);
+    const auto* multi_count = property(multi_result.inspection.root, "StreamCount");
+    assert(multi_count != nullptr && multi_count->value == "2");
+    const auto* streams = child(multi_result.inspection.root, "Streams");
+    assert(streams != nullptr);
+    assert(streams->children.size() == 2U);
+    assert(streams->children[0].properties[0].value == "0x00000020");
+    assert(streams->children[1].properties[0].value == "0x00000024");
+
+    auto malformed = multi;
+    put_u32(malformed, 0x34U, 0x26U); // unaligned internal stream offset
     assert(!run_decode_pipeline(
-        "EventTbl20.bin", malformed.data(), malformed.size()).accepted);
+        "EventTbl07.bin", malformed.data(), malformed.size()).accepted);
 
     return 0;
 }

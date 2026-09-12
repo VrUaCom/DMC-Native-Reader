@@ -56,7 +56,8 @@ PipelineResult run_evt_module(
     }
 
     std::ostringstream detail;
-    detail << "EVT event table | commands=" << parsed.document.commands.size()
+    detail << "EVT event table | streams=" << parsed.document.header.stream_count
+           << " commands=" << parsed.document.commands.size()
            << " terminal="
            << hex_value(parsed.document.header.terminal_command_offset, 8);
     auto out = structural_pipeline(probe, module.id, detail.str());
@@ -67,7 +68,13 @@ PipelineResult run_evt_module(
     out.inspection.root.kind = InspectionKind::Document;
     out.inspection.root.source_span = SourceSpan{0U, size};
     out.inspection.root.properties.push_back({
-        "Version", hex_value(parsed.document.header.version, 8),
+        "PackedHeader", hex_value(parsed.document.header.version, 8),
+        EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.properties.push_back({
+        "Revision", std::to_string(parsed.document.header.revision),
+        EvidenceLevel::StructuralConfirmed});
+    out.inspection.root.properties.push_back({
+        "StreamCount", std::to_string(parsed.document.header.stream_count),
         EvidenceLevel::StructuralConfirmed});
     out.inspection.root.properties.push_back({
         "TerminalCommandOffset",
@@ -77,12 +84,31 @@ PipelineResult run_evt_module(
         "CommandCount", std::to_string(parsed.document.commands.size()),
         EvidenceLevel::StructuralConfirmed});
 
+    InspectionNode streams;
+    streams.id = "streams";
+    streams.title = "Streams";
+    streams.kind = InspectionKind::Collection;
+
     InspectionNode commands;
     commands.id = "commands";
     commands.title = "Commands";
     commands.kind = InspectionKind::Collection;
 
     try {
+        streams.children.reserve(parsed.document.stream_offsets.size());
+        for (std::size_t index = 0U;
+             index < parsed.document.stream_offsets.size();
+             ++index) {
+            InspectionNode node;
+            node.id = "stream-" + std::to_string(index);
+            node.title = "Stream " + std::to_string(index);
+            node.kind = InspectionKind::Object;
+            node.properties.push_back({
+                "Offset", hex_value(parsed.document.stream_offsets[index], 8),
+                EvidenceLevel::StructuralConfirmed});
+            streams.children.push_back(std::move(node));
+        }
+
         commands.children.reserve(parsed.document.commands.size());
         for (std::size_t index = 0U;
              index < parsed.document.commands.size();
@@ -128,6 +154,7 @@ PipelineResult run_evt_module(
                     : EvidenceLevel::StructuralConfirmed});
             out.inspection.root.children.push_back(std::move(node));
         }
+        out.inspection.root.children.push_back(std::move(streams));
         out.inspection.root.children.push_back(std::move(commands));
     } catch (...) {
         return module_support::reject(
