@@ -57,14 +57,20 @@ ProbeResult probe(std::string_view filename,
                       "DATA_CONFIRMED", "image/vnd-ms.dds");
     }
     if (magic4(bytes, size, 'E', 'V', 'T', '\0')) {
-        return result(Format::Evt, true, "EVT", "event-script", "inspection",
-                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.evt");
+        // Stock DMC3 paths are eventtbl\\EventTblNN.bin. "EVT" is the content
+        // magic/family tag, not evidence for a stock .evt filename extension.
+        return result(Format::Evt, true, "EventTbl", "event-script", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.eventtbl");
     }
 
     // PTX and descriptor-wrapped textures have no standalone four-byte identity
     // gate. Extensions are routing candidates only; the texture module validates
     // bytes before accepting them. DMC3 HD also keeps legacy .tm2 logical names
     // whose physical bytes are DMC descriptor + DDS rather than Sony TIM2.
+    //
+    // EventTbl intentionally has NO extension fallback here. The canonical EXE
+    // requests EventTblNN.bin, while .bin is a generic leaf extension shared by
+    // unrelated payloads. EventTbl identity therefore requires EVT\0 bytes.
     const auto extension = lower_extension(filename);
     if (extension == "scm") {
         return result(Format::Scm, false, "SCM", "geometry", "render-scene",
@@ -81,10 +87,6 @@ ProbeResult probe(std::string_view filename,
     if (extension == "ptx") {
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
-    }
-    if (extension == "evt") {
-        return result(Format::Evt, false, "EVT", "event-script", "inspection",
-                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.evt");
     }
     return {};
 }
@@ -108,7 +110,7 @@ const char* format_name(Format format) noexcept {
     case Format::Mod: return "MOD";
     case Format::Dds: return "DDS";
     case Format::Ptx: return "PTX";
-    case Format::Evt: return "EVT";
+    case Format::Evt: return "EventTbl";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";
