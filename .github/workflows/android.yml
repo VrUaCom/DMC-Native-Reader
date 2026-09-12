@@ -2,7 +2,7 @@ name: DMC Native Reader core architecture
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "feature/png-export-multi-mod-v27"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
