@@ -50,6 +50,12 @@ int main() {
     assert(!widow::has_state(
         state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::ChildBrowserMode));
+    assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
+
+    model.png_export_available = true;
+    state = widow::evaluate_model_session(model);
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
+    model.png_export_available = false;
 
     model.texture_companion_attached = true;
     state = widow::evaluate_model_session(model);
@@ -115,7 +121,8 @@ int main() {
         state, widow::StateFlag::TextureCompanionAttachable));
 
     // Structural PTX-like sessions are native child-browser state, not a Java
-    // combination of capabilities and child count.
+    // combination of capabilities and child count. The export capability is an
+    // explicit Black Widow decision and is not inferred in Android.
     widow::ModelSessionView container{
         .capabilities = capability(ResourceCapability::Inspection) |
             ResourceCapability::ChildResources,
@@ -126,13 +133,15 @@ int main() {
         .image_preview_available = false,
         .child_resource_count = 4U,
         .texture_companion_attached = false,
+        .png_export_available = true,
     };
     state = widow::evaluate_model_session(container);
     assert(widow::has_state(state, widow::StateFlag::CanInspect));
     assert(widow::has_state(state, widow::StateFlag::HasChildResources));
     assert(widow::has_state(state, widow::StateFlag::ChildBrowserMode));
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
 
-    // A direct DDS preview is not a child browser even when it is non-renderable.
+    // A direct DDS preview is not a child browser and can expose single PNG export.
     widow::ModelSessionView image{
         .capabilities = capability(ResourceCapability::Inspection) |
             ResourceCapability::ImagePreview,
@@ -143,10 +152,12 @@ int main() {
         .image_preview_available = true,
         .child_resource_count = 0U,
         .texture_companion_attached = false,
+        .png_export_available = true,
     };
     state = widow::evaluate_model_session(image);
     assert(widow::has_state(state, widow::StateFlag::CanPreviewImage));
     assert(!widow::has_state(state, widow::StateFlag::ChildBrowserMode));
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
 
     return 0;
 }

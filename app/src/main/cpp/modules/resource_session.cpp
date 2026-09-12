@@ -39,6 +39,24 @@ void prepare_session_caches(Session* session) {
     }
 }
 
+[[nodiscard]] bool session_png_export_available(const Session* session) noexcept {
+    if (session == nullptr) return false;
+    if (session->image_preview.available()) return true;
+
+    if (session->uv_gallery != nullptr) {
+        if (session->uv_map_index.has_value() &&
+            *session->uv_map_index < session->uv_gallery->maps.size()) {
+            return true;
+        }
+        return !session->uv_gallery->maps.empty();
+    }
+
+    if (session->children.empty()) return false;
+    for (const auto& child : session->children) {
+        if (!child.image_preview.available()) return false;
+    }
+    return true;
+}
 
 template<class Source>
 std::unique_ptr<Session> make_session(Source&& source, std::string trace) {
@@ -80,6 +98,7 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
             (session->uv_gallery && !session->uv_gallery->maps.empty()),
         .object_count = count_inspection_nodes(session->inspection.root, InspectionKind::Object),
         .hierarchy_node_count = session->scene.nodes.size(),
+        .png_export_available = session_png_export_available(session),
     });
 }
 

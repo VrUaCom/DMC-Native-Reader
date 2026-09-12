@@ -26,8 +26,8 @@ public final class BlackWidowState {
     private static final long CHILD_BROWSER_MODE = 1L << 15;
     private static final long TEXTURE_COMPANION_ATTACHABLE = 1L << 16;
     private static final long TEXTURE_COMPANION_ATTACHED = 1L << 17;
-
     private static final long UV_MAP_VIEW = 1L << 18;
+    private static final long CAN_EXPORT_PNG = 1L << 22;
 
     public final boolean canInspectUv;
     public final boolean canInspectMeshes;
@@ -52,6 +52,7 @@ public final class BlackWidowState {
     public final boolean childBrowserMode;
     public final boolean canAttachTextureCompanion;
     public final boolean textureCompanionAttached;
+    public final boolean canExportPng;
 
     private BlackWidowState(long bits) {
         this.bits = bits;
@@ -77,6 +78,7 @@ public final class BlackWidowState {
         childBrowserMode = has(bits, CHILD_BROWSER_MODE);
         canAttachTextureCompanion = has(bits, TEXTURE_COMPANION_ATTACHABLE);
         textureCompanionAttached = has(bits, TEXTURE_COMPANION_ATTACHED);
+        canExportPng = has(bits, CAN_EXPORT_PNG);
     }
 
     public static BlackWidowState fromNative(long bits) {
