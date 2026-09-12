@@ -85,6 +85,7 @@ jobs:
           grep -Fq 'formats.mod.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
           grep -Fq 'native.uv-projection' /tmp/native-markers.txt
@@ -110,7 +111,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='27' versionName='1.0'" /tmp/core-badging.txt
+          grep -Fq "versionCode='29' versionName='1.0.2'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
