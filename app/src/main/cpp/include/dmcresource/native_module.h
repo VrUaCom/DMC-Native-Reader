@@ -45,10 +45,12 @@ public:
                                                  const char* module_id,
                                                  std::string detail) noexcept;
 
-// Native Reader 1.0 exposes four format routes. DDS and PTX intentionally share
-// one texture implementation; Spider decides whether PTX framing is required.
+// Native Reader routes geometry, texture and EVT inspection through portable
+// C++20 modules. DDS and PTX intentionally share one texture implementation;
+// legacy .tm2 logical names route to that same validated wrapped-DDS path.
 [[nodiscard]] NativeModule scm_module() noexcept;
 [[nodiscard]] NativeModule mod_module() noexcept;
 [[nodiscard]] NativeModule texture_module(Format format) noexcept;
+[[nodiscard]] NativeModule evt_module() noexcept;
 
 }  // namespace dmcresource

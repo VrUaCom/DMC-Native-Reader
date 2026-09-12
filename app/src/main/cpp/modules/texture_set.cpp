@@ -4,7 +4,7 @@
 #include <span>
 #include <utility>
 
-#include "dmc_rengine/profiles/dmc3/texture_slot_framing.hpp"
+#include "dmc_rengine/profiles/dmc3/texture_slot_framing_compat.hpp"
 #include "dmcresource/ptx_framing_compat.h"
 
 namespace dmcresource::texture_set {
@@ -88,12 +88,13 @@ ParseResult parse_dds(std::span<const std::byte> source) noexcept {
         return out;
     }
 
-    const auto framing = dmc3::TextureSlotFramingParser::parse(source);
+    const auto read = dmc3::TextureSlotFramingReader::parse(source);
+    const auto& framing = read.framing;
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::wrapped_dds ||
         framing.document.textures.size() != 1U) {
         out.detail =
-            "DDS rejected: neither a bounded standalone DXT DDS nor canonical descriptor-wrapped DDS";
+            "DDS rejected: neither a bounded standalone DXT DDS nor descriptor-wrapped DDS";
         return out;
     }
 
@@ -102,7 +103,7 @@ ParseResult parse_dds(std::span<const std::byte> source) noexcept {
         if (!append_framed_slot(&out, source, framing.document.textures.front())) {
             out = {};
             out.detail =
-                "Wrapped DDS rejected: canonical framing child failed bounded DDS validation";
+                "Wrapped DDS rejected: framing child failed bounded DDS validation";
         }
     } catch (...) {
         out = {};
@@ -122,7 +123,7 @@ ParseResult parse_ptx(std::span<const std::byte> source) noexcept {
     const auto framing = ptx_compat::parse_texture_bundle(source, &compat_used);
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
-        out.detail = "PTX rejected by canonical texture-slot framing";
+        out.detail = "PTX rejected by canonical texture-slot reader";
         if (!framing.detail.empty()) {
             out.detail += ": ";
             out.detail += framing.detail;

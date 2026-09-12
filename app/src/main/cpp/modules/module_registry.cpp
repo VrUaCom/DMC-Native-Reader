@@ -12,6 +12,7 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
         mod_module(),
         texture_module(Format::Dds),
         texture_module(Format::Ptx),
+        evt_module(),
     };
     return registry;
 }

@@ -7,14 +7,15 @@
 
 namespace dmcresource {
 
-// Clean Native Reader 1.0 format surface. Other DMC families are intentionally
-// not registered in main until they are promoted to the same modular contract.
+// Clean Native Reader 1.0 format surface. Families are added only after they
+// have a bounded portable ReaderCore contract.
 enum class Format : std::uint8_t {
     Unknown = 0,
     Scm,
     Mod,
     Dds,
     Ptx,
+    Evt,
 };
 
 struct ProbeResult {
