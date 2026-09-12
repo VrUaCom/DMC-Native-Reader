@@ -10,7 +10,9 @@
 
 namespace {
 
-dmcresource::Session make_mod_part(const char* name, float x_offset) {
+dmcresource::Session make_mod_part(const char* name,
+                                   float x_offset,
+                                   const std::vector<std::uint32_t>& texture_slots) {
     using namespace dmcresource;
 
     Session session;
@@ -32,23 +34,44 @@ dmcresource::Session make_mod_part(const char* name, float x_offset) {
         ResourceCapability::SkinWeights;
     session.renderable = true;
 
-    Mesh mesh;
-    mesh.vertices = {
-        {x_offset + 0.0F, 0.0F, 0.0F},
-        {x_offset + 1.0F, 0.0F, 0.0F},
-        {x_offset + 0.0F, 1.0F, 0.0F},
-    };
-    mesh.indices = {0U, 1U, 2U};
-    mesh.uv0 = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}};
+    for (std::size_t triangle = 0U; triangle < texture_slots.size(); ++triangle) {
+        const float triangle_x = x_offset + static_cast<float>(triangle) * 2.0F;
+        const std::uint32_t base = static_cast<std::uint32_t>(session.render_mesh.vertices.size());
 
-    MeshPrimitive primitive;
-    primitive.name = std::string{name} + " mesh";
-    primitive.mesh = mesh;
-    primitive.object_index = 0U;
-    primitive.mesh_index = 0U;
-    primitive.node_index = -1;
-    session.scene.meshes.push_back(primitive);
-    session.scene.textures.push_back({0U, 0U, std::string{name} + ".ptx"});
+        Mesh local;
+        local.vertices = {
+            {triangle_x + 0.0F, 0.0F, 0.0F},
+            {triangle_x + 1.0F, 0.0F, 0.0F},
+            {triangle_x + 0.0F, 1.0F, 0.0F},
+        };
+        local.indices = {0U, 1U, 2U};
+        local.uv0 = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}};
+
+        MeshPrimitive primitive;
+        primitive.name = std::string{name} + " mesh " + std::to_string(triangle);
+        primitive.mesh = local;
+        primitive.object_index = 0U;
+        primitive.mesh_index = static_cast<std::uint32_t>(triangle);
+        primitive.node_index = -1;
+        const auto primitive_index = static_cast<std::uint32_t>(session.scene.meshes.size());
+        session.scene.meshes.push_back(std::move(primitive));
+        session.scene.textures.push_back({
+            primitive_index,
+            texture_slots[triangle],
+            std::string{name} + ".ptx",
+        });
+
+        session.render_mesh.vertices.insert(
+            session.render_mesh.vertices.end(),
+            local.vertices.begin(), local.vertices.end());
+        session.render_mesh.uv0.insert(
+            session.render_mesh.uv0.end(),
+            local.uv0.begin(), local.uv0.end());
+        session.render_mesh.indices.push_back(base + 0U);
+        session.render_mesh.indices.push_back(base + 1U);
+        session.render_mesh.indices.push_back(base + 2U);
+        session.render_triangle_texture_slots.push_back(texture_slots[triangle]);
+    }
 
     RenderNode node;
     node.name = std::string{name} + " root";
@@ -57,9 +80,6 @@ dmcresource::Session make_mod_part(const char* name, float x_offset) {
     node.parent_authority = true;
     node.spatial_authority = false;
     session.scene.nodes.push_back(node);
-
-    session.render_mesh = mesh;
-    session.render_triangle_texture_slots = {0U};
 
     session.inspection.format = "MOD";
     session.inspection.root.id = std::string{name} + "-document";
@@ -79,47 +99,66 @@ int main() {
     using namespace dmcresource;
     namespace widow = dmcresource::spider::black_widow;
 
-    auto body = make_mod_part("body", 0.0F);
-    auto cape = make_mod_part("cape", 10.0F);
-    std::vector<const Session*> sources{&body, &cape};
-    std::vector<std::string> names{"body.mod", "cape.mod"};
+    // Mirrors the sparse local texture-slot usage observed in the real em028
+    // four-MOD boss corpus supplied for device acceptance:
+    //   em028_001 -> {1}
+    //   em028_004 -> {0}
+    //   em028_005 -> {2,3}
+    //   em028_006 -> {2}
+    // Unreferenced local PTX slots are intentionally not projected globally.
+    auto body = make_mod_part("em028_001", 0.0F, {1U});
+    auto core = make_mod_part("em028_004", 10.0F, {0U});
+    auto wings = make_mod_part("em028_005", 20.0F, {2U, 3U});
+    auto tail = make_mod_part("em028_006", 30.0F, {2U});
+
+    std::vector<const Session*> sources{&body, &core, &wings, &tail};
+    std::vector<std::string> names{
+        "em028_001.mod", "em028_004.mod", "em028_005.mod", "em028_006.mod"};
 
     auto composite = compose_mod_sessions(sources, names);
     assert(composite != nullptr);
     assert(composite->probe.format == Format::Mod);
     assert(composite->renderable);
-    assert(composite->composite_parts.size() == 2U);
-    assert(session_composite_part_count(composite.get()) == 2U);
-    assert(session_composite_part_name(composite.get(), 0) == "body.mod");
-    assert(session_composite_part_name(composite.get(), 1) == "cape.mod");
+    assert(composite->composite_parts.size() == 4U);
+    assert(session_composite_part_count(composite.get()) == 4U);
+    assert(session_composite_part_name(composite.get(), 0) == "em028_001.mod");
+    assert(session_composite_part_name(composite.get(), 1) == "em028_004.mod");
+    assert(session_composite_part_name(composite.get(), 2) == "em028_005.mod");
+    assert(session_composite_part_name(composite.get(), 3) == "em028_006.mod");
 
-    // Source-local ownership is retained exactly once for future animation /
-    // physics work. Per-part flattened render_mesh copies are intentionally gone.
-    assert(composite->composite_parts[0].scene.meshes[0].name == "body mesh");
-    assert(composite->composite_parts[1].scene.meshes[0].name == "cape mesh");
+    // Required-slot namespaces are compact and non-overlapping. PTX attachment
+    // decodes only required local slots (0..max_required), so sparse unused
+    // texture entries cannot spill into the following CompositePart namespace.
     assert(composite->composite_parts[0].texture_slot_base == 0U);
-    assert(composite->composite_parts[0].texture_slot_span == 1U);
-    assert(composite->composite_parts[1].texture_slot_base == 1U);
+    assert(composite->composite_parts[0].texture_slot_span == 2U);
+    assert(composite->composite_parts[1].texture_slot_base == 2U);
     assert(composite->composite_parts[1].texture_slot_span == 1U);
+    assert(composite->composite_parts[2].texture_slot_base == 3U);
+    assert(composite->composite_parts[2].texture_slot_span == 4U);
+    assert(composite->composite_parts[3].texture_slot_base == 7U);
+    assert(composite->composite_parts[3].texture_slot_span == 3U);
 
     // The top-level scene keeps only the merged hierarchy namespace. Geometry,
-    // skins and texture bindings remain in source-local scenes while one compact
-    // flattened Mesh is retained for the shared camera/render path.
+    // skins and texture bindings stay source-local; one flattened mesh powers
+    // the shared camera/render path.
     assert(composite->scene.meshes.empty());
     assert(composite->scene.skins.empty());
     assert(composite->scene.textures.empty());
-    assert(composite->scene.nodes.size() == 2U);
-    assert(composite->scene.nodes[0].name == "body.mod / body root");
-    assert(composite->scene.nodes[1].name == "cape.mod / cape root");
+    assert(composite->scene.nodes.size() == 4U);
+    assert(composite->scene.nodes[0].name == "em028_001.mod / em028_001 root");
+    assert(composite->scene.nodes[1].name == "em028_004.mod / em028_004 root");
+    assert(composite->scene.nodes[2].name == "em028_005.mod / em028_005 root");
+    assert(composite->scene.nodes[3].name == "em028_006.mod / em028_006 root");
 
-    assert(composite->render_triangle_texture_slots.size() == 2U);
-    assert(composite->render_triangle_texture_slots[0] == 0U);
-    assert(composite->render_triangle_texture_slots[1] == 1U);
-    assert(composite->render_mesh.vertices.size() == 6U);
-    assert(composite->render_mesh.indices.size() == 6U);
-    assert(composite->render_mesh.uv0.size() == 6U);
+    const std::vector<std::uint32_t> expected_global_slots{1U, 2U, 5U, 6U, 9U};
+    assert(composite->render_triangle_texture_slots == expected_global_slots);
+    assert(composite->render_mesh.vertices.size() == 15U);
+    assert(composite->render_mesh.indices.size() == 15U);
+    assert(composite->render_mesh.uv0.size() == 15U);
     assert(composite->render_mesh.vertices[0].x == 0.0F);
     assert(composite->render_mesh.vertices[3].x == 10.0F);
+    assert(composite->render_mesh.vertices[6].x == 20.0F);
+    assert(composite->render_mesh.vertices[12].x == 30.0F);
 
     auto state = black_widow_state(composite.get());
     assert(widow::has_state(state, widow::StateFlag::CanRender));
@@ -130,15 +169,14 @@ int main() {
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
 
-    // Even if the merged projection becomes globally incomplete, a retained part
-    // with a complete local scene binding still keeps explicit per-part PTX attach
-    // available. The UV gallery remains correctly disabled for that projection.
-    composite->render_triangle_texture_slots[1] =
+    // A broken top-level slot projection disables merged UV actions without
+    // destroying explicit per-part PTX attachability from retained source scenes.
+    composite->render_triangle_texture_slots[2] =
         std::numeric_limits<std::uint32_t>::max();
     state = black_widow_state(composite.get());
     assert(!widow::has_state(state, widow::StateFlag::CanShowUv));
     assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
-    composite->render_triangle_texture_slots[1] = 1U;
+    composite->render_triangle_texture_slots[2] = 5U;
 
     // A composite PTX must always target one explicit part; global automatic
     // slot matching is intentionally refused because each MOD owns its slots.
@@ -147,9 +185,9 @@ int main() {
            != std::string::npos);
 
     // Invalid/non-MOD mixtures are rejected rather than silently flattened.
-    auto not_mod = cape;
+    auto not_mod = tail;
     not_mod.probe.format = Format::Scm;
-    sources[1] = &not_mod;
+    sources[3] = &not_mod;
     assert(compose_mod_sessions(sources, names) == nullptr);
 
     return 0;
