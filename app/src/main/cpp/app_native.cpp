@@ -299,17 +299,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtxToPart(
     }
 
     const auto name = to_utf8(env, filename);
-
-    // A composite may intentionally share one PTX bank across every source-local
-    // MOD texture namespace (for example em028_000.ptx with em028_001/004/005/006).
-    // Try the transactional shared route first. If the PTX cannot satisfy every
-    // required part, the core leaves the session unchanged and explicit per-part
-    // attachment remains the deterministic fallback selected by Android.
-    if (dmcresource::session_composite_part_count(session) > 1U &&
-        dmcresource::attach_session_ptx(session, name, mapped.data(), mapped.size())) {
-        return JNI_TRUE;
-    }
-
     return dmcresource::attach_session_part_ptx(
         session, part_index, name, mapped.data(), mapped.size())
         ? JNI_TRUE : JNI_FALSE;
