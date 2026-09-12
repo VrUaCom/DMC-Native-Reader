@@ -114,6 +114,7 @@ public final class MainActivity extends Activity {
     private final ArrayList<Uri> modelPartUris = new ArrayList<>();
     private final ArrayList<Uri> modelPartPtxUris = new ArrayList<>();
     private final ArrayList<StagedAsset> stagedAssets = new ArrayList<>();
+    private Uri sharedModelPtxUri;
 
     private BlackWidowState blackWidowState = BlackWidowState.empty();
     private String infoText = "";
@@ -591,16 +592,18 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        String[] names = new String[partCount];
+        String[] names = new String[partCount + 1];
+        names[0] = "Shared PTX · all MOD parts";
         for (int index = 0; index < partCount; ++index) {
             String name = NativeBridge.compositePartName(session, index);
-            names[index] = name == null || name.isEmpty()
+            names[index + 1] = name == null || name.isEmpty()
                     ? "MOD part " + (index + 1)
                     : name;
         }
         new AlertDialog.Builder(this)
-                .setTitle("Attach PTX to MOD part")
-                .setItems(names, (dialog, which) -> choosePtxCompanion(which))
+                .setTitle("Attach PTX texture")
+                .setItems(names, (dialog, which) ->
+                        choosePtxCompanion(which == 0 ? -1 : which - 1))
                 .setNegativeButton("Cancel", null)
                 .show();
     }
@@ -832,6 +835,7 @@ public final class MainActivity extends Activity {
     private void resetCompositionState() {
         modelPartUris.clear();
         modelPartPtxUris.clear();
+        sharedModelPtxUri = null;
         stagedAssets.clear();
         selectedMotionIndex = -1;
     }
@@ -1093,6 +1097,17 @@ public final class MainActivity extends Activity {
     private void reattachSavedPtxToComposite() {
         if (session == 0 || NativeBridge.compositePartCount(session) <= 0) return;
         int restored = 0;
+
+        if (sharedModelPtxUri != null) {
+            final String sharedName = displayName(sharedModelPtxUri);
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(sharedModelPtxUri)) {
+                if (pfd != null && NativeBridge.attachPtx(
+                        session, pfd.getFd(), sharedName)) {
+                    ++restored;
+                }
+            } catch (Exception ignored) {}
+        }
+
         for (int index = 0; index < modelPartPtxUris.size(); ++index) {
             Uri uri = modelPartPtxUris.get(index);
             if (uri == null) continue;
@@ -1114,10 +1129,18 @@ public final class MainActivity extends Activity {
 
     private void rememberPtxForPart(Uri uri, int partIndex) {
         if (modelPartUris.isEmpty()) return;
-        int target = partIndex >= 0 ? partIndex : 0;
-        if (target < 0 || target >= modelPartUris.size()) return;
         while (modelPartPtxUris.size() < modelPartUris.size()) modelPartPtxUris.add(null);
-        modelPartPtxUris.set(target, uri);
+
+        if (partIndex < 0) {
+            sharedModelPtxUri = uri;
+            for (int index = 0; index < modelPartPtxUris.size(); ++index) {
+                modelPartPtxUris.set(index, null);
+            }
+            return;
+        }
+
+        if (partIndex >= modelPartUris.size()) return;
+        modelPartPtxUris.set(partIndex, uri);
     }
 
     private void attachPtxUri(Uri uri, int partIndex, boolean remember) {
