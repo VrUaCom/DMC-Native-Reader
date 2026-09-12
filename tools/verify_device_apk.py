@@ -1,4 +1,4 @@
-"""Verify the 1.0/v27 device APK, not production signing or device behaviour."""
+"""Verify the 1.0.2/v29 EventTbl device APK, not production signing or device behaviour."""
 import argparse
 import hashlib
 import json
@@ -29,7 +29,7 @@ def main():
     build_tools = Path(args.sdk) / "build-tools/36.0.0"
     badging = run(str(build_tools / "aapt2"), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging, "Wrong application ID")
-    require("versionCode='27' versionName='1.0'" in badging, "Wrong release identity")
+    require("versionCode='29' versionName='1.0.2'" in badging, "Wrong release identity")
     require("native-code: 'arm64-v8a'" in badging, "Wrong ABI")
     manifest = run(str(build_tools / "aapt2"), "dump", "xmltree", str(args.apk),
                    "--file", "AndroidManifest.xml")
@@ -56,7 +56,7 @@ def main():
         library = archive.read(native)
     for marker in ("spider.crusader", "native.texture-set", "native.uv-projection",
                    "formats.mod.mesh-reader", "formats.scm.mesh-reader",
-                   "formats.texture.spider-reader"):
+                   "formats.texture.spider-reader", "formats.evt.structural-reader"):
         require(marker.encode() in library, "Missing native module: " + marker)
 
     root = Path(__file__).resolve().parents[1]
@@ -64,8 +64,9 @@ def main():
     native_cpp = (root / "app/src/main/cpp/app_native.cpp").read_text()
     cmake = (root / "app/src/main/cpp/CMakeLists.txt").read_text()
 
-    # v27 image transport is a source/API contract, not merely a JNI symbol-name
-    # contract. Fail if the old Java int[] frame ABI returns or if Java/C++ drift.
+    # Direct-Bitmap image transport is a source/API contract, not merely a JNI
+    # symbol-name contract. Fail if the old Java int[] frame ABI returns or if
+    # Java/C++ drift.
     require("import android.graphics.Bitmap;" in bridge,
             "NativeBridge must use android.graphics.Bitmap for image transport")
     direct_bitmap_java = {
@@ -128,12 +129,12 @@ def main():
             require(any(symbol == line.split()[-1] and " UND " not in line
                         for line in symbols.splitlines() if line.split()),
                     "Missing JNI export: " + method)
-    print(json.dumps({"apk": str(args.apk), "versionName": "1.0", "versionCode": 27,
+    print(json.dumps({"apk": str(args.apk), "versionName": "1.0.2", "versionCode": 29,
                       "abi": "arm64-v8a", "signer_sha256": expected,
                       "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
                       "jni_exports_checked": len(methods),
-                      "direct_bitmap_abi": "pass", "zip_integrity": "pass",
-                      "apk_bytes": args.apk.stat().st_size,
+                      "direct_bitmap_abi": "pass", "eventtbl_module": "pass",
+                      "zip_integrity": "pass", "apk_bytes": args.apk.stat().st_size,
                       "native_bytes": len(library), "dex_bytes": dex_bytes,
                       "public_native_exports": len(exports), "kotlin_runtime": "absent",
                       "legacy_packaging": "pass", "device_test": "pending"}, indent=2))
