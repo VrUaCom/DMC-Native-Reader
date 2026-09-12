@@ -689,9 +689,19 @@ public final class MainActivity extends Activity {
             ArrayList<Uri> added = selectedUris(data);
             if (added.isEmpty()) return;
             for (Uri uri : added) persistUriPermission(uri, data.getFlags(), false);
-            ArrayList<Uri> combined = new ArrayList<>(modelPartUris);
-            for (Uri uri : added) if (!combined.contains(uri)) combined.add(uri);
-            openCompositeUris(combined, true);
+
+            // The first transition from one live MOD to a composite must not
+            // reopen the already-loaded base through an old content URI. Keep
+            // the native base Session authoritative and open only the new parts.
+            // This is especially important for ACTION_VIEW/file-manager grants,
+            // which may be temporary even though the MOD itself is still live.
+            if (session != 0 && NativeBridge.compositePartCount(session) == 0) {
+                composeCurrentWithAdditionalMods(added);
+            } else {
+                ArrayList<Uri> combined = new ArrayList<>(modelPartUris);
+                for (Uri uri : added) if (!combined.contains(uri)) combined.add(uri);
+                openCompositeUris(combined, true);
+            }
             return;
         }
 
@@ -794,6 +804,7 @@ public final class MainActivity extends Activity {
                 if (item != null && !uris.contains(item)) uris.add(item);
             }
             if (uris.size() > 1) {
+                for (Uri item : uris) persistUriPermission(item, intent.getFlags(), false);
                 openCompositeUris(uris, false);
                 return;
             }
@@ -813,6 +824,7 @@ public final class MainActivity extends Activity {
         if (uri == null) {
             showIdleStatus();
         } else {
+            persistUriPermission(uri, intent.getFlags(), false);
             openUri(uri);
         }
     }
@@ -925,6 +937,93 @@ public final class MainActivity extends Activity {
             modelPartUris.add(uri);
             modelPartPtxUris.add(null);
         }
+    }
+
+    private void composeCurrentWithAdditionalMods(ArrayList<Uri> requested) {
+        if (session == 0 || requested == null || requested.isEmpty()) return;
+        if (NativeBridge.compositePartCount(session) != 0) {
+            ArrayList<Uri> combined = new ArrayList<>(modelPartUris);
+            for (Uri uri : requested) if (!combined.contains(uri)) combined.add(uri);
+            openCompositeUris(combined, true);
+            return;
+        }
+
+        ArrayList<Uri> additions = new ArrayList<>();
+        for (Uri uri : requested) {
+            if (uri != null && !modelPartUris.contains(uri) && !additions.contains(uri)) {
+                additions.add(uri);
+            }
+        }
+        if (additions.isEmpty()) {
+            Toast.makeText(this, "No new MOD parts selected", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        final ArrayList<Uri> previousPtx = new ArrayList<>(modelPartPtxUris);
+        final long baseSession = session;
+        final int totalParts = additions.size() + 1;
+        long[] handles = new long[totalParts];
+        String[] names = new String[totalParts];
+        handles[0] = baseSession;
+        names[0] = !modelPartUris.isEmpty()
+                ? displayName(modelPartUris.get(0))
+                : titleView.getText().toString();
+
+        long composite = 0;
+        String failure = null;
+        try {
+            for (int index = 0; index < additions.size(); ++index) {
+                Uri uri = additions.get(index);
+                final int target = index + 1;
+                names[target] = displayName(uri);
+                try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+                    if (pfd == null) throw new FileNotFoundException("No file descriptor");
+                    handles[target] = NativeBridge.open(pfd.getFd(), names[target]);
+                }
+                if (handles[target] == 0) {
+                    failure = "Could not open " + names[target] + " as a canonical DMC resource";
+                    break;
+                }
+            }
+            if (failure == null) {
+                composite = NativeBridge.composeMods(handles, names);
+                if (composite == 0) {
+                    failure = "Selected files could not be composed with the live MOD session";
+                }
+            }
+        } catch (Exception error) {
+            failure = "Could not read selected MOD files: " + error;
+        } finally {
+            // handles[0] is the currently displayed Session and remains owned by
+            // MainActivity until the replacement composite is known-good.
+            for (int index = 1; index < handles.length; ++index) {
+                if (handles[index] != 0) NativeBridge.close(handles[index]);
+            }
+        }
+
+        if (composite == 0) {
+            Toast.makeText(this,
+                    failure == null ? "MOD composition failed" : failure,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        ArrayList<Uri> combinedUris = new ArrayList<>(modelPartUris);
+        for (Uri uri : additions) if (!combinedUris.contains(uri)) combinedUris.add(uri);
+
+        closeAllSessions();
+        modelPartUris.clear();
+        modelPartUris.addAll(combinedUris);
+        modelPartPtxUris.clear();
+        for (int index = 0; index < combinedUris.size(); ++index) {
+            modelPartPtxUris.add(index < previousPtx.size() ? previousPtx.get(index) : null);
+        }
+
+        activateSession(composite, "MOD scene · " + combinedUris.size() + " parts");
+        reattachSavedPtxToComposite();
+        Toast.makeText(this,
+                combinedUris.size() + " MOD parts composed from the live base session",
+                Toast.LENGTH_LONG).show();
     }
 
     private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets) {
