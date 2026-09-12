@@ -32,8 +32,8 @@ public final class NativeBridge {
 
     // Companion-resource orchestration. Java only supplies a file descriptor;
     // native Spider/framing/DDS modules validate PTX and bind decoded texture
-    // slots. Composite scenes require an explicit part index, so Android never
-    // guesses which MOD owns a PTX companion.
+    // slots. Composite scenes may consume one shared PTX bank transactionally;
+    // explicit per-part attachment remains the deterministic fallback.
     public static native boolean attachPtx(long handle, int fd, String filename);
     public static native boolean attachPtxToPart(long handle, int partIndex,
                                                   int fd, String filename);
