@@ -555,10 +555,59 @@ std::string describe_session(const Session* session) {
 bool attach_session_ptx(Session* session, std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
     if (session == nullptr) return false;
+
     if (!session->composite_parts.empty()) {
-        session->texture_attachment_detail =
-            "PTX companion requires an explicit composite MOD part; automatic part matching is disabled";
-        return false;
+        if (bytes == nullptr) {
+            session->texture_attachment_detail =
+                "Shared PTX rejected: null source";
+            return false;
+        }
+
+        try {
+            Session staged = *session;
+            std::size_t attachable_parts = 0U;
+            for (std::size_t index = 0U;
+                 index < staged.composite_parts.size(); ++index) {
+                const auto& part = staged.composite_parts[index];
+                if (!texture_companion::can_attach({
+                        .scene = &part.scene,
+                        .triangle_texture_slots = part.render_triangle_texture_slots,
+                    })) {
+                    continue;
+                }
+                ++attachable_parts;
+                if (!attach_session_part_ptx(
+                        &staged, static_cast<int>(index), name, bytes, size)) {
+                    session->texture_attachment_detail =
+                        "Shared PTX rejected at " + part.name + ": " +
+                        staged.texture_attachment_detail;
+                    return false;
+                }
+            }
+
+            if (attachable_parts == 0U) {
+                session->texture_attachment_detail =
+                    "Shared PTX rejected: composite has no attachable texture parts";
+                return false;
+            }
+            if (!staged.texture_companion_attached) {
+                session->texture_attachment_detail =
+                    "Shared PTX rejected: not every texture-requiring composite part could be satisfied";
+                return false;
+            }
+
+            staged.texture_attachment_detail =
+                "Shared PTX attached: " + std::string{name} +
+                " | compositeParts=" + std::to_string(attachable_parts) +
+                "/" + std::to_string(attachable_parts) +
+                " | route=shared-local-slots->composite-global-remap";
+            *session = std::move(staged);
+            return true;
+        } catch (...) {
+            session->texture_attachment_detail =
+                "Shared PTX rejected: transactional staging allocation failed";
+            return false;
+        }
     }
 
     auto attachment = dmcresource::texture_companion::attach_ptx(
