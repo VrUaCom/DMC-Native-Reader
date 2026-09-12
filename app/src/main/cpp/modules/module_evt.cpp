@@ -23,6 +23,20 @@ namespace evt = dmc::rengine::formats::evt;
     return out.str();
 }
 
+[[nodiscard]] EvidenceLevel opcode_evidence_level(evt::OpcodeEvidence evidence) noexcept {
+    switch (evidence) {
+    case evt::OpcodeEvidence::exe_confirmed:
+        return EvidenceLevel::ExeConfirmed;
+    case evt::OpcodeEvidence::corpus_structural_confirmed:
+        return EvidenceLevel::StructuralConfirmed;
+    case evt::OpcodeEvidence::corpus_semantic_candidate:
+        return EvidenceLevel::Recognized;
+    case evt::OpcodeEvidence::unknown:
+        return EvidenceLevel::PreservedUndecoded;
+    }
+    return EvidenceLevel::PreservedUndecoded;
+}
+
 PipelineResult run_evt_module(
     const NativeModule& module,
     std::string_view,
@@ -56,17 +70,19 @@ PipelineResult run_evt_module(
     }
 
     std::ostringstream detail;
-    detail << "EVT event table | streams=" << parsed.document.header.stream_count
+    detail << "EventTbl | streams=" << parsed.document.header.stream_count
            << " commands=" << parsed.document.commands.size()
            << " terminal="
            << hex_value(parsed.document.header.terminal_command_offset, 8);
     auto out = structural_pipeline(probe, module.id, detail.str());
     out.capabilities = capability(ResourceCapability::Inspection);
-    out.inspection.format = "EVT";
+    out.inspection.format = "EventTbl";
     out.inspection.root.id = "evt";
     out.inspection.root.title = "Event Table";
     out.inspection.root.kind = InspectionKind::Document;
     out.inspection.root.source_span = SourceSpan{0U, size};
+    out.inspection.root.properties.push_back({
+        "Magic", "EVT\\0", EvidenceLevel::StructuralConfirmed});
     out.inspection.root.properties.push_back({
         "PackedHeader", hex_value(parsed.document.header.version, 8),
         EvidenceLevel::StructuralConfirmed});
@@ -114,9 +130,14 @@ PipelineResult run_evt_module(
              index < parsed.document.commands.size();
              ++index) {
             const auto& command = parsed.document.commands[index];
+            const auto descriptor = command.descriptor();
+            const auto semantic_evidence = opcode_evidence_level(descriptor.evidence);
+
             InspectionNode node;
             node.id = "command-" + std::to_string(index);
-            node.title = "Command " + std::to_string(index);
+            node.title = descriptor.evidence == evt::OpcodeEvidence::unknown
+                ? "Command " + std::to_string(index)
+                : std::string{descriptor.name};
             node.kind = InspectionKind::Object;
             node.source_span = SourceSpan{
                 command.offset, command.serialized_size()};
@@ -129,6 +150,16 @@ PipelineResult run_evt_module(
             node.properties.push_back({
                 "ArgumentCount", std::to_string(command.argument_count),
                 EvidenceLevel::StructuralConfirmed});
+            node.properties.push_back({
+                "SemanticName", std::string{descriptor.name}, semantic_evidence});
+            node.properties.push_back({
+                "SemanticClass",
+                std::string{evt::to_string(descriptor.semantic_class)},
+                semantic_evidence});
+            node.properties.push_back({
+                "SemanticEvidence",
+                std::string{evt::to_string(descriptor.evidence)},
+                semantic_evidence});
             for (std::size_t argument = 0U;
                  argument < command.arguments.size();
                  ++argument) {
@@ -169,7 +200,7 @@ PipelineResult run_evt_module(
 NativeModule evt_module() noexcept {
     return {
         "formats.evt.structural-reader",
-        "EVT",
+        "EventTbl",
         Format::Evt,
         ModuleKind::Structural,
         false,
