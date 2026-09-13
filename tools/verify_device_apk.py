@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ ACCEPTED_V26_NATIVE_BYTES = 1_676_448
 MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
+NDK_VERSION = "28.2.13676358"
 
 
 def require(condition, message):
@@ -43,6 +45,21 @@ def zip_data_offset(apk: Path, info: zipfile.ZipInfo) -> int:
     return info.header_offset + 30 + filename_len + extra_len
 
 
+def find_elf_reader(sdk: Path) -> str:
+    # Use the exact pinned NDK first. This makes the verifier independent of
+    # whether the GitHub host is Linux or macOS and keeps ELF inspection bound
+    # to the same Android toolchain that built libdmcviewer.so.
+    ndk_readers = sorted((sdk / "ndk" / NDK_VERSION / "toolchains" / "llvm" /
+                          "prebuilt").glob("*/bin/llvm-readelf"))
+    if ndk_readers:
+        return str(ndk_readers[0])
+    for candidate in ("llvm-readelf", "readelf"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    raise SystemExit("No llvm-readelf/readelf available for native ABI verification")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk", type=Path)
@@ -50,12 +67,14 @@ def main():
                         os.environ.get("ANDROID_HOME"))
     args = parser.parse_args()
     require(args.sdk, "Provide --sdk or ANDROID_SDK_ROOT")
+    sdk = Path(args.sdk)
     require(args.apk.stat().st_size <= MAX_APK_BYTES,
             f"APK exceeds modular size budget: {args.apk.stat().st_size} > {MAX_APK_BYTES}")
 
-    build_tools = Path(args.sdk) / "build-tools/36.0.0"
+    build_tools = sdk / "build-tools/36.0.0"
     aapt2 = build_tools / "aapt2"
     apksigner = build_tools / "apksigner"
+    elf_reader = find_elf_reader(sdk)
 
     badging = run(str(aapt2), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging,
@@ -169,8 +188,8 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         native_path = Path(temp) / "libdmcviewer.so"
         native_path.write_bytes(native_bytes)
-        symbols = run("readelf", "--dyn-syms", "--wide", str(native_path))
-        header = run("readelf", "-h", str(native_path))
+        symbols = run(elf_reader, "--dyn-syms", "--wide", str(native_path))
+        header = run(elf_reader, "-h", str(native_path))
         require("AArch64" in header, "Native library is not AArch64")
         exports = {
             line.split()[-1] for line in symbols.splitlines()
@@ -196,6 +215,7 @@ def main():
         "native_zip_alignment": 16384,
         "extractNativeLibs": False,
         "jni_exports_checked": len(methods),
+        "elf_reader": elf_reader,
         "scm_authority": "dmc-rengine-main-809824882c60487962e99ee41f16bca7e3ccbc83",
         "zip_integrity": "pass",
         "apk_bytes": args.apk.stat().st_size,
