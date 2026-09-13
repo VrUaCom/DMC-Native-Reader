@@ -28,9 +28,14 @@ std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
     const char* raw = env->GetStringUTFChars(value, nullptr);
     if (raw == nullptr) return {};
-    std::string out(raw);
-    env->ReleaseStringUTFChars(value, raw);
-    return out;
+    try {
+        std::string out(raw);
+        env->ReleaseStringUTFChars(value, raw);
+        return out;
+    } catch (...) {
+        env->ReleaseStringUTFChars(value, raw);
+        throw;
+    }
 }
 
 class ReadOnlyMap {
