@@ -10,6 +10,15 @@ import subprocess
 import tempfile
 import zipfile
 
+# Accepted v26 was ~0.60 MiB compressed with one 1.60 MiB ARM64 DSO. v33 keeps
+# its single mmap-ready DSO uncompressed, so the APK is expected to be larger on
+# disk, but it must still stay far below the rejected recovery chain. These
+# bounds deliberately leave substantial feature headroom while making runtime
+# duplication/bloat a hard build failure instead of a device-side surprise.
+MAX_APK_BYTES = 8 * 1024 * 1024
+MAX_NATIVE_BYTES = 4 * 1024 * 1024
+MAX_DEX_BYTES = 1024 * 1024
+
 
 def require(condition, message):
     if not condition:
@@ -37,6 +46,8 @@ def main():
                         os.environ.get("ANDROID_HOME"))
     args = parser.parse_args()
     require(args.sdk, "Provide --sdk or ANDROID_SDK_ROOT")
+    require(args.apk.stat().st_size <= MAX_APK_BYTES,
+            f"APK exceeds modular size budget: {args.apk.stat().st_size} > {MAX_APK_BYTES}")
 
     build_tools = Path(args.sdk) / "build-tools/36.0.0"
     aapt2 = build_tools / "aapt2"
@@ -84,6 +95,8 @@ def main():
         native_info = archive.getinfo(expected_libs[0])
         require(native_info.compress_type == zipfile.ZIP_STORED,
                 "libdmcviewer.so must be stored uncompressed for direct mmap")
+        require(native_info.file_size <= MAX_NATIVE_BYTES,
+                f"Native DSO exceeds modular size budget: {native_info.file_size} > {MAX_NATIVE_BYTES}")
         native_offset = zip_data_offset(args.apk, native_info)
         require(native_offset % 16384 == 0,
                 f"libdmcviewer.so is not 16 KiB ZIP-aligned: offset={native_offset}")
@@ -92,6 +105,8 @@ def main():
         require("classes.dex" in archive.namelist(), "Java shell missing")
         dex_files = [i for i in archive.infolist() if i.filename.endswith(".dex")]
         dex_bytes = sum(i.file_size for i in dex_files)
+        require(dex_bytes <= MAX_DEX_BYTES,
+                f"Java shell exceeds size budget: {dex_bytes} > {MAX_DEX_BYTES}")
         require(not any(b"Lkotlin/" in archive.read(i) for i in dex_files),
                 "Unexpected Kotlin runtime in Java-only shell")
 
@@ -173,6 +188,9 @@ def main():
         "apk_bytes": args.apk.stat().st_size,
         "native_bytes": len(native_bytes),
         "dex_bytes": dex_bytes,
+        "max_apk_bytes": MAX_APK_BYTES,
+        "max_native_bytes": MAX_NATIVE_BYTES,
+        "max_dex_bytes": MAX_DEX_BYTES,
         "modular_native_architecture": "pass",
         "device_test": "pending",
     }, indent=2))
