@@ -52,7 +52,14 @@ set_target_properties(dmc_native_reader_core PROPERTIES
 # Android is deliberately a thin shell. It owns JNI/FD/lifecycle integration
 # and direct Bitmap transport only; application decisions, resource parsing,
 # texture attachment and render contracts stay in DMCNativeReader::Core.
+# Portable modules and Rengine ReaderCore remain static link-time components;
+# the APK must contain exactly one runtime DSO: libdmcviewer.so.
 if(ANDROID)
+    target_compile_options(dmc_native_reader_core PRIVATE
+        -ffunction-sections
+        -fdata-sections
+    )
+
     add_library(dmcviewer SHARED
         app_native.cpp
     )
@@ -63,11 +70,19 @@ if(ANDROID)
     )
 
     target_compile_features(dmcviewer PRIVATE cxx_std_20)
-    target_compile_options(dmcviewer PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(dmcviewer PRIVATE
+        -Wall -Wextra -Wpedantic
+        -ffunction-sections
+        -fdata-sections
+    )
     # This DSO is an Android JNI boundary, not a public C++ plugin ABI.
-    # Keep every declared JNI entry point while hiding implementation symbols.
+    # Keep every declared JNI entry point while hiding implementation symbols;
+    # discard unreachable static-module sections instead of shipping duplicate
+    # shim/core libraries.
     target_link_options(dmcviewer PRIVATE
-        "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map")
+        "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map"
+        "-Wl,--gc-sections"
+    )
     set_property(TARGET dmcviewer APPEND PROPERTY LINK_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map")
 endif()
