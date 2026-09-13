@@ -54,7 +54,9 @@ android {
 
     buildTypes {
         debug {
-            isJniDebuggable = true
+            // Device-test APKs use source/host regressions for diagnostics; the
+            // installed JNI image itself should remain stripped and compact.
+            isJniDebuggable = false
             signingConfig = signingConfigs.getByName("stableDebug")
         }
         release {
