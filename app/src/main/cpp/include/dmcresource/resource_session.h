@@ -42,16 +42,17 @@ struct Session {
     dmcresource::HierarchyOverlay hierarchy_overlay;
     std::vector<std::uint32_t> render_triangle_texture_slots;
 
-    // Vector index == canonical texture slot. Empty entries represent slots not
-    // required by the current model. PTX parsing/decoding stays in native
-    // reusable modules rather than Java or the renderer.
+    // Render-bank indexed decoded textures. For a single model this normally
+    // matches canonical source slots. Composite Spider actions may remap triangle
+    // slots onto one shared or mixed bank while each CompositePart retains the
+    // authoritative source-local slot identity separately.
     std::vector<dmcresource::ImagePreview> attached_textures;
     std::string texture_attachment_detail;
     bool texture_companion_attached{};
 
     // Non-empty only for an explicitly composed multi-MOD scene. Parts retain
     // their source-local scene/node/texture namespaces. The top-level Session
-    // owns a flattened projection with remapped texture slots for rendering.
+    // owns one derived flattened render cache; it is not a second format authority.
     std::vector<CompositePart> composite_parts;
 
     std::string detail;
@@ -66,9 +67,13 @@ struct Session {
     const std::uint8_t* bytes, std::size_t size);
 [[nodiscard]] std::unique_ptr<Session> session_from_child(const ChildResource& child);
 [[nodiscard]] std::unique_ptr<Session> open_uv_gallery(const Session* model);
+
+// Low-level composition primitive used by the Spider session-action layer.
+// Platform/JNI callers must use spider::actions::compose_mod_sessions instead.
 [[nodiscard]] std::unique_ptr<Session> compose_mod_sessions(
     const std::vector<const Session*>& parts,
     const std::vector<std::string>& names);
+
 [[nodiscard]] std::size_t session_composite_part_count(const Session* session) noexcept;
 [[nodiscard]] std::string session_composite_part_name(const Session* session, int index);
 [[nodiscard]] std::size_t session_child_count(const Session* session) noexcept;
@@ -81,10 +86,10 @@ struct Session {
 [[nodiscard]] std::unique_ptr<Session> open_session_child(const Session* session, int index);
 [[nodiscard]] std::string describe_session(const Session* session);
 [[nodiscard]] spider::black_widow::StateBits black_widow_state(const Session* session) noexcept;
-[[nodiscard]] bool attach_session_ptx(Session* session, std::string_view name,
-    const std::uint8_t* bytes, std::size_t size);
-[[nodiscard]] bool attach_session_part_ptx(Session* session, int part_index,
-    std::string_view name, const std::uint8_t* bytes, std::size_t size);
+
+// Texture attachment is intentionally absent from this generic session API.
+// Product attachment actions are owned by dmcresource::spider::actions so JNI,
+// desktop shells and future platforms cannot bypass the Spider execution layer.
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags);
 
