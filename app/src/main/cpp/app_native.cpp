@@ -18,6 +18,7 @@
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 
 namespace {
@@ -198,7 +199,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_composeMods(
             if (value != nullptr) env->DeleteLocalRef(value);
         }
 
-        auto composite = dmcresource::compose_mod_sessions(parts, part_names);
+        auto composite = dmcresource::spider::actions::compose_mod_sessions(
+            parts, part_names);
         return to_handle(composite.release());
     } catch (...) { return 0; }
 }
@@ -295,7 +297,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtx(
         }
 
         const auto name = to_utf8(env, filename);
-        return dmcresource::attach_session_ptx(
+        return dmcresource::spider::actions::attach_ptx(
             session, name, mapped.data(), mapped.size())
             ? JNI_TRUE : JNI_FALSE;
     } catch (...) { return JNI_FALSE; }
@@ -317,7 +319,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachPtxToPart(
         }
 
         const auto name = to_utf8(env, filename);
-        return dmcresource::attach_session_part_ptx(
+        return dmcresource::spider::actions::attach_ptx_to_part(
             session, part_index, name, mapped.data(), mapped.size())
             ? JNI_TRUE : JNI_FALSE;
     } catch (...) { return JNI_FALSE; }
