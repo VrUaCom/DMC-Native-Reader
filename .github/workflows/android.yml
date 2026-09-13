@@ -111,7 +111,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='29' versionName='1.0.2'" /tmp/core-badging.txt
+          grep -Fq "versionCode='32' versionName='1.0.5'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
@@ -123,5 +123,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-core-debug
+          name: dmc-native-reader-v32-scm-authority-debug
           path: app/build/outputs/apk/debug/app-debug.apk
