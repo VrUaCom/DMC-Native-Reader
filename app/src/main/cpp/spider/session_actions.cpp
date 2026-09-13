@@ -28,8 +28,7 @@ constexpr int kWholeSession = -1;
 }
 
 void refresh_attachment_completion(Session* session) noexcept {
-    if (session == nullptr) return;
-    if (session->composite_parts.empty()) return;
+    if (session == nullptr || session->composite_parts.empty()) return;
 
     bool any_required = false;
     bool complete = true;
@@ -89,22 +88,6 @@ void refresh_attachment_completion(Session* session) noexcept {
     return a.width == b.width && a.height == b.height && a.rgba8 == b.rgba8;
 }
 
-[[nodiscard]] std::uint32_t find_identical_texture(
-    const std::vector<ImagePreview>& textures,
-    const ImagePreview& candidate) noexcept {
-    if (!candidate.available()) return kNoTextureSlot;
-    for (std::size_t index = 0U; index < textures.size(); ++index) {
-        if (!textures[index].available()) continue;
-        if (image_equal(textures[index], candidate)) {
-            if (index >= static_cast<std::size_t>(kNoTextureSlot)) {
-                return kNoTextureSlot;
-            }
-            return static_cast<std::uint32_t>(index);
-        }
-    }
-    return kNoTextureSlot;
-}
-
 [[nodiscard]] bool compact_unreferenced_textures(Session* session) noexcept {
     if (session == nullptr || session->attached_textures.empty()) return true;
 
@@ -132,9 +115,10 @@ void refresh_attachment_completion(Session* session) noexcept {
             compacted.push_back(std::move(session->attached_textures[index]));
         }
 
+        // Every referenced slot was validated before the move phase, so this
+        // loop cannot discover a new invalid index after ownership has moved.
         for (auto& slot : session->render_triangle_texture_slots) {
             if (slot == kNoTextureSlot) continue;
-            if (slot >= remap.size() || remap[slot] == kNoTextureSlot) return false;
             slot = remap[slot];
         }
         session->attached_textures = std::move(compacted);
@@ -202,19 +186,19 @@ void refresh_attachment_completion(Session* session) noexcept {
     }
 
     // Atomic ownership switch: the previous bank/slot projection remains live
-    // until all parsing, decoding and projection validation above has succeeded.
+    // until parsing, decode and projection validation have all succeeded.
     session->attached_textures = std::move(attachment.textures);
     session->render_triangle_texture_slots = std::move(shared_slots);
     for (auto& part : session->composite_parts) {
         if (!has_required_slots(part)) continue;
         part.texture_companion_attached = true;
-        part.texture_attachment_detail =
-            "shared bank: " + std::string{name};
+        part.texture_attachment_detail = "shared bank: " + std::string{name};
     }
     refresh_attachment_completion(session);
     session->texture_attachment_detail = attachment.detail +
         " | compositeParts=" + std::to_string(views.size()) +
-        " | duplicateRgba=0 | action=spider.crusader";
+        " | duplicatePartRgba=0 | slotIdentityPreserved=1"
+        " | action=spider.crusader";
     return session->texture_companion_attached;
 }
 
@@ -266,16 +250,56 @@ void refresh_attachment_completion(Session* session) noexcept {
 
     std::vector<std::uint32_t> staged_slots;
     std::vector<std::uint32_t> local_to_texture;
+    std::vector<std::uint32_t> existing_by_local;
+    std::vector<bool> existing_conflict;
     try {
         staged_slots = session->render_triangle_texture_slots;
         local_to_texture.assign(attachment.textures.size(), kNoTextureSlot);
+        existing_by_local.assign(attachment.textures.size(), kNoTextureSlot);
+        existing_conflict.assign(attachment.textures.size(), false);
+
+        // Reuse is legal only for the same source-local slot on this part. Two
+        // different PTX slots may currently contain identical RGBA but still
+        // carry distinct material/sampler identity, so global content-based
+        // deduplication is intentionally forbidden.
+        for (std::size_t local_triangle = 0U;
+             local_triangle < part.render_triangle_texture_slots.size();
+             ++local_triangle) {
+            const auto local_slot = part.render_triangle_texture_slots[local_triangle];
+            if (local_slot == kNoTextureSlot) continue;
+            if (local_slot >= existing_by_local.size()) {
+                session->texture_attachment_detail =
+                    part.name + ": PTX rejected: local slot exceeds decoded bank";
+                return false;
+            }
+            const auto current = session->render_triangle_texture_slots[begin + local_triangle];
+            if (current == kNoTextureSlot || current >= session->attached_textures.size()) {
+                continue;
+            }
+            if (existing_by_local[local_slot] == kNoTextureSlot) {
+                existing_by_local[local_slot] = current;
+            } else if (existing_by_local[local_slot] != current) {
+                existing_conflict[local_slot] = true;
+            }
+        }
 
         std::size_t new_texture_count = 0U;
-        for (const auto& texture : attachment.textures) {
-            if (texture.available() &&
-                find_identical_texture(session->attached_textures, texture) == kNoTextureSlot) {
-                ++new_texture_count;
-            }
+        for (std::size_t local = 0U; local < attachment.textures.size(); ++local) {
+            const auto& texture = attachment.textures[local];
+            if (!texture.available()) continue;
+            const auto existing = existing_by_local[local];
+            const bool reusable = !existing_conflict[local] &&
+                existing != kNoTextureSlot &&
+                existing < session->attached_textures.size() &&
+                image_equal(session->attached_textures[existing], texture);
+            if (!reusable) ++new_texture_count;
+        }
+        if (new_texture_count > static_cast<std::size_t>(kNoTextureSlot) -
+                std::min(session->attached_textures.size(),
+                         static_cast<std::size_t>(kNoTextureSlot))) {
+            session->texture_attachment_detail =
+                part.name + ": PTX rejected: texture index namespace exhausted";
+            return false;
         }
         session->attached_textures.reserve(
             session->attached_textures.size() + new_texture_count);
@@ -283,18 +307,24 @@ void refresh_attachment_completion(Session* session) noexcept {
         for (std::size_t local = 0U; local < attachment.textures.size(); ++local) {
             auto& texture = attachment.textures[local];
             if (!texture.available()) continue;
-            auto actual = find_identical_texture(session->attached_textures, texture);
-            if (actual == kNoTextureSlot) {
-                if (session->attached_textures.size() >=
-                    static_cast<std::size_t>(kNoTextureSlot)) {
-                    session->texture_attachment_detail =
-                        part.name + ": PTX rejected: texture index namespace exhausted";
-                    return false;
-                }
-                actual = static_cast<std::uint32_t>(session->attached_textures.size());
-                session->attached_textures.push_back(std::move(texture));
+
+            const auto existing = existing_by_local[local];
+            if (!existing_conflict[local] && existing != kNoTextureSlot &&
+                existing < session->attached_textures.size() &&
+                image_equal(session->attached_textures[existing], texture)) {
+                local_to_texture[local] = existing;
+                continue;
             }
-            local_to_texture[local] = actual;
+
+            if (session->attached_textures.size() >=
+                static_cast<std::size_t>(kNoTextureSlot)) {
+                session->texture_attachment_detail =
+                    part.name + ": PTX rejected: texture index namespace exhausted";
+                return false;
+            }
+            local_to_texture[local] =
+                static_cast<std::uint32_t>(session->attached_textures.size());
+            session->attached_textures.push_back(std::move(texture));
         }
 
         for (std::size_t local_triangle = 0U;
@@ -326,7 +356,8 @@ void refresh_attachment_completion(Session* session) noexcept {
 
     const bool compacted = compact_unreferenced_textures(session);
     session->texture_attachment_detail = part.name + ": " + attachment.detail +
-        " | duplicateRgba=0 | action=spider.crusader";
+        " | duplicatePartRgba=0 | slotIdentityPreserved=1"
+        " | action=spider.crusader";
     if (!compacted) {
         session->texture_attachment_detail +=
             " | warning=texture-compaction-skipped";
