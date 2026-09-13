@@ -59,10 +59,18 @@ jobs:
             "$(git ls-tree HEAD app/src/main/cpp/vendor/dmc-rengine-cpp | awk '{print $3}')"
           test -f app/src/main/cpp/vendor/dmc-rengine-cpp/cmake/reader_core.cmake
 
-      - name: Build debug and unsigned release APKs
-        run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
+      - name: Build host regressions
+        run: |
+          set -euxo pipefail
+          cmake -S app/src/main/cpp -B build/host \
+            -DDMC_NATIVE_READER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build/host --parallel 2
+          ctest --test-dir build/host --output-on-failure
 
-      - name: Verify 1.0 artifacts
+      - name: Build clean debug and unsigned release APKs
+        run: gradle --no-daemon clean :app:assembleDebug :app:assembleRelease
+
+      - name: Verify v33 / 1.0.6 artifacts
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -77,19 +85,25 @@ jobs:
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='27'" "$BADGING"
-            grep -q "versionName='1.0'" "$BADGING"
+            grep -q "versionCode='33'" "$BADGING"
+            grep -q "versionName='1.0.6'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
 
+          mapfile -t LIBS < <(zipinfo -1 "$DEBUG_APK" | grep '^lib/.*\.so$')
+          test "${#LIBS[@]}" -eq 1
+          test "${LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
           unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
           grep -Fq 'formats.mod.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
           grep -Fq 'native.uv-projection' /tmp/native-markers.txt
+          ! grep -Fq 'libdmcshim' /tmp/native-markers.txt
+          ! grep -Fq 'libdmccore00' /tmp/native-markers.txt
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
@@ -111,19 +125,19 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0-debug
+          name: dmc-native-reader-v33-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0-unsigned-release
+          name: dmc-native-reader-v33-unsigned-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0-hardening-evidence
+          name: dmc-native-reader-v33-hardening-evidence
           path: |
             /tmp/debug-badging.txt
             /tmp/release-badging.txt
