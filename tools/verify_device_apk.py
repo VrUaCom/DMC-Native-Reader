@@ -90,13 +90,22 @@ def main():
         require(libs == expected_libs,
                 "Modular APK must contain exactly one native DSO: libdmcviewer.so; "
                 "found: " + ", ".join(libs))
+        # Reject duplicates even if a malformed ZIP repeats the exact same path;
+        # ZipFile.getinfo() would otherwise hide that architectural error.
+        native_entries = [
+            i for i in archive.infolist()
+            if i.filename.startswith("lib/") and i.filename.endswith(".so")
+        ]
+        require(len(native_entries) == 1 and
+                native_entries[0].filename == expected_libs[0],
+                "APK must contain exactly one physical native library entry")
         require(not any(
             marker in name.lower()
             for name in archive.namelist()
             for marker in ("dmcshim", "dmccore00")),
             "Recovery shim/core duplicate leaked into canonical APK")
 
-        native_info = archive.getinfo(expected_libs[0])
+        native_info = native_entries[0]
         require(native_info.compress_type == zipfile.ZIP_STORED,
                 "libdmcviewer.so must be stored uncompressed for direct mmap")
         require(native_info.file_size <= MAX_NATIVE_BYTES,
