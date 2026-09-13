@@ -92,8 +92,14 @@ namespace {
                << filename
                << " | requiredSlots=" << required.slots.size()
                << " | bundleTextures=" << set.slots.size()
-               << " | decodePasses=1"
-               << " | route=TextureSet/Crusader/PTX->DDS->UV";
+               << " | decodePasses=1";
+        if (shared_bank) {
+            // One bank is shared by every composite part. This marker is a
+            // regression contract: identical local slot references do not cause
+            // a second RGBA allocation merely because another MOD part uses it.
+            detail << " | duplicateRgba=0";
+        }
+        detail << " | route=TextureSet/Crusader/PTX->DDS->UV";
         if (set.ptx_aux_compat_used) {
             detail << " | auxCompat=retail-DXT1";
         }
