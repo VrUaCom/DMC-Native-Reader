@@ -123,19 +123,25 @@ int main() {
     using dmcresource::has_capability;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 4U);
+    assert(modules.size() == 5U);
 
     const auto* mod = NativeModuleRegistry::find("MOD");
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* dds = NativeModuleRegistry::find("DDS");
     const auto* ptx = NativeModuleRegistry::find("PTX");
-    assert(mod != nullptr && scm != nullptr && dds != nullptr && ptx != nullptr);
+    const auto* event_tbl = NativeModuleRegistry::find("EventTbl");
+    assert(mod != nullptr && scm != nullptr && dds != nullptr && ptx != nullptr &&
+           event_tbl != nullptr);
 
     // MOD and SCM share one Spider-backed model execution entry point, while
-    // DDS and PTX share the existing Spider-backed texture execution entry point.
+    // DDS and PTX share the Spider-backed texture execution entry point.
+    // EventTbl remains a separate structural module until its own Spider plan is
+    // promoted; keeping it explicit prevents the registry count from silently
+    // drifting away from the tested product surface.
     assert(mod->run == scm->run);
     assert(dds->run == ptx->run);
     assert(mod->run != dds->run);
+    assert(event_tbl->run != nullptr);
 
     // Black Widow can distinguish the promoted skeletal MOD model family from
     // SCM without Android inspecting filenames: the distinction is carried by
