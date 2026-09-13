@@ -185,7 +185,7 @@ int main() {
         "EventTbl00.bin", event.data(), event.size());
     assert(evt_result.accepted);
     assert(!evt_result.renderable);
-    assert(evt_result.inspection.format == "EVT");
+    assert(evt_result.inspection.format == "EventTbl");
     assert(has_capability(evt_result.capabilities, ResourceCapability::Inspection));
     const auto* revision = property(evt_result.inspection.root, "Revision");
     const auto* stream_count = property(evt_result.inspection.root, "StreamCount");
