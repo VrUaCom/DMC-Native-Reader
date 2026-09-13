@@ -11,6 +11,7 @@
 #include "dmcresource/resource_capabilities.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/session_actions.h"
 
 namespace {
 
@@ -172,6 +173,7 @@ dmcresource::Session make_mod_part(const char* name,
 int main() {
     using namespace dmcresource;
     namespace widow = dmcresource::spider::black_widow;
+    namespace actions = dmcresource::spider::actions;
 
     // Mirrors the sparse local texture-slot usage observed in the real em028
     // four-MOD boss corpus supplied for device acceptance:
@@ -179,7 +181,6 @@ int main() {
     //   em028_004 -> {0}
     //   em028_005 -> {2,3}
     //   em028_006 -> {2}
-    // Unreferenced local PTX slots are intentionally not projected globally.
     auto body = make_mod_part("em028_001", 0.0F, {1U});
     auto core = make_mod_part("em028_004", 10.0F, {0U});
     auto wings = make_mod_part("em028_005", 20.0F, {2U, 3U});
@@ -189,20 +190,20 @@ int main() {
     std::vector<std::string> names{
         "em028_001.mod", "em028_004.mod", "em028_005.mod", "em028_006.mod"};
 
-    auto composite = compose_mod_sessions(sources, names);
+    auto composite = actions::compose_mod_sessions(sources, names);
     assert(composite != nullptr);
     assert(composite->probe.format == Format::Mod);
     assert(composite->renderable);
     assert(composite->composite_parts.size() == 4U);
+    assert(composite->trace.find("spider.crusader.action.compose-mods") != std::string::npos);
     assert(session_composite_part_count(composite.get()) == 4U);
     assert(session_composite_part_name(composite.get(), 0) == "em028_001.mod");
     assert(session_composite_part_name(composite.get(), 1) == "em028_004.mod");
     assert(session_composite_part_name(composite.get(), 2) == "em028_005.mod");
     assert(session_composite_part_name(composite.get(), 3) == "em028_006.mod");
 
-    // Required-slot namespaces are compact and non-overlapping. PTX attachment
-    // decodes only required local slots (0..max_required), so sparse unused
-    // texture entries cannot spill into the following CompositePart namespace.
+    // Before a texture bank is selected, source-local slot namespaces are
+    // remapped into non-overlapping composite ranges.
     assert(composite->composite_parts[0].texture_slot_base == 0U);
     assert(composite->composite_parts[0].texture_slot_span == 2U);
     assert(composite->composite_parts[1].texture_slot_base == 2U);
@@ -252,38 +253,52 @@ int main() {
     assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
     composite->render_triangle_texture_slots[2] = 5U;
 
-    // One canonical four-slot PTX can be an explicit shared texture bank for all
-    // four source-local MOD namespaces. The top-level renderer still consumes
-    // only globally remapped slots.
+    // One canonical four-slot PTX is decoded once and shared by all four local
+    // MOD namespaces. The renderer projection switches from synthetic global
+    // namespace slots to actual bank indices, so local slot 2 is stored once
+    // even though both wings and tail use it.
     const auto shared_ptx = make_shared_four_slot_ptx();
-    assert(attach_session_ptx(
+    assert(actions::attach_ptx(
         composite.get(), "em028_000.ptx", shared_ptx.data(), shared_ptx.size()));
     assert(composite->texture_companion_attached);
     for (const auto& part : composite->composite_parts) {
         assert(part.texture_companion_attached);
     }
-    assert(composite->attached_textures.size() == 10U);
-    for (const std::uint32_t slot : expected_global_slots) {
+    const std::vector<std::uint32_t> expected_shared_bank_slots{1U, 0U, 2U, 3U, 2U};
+    assert(composite->render_triangle_texture_slots == expected_shared_bank_slots);
+    assert(composite->attached_textures.size() == 4U);
+    for (std::size_t slot = 0U; slot < 4U; ++slot) {
         assert(composite->attached_textures[slot].available());
     }
-    assert(composite->texture_attachment_detail.find("Shared PTX attached")
+    assert(composite->texture_attachment_detail.find("Shared PTX bank attached")
+           != std::string::npos);
+    assert(composite->texture_attachment_detail.find("duplicateRgba=0")
            != std::string::npos);
 
     state = black_widow_state(composite.get());
     assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttached));
 
+    // Re-attaching the same bank to one part must reuse identical decoded RGBA
+    // instead of growing texture storage.
+    assert(actions::attach_ptx_to_part(
+        composite.get(), 0, "em028_000.ptx", shared_ptx.data(), shared_ptx.size()));
+    assert(composite->attached_textures.size() == 4U);
+    assert(composite->render_triangle_texture_slots == expected_shared_bank_slots);
+
     // A failed replacement is transactional: the already attached shared bank
-    // must survive intact.
-    const auto retained_slot_9 = composite->attached_textures[9].rgba8;
-    assert(!attach_session_ptx(composite.get(), "bad.ptx", nullptr, 0U));
+    // and slot projection survive intact.
+    const auto retained_slot_2 = composite->attached_textures[2].rgba8;
+    const auto retained_projection = composite->render_triangle_texture_slots;
+    assert(!actions::attach_ptx(composite.get(), "bad.ptx", nullptr, 0U));
     assert(composite->texture_companion_attached);
-    assert(composite->attached_textures[9].rgba8 == retained_slot_9);
+    assert(composite->attached_textures[2].rgba8 == retained_slot_2);
+    assert(composite->render_triangle_texture_slots == retained_projection);
 
     // Invalid/non-MOD mixtures are rejected rather than silently flattened.
     auto not_mod = tail;
     not_mod.probe.format = Format::Scm;
     sources[3] = &not_mod;
-    assert(compose_mod_sessions(sources, names) == nullptr);
+    assert(actions::compose_mod_sessions(sources, names) == nullptr);
 
     return 0;
 }
