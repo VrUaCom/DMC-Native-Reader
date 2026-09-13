@@ -2,79 +2,84 @@
 
 This changelog distinguishes accepted `main` history from development candidates. Historical build/evidence documents remain useful provenance but are not current support claims.
 
-## Unreleased — Native Reader 1.0 v27 candidate
+## Unreleased — Native Reader 1.0.6 / v33 candidate
 
-**Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; real build/device acceptance pending; not yet part of accepted `main`.
-
-### PNG export + direct Bitmap transport
-
-- the shared `🔄` control becomes `↓` only when native Black Widow exposes `CanExportPng`;
-- ordinary 3D MOD/SCM keeps `🔄` reset behavior;
-- UV gallery exports every texture-slot map as a separate PNG to a system-selected folder;
-- an opened UV map exports one 1024×1024 PNG through Android's create-document dialog;
-- PTX gallery exports every DDS child as a separate PNG;
-- an opened PTX/DDS image exports one PNG through the system save dialog;
-- filenames preserve the root source identity plus native child/slot title;
-- large PTX children outside the resident RGBA gallery budget can be lazily decoded from retained encoded DDS bytes, without removing the memory cap;
-- all writes use Android Storage Access Framework rather than broad storage permissions;
-- Android image transport no longer returns Java `int[]` frames: Java allocates/reuses an `ARGB_8888` Bitmap and JNI copies native RGBA rows into locked Bitmap pixels;
-- successful `AndroidBitmap_lockPixels` calls are paired with `AndroidBitmap_unlockPixels`, including the defensive null-pixel case;
-- `jnigraphics` is linked only by the Android `dmcviewer` target and is not a dependency of `DMCNativeReader::Core`;
-- `tools/verify_device_apk.py` gates the direct-Bitmap Java/C++ ABI and rejects a return to legacy `int[]` image declarations.
-
-### Multi-MOD scenes
-
-- the open picker supports multi-select canonical MOD resources;
-- each input remains a native `CompositePart` with an authoritative source-local `RenderScene`, local node namespace, triangle texture-slot projection, texture-slot base/span, name and PTX state;
-- a second per-part flattened `Mesh` is deliberately not retained;
-- the top-level session retains merged hierarchy nodes plus one flattened `render_mesh` for the shared camera/render path;
-- top-level `RenderScene.meshes` is not used as a duplicate composite geometry store;
-- the flattened render projection offsets vertex/index references safely and remaps texture slots into non-overlapping global ranges;
-- source coordinates are preserved; no weapon/cape/bone attachment is fabricated;
-- PTX attachment requires explicit MOD-part selection and validates directly against that part's local `RenderScene` binding;
-- adding more MOD parts preserves the staged scene context and restores remembered per-part PTX attachments where possible.
-
-### Companion / animation foundation
-
-- the dedicated PTX header button is replaced by a top-right `⋮` companion menu;
-- the menu supports adding MOD parts, attaching PTX, and staging motion, texture, physics, cloth or other future companion resources;
-- staged animation/motion files create a second horizontal 48 dp card row above the main toolbar;
-- motion cards show the file extension on top and compact source stem below, e.g. `MOT` + `EM000`;
-- the motion row scrolls horizontally and tracks the selected staged animation;
-- the motion row is root-scene UI and hides while browsing UV/PTX children;
-- animation playback, retargeting, root motion, physics coupling and cloth simulation remain disabled until matching canonical native runtimes are promoted;
-- unpromoted companion formats are staged without fabricated parsing, binding or simulation semantics.
+**Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; exact-head build/device acceptance pending; not yet part of accepted `main`.
 
 ### Modular + Spider architecture
 
-- `NativeModuleRegistry` remains the only production format entrance and still contains exactly MOD / SCM / DDS / PTX;
-- `DMCNativeReader::Core` remains the reusable platform-neutral C++20 product target;
-- MOD and SCM now share a Spider Crusader model execution plan while keeping separate canonical format adapters;
-- DDS and PTX continue through the Spider Crusader texture execution plan;
-- successful promoted model/texture routes publish `spider.crusader` in their module traces;
-- Black Widow now owns `CanAddModelPart` and `CanStageCompanion` in addition to render/UV/PTX/export/inspection policy;
-- Android no longer enables model/companion actions from a `.mod` filename or retained URI list; it consumes typed native Spider state;
-- future MOT/TM2/physics/cloth support must be promoted through bounded native modules, typed output and Spider execution instead of Java-side format logic;
-- the hard boundary is documented in `docs/MODULAR_SPIDER_V27.md`.
+- production `NativeModuleRegistry` contains five promoted families: MOD / SCM / DDS / PTX / EventTbl;
+- every promoted format route executes through Spider Crusader while canonical adapters/parsers remain format authorities;
+- composition and PTX attachment now use `dmcresource::spider::actions` instead of JNI orchestration;
+- Black Widow remains the native application-state/capability authority;
+- Android JNI is transport/handle/Bitmap glue only;
+- `DMCNativeReader::Core` remains the reusable portable C++20 product target;
+- canonical architecture authority is `docs/MODULAR_SPIDER_V33.md`.
 
-### v27 evidence
+### Canonical Rengine / SCM
 
-- added `spider_model_execution_test` for the four-module registry and shared Spider model/texture entry points;
-- added `composite_mod_scene_test` for source-local ownership and one flattened top-level render projection;
-- added `png_export_session_test`;
-- extended `ptx_model_texture_test` for direct `RenderScene` texture-binding validation;
-- extended `black_widow_state_test` for PNG export and companion-action policy;
-- versionName remains `1.0`; Android candidate versionCode is `27`;
-- `tools/verify_device_apk.py` targets versionCode 27 and now checks direct-Bitmap Java/JNI signatures plus Android-only `jnigraphics` linkage;
-- device acceptance covers PNG export, multi-MOD/PTX routing, the `⋮` companion menu, motion strip, direct-Bitmap rotate/zoom behavior and preservation of evidence boundaries.
+- ReaderCore pin advanced to `660cd29909863dac4f8980b12d070ac3afd3036f`, a direct descendant of SCM authority baseline `809824882c60487962e99ee41f16bca7e3ccbc83`;
+- SCM retail versions 0.83 / 0.90 / 1.00 / 1.01 remain supported by the canonical parser contract;
+- `header +0x13` remains `lighting_reference_node_index`;
+- confirmed structural resource-code family domain includes 3 / 4 / 7 / 8;
+- SCM regression covers hierarchy/order/object binding/world transform through final world-space render vertices, protecting stage placement such as `st002`;
+- compatibility selector and confirmed material GIF packet authority remain regression-gated.
+
+### Multi-MOD + shared PTX bank
+
+- multi-select canonical MOD resources compose through Spider session actions;
+- each `CompositePart` retains source-local scene/node/texture-slot authority;
+- pre-attachment synthetic slot ranges keep different source namespaces explicit;
+- shared PTX attachment unions required source-local slots, parses once and decodes each required slot once;
+- all compatible parts point into one slot-indexed decoded texture bank, eliminating per-part RGBA copies for the same local slot;
+- distinct PTX slot identities are never merged merely because their pixel payloads happen to match;
+- explicit per-part PTX replacement remains available and preserves local-slot identity;
+- `composite_mod_scene_test` uses the em028-style `001/004/005/006 + em028_000.ptx` layout and requires four decoded slots instead of the former synthetic ten-slot duplication.
+
+### PNG export + direct Bitmap transport
+
+- the shared reset control becomes `↓` only when native Black Widow exposes `CanExportPng`;
+- UV gallery exports every texture-slot map as PNG to a system-selected folder;
+- an opened UV map exports one 1024×1024 PNG;
+- PTX gallery exports DDS children and individual PTX/DDS images through Android SAF;
+- large PTX children can be lazily decoded from retained bounded encoded bytes;
+- JNI writes native RGBA directly into reusable Java-owned `ARGB_8888` Bitmaps;
+- legacy Java `int[]` frame transport remains forbidden;
+- JNI resource operations fail closed on C++ exceptions.
+
+### EventTbl / legacy texture routes
+
+- EventTbl identity requires `EVT\0` bytes and is exposed as the canonical `EventTbl` registry family;
+- EventTbl now has its own Spider Crusader execution regression;
+- logical `.tm2` names with DMC descriptor + DDS bytes continue through the validated wrapped-DDS path rather than a fabricated Sony TIM2 decoder;
+- PTX/DDS framing and model-texture authority are consumed from canonical DMC Rengine ReaderCore.
+
+### Android modular packaging and size gates
+
+- versionName / versionCode are `1.0.6` / `33`;
+- APK contains exactly one native DSO: `lib/arm64-v8a/libdmcviewer.so`;
+- `DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that one DSO;
+- recovery `libdmcshim*`, `libdmccore00.so`, `dlopen` and `dlsym` paths are forbidden;
+- `extractNativeLibs=false`; native DSO remains uncompressed for direct mmap;
+- verifier checks 16 KiB APK ZIP data alignment **and** every ELF `PT_LOAD` alignment;
+- verifier checks Java/JNI exact symbol parity and that JNI composition/PTX actions route through Spider;
+- APK budget <= 8 MiB, native DSO <= 4 MiB, total Dex <= 1 MiB;
+- old v32 recovery build with four native DSOs is explicitly rejected and must not be used as a build base.
+
+### v33 regression cleanup
+
+- fixed `spider_model_execution_test` after EventTbl became the fifth production module;
+- fixed registry lookup from stale `EVT` to canonical `EventTbl`;
+- fixed EventTbl inspection identity expectation;
+- aligned `v1-hardening.yml` with v33 / 1.0.6 and added host CTest before APK packaging;
+- added `spider_event_execution_test`;
+- retired the stale v27 Spider contract in favor of `MODULAR_SPIDER_V33.md`.
 
 ### Current build boundary
 
-No v27 APK is accepted yet. GitHub-hosted jobs observed on this development line have terminated before runner assignment with no executed steps. Checkout, CMake, Gradle and tests therefore did not execute, so those runs are neither green evidence nor code-regression evidence.
+No v33 APK is accepted yet. Both `ubuntu-latest` and a bounded `macos-15` probe have been observed failing before runner assignment with `runner_id=0` and no executed steps. Checkout, CMake, Gradle and tests therefore did not run in those jobs; these failures are infrastructure evidence, not green or red source evidence. The temporary macOS probe workflow was removed after confirming the account-level behavior.
 
-PR #33 remains draft until a real build of the exact current head runs the native suite, produces/verifies the arm64 APK, and the Samsung device checklist is completed.
-
-See `docs/PNG_EXPORT_MULTI_MOD_V27.md` and `docs/MODULAR_SPIDER_V27.md`.
+PR #33 remains draft until a real exact-head clean build runs the full native suite, produces a verifier-clean ARM64 APK, and the Samsung device checklist is completed.
 
 ## Native Reader 1.0 v26 — accepted `main`
 
@@ -155,4 +160,4 @@ The repository deliberately replaced the earlier broad multi-format/recognition 
 - DDS;
 - PTX.
 
-The old HITS/TXT/index/DCA/LIG/PAC/PNST/NBZ/partial-adapter surface was removed from the production registry/build and preserved on `main.2` as backlog/reference. Future families must be promoted individually through Architecture v2 with canonical/evidence-backed authority and regressions.
+That four-module statement describes the historical v1 clean-core transition. The current v33 candidate promotes EventTbl as a fifth bounded production module. The old HITS/TXT/index/DCA/LIG/PAC/PNST/NBZ/partial-adapter surface remains excluded from the production registry/build and preserved as backlog/reference. Future families must be promoted individually through the current modular + Spider contract with canonical/evidence-backed authority and regressions.
