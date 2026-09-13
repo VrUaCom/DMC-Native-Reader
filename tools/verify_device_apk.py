@@ -24,6 +24,9 @@ MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
 NDK_VERSION = "28.2.13676358"
+PAGE_ALIGNMENT = 16 * 1024
+RENGINE_PIN = "660cd29909863dac4f8980b12d070ac3afd3036f"
+SCM_AUTHORITY_BASE = "809824882c60487962e99ee41f16bca7e3ccbc83"
 
 
 def require(condition, message):
@@ -58,6 +61,23 @@ def find_elf_reader(sdk: Path) -> str:
         if resolved:
             return resolved
     raise SystemExit("No llvm-readelf/readelf available for native ABI verification")
+
+
+def load_segment_alignments(elf_reader: str, native_path: Path):
+    program_headers = run(
+        elf_reader, "--program-headers", "--wide", str(native_path))
+    alignments = []
+    for line in program_headers.splitlines():
+        fields = line.split()
+        if not fields or fields[0] != "LOAD":
+            continue
+        try:
+            alignments.append(int(fields[-1], 0))
+        except ValueError as error:
+            raise SystemExit(
+                f"Could not parse PT_LOAD alignment from: {line}") from error
+    require(alignments, "Native library exposes no PT_LOAD segments")
+    return alignments
 
 
 def main():
@@ -130,7 +150,7 @@ def main():
         require(native_info.file_size <= MAX_NATIVE_BYTES,
                 f"Native DSO exceeds modular size budget: {native_info.file_size} > {MAX_NATIVE_BYTES}")
         native_offset = zip_data_offset(args.apk, native_info)
-        require(native_offset % 16384 == 0,
+        require(native_offset % PAGE_ALIGNMENT == 0,
                 f"libdmcviewer.so is not 16 KiB ZIP-aligned: offset={native_offset}")
         native_bytes = archive.read(native_info)
 
@@ -171,6 +191,9 @@ def main():
             "Direct-Bitmap JNI path missing")
     require("dlopen(" not in native_cpp and "dlsym(" not in native_cpp,
             "Runtime shim delegation is forbidden in canonical JNI source")
+    require("spider::actions::compose_mod_sessions" in native_cpp and
+            "spider::actions::attach_ptx" in native_cpp,
+            "JNI composition/attachment must route through Spider actions")
 
     android_link = re.search(
         r"target_link_libraries\s*\(\s*dmcviewer\s+PRIVATE(?P<body>.*?)\)",
@@ -183,6 +206,8 @@ def main():
             "Android JNI target must link the portable core and jnigraphics")
     require(core_link and "DMCRengine::ReaderCore" in core_link.group("body"),
             "Portable core must statically consume canonical Rengine ReaderCore")
+    require("spider/session_actions.cpp" in cmake,
+            "Portable core must own Spider session actions")
 
     methods = re.findall(r"public\s+static\s+native\s+\S+\s+(\w+)\s*\(", bridge)
     with tempfile.TemporaryDirectory() as temp:
@@ -191,6 +216,10 @@ def main():
         symbols = run(elf_reader, "--dyn-syms", "--wide", str(native_path))
         header = run(elf_reader, "-h", str(native_path))
         require("AArch64" in header, "Native library is not AArch64")
+        load_alignments = load_segment_alignments(elf_reader, native_path)
+        require(all(alignment >= PAGE_ALIGNMENT for alignment in load_alignments),
+                "Every ELF PT_LOAD must support 16 KiB pages; alignments=" +
+                ",".join(hex(value) for value in load_alignments))
         exports = {
             line.split()[-1] for line in symbols.splitlines()
             if len(line.split()) >= 8 and line.split()[4] in ("GLOBAL", "WEAK")
@@ -212,11 +241,13 @@ def main():
         "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
         "native_dso_count": 1,
         "native_dso": "lib/arm64-v8a/libdmcviewer.so",
-        "native_zip_alignment": 16384,
+        "native_zip_alignment": PAGE_ALIGNMENT,
+        "native_elf_load_alignments": load_alignments,
         "extractNativeLibs": False,
         "jni_exports_checked": len(methods),
         "elf_reader": elf_reader,
-        "scm_authority": "dmc-rengine-main-809824882c60487962e99ee41f16bca7e3ccbc83",
+        "rengine_pin": RENGINE_PIN,
+        "scm_authority_base": SCM_AUTHORITY_BASE,
         "zip_integrity": "pass",
         "apk_bytes": args.apk.stat().st_size,
         "native_bytes": len(native_bytes),
