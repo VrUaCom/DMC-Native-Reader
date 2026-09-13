@@ -16,12 +16,13 @@ int main() {
     const auto* mod = NativeModuleRegistry::find("MOD");
     const auto* dds = NativeModuleRegistry::find("DDS");
     const auto* ptx = NativeModuleRegistry::find("PTX");
-    const auto* evt = NativeModuleRegistry::find("EVT");
+    const auto* event_tbl = NativeModuleRegistry::find("EventTbl");
     assert(scm != nullptr && scm->format == Format::Scm && scm->renderable);
     assert(mod != nullptr && mod->format == Format::Mod && mod->renderable);
     assert(dds != nullptr && dds->format == Format::Dds && !dds->renderable);
     assert(ptx != nullptr && ptx->format == Format::Ptx && !ptx->renderable);
-    assert(evt != nullptr && evt->format == Format::Evt && !evt->renderable);
+    assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
+           !event_tbl->renderable);
 
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
