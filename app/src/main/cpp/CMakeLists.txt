@@ -95,7 +95,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         black_widow_state composite_mod_scene core_model_pipeline dds_ptx_v1
         em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture render_scene scm_authority
-        spider_model_execution uv_gallery session_inspection tm2_legacy)
+        spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy)
         add_executable(${test_name}_test
             ../../test/native/${test_name}_test.cpp)
         target_link_libraries(${test_name}_test PRIVATE DMCNativeReader::Core)
