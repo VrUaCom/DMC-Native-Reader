@@ -2,7 +2,9 @@
 
 #include "dmc_rengine/formats/evt.hpp"
 #include "dmcresource/module_support.h"
+#include "dmcresource/spider/crusader.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -15,6 +17,9 @@ namespace dmcresource {
 namespace {
 
 namespace evt = dmc::rengine::formats::evt;
+namespace crusader = dmcresource::spider::crusader;
+
+constexpr crusader::OperationId kProjectEventTbl = 1U;
 
 [[nodiscard]] std::string hex_value(std::uint64_t value, int width) {
     std::ostringstream out;
@@ -37,9 +42,8 @@ namespace evt = dmc::rengine::formats::evt;
     return EvidenceLevel::PreservedUndecoded;
 }
 
-PipelineResult run_evt_module(
+PipelineResult project_evt(
     const NativeModule& module,
-    std::string_view,
     const std::uint8_t* bytes,
     std::size_t size,
     const ProbeResult& probe) noexcept {
@@ -193,6 +197,69 @@ PipelineResult run_evt_module(
     }
 
     return out;
+}
+
+struct EventExecutionState final {
+    const NativeModule* module{};
+    const std::uint8_t* bytes{};
+    std::size_t size{};
+    const ProbeResult* probe{};
+    PipelineResult result{};
+};
+
+bool project_event_operation(void* raw, std::uint32_t) noexcept {
+    auto* state = static_cast<EventExecutionState*>(raw);
+    if (state == nullptr || state->module == nullptr || state->probe == nullptr) {
+        return false;
+    }
+    state->result = project_evt(
+        *state->module, state->bytes, state->size, *state->probe);
+    return state->result.accepted;
+}
+
+const crusader::Plan& event_plan() {
+    static const crusader::Plan plan = [] {
+        crusader::Plan out;
+        out.instructions.push_back({
+            .operation = kProjectEventTbl,
+            .operand = 0U,
+            .dependency_begin = 0U,
+            .dependency_count = 0U,
+            .domain = crusader::Domain::cpu,
+        });
+        return out;
+    }();
+    return plan;
+}
+
+PipelineResult run_evt_module(
+    const NativeModule& module,
+    std::string_view,
+    const std::uint8_t* bytes,
+    std::size_t size,
+    const ProbeResult& probe) noexcept {
+    EventExecutionState state{
+        .module = &module,
+        .bytes = bytes,
+        .size = size,
+        .probe = &probe,
+    };
+    static const std::array bindings{
+        crusader::OperationBinding{
+            .operation = kProjectEventTbl,
+            .execute = &project_event_operation,
+        },
+    };
+
+    const auto report = crusader::execute(event_plan(), bindings, &state);
+    if (!report.ok()) {
+        if (!state.result.detail.empty()) return state.result;
+        std::string detail = "Crusader EventTbl execution failed: ";
+        detail += crusader::to_string(report.status);
+        return module_support::reject(probe, module.id, std::move(detail));
+    }
+    state.result.modules.push_back({"spider.crusader", true});
+    return state.result;
 }
 
 } // namespace
