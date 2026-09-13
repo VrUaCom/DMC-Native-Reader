@@ -40,7 +40,7 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-      - name: Reject archived legacy source paths
+      - name: Reject archived and recovery source paths
         run: |
           set -euxo pipefail
           for path in \
@@ -58,6 +58,7 @@ jobs:
             app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java; do
             test ! -e "$path"
           done
+          ! grep -R -n -E 'libdmcshim|libdmccore00|dlopen\(|dlsym\(' app/src/main/cpp app/src/main/java
 
       - name: Build and run native regressions through the product core
         run: |
@@ -70,7 +71,7 @@ jobs:
       - name: Build APK
         run: gradle --no-daemon :app:assembleDebug
 
-      - name: Verify device APK identity, signer, JNI and packaging
+      - name: Verify device APK identity, signer, JNI and modular packaging
         run: python3 tools/verify_device_apk.py app/build/outputs/apk/debug/app-debug.apk
 
       - name: Verify APK modular core surface
@@ -79,6 +80,12 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
           unzip -t "$APK"
+
+          mapfile -t NATIVE_LIBS < <(zipinfo -1 "$APK" | grep '^lib/.*\.so$')
+          test "${#NATIVE_LIBS[@]}" -eq 1
+          test "${NATIVE_LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
+          ! zipinfo -1 "$APK" | grep -E 'libdmcshim|libdmccore00'
+
           unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
 
@@ -111,7 +118,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='32' versionName='1.0.5'" /tmp/core-badging.txt
+          grep -Fq "versionCode='33' versionName='1.0.6'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
@@ -123,5 +130,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v32-scm-authority-debug
+          name: dmc-native-reader-v33-modular-debug
           path: app/build/outputs/apk/debug/app-debug.apk
