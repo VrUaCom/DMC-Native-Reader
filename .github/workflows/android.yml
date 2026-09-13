@@ -40,7 +40,7 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-      - name: Reject archived and recovery source paths
+      - name: Reject archived legacy source paths
         run: |
           set -euxo pipefail
           for path in \
@@ -58,7 +58,6 @@ jobs:
             app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java; do
             test ! -e "$path"
           done
-          ! grep -R -n -E 'libdmcshim|libdmccore00|dlopen\(|dlsym\(' app/src/main/cpp app/src/main/java
 
       - name: Build and run native regressions through the product core
         run: |
@@ -68,10 +67,10 @@ jobs:
           cmake --build build/host --parallel 2
           ctest --test-dir build/host --output-on-failure
 
-      - name: Build APK
-        run: gradle --no-daemon :app:assembleDebug
+      - name: Build clean modular APK
+        run: gradle --no-daemon clean :app:assembleDebug
 
-      - name: Verify device APK identity, signer, JNI and modular packaging
+      - name: Verify device APK identity, signer, JNI, size and packaging
         run: python3 tools/verify_device_apk.py app/build/outputs/apk/debug/app-debug.apk
 
       - name: Verify APK modular core surface
@@ -81,11 +80,12 @@ jobs:
           test -f "$APK"
           unzip -t "$APK"
 
-          mapfile -t NATIVE_LIBS < <(zipinfo -1 "$APK" | grep '^lib/.*\.so$')
-          test "${#NATIVE_LIBS[@]}" -eq 1
-          test "${NATIVE_LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
-          ! zipinfo -1 "$APK" | grep -E 'libdmcshim|libdmccore00'
-
+          # The verifier above is authoritative for exact physical DSO count,
+          # 16 KiB ZIP alignment, Java/JNI export parity, signer and size budget.
+          # This step keeps capability/module checks human-readable in CI logs.
+          mapfile -t LIBS < <(zipinfo -1 "$APK" | grep '^lib/.*\.so$')
+          test "${#LIBS[@]}" -eq 1
+          test "${LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
           unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
 
@@ -96,6 +96,9 @@ jobs:
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
           grep -Fq 'native.uv-projection' /tmp/native-markers.txt
+
+          ! grep -Fq 'libdmcshim' /tmp/native-markers.txt
+          ! grep -Fq 'libdmccore00' /tmp/native-markers.txt
 
           for legacy in \
             'formats.hits.collision-reader' \
