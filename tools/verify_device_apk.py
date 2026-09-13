@@ -1,4 +1,4 @@
-"""Verify the 1.0.2/v29 EventTbl device APK, not production signing or device behaviour."""
+"""Verify the 1.0.5/v32 SCM-authority device APK, not production signing or device behaviour."""
 import argparse
 import hashlib
 import json
@@ -29,7 +29,7 @@ def main():
     build_tools = Path(args.sdk) / "build-tools/36.0.0"
     badging = run(str(build_tools / "aapt2"), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging, "Wrong application ID")
-    require("versionCode='29' versionName='1.0.2'" in badging, "Wrong release identity")
+    require("versionCode='32' versionName='1.0.5'" in badging, "Wrong release identity")
     require("native-code: 'arm64-v8a'" in badging, "Wrong ABI")
     manifest = run(str(build_tools / "aapt2"), "dump", "xmltree", str(args.apk),
                    "--file", "AndroidManifest.xml")
@@ -129,11 +129,12 @@ def main():
             require(any(symbol == line.split()[-1] and " UND " not in line
                         for line in symbols.splitlines() if line.split()),
                     "Missing JNI export: " + method)
-    print(json.dumps({"apk": str(args.apk), "versionName": "1.0.2", "versionCode": 29,
+    print(json.dumps({"apk": str(args.apk), "versionName": "1.0.5", "versionCode": 32,
                       "abi": "arm64-v8a", "signer_sha256": expected,
                       "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
                       "jni_exports_checked": len(methods),
                       "direct_bitmap_abi": "pass", "eventtbl_module": "pass",
+                      "scm_authority": "dmc-rengine-main-809824882c60487962e99ee41f16bca7e3ccbc83",
                       "zip_integrity": "pass", "apk_bytes": args.apk.stat().st_size,
                       "native_bytes": len(library), "dex_bytes": dex_bytes,
                       "public_native_exports": len(exports), "kotlin_runtime": "absent",
