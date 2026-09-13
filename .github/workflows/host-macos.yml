@@ -1,0 +1,30 @@
+name: DMC Native Reader host macOS fallback
+
+on:
+  push:
+    branches: ["feature/png-export-multi-mod-v27"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure portable core regressions
+        run: |
+          cmake -S app/src/main/cpp -B build/host-macos \
+            -DDMC_NATIVE_READER_BUILD_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build portable core regressions
+        run: cmake --build build/host-macos --parallel 3
+
+      - name: Run portable core regressions
+        run: ctest --test-dir build/host-macos --output-on-failure
