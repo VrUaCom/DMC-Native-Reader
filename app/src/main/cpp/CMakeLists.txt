@@ -29,6 +29,7 @@ add_library(dmc_native_reader_core STATIC
     modules/texture_companion.cpp
     modules/texture_set.cpp
     spider/black_widow.cpp
+    spider/session_actions.cpp
     view_renderer.cpp
 )
 add_library(DMCNativeReader::Core ALIAS dmc_native_reader_core)
