@@ -10,11 +10,15 @@ import subprocess
 import tempfile
 import zipfile
 
-# Accepted v26 was ~0.60 MiB compressed with one 1.60 MiB ARM64 DSO. v33 keeps
-# its single mmap-ready DSO uncompressed, so the APK is expected to be larger on
-# disk, but it must still stay far below the rejected recovery chain. These
-# bounds deliberately leave substantial feature headroom while making runtime
-# duplication/bloat a hard build failure instead of a device-side surprise.
+# Accepted v26 device APK baseline:
+#   APK 597,665 bytes; one ARM64 libdmcviewer.so 1,676,448 bytes uncompressed.
+# v33 keeps its single mmap-ready DSO uncompressed, so the APK is expected to
+# be larger on disk, but it must still stay far below the rejected recovery
+# chain. These bounds deliberately leave substantial feature headroom while
+# making runtime duplication/bloat a hard build failure instead of a device-side
+# surprise.
+ACCEPTED_V26_APK_BYTES = 597_665
+ACCEPTED_V26_NATIVE_BYTES = 1_676_448
 MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
@@ -188,6 +192,8 @@ def main():
         "apk_bytes": args.apk.stat().st_size,
         "native_bytes": len(native_bytes),
         "dex_bytes": dex_bytes,
+        "accepted_v26_apk_bytes": ACCEPTED_V26_APK_BYTES,
+        "accepted_v26_native_bytes": ACCEPTED_V26_NATIVE_BYTES,
         "max_apk_bytes": MAX_APK_BYTES,
         "max_native_bytes": MAX_NATIVE_BYTES,
         "max_dex_bytes": MAX_DEX_BYTES,
