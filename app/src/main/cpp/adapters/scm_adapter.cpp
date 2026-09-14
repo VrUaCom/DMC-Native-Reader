@@ -27,7 +27,6 @@ namespace {
 namespace scm = dmc::rengine::formats::scm;
 
 using namespace dmcresource::resource_limits;
-
 using namespace dmcresource::vector_math;
 
 [[nodiscard]] std::string first_error(const scm::ParseResult& parsed) {
@@ -113,50 +112,62 @@ InspectionNode make_diagnostic_node(
     }
     output->indices.reserve(output->indices.size() + capacity);
 
-    std::size_t p1 = 0U;
-    std::size_t p2 = 1U;
-    for (std::size_t p3 = 2U; p3 < vertex_count; ++p3) {
-        const bool topology_break =
-            (source.colors_topology[p3].topology_flags &
-             scm::triangle_break_bit) != 0U;
-        if (!topology_break) {
-            const Vec3 a{source.positions[p1].x, source.positions[p1].y,
-                         source.positions[p1].z};
-            const Vec3 b{source.positions[p2].x, source.positions[p2].y,
-                         source.positions[p2].z};
-            const Vec3 c{source.positions[p3].x, source.positions[p3].y,
-                         source.positions[p3].z};
-            const Vec3 na{source.normals[p1].x, source.normals[p1].y,
-                          source.normals[p1].z};
-            const Vec3 nb{source.normals[p2].x, source.normals[p2].y,
-                          source.normals[p2].z};
-            const Vec3 nc{source.normals[p3].x, source.normals[p3].y,
-                          source.normals[p3].z};
+    // Rengine owns the DMC3 SCM strip-break semantics. Native Reader only
+    // projects the canonical strip into the renderer's triangle-list contract
+    // and orients each non-degenerate triangle against the parsed normals.
+    std::vector<std::uint8_t> topology_flags;
+    topology_flags.reserve(source.colors_topology.size());
+    for (const auto& color_topology : source.colors_topology) {
+        topology_flags.push_back(color_topology.topology_flags);
+    }
+    const auto strip_indices = scm::generate_triangle_strip_indices(topology_flags);
 
-            const Vec3 e1 = normalize(sub(c, a));
-            const Vec3 e2 = normalize(sub(b, a));
-            const Vec3 face = normalize(cross(e1, e2));
-            const Vec3 sum = add(add(na, nb), nc);
-            const Vec3 normal_sum =
-                (sum.x == 0.0F && sum.y == 0.0F && sum.z == 0.0F)
-                    ? face
-                    : normalize(sum);
+    for (std::size_t strip_pos = 2U; strip_pos < strip_indices.size(); ++strip_pos) {
+        const auto p1 = static_cast<std::size_t>(strip_indices[strip_pos - 2U]);
+        const auto p2 = static_cast<std::size_t>(strip_indices[strip_pos - 1U]);
+        const auto p3 = static_cast<std::size_t>(strip_indices[strip_pos]);
 
-            const auto ia = static_cast<std::uint32_t>(base_vertex + p1);
-            const auto ib = static_cast<std::uint32_t>(base_vertex + p2);
-            const auto ic = static_cast<std::uint32_t>(base_vertex + p3);
-            if (dot(normal_sum, face) > 0.0F) {
-                output->indices.push_back(ia);
-                output->indices.push_back(ic);
-                output->indices.push_back(ib);
-            } else {
-                output->indices.push_back(ia);
-                output->indices.push_back(ib);
-                output->indices.push_back(ic);
-            }
+        // Canonical run restarts insert repeated indices to create degenerate
+        // connector triangles. They are strip control data, not render faces.
+        if (p1 == p2 || p2 == p3 || p1 == p3) continue;
+        if (p1 >= vertex_count || p2 >= vertex_count || p3 >= vertex_count) {
+            return false;
         }
-        p1 = p2;
-        p2 = p3;
+
+        const Vec3 a{source.positions[p1].x, source.positions[p1].y,
+                     source.positions[p1].z};
+        const Vec3 b{source.positions[p2].x, source.positions[p2].y,
+                     source.positions[p2].z};
+        const Vec3 c{source.positions[p3].x, source.positions[p3].y,
+                     source.positions[p3].z};
+        const Vec3 na{source.normals[p1].x, source.normals[p1].y,
+                      source.normals[p1].z};
+        const Vec3 nb{source.normals[p2].x, source.normals[p2].y,
+                      source.normals[p2].z};
+        const Vec3 nc{source.normals[p3].x, source.normals[p3].y,
+                      source.normals[p3].z};
+
+        const Vec3 e1 = normalize(sub(c, a));
+        const Vec3 e2 = normalize(sub(b, a));
+        const Vec3 face = normalize(cross(e1, e2));
+        const Vec3 sum = add(add(na, nb), nc);
+        const Vec3 normal_sum =
+            (sum.x == 0.0F && sum.y == 0.0F && sum.z == 0.0F)
+                ? face
+                : normalize(sum);
+
+        const auto ia = static_cast<std::uint32_t>(base_vertex + p1);
+        const auto ib = static_cast<std::uint32_t>(base_vertex + p2);
+        const auto ic = static_cast<std::uint32_t>(base_vertex + p3);
+        if (dot(normal_sum, face) > 0.0F) {
+            output->indices.push_back(ia);
+            output->indices.push_back(ic);
+            output->indices.push_back(ib);
+        } else {
+            output->indices.push_back(ia);
+            output->indices.push_back(ib);
+            output->indices.push_back(ic);
+        }
     }
     return true;
 }
@@ -302,6 +313,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
         out.modules.push_back({"bounded-read-guard", true});
         out.modules.push_back({"canonical.scm.structural-parser", true});
         out.modules.push_back({"canonical.scm.scene-hierarchy", true});
+        out.modules.push_back({"canonical.scm.topology", true});
         out.modules.push_back({module_id, true});
 
         out.inspection.format = "SCM";
