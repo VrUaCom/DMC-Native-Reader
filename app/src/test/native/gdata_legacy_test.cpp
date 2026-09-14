@@ -214,5 +214,15 @@ int main() {
     assert(!run_decode_pipeline(
         "EventTbl07.bin", malformed.data(), malformed.size()).accepted);
 
+    // Android may route a stock-looking EventTblNN.bin name to Native Reader,
+    // but native identity remains content-authoritative. Never promote generic
+    // .bin or a matching filename without confirmed EVT\0 bytes.
+    std::vector<std::uint8_t> unrelated_bin(0x40U, 0U);
+    const auto unrelated_probe = probe(
+        "EventTbl99.bin", unrelated_bin.data(), unrelated_bin.size());
+    assert(!unrelated_probe.recognized);
+    assert(!run_decode_pipeline(
+        "EventTbl99.bin", unrelated_bin.data(), unrelated_bin.size()).accepted);
+
     return 0;
 }
