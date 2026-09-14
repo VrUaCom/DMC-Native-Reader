@@ -133,15 +133,16 @@ int main() {
     assert(mod != nullptr && scm != nullptr && dds != nullptr && ptx != nullptr &&
            event_tbl != nullptr);
 
-    // MOD and SCM share one Spider-backed model execution entry point, while
-    // DDS and PTX share the Spider-backed texture execution entry point.
-    // EventTbl remains a separate structural module until its own Spider plan is
-    // promoted; keeping it explicit prevents the registry count from silently
-    // drifting away from the tested product surface.
+    // MOD and SCM share one Spider-backed model execution entry point; DDS and
+    // PTX share the Spider-backed texture entry point; EventTbl owns a separate
+    // Spider-backed structural route. This keeps all five promoted families on
+    // Crusader without conflating their product domains.
     assert(mod->run == scm->run);
     assert(dds->run == ptx->run);
     assert(mod->run != dds->run);
     assert(event_tbl->run != nullptr);
+    assert(event_tbl->run != mod->run);
+    assert(event_tbl->run != dds->run);
 
     // Black Widow can distinguish the promoted skeletal MOD model family from
     // SCM without Android inspecting filenames: the distinction is carried by
