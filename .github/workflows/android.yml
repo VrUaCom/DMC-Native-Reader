@@ -59,6 +59,11 @@ jobs:
             test ! -e "$path"
           done
 
+          # DMC Rengine owns SCM strip-break semantics. Native Reader may only
+          # project the canonical strip into its renderer representation.
+          grep -Fq 'generate_triangle_strip_indices' app/src/main/cpp/adapters/scm_adapter.cpp
+          ! grep -Fq 'triangle_break_bit' app/src/main/cpp/adapters/scm_adapter.cpp
+
       - name: Build and run native regressions through the product core
         run: |
           set -euxo pipefail
