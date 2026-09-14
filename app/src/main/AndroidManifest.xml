@@ -23,7 +23,7 @@
             android:excludeFromRecents="true"
             android:label="DMC Native Reader">
 
-            <!-- Native Reader 1.0 explicit public format surface. -->
+            <!-- Native Reader v33 explicit public format surface. -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -34,9 +34,13 @@
                 <data android:mimeType="application/vnd.dmc.mod" />
                 <data android:mimeType="application/vnd.dmc.ptx" />
                 <data android:mimeType="image/vnd-ms.dds" />
+                <data android:mimeType="application/vnd.dmc.eventtbl" />
             </intent-filter>
 
-            <!-- Samsung/OEM extension routing for the four promoted families. -->
+            <!-- Samsung/OEM extension routing for the five promoted families.
+                 EventTbl keeps its stock EventTblNN.bin naming. We deliberately
+                 do not claim generic .bin files; native probing still requires
+                 the confirmed EVT\0 content identity before accepting them. -->
             <intent-filter android:priority="100">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
@@ -47,10 +51,13 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mod" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.dds" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ptx" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*EventTbl.*\\.bin" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*eventtbl.*\\.bin" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.SCM" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.DDS" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.PTX" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*EVENTTBL.*\\.BIN" />
             </intent-filter>
 
             <intent-filter android:priority="100">
@@ -63,10 +70,13 @@
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mod" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.dds" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ptx" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*EventTbl.*\\.bin" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*eventtbl.*\\.bin" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.SCM" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.DDS" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.PTX" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*EVENTTBL.*\\.BIN" />
             </intent-filter>
 
             <!-- Provider fallback stays generic; native probing still fails closed. -->
