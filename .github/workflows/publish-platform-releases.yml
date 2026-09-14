@@ -1,0 +1,234 @@
+name: Publish Android and Windows releases
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/publish-platform-releases.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Build Android v1.0.1
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.5.0"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+      - name: Build unsigned release APK
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Restore production signing authority
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.DMC_NATIVE_READER_RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.DMC_NATIVE_READER_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.DMC_NATIVE_READER_RELEASE_KEY_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.DMC_NATIVE_READER_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_KEYSTORE_BASE64"
+          test -n "$RELEASE_STORE_PASSWORD"
+          test -n "$RELEASE_KEY_PASSWORD"
+          test -n "$RELEASE_KEY_ALIAS"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > /tmp/dmc-native-reader-release.jks
+          printf '%s\n' "$RELEASE_STORE_PASSWORD" > /tmp/release-store-passphrase.txt
+          printf '%s\n' "$RELEASE_KEY_PASSWORD" > /tmp/release-key-passphrase.txt
+          printf '%s\n' "$RELEASE_KEY_ALIAS" > /tmp/release-key-alias.txt
+          keytool -list \
+            -keystore /tmp/dmc-native-reader-release.jks \
+            -storepass:file /tmp/release-store-passphrase.txt \
+            -alias "$RELEASE_KEY_ALIAS" >/dev/null
+
+      - name: Sign Android v1.0.1 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          SIGNED="/tmp/DMC-Native-Reader-Android-v1.0.1.apk"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          ALIAS="$(cat /tmp/release-key-alias.txt)"
+          "$APKSIGNER" sign \
+            --ks /tmp/dmc-native-reader-release.jks \
+            --ks-key-alias "$ALIAS" \
+            --ks-pass file:/tmp/release-store-passphrase.txt \
+            --key-pass file:/tmp/release-key-passphrase.txt \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$SIGNED" \
+            "$UNSIGNED"
+
+      - name: Verify Android package
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="/tmp/DMC-Native-Reader-Android-v1.0.1.apk"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
+          unzip -t "$APK"
+          "$AAPT2" dump badging "$APK" | tee /tmp/android-release-badging.txt
+          grep -q "package: name='com.dmcrengine.nativereader'" /tmp/android-release-badging.txt
+          grep -q "versionCode='28'" /tmp/android-release-badging.txt
+          grep -q "versionName='1.0.1'" /tmp/android-release-badging.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/android-release-signing.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' /tmp/android-release-signing.txt
+          grep -q 'Verified using v3 scheme (APK Signature Scheme v3): true' /tmp/android-release-signing.txt
+          sha256sum "$APK" | tee /tmp/android-release.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-Android-v1.0.1
+          path: /tmp/DMC-Native-Reader-Android-v1.0.1.apk
+          if-no-files-found: error
+          retention-days: 90
+
+  windows:
+    name: Build Windows x64 preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/cross-platform-native-reader
+
+      - name: Install MinGW cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 zip
+
+      - name: Configure Windows x64 build
+        run: |
+          cmake -S windows -B build/windows \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Windows executable
+        run: cmake --build build/windows --parallel
+
+      - name: Package Windows preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="dist/DMC-Native-Reader-Windows-v1.0.0-preview"
+          mkdir -p "$OUT"
+          test -f build/windows/DMC-Native-Reader.exe
+          test -f windows/Register-OpenWith.ps1
+          test -f windows/Unregister-OpenWith.ps1
+          cp build/windows/DMC-Native-Reader.exe "$OUT/DMC-Native-Reader.exe"
+          cp windows/Register-OpenWith.ps1 "$OUT/Register-OpenWith.ps1"
+          cp windows/Unregister-OpenWith.ps1 "$OUT/Unregister-OpenWith.ps1"
+          cp LICENSE "$OUT/LICENSE.txt"
+          cp THIRD_PARTY_NOTICES.md "$OUT/THIRD_PARTY_NOTICES.md"
+          (cd "$OUT" && zip -9 -r "../DMC-Native-Reader-Windows-v1.0.0-preview.zip" .)
+          test -f dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+          sha256sum dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip | tee dist/windows-release.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v1.0.0-preview
+          path: dist/DMC-Native-Reader-Windows-v1.0.0-preview.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish GitHub Releases
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: DMC-Native-Reader-Android-v1.0.1
+          path: dist/android
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v1.0.0-preview
+          path: dist/windows
+
+      - name: Publish Android release
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="dist/android/DMC-Native-Reader-Android-v1.0.1.apk"
+          NOTES=$(mktemp)
+          cat > "$NOTES" <<'EOF'
+          Android build of DMC Native Reader 1.0.1 (versionCode 28).
+
+          Current accepted Android baseline from `main`, including the device-confirmed PNG export hotfix for PTX/DDS and MOD/SCM UV exports.
+
+          Platform: Android arm64-v8a, minSdk 26, targetSdk 36.
+          Supported production families: MOD / SCM / DDS / PTX.
+          EOF
+          if gh release view android-v1.0.1 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit android-v1.0.1 --repo "$GITHUB_REPOSITORY" \
+              --title "DMC Native Reader for Android — v1.0.1" \
+              --notes-file "$NOTES"
+            gh release upload android-v1.0.1 "$APK" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create android-v1.0.1 "$APK" --repo "$GITHUB_REPOSITORY" \
+              --target main \
+              --title "DMC Native Reader for Android — v1.0.1" \
+              --notes-file "$NOTES"
+          fi
+
+      - name: Publish Windows preview release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="dist/windows/DMC-Native-Reader-Windows-v1.0.0-preview.zip"
+          NOTES=$(mktemp)
+          cat > "$NOTES" <<'EOF'
+          Native Windows x64 preview of DMC Native Reader.
+
+          Includes `DMC-Native-Reader.exe` plus optional per-user Open With registration helpers for MOD / SCM / DDS / PTX.
+
+          This Windows package is a technical preview. It shares the portable C++20 parser/rendering core, but it has not yet received the same physical-device acceptance status as the Android build.
+          EOF
+          if gh release view windows-v1.0.0-preview --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit windows-v1.0.0-preview --repo "$GITHUB_REPOSITORY" \
+              --title "DMC Native Reader for Windows — v1.0.0 Preview" \
+              --notes-file "$NOTES" \
+              --prerelease
+            gh release upload windows-v1.0.0-preview "$ZIP" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create windows-v1.0.0-preview "$ZIP" --repo "$GITHUB_REPOSITORY" \
+              --target feature/cross-platform-native-reader \
+              --title "DMC Native Reader for Windows — v1.0.0 Preview" \
+              --notes-file "$NOTES" \
+              --prerelease
+          fi
