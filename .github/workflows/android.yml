@@ -64,6 +64,13 @@ jobs:
           grep -Fq 'generate_triangle_strip_indices' app/src/main/cpp/adapters/scm_adapter.cpp
           ! grep -Fq 'triangle_break_bit' app/src/main/cpp/adapters/scm_adapter.cpp
 
+          # DMC Rengine also owns MOD bit-15 topology state. Prefer the typed
+          # decoded skin flag and use the canonical mask only for zero-domain
+          # files; never restore a Reader-local control-word literal.
+          grep -Fq 'source.skin[vertex].skin.topology_break' app/src/main/cpp/adapters/mod_adapter.cpp
+          grep -Fq 'CanonicalMod::topology_break_mask' app/src/main/cpp/adapters/mod_adapter.cpp
+          ! grep -Eq 'control_words.*0x8000' app/src/main/cpp/adapters/mod_adapter.cpp
+
       - name: Build and run native regressions through the product core
         run: |
           set -euxo pipefail
@@ -99,6 +106,8 @@ jobs:
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
           grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
+          grep -Fq 'canonical.mod.topology-break' /tmp/native-markers.txt
+          grep -Fq 'canonical.scm.topology' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
           grep -Fq 'native.uv-projection' /tmp/native-markers.txt
 
