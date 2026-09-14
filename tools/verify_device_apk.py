@@ -176,6 +176,24 @@ def main():
     bridge = (root / "app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java").read_text()
     native_cpp = (root / "app/src/main/cpp/app_native.cpp").read_text()
     cmake = (root / "app/src/main/cpp/CMakeLists.txt").read_text()
+    resource_session_cpp = (
+        root / "app/src/main/cpp/modules/resource_session.cpp").read_text()
+
+    # The APK is only canonical when the source tree that produced it points at
+    # the exact ReaderCore authority pinned for v33. Check both the parent
+    # repository gitlink and the recursively checked-out submodule worktree.
+    rengine_path = root / "app/src/main/cpp/vendor/dmc-rengine-cpp"
+    rengine_gitlink = run(
+        "git", "-C", str(root), "rev-parse",
+        "HEAD:app/src/main/cpp/vendor/dmc-rengine-cpp").strip()
+    require(rengine_gitlink == RENGINE_PIN,
+            "DMC Rengine gitlink does not match the canonical v33 pin: " +
+            rengine_gitlink)
+    rengine_checkout = run(
+        "git", "-C", str(rengine_path), "rev-parse", "HEAD").strip()
+    require(rengine_checkout == RENGINE_PIN,
+            "Checked-out DMC Rengine submodule does not match the canonical v33 pin: " +
+            rengine_checkout)
 
     require("import android.graphics.Bitmap;" in bridge,
             "NativeBridge must use android.graphics.Bitmap")
@@ -194,6 +212,9 @@ def main():
     require("spider::actions::compose_mod_sessions" in native_cpp and
             "spider::actions::attach_ptx" in native_cpp,
             "JNI composition/attachment must route through Spider actions")
+    require("attach_session_ptx(" not in resource_session_cpp and
+            "attach_session_part_ptx(" not in resource_session_cpp,
+            "Obsolete direct Session PTX attachment implementation reappeared")
 
     android_link = re.search(
         r"target_link_libraries\s*\(\s*dmcviewer\s+PRIVATE(?P<body>.*?)\)",
@@ -247,6 +268,8 @@ def main():
         "jni_exports_checked": len(methods),
         "elf_reader": elf_reader,
         "rengine_pin": RENGINE_PIN,
+        "rengine_gitlink": rengine_gitlink,
+        "rengine_checkout": rengine_checkout,
         "scm_authority_base": SCM_AUTHORITY_BASE,
         "zip_integrity": "pass",
         "apk_bytes": args.apk.stat().st_size,
