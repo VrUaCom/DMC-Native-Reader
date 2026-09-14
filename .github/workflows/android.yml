@@ -127,6 +127,7 @@ jobs:
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.ptx' /tmp/manifest.txt
           grep -Fq 'image/vnd-ms.dds' /tmp/manifest.txt
+          grep -Fq 'application/vnd.dmc.eventtbl' /tmp/manifest.txt
           ! grep -Fq 'application/vnd.dmc.hits' /tmp/manifest.txt
           ! grep -Fq 'application/vnd.dmc.pac' /tmp/manifest.txt
           ! grep -Fq 'application/vnd.dmc.pnst' /tmp/manifest.txt
