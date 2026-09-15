@@ -11,11 +11,10 @@ import subprocess
 import tempfile
 import zipfile
 
-ACCEPTED_V26_APK_BYTES = 597_665
-ACCEPTED_V26_NATIVE_BYTES = 1_676_448
 MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
+MAX_INSTALLED_PACKAGE_CODE_BYTES = 4 * 1024 * 1024
 DUPLICATE_PAYLOAD_MIN_BYTES = 64 * 1024
 NDK_VERSION = "30.0.16248370"
 CPP_STANDARD = "C++23"
@@ -84,15 +83,6 @@ def load_segment_alignments(elf_reader: str, native_path: Path):
                 f"Could not parse PT_LOAD alignment from: {line}") from error
     require(alignments, "Native library exposes no PT_LOAD segments")
     return alignments
-
-
-def growth_from_baseline(current: int, baseline: int):
-    delta = current - baseline
-    percent = (delta * 100.0 / baseline) if baseline else 0.0
-    return {
-        "bytes": delta,
-        "percent": round(percent, 2),
-    }
 
 
 def main():
@@ -343,6 +333,8 @@ def main():
             "Portable regression set must include the C++23 profile gate")
     require("spider/session_actions.cpp" not in cmake,
             "Legacy monolithic Spider session_actions.cpp must not be compiled")
+    require(not (root / "app/src/main/cpp/spider/session_actions.cpp").exists(),
+            "Dead duplicate Spider session_actions.cpp must not remain in source tree")
 
     methods = re.findall(r"public\s+static\s+native\s+\S+\s+(\w+)\s*\(", bridge)
     with tempfile.TemporaryDirectory() as temp:
@@ -399,13 +391,13 @@ def main():
         "apk_bytes": apk_bytes,
         "native_bytes": native_size,
         "dex_bytes": dex_bytes,
-        "accepted_v26_apk_bytes": ACCEPTED_V26_APK_BYTES,
-        "accepted_v26_native_bytes": ACCEPTED_V26_NATIVE_BYTES,
-        "apk_growth_from_v26": growth_from_baseline(apk_bytes, ACCEPTED_V26_APK_BYTES),
-        "native_growth_from_v26": growth_from_baseline(native_size, ACCEPTED_V26_NATIVE_BYTES),
         "max_apk_bytes": MAX_APK_BYTES,
         "max_native_bytes": MAX_NATIVE_BYTES,
         "max_dex_bytes": MAX_DEX_BYTES,
+        "max_installed_package_code_bytes": MAX_INSTALLED_PACKAGE_CODE_BYTES,
+        "installed_size_measurement": "required-on-device-via-measure_installed_footprint.py",
+        "historical_v26_growth_comparable": False,
+        "size_acceptance_authority": "absolute-package-metrics+installed-package-code<=4MiB",
         "modular_native_architecture": "pass",
         "device_test": "pending",
     }, indent=2))
