@@ -12,11 +12,6 @@ measure = module_from_spec(_measure_spec)
 _measure_spec.loader.exec_module(measure)
 
 
-def expect_system_exit(callback) -> None:
-    with unittest.TestCase().assertRaises(SystemExit):
-        callback()
-
-
 class VerifyDeviceApkPolicyTest(unittest.TestCase):
     def test_unique_zip_names_are_not_reported(self):
         self.assertEqual(
@@ -41,16 +36,12 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
             ["classes.dex", "res/a.xml"],
         )
 
-    def test_installed_package_code_limit_is_four_mib(self):
-        self.assertEqual(
-            verifier.MAX_INSTALLED_PACKAGE_CODE_BYTES,
-            4 * 1024 * 1024,
-        )
+    def test_apk_and_installed_package_limits_are_four_mib(self):
+        four_mib = 4 * 1024 * 1024
+        self.assertEqual(verifier.MAX_APK_BYTES, four_mib)
+        self.assertEqual(verifier.MAX_INSTALLED_PACKAGE_CODE_BYTES, four_mib)
         self.assertEqual(measure.MAX_INSTALLED_CODE_KIB, 4096)
-        self.assertEqual(
-            measure.MAX_INSTALLED_CODE_BYTES,
-            verifier.MAX_INSTALLED_PACKAGE_CODE_BYTES,
-        )
+        self.assertEqual(measure.MAX_INSTALLED_CODE_BYTES, four_mib)
 
     def test_historical_v26_growth_constants_are_not_acceptance_api(self):
         self.assertFalse(hasattr(verifier, "ACCEPTED_V26_APK_BYTES"))
