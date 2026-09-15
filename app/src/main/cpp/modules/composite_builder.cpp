@@ -13,11 +13,11 @@ namespace {
     for (auto& part : session->composite_parts) {
         const auto asset_id = session->workspace_graph.add_asset(
             ResourceAssetKind::Model, part.name);
-        if (asset_id == kInvalidAssetId) return false;
-        const auto instance_id = session->workspace_graph.add_model_instance(asset_id);
-        if (instance_id == kInvalidInstanceId) return false;
-        part.asset_id = asset_id;
-        part.instance_id = instance_id;
+        if (!asset_id) return false;
+        const auto instance_id = session->workspace_graph.add_model_instance(*asset_id);
+        if (!instance_id) return false;
+        part.asset_id = *asset_id;
+        part.instance_id = *instance_id;
     }
     return session->workspace_graph.valid();
 }
@@ -47,7 +47,7 @@ BuildResult build_mod_composite(
         if (!options.resolve_default_joint_attachments) {
             if (!out.session->trace.empty()) out.session->trace += "\n";
             out.session->trace +=
-                "[OK] composite.builder placement=source-only stable-ids=1";
+                "[OK] composite.builder placement=source-only stable-ids=1 cpp23=1";
             return out;
         }
 
@@ -86,10 +86,11 @@ BuildResult build_mod_composite(
             " primaryHostInstance=" + std::to_string(host.instance_id) +
             " defaultJointAttempts=" + std::to_string(out.stats.attachment_attempts) +
             " resolved=" + std::to_string(out.stats.attachments_resolved) +
-            " unresolved=" + std::to_string(out.stats.attachments_unresolved);
+            " unresolved=" + std::to_string(out.stats.attachments_unresolved) +
+            " language=C++23";
         if (!out.session->trace.empty()) out.session->trace += "\n";
         out.session->trace +=
-            "[OK] composite.builder default-joint-resolution stable-ids=1";
+            "[OK] composite.builder default-joint-resolution stable-ids=1 cpp23=1";
         return out;
     } catch (...) {
         out.session.reset();
