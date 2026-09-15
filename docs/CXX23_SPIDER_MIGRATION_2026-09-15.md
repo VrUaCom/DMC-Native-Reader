@@ -50,6 +50,20 @@ Other facilities may be adopted only when they solve a concrete product problem 
 
 NDK r30 LTS is selected for Android migration so the C++23 product contract is paired with a current LLVM/libc++ toolchain rather than only changing a compiler flag.
 
+## Toolchain compatibility evidence
+
+The language/toolchain decision is backed by current upstream documentation, not only repository assumptions:
+
+- CMake added `CXX_STANDARD 23` and the `cxx_std_23` compile-feature meta-feature in CMake **3.20**. The repository pins CMake **3.22.1**, so target-scoped C++23 selection is supported by the configured CMake version.
+- Android currently publishes **NDK r30 `30.0.16248370` as the latest LTS NDK**. This is the canonical Android NDK pin for the migration.
+- Android NDK uses LLVM libc++ as its C++ standard library; libc++ has been the NDK STL since r18.
+- The product does not trust one exact `__cplusplus` date value as proof of C++23 because valid toolchains can report different transition values. CMake selects the language mode, while `cpp23_profile.h` rejects C++20-or-older and proves the concrete required library facilities using SD-6 feature-test macros.
+
+Source references used during migration research:
+- CMake 3.20 release notes: `https://cmake.org/cmake/help/latest/release/3.20.html`
+- Android NDK downloads: `https://developer.android.com/ndk/downloads`
+- Android NDK C++ library support: `https://developer.android.com/ndk/guides/cpp-support`
+
 ## Spider C++
 
 **Spider C++** is the Native Reader embedded C++23 orchestration profile.
