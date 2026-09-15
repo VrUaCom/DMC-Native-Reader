@@ -9,7 +9,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 **Active candidate:** **v33 / versionName 1.0.6 / versionCode 33**  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
-**Native product language:** **C++23 + Spider C++ (`spider.cpp23`)**  
+**Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  
 **Production registry:** **MOD / SCM / DDS / PTX / EventTbl**
 
 The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
@@ -54,7 +54,9 @@ Unknown and unpromoted resource families fail closed.
 
 ## C++23 / Spider C++
 
-`DMCNativeReader::Core` and the Android JNI target compile as C++23. Android is pinned to NDK r30 LTS `30.0.16248370`. `cpp23_profile.h` requires the C++23 language level and `std::expected`, and CI/verifier gates reject a fallback to the former C++20/r28 product contract.
+C++23 is owned by the Native Reader **CMake targets**, not by a repository-global flag. `DMCNativeReader::Core`, Android JNI and Native Reader regression targets require `cxx_std_23`, `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`. Gradle pins Android to NDK r30 LTS `30.0.16248370` but does not pass `-std=c++*`, so vendored dependencies keep their own language contract.
+
+`cpp23_profile.h` requires final C++23 mode together with `std::expected`, `std::byteswap`, and `std::to_underlying`. CI/verifier gates reject fallback to the former C++20 contract or reintroduction of Gradle-owned language mode.
 
 **Spider C++** is the embedded C++23 product-language layer for orchestration. It supplies typed result/concept contracts above Spider Crusader while preserving the canonical Rengine native executor underneath. It is not a second runtime or a copy of Rengine format logic.
 
@@ -63,6 +65,8 @@ The first production C++23 upgrades are:
 - `WorkspaceGraph` mutation APIs return typed `std::expected` results;
 - stable `AssetId` / `InstanceId` / `BindingId` remain native resource identity;
 - MOD composition executes through the typed `spider.cpp23` wrapper and then the existing Crusader/Rengine executor.
+
+Migration work is tracked through #34, with #35 review/research completed and #36 C++23 build baseline still active until a real exact-head build executes.
 
 ## Architecture
 
@@ -112,7 +116,7 @@ The canonical APK contains exactly one native runtime DSO:
 
 `lib/arm64-v8a/libdmcviewer.so`
 
-`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, size budgets and the exact Rengine gitlink.
+`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates target-scoped C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, size budgets and the exact Rengine gitlink.
 
 ## Product boundary
 
