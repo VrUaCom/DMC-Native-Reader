@@ -168,6 +168,8 @@ Every exact-head build/review must:
 - reject duplicate CMake source/test entries rather than compiling the same responsibility twice;
 - prefer shared decoded/content storage where exact identity permits it, while preserving logical resource/slot/binding identity and provenance.
 
+**Installed-size hard gate:** the installed package/code footprint on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed APK. Measure package/code footprint separately from mutable user data and cache; record the raw byte value and the APK SHA-256 in the device evidence. A candidate above 4 MiB is NO-GO until the growth is removed or Viktor explicitly changes this architecture limit.
+
 Do not trade modularity for duplicated binaries, duplicated decoded banks, copied parsers, copied executors or parallel compatibility implementations. A smaller package is not allowed to erase semantic identity; deduplication must happen at the correct ownership/storage layer.
 
 ## 8. Repository hygiene
@@ -205,7 +207,7 @@ Required promotion evidence:
 2. clean Android debug/release build;
 3. package/APK verifier passes;
 4. exact APK hash and package-size/dedup metrics are recorded;
-5. required physical Samsung scenarios pass on that artifact;
+5. required physical Samsung scenarios pass on that artifact, including installed package/code footprint <= 4 MiB;
 6. Viktor explicitly approves merge/release.
 
 `runner_id=0`, `steps=[]`, skipped workflows or pre-run infrastructure failures are **not** compile/test evidence.
