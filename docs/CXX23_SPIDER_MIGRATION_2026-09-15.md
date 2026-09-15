@@ -11,11 +11,22 @@ The migration does **not** change the DMC Rengine repository or its canonical fo
 
 Android canonical toolchain target for this migration is **Android NDK r30 LTS (`30.0.16248370`)** with LLVM/Clang and libc++.
 
+## Language authority
+
+C++23 is owned **only by Native Reader CMake targets**. `DMCNativeReader::Core`, the Android JNI target and Native Reader regression targets require strict ISO C++23 through target-scoped CMake properties:
+
+- `cxx_std_23`;
+- `CXX_STANDARD 23`;
+- `CXX_STANDARD_REQUIRED ON`;
+- `CXX_EXTENSIONS OFF`.
+
+Do not set repository-global `CMAKE_CXX_STANDARD` and do not pass `-std=` through Gradle `cppFlags`. Either mechanism could propagate Native Reader's language decision into vendored dependency targets. Gradle owns Android toolchain selection, ABI and packaging; CMake owns each Native Reader target's language contract.
+
 ## Review findings
 
 Before migration the Native Reader core and JNI targets were explicitly C++20, Gradle passed `-std=c++20`, and Android workflows/verifier pinned NDK r28c (`28.2.13676358`). Spider Crusader was already a zero-overhead facade over the Rengine native executor. Therefore a safe migration must preserve the executor authority and avoid creating a second Spider runtime.
 
-The first product subsystem that materially benefits from C++23 is `WorkspaceGraph`: mutation operations currently use invalid-ID sentinels to represent multiple distinct failure modes. `std::expected` lets the product keep fail-closed behavior while making errors typed and explicit.
+The first product subsystem that materially benefits from C++23 is `WorkspaceGraph`: mutation operations used invalid-ID sentinels to represent multiple distinct failure modes. `std::expected` lets the product keep fail-closed behavior while making errors typed and explicit.
 
 ## Research conclusions
 
@@ -39,13 +50,14 @@ Future Spider C++ evolution may add bounded compile-time plan declarations, stro
 
 ## Migration plan
 
-1. **Toolchain contract** — set Native Reader CMake/Gradle targets to C++23 and Android NDK r30 LTS.
-2. **Compile gate** — add a C++23 profile header and regression that fails when `std::expected`/C++23 are unavailable.
-3. **Real product adoption** — migrate `WorkspaceGraph` mutation results from invalid-ID sentinels to typed `std::expected` errors.
-4. **Spider C++ v1** — add the embedded C++23 language/profile layer above Crusader without changing the Rengine executor.
-5. **CI/verifier** — make active v33 Android/hardening and device verifier enforce C++23 + NDK r30 + Spider C++ markers.
-6. **Architecture docs** — update the v33 architecture contract from portable C++20 to portable C++23 and document the Rengine boundary.
-7. **Verification** — exact-head host CTest, clean APK build, package verifier and physical Samsung acceptance remain mandatory before merge/release.
+1. **Review/research** — inventory language locks, dependency boundaries, toolchain support, Spider authority and migration risks before implementation.
+2. **Toolchain baseline** — make target-scoped CMake the sole C++ standard authority; require strict C++23 and Android NDK r30 LTS without changing vendored dependency language mode.
+3. **Compile gate** — use a C++23 profile header and regression that fail when the required language/library profile is unavailable.
+4. **Bounded modernization** — adopt C++23 features only where they materially improve safety or clarity; `WorkspaceGraph` typed `std::expected` results are the first promoted case.
+5. **Spider C++** — evolve the embedded C++23 language/profile layer above Crusader without changing the Rengine executor.
+6. **Dependency graph** — move resource bindings onto stable native IDs instead of Java URI/vector-position semantics.
+7. **CI/verifier** — make active v33 Android/hardening and device verifier enforce the target-scoped C++23 + NDK r30 + Spider C++ contract.
+8. **Verification** — exact-head host CTest, clean APK build, package verifier and physical Samsung acceptance remain mandatory before merge/release.
 
 ## Boundary rules
 
@@ -56,6 +68,18 @@ Future Spider C++ evolution may add bounded compile-time plan declarations, stro
 - Spider C++ remains orchestration/product language, not format authority.
 - No filename/order heuristics become semantic authority.
 - Release promotion remains blocked until real build/test/device evidence exists.
+
+## Phase tracking
+
+The migration is tracked through repository issues:
+
+- #34 program tracker;
+- #35 review/research — completed;
+- #36 C++23 baseline — active;
+- #37 bounded modernization;
+- #38 C++ Spider;
+- #39 stable WorkspaceGraph bindings;
+- #40 verification/device/release readiness.
 
 ## Legacy workflow note
 
