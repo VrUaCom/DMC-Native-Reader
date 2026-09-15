@@ -39,7 +39,7 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
     def test_apk_and_installed_app_limits_are_four_mib(self):
         four_mib = 4 * 1024 * 1024
         self.assertEqual(verifier.MAX_APK_BYTES, four_mib)
-        self.assertEqual(verifier.MAX_INSTALLED_PACKAGE_CODE_BYTES, four_mib)
+        self.assertEqual(verifier.MAX_INSTALLED_APP_BYTES, four_mib)
         self.assertEqual(measure.MAX_INSTALLED_APP_BYTES, four_mib)
 
     def test_historical_v26_growth_constants_are_not_acceptance_api(self):
