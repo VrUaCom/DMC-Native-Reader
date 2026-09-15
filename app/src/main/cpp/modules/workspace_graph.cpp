@@ -12,8 +12,8 @@ template <typename Id>
     return next != 0U && next != std::numeric_limits<Id>::max();
 }
 
-template <typename Id>
-[[nodiscard]] bool unique_nonzero_ids(const auto& values) noexcept {
+template <typename Collection>
+[[nodiscard]] bool unique_nonzero_ids(const Collection& values) noexcept {
     for (std::size_t i = 0U; i < values.size(); ++i) {
         if (values[i].id == 0U) return false;
         for (std::size_t j = i + 1U; j < values.size(); ++j) {
@@ -129,9 +129,9 @@ const BindingEdge* WorkspaceGraph::find_binding(BindingId id) const noexcept {
 }
 
 bool WorkspaceGraph::valid() const noexcept {
-    if (!unique_nonzero_ids<AssetId>(assets_) ||
-        !unique_nonzero_ids<InstanceId>(instances_) ||
-        !unique_nonzero_ids<BindingId>(bindings_)) {
+    if (!unique_nonzero_ids(assets_) ||
+        !unique_nonzero_ids(instances_) ||
+        !unique_nonzero_ids(bindings_)) {
         return false;
     }
 
