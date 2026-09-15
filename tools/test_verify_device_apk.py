@@ -28,15 +28,16 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
             ["classes.dex", "res/a.xml"],
         )
 
-    def test_growth_from_baseline_records_bytes_and_percent(self):
+    def test_installed_package_code_limit_is_four_mib(self):
         self.assertEqual(
-            verifier.growth_from_baseline(150, 100),
-            {"bytes": 50, "percent": 50.0},
+            verifier.MAX_INSTALLED_PACKAGE_CODE_BYTES,
+            4 * 1024 * 1024,
         )
-        self.assertEqual(
-            verifier.growth_from_baseline(75, 100),
-            {"bytes": -25, "percent": -25.0},
-        )
+
+    def test_historical_v26_growth_constants_are_not_acceptance_api(self):
+        self.assertFalse(hasattr(verifier, "ACCEPTED_V26_APK_BYTES"))
+        self.assertFalse(hasattr(verifier, "ACCEPTED_V26_NATIVE_BYTES"))
+        self.assertFalse(hasattr(verifier, "growth_from_baseline"))
 
 
 if __name__ == "__main__":
