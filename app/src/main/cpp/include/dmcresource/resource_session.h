@@ -12,6 +12,7 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/workspace_graph.h"
 
 namespace dmcresource {
 
@@ -36,10 +37,15 @@ struct Session {
     std::string texture_attachment_detail;
     bool texture_companion_attached{};
 
+    // Native product/workspace authority for stable resource/instance/binding
+    // identity. Java URI arrays and flattened render tables are lifecycle or
+    // derived presentation state and must not replace this graph.
+    WorkspaceGraph workspace_graph;
+
     // Non-empty only for an explicitly composed multi-MOD scene. Parts retain
-    // source-local scene/node/texture namespaces and explicit placement state.
-    // The top-level Session owns derived render/hierarchy caches only; it is not
-    // a second format authority.
+    // source-local scene/node/texture namespaces, stable workspace identity and
+    // explicit placement state. The top-level Session owns derived render/
+    // hierarchy caches only; it is not a second format authority.
     std::vector<CompositePart> composite_parts;
 
     std::string detail;
