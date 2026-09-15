@@ -93,11 +93,23 @@ int main() {
 
     auto built = builder::build_mod_composite(parts, names);
     assert(built);
+    assert(built.session->workspace_graph.valid());
+    assert(built.session->workspace_graph.assets().size() == 2U);
+    assert(built.session->workspace_graph.instances().size() == 2U);
+    assert(built.session->composite_parts[0].asset_id != kInvalidAssetId);
+    assert(built.session->composite_parts[1].asset_id != kInvalidAssetId);
+    assert(built.session->composite_parts[0].instance_id != kInvalidInstanceId);
+    assert(built.session->composite_parts[1].instance_id != kInvalidInstanceId);
+    assert(built.session->composite_parts[0].instance_id !=
+           built.session->composite_parts[1].instance_id);
+
     assert(built.stats.attachment_attempts == 1U);
     assert(built.stats.attachments_resolved == 1U);
     assert(built.stats.attachments_unresolved == 0U);
     assert(built.session->composite_parts[1].placement.resolved);
     assert(built.session->composite_parts[1].placement.host_part_index == 0U);
+    assert(built.session->composite_parts[1].placement.host_instance_id ==
+           built.session->composite_parts[0].instance_id);
     assert(built.session->composite_parts[1].placement.attachment_selector == 1U);
     assert(built.session->render_mesh.vertices[3].x == 12.0F);
     assert(built.session->render_mesh.vertices[3].y == 5.0F);
@@ -110,10 +122,13 @@ int main() {
     parts[1] = &invalid_hair;
     auto unresolved = builder::build_mod_composite(parts, names);
     assert(unresolved);
+    assert(unresolved.session->workspace_graph.valid());
     assert(unresolved.stats.attachment_attempts == 1U);
     assert(unresolved.stats.attachments_resolved == 0U);
     assert(unresolved.stats.attachments_unresolved == 1U);
     assert(!unresolved.session->composite_parts[1].placement.resolved);
+    assert(unresolved.session->composite_parts[1].placement.host_instance_id ==
+           kInvalidInstanceId);
     assert(unresolved.session->render_mesh.vertices[3].x == 2.0F);
     assert(unresolved.session->render_mesh.vertices[3].y == 0.0F);
 
@@ -125,8 +140,13 @@ int main() {
             .resolve_default_joint_attachments = false,
         });
     assert(source_only);
+    assert(source_only.session->workspace_graph.valid());
+    assert(source_only.session->composite_parts[0].instance_id != kInvalidInstanceId);
+    assert(source_only.session->composite_parts[1].instance_id != kInvalidInstanceId);
     assert(source_only.stats.attachment_attempts == 0U);
     assert(!source_only.session->composite_parts[1].placement.resolved);
+    assert(source_only.session->composite_parts[1].placement.host_instance_id ==
+           kInvalidInstanceId);
     assert(source_only.session->render_mesh.vertices[3].x == 2.0F);
 
     return 0;
