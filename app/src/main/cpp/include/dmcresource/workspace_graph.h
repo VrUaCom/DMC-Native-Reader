@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "dmcresource/cpp23_profile.h"
+
 namespace dmcresource {
 
 using AssetId = std::uint64_t;
@@ -34,6 +36,19 @@ enum class BindingRole : std::uint8_t {
     Effect,
 };
 
+enum class WorkspaceGraphError : std::uint8_t {
+    IdExhausted,
+    AssetMissing,
+    AssetKindMismatch,
+    EmptyTargets,
+    TargetMissing,
+    DuplicateTarget,
+    AllocationFailed,
+};
+
+template <class T>
+using WorkspaceResult = cpp23::Result<T, WorkspaceGraphError>;
+
 // Logical resource identity. label is display/provenance context only; it is
 // never used as canonical identity or dependency evidence.
 struct ResourceAsset final {
@@ -60,13 +75,15 @@ struct BindingEdge final {
 
 // Native ownership graph for assembled resources. This is product/workspace
 // authority; flattened render tables and Java URI arrays are derived/lifecycle
-// state and must not replace these stable identities.
+// state and must not replace these stable identities. Mutation failures are
+// explicit C++23 results rather than ambiguous invalid-ID sentinels.
 class WorkspaceGraph final {
 public:
-    [[nodiscard]] AssetId add_asset(
+    [[nodiscard]] WorkspaceResult<AssetId> add_asset(
         ResourceAssetKind kind, std::string label) noexcept;
-    [[nodiscard]] InstanceId add_model_instance(AssetId model_asset) noexcept;
-    [[nodiscard]] BindingId add_binding(
+    [[nodiscard]] WorkspaceResult<InstanceId> add_model_instance(
+        AssetId model_asset) noexcept;
+    [[nodiscard]] WorkspaceResult<BindingId> add_binding(
         AssetId source_asset,
         BindingRole role,
         std::span<const InstanceId> targets) noexcept;
