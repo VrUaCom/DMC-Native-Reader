@@ -35,6 +35,18 @@ def run(*command):
     return subprocess.check_output(command, text=True, stderr=subprocess.STDOUT)
 
 
+def find_duplicate_names(names):
+    """Return sorted entry names that appear more than once."""
+    seen = set()
+    duplicates = set()
+    for name in names:
+        if name in seen:
+            duplicates.add(name)
+        else:
+            seen.add(name)
+    return sorted(duplicates)
+
+
 def zip_data_offset(apk: Path, info: zipfile.ZipInfo) -> int:
     with apk.open("rb") as stream:
         stream.seek(info.header_offset)
@@ -133,14 +145,7 @@ def main():
         require(archive.testzip() is None, "ZIP integrity failure")
         entries = archive.infolist()
         entry_names = [info.filename for info in entries]
-        seen_names = set()
-        duplicate_names = set()
-        for name in entry_names:
-            if name in seen_names:
-                duplicate_names.add(name)
-            else:
-                seen_names.add(name)
-        duplicate_entry_names = sorted(duplicate_names)
+        duplicate_entry_names = find_duplicate_names(entry_names)
         require(not duplicate_entry_names,
                 "APK contains duplicate ZIP entry names: " +
                 ", ".join(duplicate_entry_names))
