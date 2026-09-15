@@ -128,7 +128,7 @@ def require_runtime_markers(apk: Path) -> None:
     with zipfile.ZipFile(apk) as archive:
         try:
             native_bytes = archive.read(RUNTIME_DSO)
-        except KeyError as error:
+        except KeyError:
             fail(f"canonical runtime DSO missing from APK: {RUNTIME_DSO}")
     missing = [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS if marker not in native_bytes]
     if missing:
@@ -159,6 +159,29 @@ def read_host_compiler_evidence() -> tuple[str, str]:
     return compiler_id.group(1).strip(), compiler_path.group(1).strip()
 
 
+def read_verifier_report() -> dict:
+    verifier_log = EVIDENCE_DIR / "05-device-apk-verifier.log"
+    if not verifier_log.is_file():
+        fail("APK verifier log missing after successful verifier execution")
+    try:
+        report = json.loads(verifier_log.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        fail(f"APK verifier did not emit machine-readable JSON evidence: {error}")
+    if not isinstance(report, dict):
+        fail("APK verifier report is not a JSON object")
+    if report.get("duplicate_zip_entry_names"):
+        fail("APK verifier reported duplicate ZIP entry names")
+    duplicate_waste = report.get("duplicate_large_payload_waste_bytes")
+    if duplicate_waste is None:
+        fail("APK verifier report is missing duplicate payload metrics")
+    if duplicate_waste != 0:
+        fail(
+            "APK contains avoidable large duplicate payloads; "
+            f"wasted bytes={duplicate_waste} groups={report.get('duplicate_large_payload_groups')}"
+        )
+    return report
+
+
 def require_static_contract() -> None:
     root_gradle = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
     app_gradle = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
@@ -179,10 +202,14 @@ def require_static_contract() -> None:
         "CXX_STANDARD 23",
         "CXX_STANDARD_REQUIRED ON",
         "CXX_EXTENSIONS OFF",
+        "DMC_NATIVE_READER_CORE_SOURCES",
+        "Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES",
+        "DMC_NATIVE_READER_TESTS",
+        "Duplicate test entry in DMC_NATIVE_READER_TESTS",
     )
     for marker in required_cmake:
         if marker not in cmake:
-            fail(f"CMake C++23 contract marker missing: {marker}")
+            fail(f"CMake C++23/dedup contract marker missing: {marker}")
     if "cxx_std_20" in cmake:
         fail("Native Reader CMake still contains cxx_std_20")
     if "-std=c++" in app_gradle:
@@ -349,6 +376,7 @@ def main() -> int:
         ],
         env=env,
     )
+    package_policy = read_verifier_report()
 
     final_dirty = capture(["git", "status", "--porcelain", "--untracked-files=all"])
     if final_dirty.strip():
@@ -381,6 +409,7 @@ def main() -> int:
         "rengine_language_contract": "target-scoped cxx_std_20",
         "runtime_markers": [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS],
         "java_version_output": java_version_text.strip(),
+        "package_policy": package_policy,
         "artifacts": {
             "debug_apk": {
                 "path": str(debug_apk.relative_to(ROOT)),
