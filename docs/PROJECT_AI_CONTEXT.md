@@ -157,10 +157,15 @@ Canonical Android architecture:
 ### Weight and duplicate discipline
 Application size is an architecture constraint, not a final release cleanup task.
 
+Hard package pre-gates for the current v33 line:
+- **APK <= 4 MiB (4,194,304 bytes)**;
+- native DSO <= 4 MiB;
+- Dex total <= 1 MiB.
+
 Every exact-head build/review must:
 - record APK, native DSO and Dex byte sizes;
-- preserve hard package/native/Dex budgets unless a review explicitly changes them with evidence;
-- record size delta against the accepted baseline when one exists;
+- enforce the hard pre-gates above unless Viktor explicitly changes the architecture limit;
+- use historical size deltas only when the old artifact/packaging/measurement provenance is proven comparable;
 - surface the largest packaged entries so unexpected growth is attributable;
 - reject duplicate ZIP entry names;
 - reject duplicate native/runtime implementations and duplicate `.so`/`.dex` payloads;
@@ -168,7 +173,9 @@ Every exact-head build/review must:
 - reject duplicate CMake source/test entries rather than compiling the same responsibility twice;
 - prefer shared decoded/content storage where exact identity permits it, while preserving logical resource/slot/binding identity and provenance.
 
-**Installed-size hard gate:** the installed package/code footprint on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed APK. Measure package/code footprint separately from mutable user data and cache; record the raw byte value and the APK SHA-256 in the device evidence. A candidate above 4 MiB is NO-GO until the growth is removed or Viktor explicitly changes this architecture limit.
+**Installed-size hard gate:** the installed package/code footprint on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed APK. Measure package/code footprint separately from mutable user data and cache; record the raw byte value, device/build identity and APK SHA-256 in the device evidence. `tools/measure_installed_footprint.py` is the bounded device-evidence tool for this metric. A candidate above 4 MiB is NO-GO until the growth is removed or Viktor explicitly changes this architecture limit.
+
+`APK <= 4 MiB` is necessary but not sufficient for the installed hard gate: installed compiled code/metadata can still make a sub-4-MiB APK exceed the 4 MiB package/code allocation on device.
 
 Do not trade modularity for duplicated binaries, duplicated decoded banks, copied parsers, copied executors or parallel compatibility implementations. A smaller package is not allowed to erase semantic identity; deduplication must happen at the correct ownership/storage layer.
 
@@ -195,6 +202,7 @@ Important v33/C++23 gates include:
 - PTX transaction regression;
 - SCM authority regression;
 - module/Spider/texture/PNG/render/inspection regressions;
+- `tools/test_verify_device_apk.py` for package/dedup/4 MiB policy;
 - exact APK verifier;
 - physical Samsung acceptance for the release candidate.
 
@@ -204,9 +212,9 @@ Never promote based on stale SHA or an unexecuted workflow.
 
 Required promotion evidence:
 1. exact-head host build/tests actually execute and pass;
-2. clean Android debug/release build;
+2. clean Android debug/release builds, each APK <= 4 MiB;
 3. package/APK verifier passes;
-4. exact APK hash and package-size/dedup metrics are recorded;
+4. exact APK hash and absolute package-size/dedup metrics are recorded;
 5. required physical Samsung scenarios pass on that artifact, including installed package/code footprint <= 4 MiB;
 6. Viktor explicitly approves merge/release.
 
