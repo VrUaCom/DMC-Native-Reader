@@ -1,6 +1,6 @@
 # DMC Native Reader
 
-Native Android reader for Devil May Cry 3 HD Collection resources, built around a reusable C++20 core and canonical DMC Rengine read-side authority.
+Native Android reader for Devil May Cry 3 HD Collection resources, built around a reusable **C++23** core and canonical DMC Rengine read-side authority.
 
 ## Current state
 
@@ -8,7 +8,8 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 **Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
 **Active candidate:** **v33 / versionName 1.0.6 / versionCode 33**  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
-**Android:** arm64-v8a, minSdk 26, targetSdk 36  
+**Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
+**Native product language:** **C++23 + Spider C++ (`spider.cpp23`)**  
 **Production registry:** **MOD / SCM / DDS / PTX / EventTbl**
 
 The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
@@ -51,16 +52,31 @@ The accepted v26 line was physically tested on Samsung and approved for `main`. 
 
 Unknown and unpromoted resource families fail closed.
 
+## C++23 / Spider C++
+
+`DMCNativeReader::Core` and the Android JNI target compile as C++23. Android is pinned to NDK r30 LTS `30.0.16248370`. `cpp23_profile.h` requires the C++23 language level and `std::expected`, and CI/verifier gates reject a fallback to the former C++20/r28 product contract.
+
+**Spider C++** is the embedded C++23 product-language layer for orchestration. It supplies typed result/concept contracts above Spider Crusader while preserving the canonical Rengine native executor underneath. It is not a second runtime or a copy of Rengine format logic.
+
+The first production C++23 upgrades are:
+
+- `WorkspaceGraph` mutation APIs return typed `std::expected` results;
+- stable `AssetId` / `InstanceId` / `BindingId` remain native resource identity;
+- MOD composition executes through the typed `spider.cpp23` wrapper and then the existing Crusader/Rengine executor.
+
 ## Architecture
 
 ```text
 resource bytes
   -> bounded probe
   -> NativeModuleRegistry
-  -> Spider Crusader
-      -> canonical MOD/SCM/texture/EventTbl modules
+  -> Spider C++23
+      -> Spider Crusader
+          -> canonical MOD/SCM/texture/EventTbl modules
+          -> pinned Rengine native executor / ReaderCore
   -> DMCNativeReader::Core
       -> resource session
+      -> WorkspaceGraph / stable identity
       -> composite model state
       -> composite builder
       -> Rengine-backed MOD attachment resolver
@@ -88,7 +104,7 @@ v33 pins `app/src/main/cpp/vendor/dmc-rengine-cpp` to:
 
 `caf445226c7d61841292384a10e93e4f58ae29f9`
 
-That pin contains the canonical read-side MOD cross-model default-joint attachment contract. Native Reader consumes this authority rather than duplicating the selector/index semantics in Android or JNI.
+That pin contains the canonical read-side MOD cross-model default-joint attachment contract. Native Reader consumes this authority rather than duplicating the selector/index semantics in Android or JNI. The C++23 migration changes only Native Reader; it does not alter the Rengine repository or its language policy.
 
 ## Android runtime contract
 
@@ -96,7 +112,7 @@ The canonical APK contains exactly one native runtime DSO:
 
 `lib/arm64-v8a/libdmcviewer.so`
 
-`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, size budgets and the exact Rengine gitlink.
+`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, size budgets and the exact Rengine gitlink.
 
 ## Product boundary
 
@@ -107,6 +123,7 @@ DMC Native Reader is read-only. Editing, writing and repacking belong to DMC Ren
 Start with:
 
 - `docs/MODULAR_SPIDER_V33.md` — canonical v33 architecture contract;
+- `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md` — C++23 review, research, migration plan and boundaries;
 - `docs/MODULAR_REVIEW_2026-09-15.md` — latest modular review;
 - `docs/STATUS.md` — accepted baseline, candidate and verification state;
 - `docs/RESOURCE_DEPENDENCY_GRAPH_V33.md` — v33 resource/dependency model;
