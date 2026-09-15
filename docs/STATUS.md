@@ -1,202 +1,119 @@
 # DMC Native Reader — Status
 
-Last updated: 2026-09-11.
+Last updated: 2026-09-15.
 
 ## Accepted baseline (`main`)
 
-- Product line: **Native Reader 1.0**
-- versionName: `1.0`
-- versionCode: `26`
-- accepted v26 main: `0148f0bd1b384fa1d2b43124b88423fd7b66c379`
-- accepted through: PR #32
+- current `main`: `561385e24e7246da11631e594ad5a86ca619fa74`
+- device-confirmed product baseline: v26 line accepted through PR #32
 - package: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
 - minSdk / targetSdk: `26 / 36`
-- production module registry: **4 modules — MOD, SCM, DDS, PTX**
-- canonical reverse/read-side authority: `VrUaCom/dmc-rengine-cpp` / pinned `ReaderCore`
-- archived pre-cleanup implementation: `main.2` — backlog/reference only
+- later `main` maintenance added Android/Windows release-publishing workflow; it did not constitute a new device-accepted reader build
 
-## Acceptance evidence
+The v26 line was physically tested on Samsung on 2026-09-10 and explicitly approved for promotion to `main`.
 
-The owner confirmed the required physical Samsung/device checks for v26 on
-2026-09-10 and explicitly approved PR #32 for promotion to `main`. The accepted
-v26 line therefore includes the v24 architecture/size cleanup, v25 UV slot
-gallery and v26 focused long-press inspection tools.
+## Active candidate — v33
 
-Build-side evidence carried by the accepted candidate includes the portable
-native regressions and verified arm64 APK/package gates documented in the v25/v26
-evidence files. The v26 candidate APK was versionName `1.0`, versionCode `26`,
-597,665 bytes, with SHA-256
-`b80be422197ff8270f67049dbdd596603b0ebcf4f41884f6b22a5936fedf4596`.
+- branch: `feature/png-export-multi-mod-v27`
+- PR: #33, draft
+- versionName: `1.0.6`
+- versionCode: `33`
+- production modules: **MOD / SCM / DDS / PTX / EventTbl**
+- canonical DMC Rengine ReaderCore pin: `caf445226c7d61841292384a10e93e4f58ae29f9`
 
-GitHub-hosted Actions remain affected by a runner/pre-step failure where a job can
-terminate before checkout with `steps: []`; CI is not claimed green on that basis.
-Physical-device acceptance and verified build/regression evidence remain the
-promotion authority for the accepted v26 merge.
+PR #33 must not be merged until an exact-head build actually executes the full host regressions, passes `tools/verify_device_apk.py`, produces the canonical single-DSO APK, and passes Samsung device acceptance.
 
-See `SIZE_AND_MODULES_V24.md`, `UV_GALLERY_V25.md` and
-`TOOL_INSPECTION_V26.md` for the bounded evidence slices.
-
-## Current architecture
+## v33 architecture
 
 ```text
 resource bytes
-  -> bounded probe / DMC Rengine ReaderCore
-  -> NativeModuleRegistry (MOD | SCM | DDS | PTX)
-  -> Spider Crusader execution plan
-      -> typed format adapter / TextureSet
-  -> InspectionDocument / RenderScene / ImagePreview / ChildResource[]
-  -> DMCNativeReader::Core
-      -> resource_session
-      -> scene_projection
-      -> texture/material binding
-      -> Spider Black Widow typed application state
-      -> direct C++ rendering
-  -> thin Android JNI + Java shell
-      -> direct native RGBA -> Android Bitmap pixel transport
+  -> bounded probe
+  -> NativeModuleRegistry
+  -> Spider Crusader
+      -> MOD / SCM / DDS / PTX / EventTbl native modules
+  -> portable DMCNativeReader::Core
+      -> resource session
+      -> composite model state
+      -> composite builder
+      -> Rengine-backed default-joint resolver
+      -> composite placement
+      -> scene projection
+      -> texture companion binding
+      -> Black Widow typed capability state
+      -> renderer / inspection / UV / PNG export
+  -> thin JNI / Android shell
 ```
 
-Unknown/unpromoted formats fail closed. Java does not parse DMC binary layouts and
-the renderer does not own format parsers.
+Android remains transport/presentation only. It must not parse DMC layouts, decide model attachment semantics or implement texture-binding policy.
 
-## Accepted capabilities
+## Multi-MOD / body-hair placement
 
-### MOD
+The old v33 compositor flattened all MOD parts in source coordinates. That behavior explains the observed body/hair problem: separate parts were rendered around their own model-space origin instead of receiving the runtime-style host-joint root transform.
 
-- canonical structural parsing;
-- renderable geometry;
-- rotate / zoom / wireframe;
-- typed inspection;
-- hierarchy/spatial projection when canonical authority is valid;
-- skin weights;
-- canonical texture-slot and legacy GS state;
-- PTX companion attachment for valid model texture bindings;
-- per-texture-slot UV gallery;
-- focused UV/mesh/hierarchy information views.
+The current candidate now has a modular attachment path:
 
-### SCM
+1. the MOD module publishes canonical `Header::default_joint_index()` as typed `RenderScene::default_attachment_selector`;
+2. `composite_builder` treats the already-open/base MOD as an explicit primary host;
+3. appended MOD parts resolve their selector through `dmc::rengine::formats::mod::attachment`;
+4. valid host spatial authority + in-range selector yields a host joint matrix;
+5. `composite_placement` applies that matrix only to the derived flattened render/hierarchy projection;
+6. the source-local child `RenderScene` remains unchanged and can be reset without reparsing.
 
-- canonical structural parsing;
-- renderable geometry;
-- canonical scene hierarchy and transforms;
-- rotate / zoom / wireframe;
-- typed inspection;
-- texture-slot state;
-- PTX companion attachment through the shared texture path;
-- per-texture-slot UV gallery;
-- focused UV/mesh/hierarchy information views.
+The resolver does not infer a different host from filenames, visual proximity, `runtime_metadata_u32` or arbitrary candidate scanning. Missing/out-of-range selectors and hosts without canonical spatial authority fail closed to source coordinates.
 
-### DDS
+## Modular split completed in this pass
 
-- bounded DXT1/DXT5 parsing/decoding;
-- generic RGBA image preview;
-- malformed/overflow rejection.
+- `include/dmcresource/composite_model.h` — source-part + placement state
+- `include/dmcresource/composite_builder.h` / `modules/composite_builder.cpp` — product composition policy
+- `include/dmcresource/mod_attachment_resolver.h` / `modules/mod_attachment_resolver.cpp` — Rengine-backed selector resolution
+- `include/dmcresource/composite_placement.h` / `modules/composite_placement.cpp` — derived placement projection
+- `spider/session_compose_actions.cpp` — compose action
+- `spider/session_texture_actions.cpp` — texture actions
+- `spider/model_placement_actions.cpp` — explicit placement/reset actions
 
-### PTX
+The old monolithic `spider/session_actions.cpp` is no longer compiled.
 
-- bounded texture-bundle framing;
-- generic DDS child resources;
-- thumbnail/gallery presentation;
-- child preview and parent-session navigation;
-- shared TextureSet path for model companion application.
+## PTX transaction safety
 
-## Active development candidate
+Per-part PTX replacement is now fully staged. Texture storage and triangle-slot projection are copied into temporary state; decode, range validation, slot validation and compaction complete before the live session is replaced. A failed replacement therefore preserves the previous valid texture bank and render projection.
 
-Draft PR #33 on `feature/png-export-multi-mod-v27` carries **v27**
-(`versionCode 27`, `versionName 1.0`). It contains four connected layers:
+New regression: `ptx_transaction_test`.
 
-1. **PNG export + direct Bitmap transport**
-   - `↓` replaces the shared reset button only on exportable UV/image sessions;
-   - UV gallery exports all maps to a selected system folder;
-   - opened UV exports one 1024×1024 PNG through the system save dialog;
-   - PTX gallery exports every DDS texture as an individual PNG;
-   - opened PTX/DDS texture exports one PNG;
-   - ordinary 3D MOD/SCM keeps `🔄` reset;
-   - large PTX children omitted from resident RGBA gallery memory can be lazily
-     materialized from retained encoded DDS bytes through the canonical decoder;
-   - Java no longer receives image frames as `int[]`: Android allocates/reuses an
-     `ARGB_8888` Bitmap and JNI copies native RGBA rows directly into locked pixels;
-   - `jnigraphics` is linked only to the Android JNI target, never to portable Core;
-   - APK verification gates the Java/C++ direct-Bitmap ABI and rejects legacy
-     `int[]` image declarations.
+## Current regression set added/strengthened
 
-2. **Low-copy multi-MOD scene composition**
-   - multi-select canonical MOD files into one render session;
-   - retain every source as a separate `CompositePart` with an authoritative
-     source-local `RenderScene`, node namespace, local texture-slot projection,
-     texture-slot base/span and PTX state;
-   - do not retain a second per-part flattened `Mesh`;
-   - top level retains merged hierarchy nodes plus one flattened `render_mesh`;
-   - do not duplicate composite geometry in top-level `RenderScene.meshes`;
-   - remap only the flattened render projection into non-overlapping texture-slot
-     ranges;
-   - PTX attachment requires explicit MOD-part selection and validates directly
-     against that part's local `RenderScene`;
-   - adding more MOD parts rebuilds the composite while preserving/restoring known
-     per-part PTX URI attachments in the Android shell;
-   - no inferred cape/weapon/bone attachment.
+Important v33-specific regressions now include:
 
-3. **Companion / animation UI foundation**
-   - a top-right `⋮` menu replaces the single-purpose PTX header button;
-   - the menu can add MOD parts, attach PTX, and stage motion, texture, physics,
-     cloth or other companion resources;
-   - staged motion files create a second horizontal 48 dp card row directly above
-     the main bottom toolbar;
-   - each card presents format/extension on top and a compact source stem below
-     (for example `MOT` + `EM000`);
-   - the strip scrolls left/right and tracks selected motion state;
-   - the strip is root-scene UI and is hidden while browsing UV/PTX child sessions;
-   - animation playback, retargeting, root motion, physics and cloth simulation
-     remain disabled until canonical native runtimes are promoted.
+- `composite_builder_test` — automatic primary-host/default-joint placement and fail-closed fallback;
+- `composite_placement_test` — explicit host-joint projection, row-vector transform order and reset;
+- `ptx_transaction_test` — failed per-part PTX replacement preserves live state;
+- `composite_mod_scene_test` — low-copy composition and shared PTX bank;
+- `scm_authority_test` — canonical SCM world-space authority;
+- existing module/Spider/texture/PNG/render/inspection regressions.
 
-4. **Modular + Spider hardening**
-   - `NativeModuleRegistry` remains the only production format entrance and still
-     exposes exactly MOD / SCM / DDS / PTX;
-   - MOD and SCM share a Spider Crusader model execution plan while keeping their
-     canonical adapters separate;
-   - DDS/PTX share the Spider Crusader texture execution plan;
-   - successful promoted routes publish `spider.crusader` in the pipeline trace;
-   - Black Widow owns render/UV/PTX/export policy plus `CanAddModelPart` and
-     `CanStageCompanion`;
-   - the registry's typed capabilities distinguish promoted MOD model sessions
-     (`SkeletalSkinning`) from SCM without Java checking filenames;
-   - Android no longer infers model-part actions from `.mod` filenames or from its
-     retained URI list; those lists are storage/lifecycle bookkeeping only;
-   - future MOT/TM2/physics/cloth support must be promoted as native modules with
-     Spider execution and typed runtime contracts before they gain semantics.
+## APK/runtime contract
 
-The distinction is deliberate: **animation/physics execution is deferred, but the
-attachment and selection foundation is already part of v27.** Unpromoted companion
-formats are staged without fabricated parsing or runtime semantics.
+v33 requires:
 
-Portable regression targets include `module_registry_test`,
-`spider_model_execution_test`, `core_model_pipeline_test`, `dds_ptx_v1_test`,
-`black_widow_state_test`, `composite_mod_scene_test`, `png_export_session_test`,
-`ptx_model_texture_test`, `render_scene_test`, `uv_gallery_test`,
-`session_inspection_test` and `mod_spatial_adapter_test`. The APK verifier also
-checks the direct-Bitmap source/ABI boundary in addition to package/signature/JNI
-export/module-marker gates.
+- exactly one packaged native DSO: `lib/arm64-v8a/libdmcviewer.so`;
+- static `DMCNativeReader::Core` + `DMCRengine::ReaderCore`;
+- `extractNativeLibs=false`;
+- native DSO stored uncompressed and 16 KiB ZIP aligned;
+- every ELF `PT_LOAD` alignment >= 16 KiB;
+- exact Java `NativeBridge` ↔ JNI export parity;
+- no recovery `dmcshim` / `dmccore00` path;
+- direct Android Bitmap transport;
+- APK <= 8 MiB, DSO <= 4 MiB, Dex <= 1 MiB;
+- exact Rengine gitlink and checkout at `caf445226c7d61841292384a10e93e4f58ae29f9`.
 
-## v27 build state
+`tools/verify_device_apk.py` has been updated for the split compose/texture action modules and the new Rengine pin.
 
-No v27 APK has been accepted or published yet. The GitHub-hosted jobs observed on
-this development line have failed before runner assignment: jobs report no executed
-steps, so checkout, CMake, Gradle and tests did not run. These failures are not
-code-regression evidence and are not green evidence either.
+## CI state
 
-PR #33 stays draft until a real build of the exact current head executes the native
-suite, produces and verifies the arm64 APK, and the resulting APK passes the Samsung
-device checklist including rotate/zoom direct-Bitmap behavior.
+GitHub-hosted jobs on this repository continue to be observed failing before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]`; checkout, CMake, Gradle and tests never start. Such a run is not evidence that the current source fails to compile, but it is also not acceptance evidence.
 
-See `PNG_EXPORT_MULTI_MOD_V27.md` and `MODULAR_SPIDER_V27.md`.
+Until a real exact-head build executes, v33 remains **not release-approved**.
 
-## Not in production registry
+## Production boundary
 
-HITS, TXT, `.index`, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and the previous
-wide recognition catalog are absent from the current `main` registry/build. Their
-existence in historical branches or reverse documentation does not make them
-supported Native Reader modules.
-
-Future promotion requires a bounded Architecture v2 module,
-canonical/evidence-backed authority and regression/device evidence appropriate to
-the feature.
+DMC Native Reader is read-only. Editing/repacking belongs to DMC Rengine. HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, MOT, EFM/MRP/SHW and other researched formats remain outside the production Native Reader registry until individually promoted with native authority and regression coverage.
