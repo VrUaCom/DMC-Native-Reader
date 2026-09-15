@@ -6,8 +6,13 @@
 #include <utility>
 #include <version>
 
-#if __cplusplus < 202302L
-#error "DMC Native Reader product core requires C++23"
+// CMake is the authority that selects strict ISO C++23 for Native Reader
+// targets. Do not require one compiler-specific final __cplusplus date here:
+// some valid C++23 toolchains historically report an intermediate value such as
+// 202100L. Reject C++20-or-older, then prove the concrete product facilities via
+// SD-6 feature-test macros below.
+#if __cplusplus <= 202002L
+#error "DMC Native Reader product core requires C++23-or-later language mode"
 #endif
 
 #if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
