@@ -23,6 +23,7 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - C++ standard authority: **target-scoped CMake; strict ISO C++23**
 - Spider product language/profile: **Spider C++ (`spider.cpp23`)**
 - Android native toolchain: **NDK r30 LTS `30.0.16248370`**
+- Android build stack: **AGP 9.3.0 / Gradle 9.5.0 / JDK 17 / Build Tools 36.0.0 / Android CMake 3.22.1**
 - production modules: **MOD / SCM / DDS / PTX / EventTbl**
 - canonical DMC Rengine ReaderCore pin: `caf445226c7d61841292384a10e93e4f58ae29f9`
 
@@ -62,14 +63,20 @@ The current candidate enforces C++23 as a product contract rather than merely ch
 
 1. `DMCNativeReader::Core`, JNI and Native Reader regression targets require `cxx_std_23` plus `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`;
 2. Android Gradle pins NDK r30 LTS but does **not** pass `-std=c++*`; CMake owns the Native Reader language mode so vendored dependency targets retain their own contract;
-3. `cpp23_profile.h` fails compilation without final C++23 mode, `std::expected`, `std::byteswap`, and `std::to_underlying`;
-4. `WorkspaceGraph` mutation APIs return typed `std::expected` results with explicit error codes;
-5. `spider/cpp23_language.h` defines the Spider C++ result/concept profile above Crusader;
-6. multi-MOD compose is the first production action executed through the Spider C++ typed wrapper;
-7. `cxx23_profile_test`, active CI and the APK verifier gate the new language/toolchain contract.
+3. `cpp23_profile.h` rejects C++20-or-older and requires concrete C++23 facilities: `std::expected`, `std::byteswap`, and `std::to_underlying`;
+4. the profile uses `_MSVC_LANG` on MSVC and `__cplusplus` elsewhere so portable core validation does not depend on one compiler's macro-reporting behavior;
+5. `WorkspaceGraph` mutation APIs currently return typed `std::expected` results with explicit error codes;
+6. `spider/cpp23_language.h` defines the initial Spider C++ result/concept profile above Crusader;
+7. multi-MOD compose currently exercises the initial Spider C++ typed wrapper;
+8. active PR workflows explicitly checkout `${{ github.event.pull_request.head.sha || github.sha }}` so evidence is tied to the candidate source head rather than GitHub's synthetic pull-request merge ref;
+9. `tools/run_phase2_exact_head.py` is the shared exact-head execution baseline for hosted CI and authorized local/self-hosted recovery: it checks the complete toolchain contract, runs host CMake/CTest, clean Android debug/release builds, the APK verifier, and writes toolchain/artifact SHA-256 evidence;
+10. active CI and the APK verifier gate the target-scoped C++23/NDK contract.
+
+The `WorkspaceGraph std::expected` migration and initial Spider C++ seed entered the branch before formal Phase/Review gates were established. Phase 2 does not expand them further. Review Gate #41 must explicitly classify them retain/correct/defer/revert before Phase 3/4 progression.
 
 Migration review/research/plan: `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md`.
-Program tracking: #34; Phase 1 (#35) completed; Phase 2 (#36) remains active until a real exact-head build executes.
+Private project/AI context: `docs/PROJECT_AI_CONTEXT.md`, Project card #46.
+Program tracking: #34; Phase 1 (#35) completed; Phase 2 (#36) remains active until a real exact-head build executes. CI execution recovery is tracked in #47.
 
 ## Multi-MOD / body-hair placement
 
@@ -89,13 +96,13 @@ The resolver does not infer a different host from filenames, visual proximity, `
 ## Modular split completed in this pass
 
 - `include/dmcresource/cpp23_profile.h` — canonical C++23 compile/result profile
-- `include/dmcresource/spider/cpp23_language.h` — Spider C++ typed product-language layer
-- `include/dmcresource/workspace_graph.h` / `modules/workspace_graph.cpp` — stable identities + typed C++23 mutation results
+- `include/dmcresource/spider/cpp23_language.h` — initial Spider C++ typed product-language layer, pending formal gate disposition
+- `include/dmcresource/workspace_graph.h` / `modules/workspace_graph.cpp` — stable identities + typed C++23 mutation results, pending formal gate disposition
 - `include/dmcresource/composite_model.h` — source-part + placement state
 - `include/dmcresource/composite_builder.h` / `modules/composite_builder.cpp` — product composition policy
 - `include/dmcresource/mod_attachment_resolver.h` / `modules/mod_attachment_resolver.cpp` — Rengine-backed selector resolution
 - `include/dmcresource/composite_placement.h` / `modules/composite_placement.cpp` — derived placement projection
-- `spider/session_compose_actions.cpp` — compose action, now routed through Spider C++23
+- `spider/session_compose_actions.cpp` — compose action
 - `spider/session_texture_actions.cpp` — texture actions
 - `spider/model_placement_actions.cpp` — explicit placement/reset actions
 
@@ -111,7 +118,7 @@ Regression: `ptx_transaction_test`.
 
 Important v33-specific regressions now include:
 
-- `cxx23_profile_test` — strict C++23 profile, `std::expected`, `std::byteswap`, `std::to_underlying`, Spider C++ concepts/profile;
+- `cxx23_profile_test` — target-scoped C++23 capability profile, portable language-level detection and required standard-library facilities;
 - `workspace_graph_test` — stable identities + typed graph failures;
 - `composite_builder_test` — automatic primary-host/default-joint placement and fail-closed fallback;
 - `composite_placement_test` — explicit host-joint projection, row-vector transform order and reset;
@@ -125,7 +132,7 @@ Important v33-specific regressions now include:
 v33 requires:
 
 - strict target-scoped C++23 Native Reader product core;
-- Spider C++ typed orchestration profile over Crusader;
+- Spider C++ typed orchestration profile over Crusader, subject to formal review-gate disposition;
 - Android NDK r30 LTS `30.0.16248370`;
 - exactly one packaged native DSO: `lib/arm64-v8a/libdmcviewer.so`;
 - static `DMCNativeReader::Core` + `DMCRengine::ReaderCore`;
@@ -142,9 +149,15 @@ v33 requires:
 
 ## CI state
 
-GitHub-hosted jobs on the current exact head continue to be observed failing before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]`; checkout, CMake, Gradle and tests never start. Such a run is not evidence that the current source fails to compile, but it is also not acceptance evidence.
+GitHub-hosted jobs on current heads continue to be observed failing before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]`; checkout, CMake, Gradle and tests never start. Manual rerun of the failed exact-head core job also produced a new attempt that queued briefly and then failed without steps.
+
+Historical GitHub Status incidents affected Actions on Sep 13 and runner startup on Sep 14, matching the onset window, but GitHub Status is currently operational while this repository still exhibits runner-less failures. #47 therefore tracks hosted-runner/account availability separately from source correctness.
 
 Until a real exact-head build executes, v33 remains **not release-approved**.
+
+## Release-infrastructure status
+
+Historical `.github/workflows/release-v1.yml` and `publish-platform-releases.yml` still encode old v1.0.1/versionCode21/28/NDK-r28/C++20-era assumptions. They are **not v33 release authority** and are intentionally deferred rather than opportunistically rewritten during Phase 2. Review Gate #44 must disposition them (retire/archive/migrate/replace) and update Phase #40 with one canonical exact-head Android release/signing/publish path. Windows preview must not accidentally block Android stable publication unless that coupling is explicitly accepted.
 
 ## Production boundary
 
