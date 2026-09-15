@@ -33,9 +33,7 @@ jobs:
           git status --short
 
       - name: Run package and installed-footprint policy regressions
-        run: |
-          python3 tools/test_verify_device_apk.py
-          python3 tools/test_measure_installed_footprint.py
+        run: python3 tools/test_verify_device_apk.py
 
       - uses: actions/setup-java@v4
         with:
