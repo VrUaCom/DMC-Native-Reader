@@ -17,7 +17,6 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 
 - branch: `feature/png-export-multi-mod-v27`
 - PR: #33, draft
-- exact HEAD at this status update: `40050304120cfd185df4eca95002f0d563d20021`
 - versionName: `1.0.6`
 - versionCode: `33`
 - canonical Native Reader language: **C++23**
@@ -27,6 +26,8 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - Android build stack: **AGP 9.3.0 / Gradle 9.5.0 / JDK 17 / Build Tools 36.0.0 / Android CMake 3.22.1**
 - production modules: **MOD / SCM / DDS / PTX / EventTbl**
 - canonical DMC Rengine ReaderCore pin: `caf445226c7d61841292384a10e93e4f58ae29f9`
+
+The current candidate SHA is deliberately **not hard-coded in this status file** because committing the document would immediately make that value stale. Exact source identity is taken from PR #33 at execution time and is recorded in the Phase-2 evidence manifest.
 
 PR #33 must not be merged until an exact-head build actually executes the full host regressions, passes `tools/verify_device_apk.py`, produces the canonical single-DSO APK, and passes Samsung device acceptance.
 
@@ -161,7 +162,7 @@ v33 requires:
 
 GitHub-hosted jobs on current heads continue to fail before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]` / `steps=null`; checkout, CMake, Gradle and tests never start. Manual rerun of an earlier failed exact-head core job also produced a new attempt that queued briefly and then failed without steps.
 
-On exact HEAD `40050304120cfd185df4eca95002f0d563d20021`, core run `35005014015`, job `104502481063`, again completed with no steps. This is infrastructure evidence only and does not classify the source as passing or failing.
+A recent exact-head example is source SHA `40050304120cfd185df4eca95002f0d563d20021`: core run `35005014015`, job `104502481063`, completed with no steps. This is retained as historical infrastructure evidence only; it is not a statement that this SHA remains the current PR head and it does not classify the source as passing or failing.
 
 Historical GitHub Status incidents affected Actions on Sep 13 and runner startup on Sep 14, matching the onset window, but GitHub Status later returned operational while this repository continued to exhibit runner-less failures. #47 therefore tracks hosted-runner/account availability separately from source correctness.
 
