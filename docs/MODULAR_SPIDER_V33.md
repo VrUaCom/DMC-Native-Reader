@@ -15,8 +15,13 @@ Android / future platform shell
             -> SCM      -> Spider Crusader -> SCM adapter -> Rengine ReaderCore
             -> DDS/PTX  -> Spider Crusader -> TextureSet / Rengine codecs
             -> EventTbl -> Spider Crusader -> Rengine EVT parser
+       -> explicit product modules
+            -> Composite model state
+            -> Composite placement projection
+            -> Texture companion binding
        -> Spider session actions
             -> Compose MOD parts
+            -> Explicit host-joint placement / reset
             -> Attach shared PTX bank
             -> Attach PTX to one part
        -> Spider Black Widow capability/application-state policy
@@ -24,7 +29,8 @@ Android / future platform shell
 ```
 
 The platform shell must never become a second parser, module registry, capability
-rules engine, or model/texture composition implementation.
+rules engine, model/texture composition implementation or cross-model placement
+resolver.
 
 ## One canonical runtime image
 
@@ -74,10 +80,12 @@ native module and regression gate before becoming supported.
 
 ## Spider session actions
 
-Composition and texture attachment are product actions, not JNI behavior.
+Composition, placement and texture attachment are product actions, not JNI behavior.
 `dmcresource::spider::actions` is the production action boundary for:
 
 - composing canonical MOD sessions;
+- explicitly placing one composite MOD part against one host joint;
+- resetting one part to source coordinates;
 - attaching one PTX to a normal model;
 - attaching one shared PTX bank to a composite;
 - attaching PTX to one explicit composite part.
@@ -111,9 +119,41 @@ flattened render projection as a derived cache for the current software renderer
 It is not format authority and must never be reparsed or treated as a second model
 source.
 
-Source coordinates are preserved. Weapon, cape, cloth, skeleton or cross-file
-attachment semantics must not be invented before matching evidence/runtime support
-is promoted.
+Composite part data and placement state are defined outside the generic `Session`
+contract in the composite-model module. Cross-MOD placement is implemented in a
+separate placement module rather than in the parser, renderer, JNI or texture path.
+
+Source coordinates remain the default. Weapon, cape, cloth, skeleton or other
+cross-file relationships must not be guessed from filenames, selection order or
+visual proximity.
+
+### Explicit host-joint placement
+
+The portable core may project one child part into one explicitly selected host
+joint matrix when that host joint has canonical spatial authority. This is a
+derived preview operation:
+
+```text
+source-local child RenderScene
+  + explicit host part
+  + explicit host joint
+  -> host joint current world matrix
+  -> child root placement projection
+  -> derived composite vertices + hierarchy overlay
+```
+
+The source-local child scene is never mutated. Reset reconstructs the derived child
+projection from that retained source scene without reparsing bytes.
+
+Placement must fail closed when the part/joint is invalid, the host joint lacks
+spatial authority, matrix data is rejected, or the flattened composite cache no
+longer matches the retained source-part ordering.
+
+The current v33 placement API deliberately does **not** infer host/child ownership
+from MOD header `+0x13`, names or ordering. Automatic DMC3 attachment binding may
+be promoted only after canonical DMC Rengine exposes the cross-model relation as
+an evidence-backed typed contract. Native Reader consumes that future contract; it
+must not independently rediscover EXE semantics.
 
 ## SCM spatial authority
 
@@ -135,6 +175,9 @@ Android must not infer actions from filenames, URI lists, diagnostics or raw for
 names. Current native flags include rendering, wireframe, hierarchy, UV, inspection,
 PNG export, texture-companion state, add-model-part and stage-companion capability.
 
+Placement-specific UI capability must be added to Black Widow before any platform
+shell exposes host/joint placement controls.
+
 ## JNI boundary
 
 JNI may:
@@ -145,8 +188,8 @@ JNI may:
 - lock/fill Android `ARGB_8888` Bitmaps;
 - call portable Native Reader APIs / Spider actions.
 
-JNI must not parse DMC formats, compose models, implement texture binding policy or
-reconstruct Black Widow decisions.
+JNI must not parse DMC formats, compose models, resolve model attachments, implement
+texture binding policy or reconstruct Black Widow decisions.
 
 All resource-facing JNI calls fail closed on native exceptions.
 
@@ -178,6 +221,7 @@ At minimum the complete host CTest suite must run. Critical v33 regressions incl
 - `spider_model_execution_test` — model/texture Spider routes and typed capability split;
 - `gdata_legacy_test` — PTX/TM2/EventTbl compatibility;
 - `composite_mod_scene_test` — Spider compose, shared PTX one-decode bank, no per-part RGBA duplication;
+- `composite_placement_test` — explicit host-joint root projection, DMC row-vector rotation order, reset and fail-closed authority checks;
 - `scm_authority_test` — retail versions, header authority and world-space placement;
 - `ptx_model_texture_test` — canonical texture-slot binding;
 - `black_widow_state_test` — native action/UI policy;
