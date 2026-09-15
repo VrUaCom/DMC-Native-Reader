@@ -15,7 +15,9 @@ add_library(dmc_native_reader_core STATIC
     inspection_format.cpp
     adapters/mod_adapter.cpp
     adapters/scm_adapter.cpp
+    modules/composite_builder.cpp
     modules/composite_placement.cpp
+    modules/mod_attachment_resolver.cpp
     modules/model_texture_binding.cpp
     modules/resource_session.cpp
     modules/session_gallery.cpp
@@ -31,7 +33,8 @@ add_library(dmc_native_reader_core STATIC
     modules/texture_set.cpp
     spider/black_widow.cpp
     spider/model_placement_actions.cpp
-    spider/session_actions.cpp
+    spider/session_compose_actions.cpp
+    spider/session_texture_actions.cpp
     view_renderer.cpp
 )
 add_library(DMCNativeReader::Core ALIAS dmc_native_reader_core)
@@ -94,7 +97,7 @@ option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
 if(DMC_NATIVE_READER_BUILD_TESTS)
     enable_testing()
     foreach(test_name IN ITEMS
-        black_widow_state composite_mod_scene composite_placement core_model_pipeline dds_ptx_v1
+        black_widow_state composite_builder composite_mod_scene composite_placement core_model_pipeline dds_ptx_v1
         em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy)
