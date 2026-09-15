@@ -20,6 +20,7 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - versionName: `1.0.6`
 - versionCode: `33`
 - canonical Native Reader language: **C++23**
+- C++ standard authority: **target-scoped CMake; strict ISO C++23**
 - Spider product language/profile: **Spider C++ (`spider.cpp23`)**
 - Android native toolchain: **NDK r30 LTS `30.0.16248370`**
 - production modules: **MOD / SCM / DDS / PTX / EventTbl**
@@ -57,17 +58,18 @@ The C++23 migration is scoped to DMC Native Reader. The Rengine repository, gitl
 
 ## C++23 migration
 
-The current candidate now enforces C++23 as a real product contract rather than only changing a compiler flag:
+The current candidate enforces C++23 as a product contract rather than merely changing a compiler flag:
 
-1. `DMCNativeReader::Core` and Android JNI require `cxx_std_23`;
-2. Android Gradle explicitly requests `-std=c++23` and pins NDK r30 LTS;
-3. `cpp23_profile.h` fails compilation without final C++23 mode and `std::expected`;
+1. `DMCNativeReader::Core`, JNI and Native Reader regression targets require `cxx_std_23` plus `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`;
+2. Android Gradle pins NDK r30 LTS but does **not** pass `-std=c++*`; CMake owns the Native Reader language mode so vendored dependency targets retain their own contract;
+3. `cpp23_profile.h` fails compilation without final C++23 mode, `std::expected`, `std::byteswap`, and `std::to_underlying`;
 4. `WorkspaceGraph` mutation APIs return typed `std::expected` results with explicit error codes;
 5. `spider/cpp23_language.h` defines the Spider C++ result/concept profile above Crusader;
 6. multi-MOD compose is the first production action executed through the Spider C++ typed wrapper;
 7. `cxx23_profile_test`, active CI and the APK verifier gate the new language/toolchain contract.
 
 Migration review/research/plan: `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md`.
+Program tracking: #34; Phase 1 (#35) completed; Phase 2 (#36) remains active until a real exact-head build executes.
 
 ## Multi-MOD / body-hair placement
 
@@ -101,7 +103,7 @@ The old monolithic `spider/session_actions.cpp` is no longer compiled.
 
 ## PTX transaction safety
 
-Per-part PTX replacement is now fully staged. Texture storage and triangle-slot projection are copied into temporary state; decode, range validation, slot validation and compaction complete before the live session is replaced. A failed replacement therefore preserves the previous valid texture bank and render projection.
+Per-part PTX replacement is fully staged. Texture storage and triangle-slot projection are copied into temporary state; decode, range validation, slot validation and compaction complete before the live session is replaced. A failed replacement therefore preserves the previous valid texture bank and render projection.
 
 Regression: `ptx_transaction_test`.
 
@@ -109,7 +111,7 @@ Regression: `ptx_transaction_test`.
 
 Important v33-specific regressions now include:
 
-- `cxx23_profile_test` — C++23, `std::expected`, Spider C++ concepts/profile;
+- `cxx23_profile_test` — strict C++23 profile, `std::expected`, `std::byteswap`, `std::to_underlying`, Spider C++ concepts/profile;
 - `workspace_graph_test` — stable identities + typed graph failures;
 - `composite_builder_test` — automatic primary-host/default-joint placement and fail-closed fallback;
 - `composite_placement_test` — explicit host-joint projection, row-vector transform order and reset;
@@ -122,7 +124,7 @@ Important v33-specific regressions now include:
 
 v33 requires:
 
-- C++23 Native Reader product core;
+- strict target-scoped C++23 Native Reader product core;
 - Spider C++ typed orchestration profile over Crusader;
 - Android NDK r30 LTS `30.0.16248370`;
 - exactly one packaged native DSO: `lib/arm64-v8a/libdmcviewer.so`;
@@ -140,7 +142,7 @@ v33 requires:
 
 ## CI state
 
-GitHub-hosted jobs on this repository continue to be observed failing before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]`; checkout, CMake, Gradle and tests never start. Such a run is not evidence that the current source fails to compile, but it is also not acceptance evidence.
+GitHub-hosted jobs on the current exact head continue to be observed failing before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]`; checkout, CMake, Gradle and tests never start. Such a run is not evidence that the current source fails to compile, but it is also not acceptance evidence.
 
 Until a real exact-head build executes, v33 remains **not release-approved**.
 
