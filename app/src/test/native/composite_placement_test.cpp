@@ -20,6 +20,19 @@ Matrix4 translated(float x, float y, float z) {
     return out;
 }
 
+Matrix4 rotated_z_90_translated(float x, float y, float z) {
+    Matrix4 out{};
+    // Row-vector convention: +X rotates toward +Y.
+    out.values[0] = 0.0F;
+    out.values[1] = 1.0F;
+    out.values[4] = -1.0F;
+    out.values[5] = 0.0F;
+    out.values[12] = x;
+    out.values[13] = y;
+    out.values[14] = z;
+    return out;
+}
+
 Session make_part(const char* name, float base_x, bool with_host_joint) {
     Session session;
     session.probe.format = Format::Mod;
@@ -70,8 +83,8 @@ Session make_part(const char* name, float base_x, bool with_host_joint) {
         joint.parent = 0;
         joint.parent_authority = true;
         joint.spatial_authority = true;
-        joint.local = translated(10.0F, 5.0F, 0.0F);
-        joint.world = translated(10.0F, 5.0F, 0.0F);
+        joint.local = rotated_z_90_translated(10.0F, 5.0F, 0.0F);
+        joint.world = rotated_z_90_translated(10.0F, 5.0F, 0.0F);
         session.scene.nodes.push_back(joint);
     }
 
@@ -111,10 +124,18 @@ int main() {
     assert(composite->composite_parts[1].placement.resolved);
     assert(composite->composite_parts[1].placement.host_part_index == 0U);
     assert(composite->composite_parts[1].placement.attachment_selector == 1U);
-    assert(composite->render_mesh.vertices[3].x == 12.0F);
-    assert(composite->render_mesh.vertices[3].y == 5.0F);
 
-    // Host has two nodes, so child root begins at global node index 2.
+    // This checks matrix order, not only translation. Source (2,0,0) under the
+    // host joint (+90 degrees around Z, then +10,+5) becomes (10,7,0).
+    assert(composite->render_mesh.vertices[3].x == 10.0F);
+    assert(composite->render_mesh.vertices[3].y == 7.0F);
+
+    // Host has two nodes, so child root begins at global node index 2. Child
+    // identity world * host joint world must equal the host joint world.
+    assert(composite->scene.nodes[2].world.values[0] == 0.0F);
+    assert(composite->scene.nodes[2].world.values[1] == 1.0F);
+    assert(composite->scene.nodes[2].world.values[4] == -1.0F);
+    assert(composite->scene.nodes[2].world.values[5] == 0.0F);
     assert(composite->scene.nodes[2].world.values[12] == 10.0F);
     assert(composite->scene.nodes[2].world.values[13] == 5.0F);
     assert(composite->trace.find("attach-mod-part-to-host-joint") != std::string::npos);
