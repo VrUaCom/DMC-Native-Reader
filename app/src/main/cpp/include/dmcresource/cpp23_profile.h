@@ -8,8 +8,8 @@
 #error "DMC Native Reader product core requires C++23"
 #endif
 
-#ifndef __cpp_lib_expected
-#error "DMC Native Reader C++23 profile requires std::expected support"
+#if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
+#error "DMC Native Reader C++23 profile requires std::expected >= 202202L"
 #endif
 
 namespace dmcresource::cpp23 {
