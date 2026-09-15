@@ -105,7 +105,10 @@ jobs:
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          MAX_APK_BYTES=$((8 * 1024 * 1024))
+          # Installed package/code hard limit is 4 MiB. Since base.apk is part
+          # of that footprint, any APK >4 MiB is already an impossible device
+          # candidate and must fail before Samsung acceptance.
+          MAX_APK_BYTES=$((4 * 1024 * 1024))
           MAX_NATIVE_BYTES=$((4 * 1024 * 1024))
           test -f "$DEBUG_APK"
           test -f "$RELEASE_APK"
