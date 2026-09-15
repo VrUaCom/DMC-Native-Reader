@@ -16,6 +16,7 @@ ACCEPTED_V26_NATIVE_BYTES = 1_676_448
 MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
+DUPLICATE_PAYLOAD_MIN_BYTES = 64 * 1024
 NDK_VERSION = "30.0.16248370"
 CPP_STANDARD = "C++23"
 CPP_STANDARD_AUTHORITY = "cmake-target-scoped"
@@ -73,6 +74,15 @@ def load_segment_alignments(elf_reader: str, native_path: Path):
     return alignments
 
 
+def growth_from_baseline(current: int, baseline: int):
+    delta = current - baseline
+    percent = (delta * 100.0 / baseline) if baseline else 0.0
+    return {
+        "bytes": delta,
+        "percent": round(percent, 2),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk", type=Path)
@@ -81,8 +91,9 @@ def main():
     args = parser.parse_args()
     require(args.sdk, "Provide --sdk or ANDROID_SDK_ROOT")
     sdk = Path(args.sdk)
-    require(args.apk.stat().st_size <= MAX_APK_BYTES,
-            f"APK exceeds modular size budget: {args.apk.stat().st_size} > {MAX_APK_BYTES}")
+    apk_bytes = args.apk.stat().st_size
+    require(apk_bytes <= MAX_APK_BYTES,
+            f"APK exceeds modular size budget: {apk_bytes} > {MAX_APK_BYTES}")
 
     build_tools = sdk / "build-tools/36.0.0"
     aapt2 = build_tools / "aapt2"
@@ -113,17 +124,33 @@ def main():
     require("Verified using v2 scheme (APK Signature Scheme v2): true" in signing,
             "APK v2 signature missing")
 
+    duplicate_entry_names = []
+    duplicate_large_payload_groups = []
+    duplicate_large_payload_waste_bytes = 0
+    largest_entries = []
+
     with zipfile.ZipFile(args.apk) as archive:
         require(archive.testzip() is None, "ZIP integrity failure")
+        entries = archive.infolist()
+        entry_names = [info.filename for info in entries]
+        seen_names = set()
+        duplicate_entry_names = sorted({
+            name for name in entry_names
+            if name in seen_names or not seen_names.add(name)
+        })
+        require(not duplicate_entry_names,
+                "APK contains duplicate ZIP entry names: " +
+                ", ".join(duplicate_entry_names))
+
         libs = sorted(
-            name for name in archive.namelist()
+            name for name in entry_names
             if name.startswith("lib/") and name.endswith(".so"))
         expected_libs = ["lib/arm64-v8a/libdmcviewer.so"]
         require(libs == expected_libs,
                 "Modular APK must contain exactly one native DSO: libdmcviewer.so; "
                 "found: " + ", ".join(libs))
         native_entries = [
-            info for info in archive.infolist()
+            info for info in entries
             if info.filename.startswith("lib/") and info.filename.endswith(".so")
         ]
         require(len(native_entries) == 1 and
@@ -131,7 +158,7 @@ def main():
                 "APK must contain exactly one physical native library entry")
         require(not any(
             marker in name.lower()
-            for name in archive.namelist()
+            for name in entry_names
             for marker in ("dmcshim", "dmccore00")),
             "Recovery shim/core duplicate leaked into canonical APK")
 
@@ -145,13 +172,54 @@ def main():
                 f"libdmcviewer.so is not 16 KiB ZIP-aligned: offset={native_offset}")
         native_bytes = archive.read(native_info)
 
-        require("classes.dex" in archive.namelist(), "Java shell missing")
-        dex_files = [info for info in archive.infolist() if info.filename.endswith(".dex")]
+        require("classes.dex" in entry_names, "Java shell missing")
+        dex_files = [info for info in entries if info.filename.endswith(".dex")]
         dex_bytes = sum(info.file_size for info in dex_files)
         require(dex_bytes <= MAX_DEX_BYTES,
                 f"Java shell exceeds size budget: {dex_bytes} > {MAX_DEX_BYTES}")
         require(not any(b"Lkotlin/" in archive.read(info) for info in dex_files),
                 "Unexpected Kotlin runtime in Java-only shell")
+
+        payload_groups = {}
+        for info in entries:
+            if info.is_dir() or info.file_size < DUPLICATE_PAYLOAD_MIN_BYTES:
+                continue
+            if info.filename.startswith("META-INF/"):
+                continue
+            digest = hashlib.sha256(archive.read(info)).hexdigest()
+            payload_groups.setdefault((digest, info.file_size), []).append(info.filename)
+
+        for (digest, size), names in sorted(payload_groups.items()):
+            if len(names) < 2:
+                continue
+            group = {
+                "sha256": digest,
+                "bytes_each": size,
+                "entries": sorted(names),
+                "wasted_duplicate_bytes": size * (len(names) - 1),
+            }
+            duplicate_large_payload_groups.append(group)
+            duplicate_large_payload_waste_bytes += group["wasted_duplicate_bytes"]
+
+        runtime_duplicate_groups = [
+            group for group in duplicate_large_payload_groups
+            if any(name.endswith((".so", ".dex")) for name in group["entries"])
+        ]
+        require(not runtime_duplicate_groups,
+                "Duplicate large runtime payload detected in APK: " +
+                json.dumps(runtime_duplicate_groups, sort_keys=True))
+
+        largest_entries = [
+            {
+                "entry": info.filename,
+                "uncompressed_bytes": info.file_size,
+                "compressed_bytes": info.compress_size,
+            }
+            for info in sorted(
+                (info for info in entries if not info.is_dir()),
+                key=lambda item: item.file_size,
+                reverse=True)[:12]
+        ]
 
     for forbidden in (b"libdmcshim", b"libdmccore00"):
         require(forbidden not in native_bytes,
@@ -187,6 +255,12 @@ def main():
     require("DMC_NATIVE_READER_CPP23=1" in cmake and
             "DMC_NATIVE_READER_SPIDER_CPP=1" in cmake,
             "C++23 / Spider C++ compile definitions missing")
+    require("DMC_NATIVE_READER_CORE_SOURCES" in cmake and
+            "Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES" in cmake,
+            "CMake must reject duplicate Native Reader core sources")
+    require("DMC_NATIVE_READER_TESTS" in cmake and
+            "Duplicate test entry in DMC_NATIVE_READER_TESTS" in cmake,
+            "CMake must reject duplicate Native Reader test entries")
     require('ndkVersion = "' + NDK_VERSION + '"' in app_gradle,
             "Android Gradle NDK pin does not match canonical r30 LTS")
     require("-std=c++" not in app_gradle,
@@ -285,6 +359,7 @@ def main():
         require(exports == expected_exports,
                 "Native public ABI and NativeBridge.java are out of sync")
 
+    native_size = len(native_bytes)
     print(json.dumps({
         "apk": str(args.apk),
         "versionName": "1.0.6",
@@ -308,11 +383,18 @@ def main():
         "rengine_checkout": rengine_checkout,
         "scm_authority_base": SCM_AUTHORITY_BASE,
         "zip_integrity": "pass",
-        "apk_bytes": args.apk.stat().st_size,
-        "native_bytes": len(native_bytes),
+        "duplicate_zip_entry_names": duplicate_entry_names,
+        "duplicate_large_payload_min_bytes": DUPLICATE_PAYLOAD_MIN_BYTES,
+        "duplicate_large_payload_groups": duplicate_large_payload_groups,
+        "duplicate_large_payload_waste_bytes": duplicate_large_payload_waste_bytes,
+        "largest_entries": largest_entries,
+        "apk_bytes": apk_bytes,
+        "native_bytes": native_size,
         "dex_bytes": dex_bytes,
         "accepted_v26_apk_bytes": ACCEPTED_V26_APK_BYTES,
         "accepted_v26_native_bytes": ACCEPTED_V26_NATIVE_BYTES,
+        "apk_growth_from_v26": growth_from_baseline(apk_bytes, ACCEPTED_V26_APK_BYTES),
+        "native_growth_from_v26": growth_from_baseline(native_size, ACCEPTED_V26_NATIVE_BYTES),
         "max_apk_bytes": MAX_APK_BYTES,
         "max_native_bytes": MAX_NATIVE_BYTES,
         "max_dex_bytes": MAX_DEX_BYTES,
