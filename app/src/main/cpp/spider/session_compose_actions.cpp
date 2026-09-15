@@ -16,7 +16,7 @@ constexpr crusader::OperationId kComposeMods = 1U;
 struct ComposeState final {
     const std::vector<const Session*>* parts{};
     const std::vector<std::string>* names{};
-    int primary_host_index{-1};
+    int primary_host_index{0};
     std::unique_ptr<Session> result;
 };
 
@@ -44,7 +44,7 @@ bool compose_operation(void* raw, std::uint32_t) noexcept {
         state->result = std::move(built.session);
         if (!state->result->trace.empty()) state->result->trace += "\n";
         state->result->trace += has_explicit_host
-            ? "[OK] spider.crusader.action.compose-mods explicit-primary-host"
+            ? "[OK] spider.crusader.action.compose-mods primary-host"
             : "[OK] spider.crusader.action.compose-mods source-only";
         return true;
     } catch (...) {
@@ -93,7 +93,11 @@ const crusader::Plan& compose_plan() {
 std::unique_ptr<Session> compose_mod_sessions(
     const std::vector<const Session*>& parts,
     const std::vector<std::string>& names) noexcept {
-    return execute_compose(parts, names, -1);
+    // Compatibility/product default for v33 Android: part 0 is the primary
+    // host. The Add-MOD path guarantees that the already-open live base model
+    // occupies part 0. Call the explicit overload with -1 when the caller has
+    // no authoritative host context and wants source-coordinate composition.
+    return execute_compose(parts, names, 0);
 }
 
 std::unique_ptr<Session> compose_mod_sessions(
