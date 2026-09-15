@@ -25,7 +25,7 @@ MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
 NDK_VERSION = "28.2.13676358"
 PAGE_ALIGNMENT = 16 * 1024
-RENGINE_PIN = "660cd29909863dac4f8980b12d070ac3afd3036f"
+RENGINE_PIN = "caf445226c7d61841292384a10e93e4f58ae29f9"
 SCM_AUTHORITY_BASE = "809824882c60487962e99ee41f16bca7e3ccbc83"
 
 
@@ -49,9 +49,6 @@ def zip_data_offset(apk: Path, info: zipfile.ZipInfo) -> int:
 
 
 def find_elf_reader(sdk: Path) -> str:
-    # Use the exact pinned NDK first. This makes the verifier independent of
-    # whether the GitHub host is Linux or macOS and keeps ELF inspection bound
-    # to the same Android toolchain that built libdmcviewer.so.
     ndk_readers = sorted((sdk / "ndk" / NDK_VERSION / "toolchains" / "llvm" /
                           "prebuilt").glob("*/bin/llvm-readelf"))
     if ndk_readers:
@@ -129,8 +126,6 @@ def main():
         require(libs == expected_libs,
                 "Modular APK must contain exactly one native DSO: libdmcviewer.so; "
                 "found: " + ", ".join(libs))
-        # Reject duplicates even if a malformed ZIP repeats the exact same path;
-        # ZipFile.getinfo() would otherwise hide that architectural error.
         native_entries = [
             i for i in archive.infolist()
             if i.filename.startswith("lib/") and i.filename.endswith(".so")
@@ -179,9 +174,6 @@ def main():
     resource_session_cpp = (
         root / "app/src/main/cpp/modules/resource_session.cpp").read_text()
 
-    # The APK is only canonical when the source tree that produced it points at
-    # the exact ReaderCore authority pinned for v33. Check both the parent
-    # repository gitlink and the recursively checked-out submodule worktree.
     rengine_path = root / "app/src/main/cpp/vendor/dmc-rengine-cpp"
     rengine_gitlink = run(
         "git", "-C", str(root), "rev-parse",
@@ -227,8 +219,16 @@ def main():
             "Android JNI target must link the portable core and jnigraphics")
     require(core_link and "DMCRengine::ReaderCore" in core_link.group("body"),
             "Portable core must statically consume canonical Rengine ReaderCore")
-    require("spider/session_actions.cpp" in cmake,
-            "Portable core must own Spider session actions")
+    for required_source in (
+        "modules/composite_builder.cpp",
+        "modules/composite_placement.cpp",
+        "modules/mod_attachment_resolver.cpp",
+        "spider/session_compose_actions.cpp",
+        "spider/session_texture_actions.cpp"):
+        require(required_source in cmake,
+                "Portable core missing modular source: " + required_source)
+    require("spider/session_actions.cpp" not in cmake,
+            "Legacy monolithic Spider session_actions.cpp must not be compiled")
 
     methods = re.findall(r"public\s+static\s+native\s+\S+\s+(\w+)\s*\(", bridge)
     with tempfile.TemporaryDirectory() as temp:
