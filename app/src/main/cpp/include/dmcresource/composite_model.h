@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "dmcresource/render_scene.h"
+#include "dmcresource/workspace_graph.h"
 
 namespace dmcresource {
 
@@ -22,20 +23,24 @@ enum class CompositePlacementMode : std::uint8_t {
 
 // Derived placement state for one source MOD inside a composite session.
 // The source-local RenderScene remains authoritative and is never rewritten.
-// Placement only changes the top-level render/hierarchy projection.
+// Stable host_instance_id is semantic workspace identity; host_part_index is a
+// derived cache used only to address the current flattened presentation order.
 struct CompositePlacement final {
     CompositePlacementMode mode{CompositePlacementMode::SourceCoordinates};
+    InstanceId host_instance_id{kInvalidInstanceId};
     std::size_t host_part_index{kNoCompositePart};
     std::uint32_t attachment_selector{kNoAttachmentSelector};
     Matrix4 root_matrix{};
     bool resolved{false};
 };
 
-// One canonical source MOD inside a composite scene. The source RenderScene and
-// local texture-slot projection are retained intact so animation, attachment,
-// texture and future physics modules can address parts without reconstructing
-// ownership from the flattened renderer cache.
+// One canonical source MOD inside a composite scene. asset_id / instance_id are
+// stable workspace identities and move with the part if presentation order is
+// changed. The source RenderScene and local texture-slot projection remain the
+// format authority; flattened renderer caches are derived only.
 struct CompositePart final {
+    AssetId asset_id{kInvalidAssetId};
+    InstanceId instance_id{kInvalidInstanceId};
     std::string name;
     RenderScene scene;
     std::vector<std::uint32_t> render_triangle_texture_slots;
