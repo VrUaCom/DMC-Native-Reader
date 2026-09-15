@@ -6,6 +6,23 @@
 #include "dmcresource/mod_attachment_resolver.h"
 
 namespace dmcresource::composite_builder {
+namespace {
+
+[[nodiscard]] bool assign_workspace_identity(Session* session) noexcept {
+    if (session == nullptr || session->composite_parts.empty()) return false;
+    for (auto& part : session->composite_parts) {
+        const auto asset_id = session->workspace_graph.add_asset(
+            ResourceAssetKind::Model, part.name);
+        if (asset_id == kInvalidAssetId) return false;
+        const auto instance_id = session->workspace_graph.add_model_instance(asset_id);
+        if (instance_id == kInvalidInstanceId) return false;
+        part.asset_id = asset_id;
+        part.instance_id = instance_id;
+    }
+    return session->workspace_graph.valid();
+}
+
+}  // namespace
 
 BuildResult build_mod_composite(
     const std::vector<const Session*>& parts,
@@ -22,11 +39,15 @@ BuildResult build_mod_composite(
         // primitive. Production callers enter through this builder so placement
         // policy is no longer owned by generic Session/JNI code.
         out.session = dmcresource::compose_mod_sessions(parts, names);
-        if (!out.session) return out;
+        if (!out.session || !assign_workspace_identity(out.session.get())) {
+            out.session.reset();
+            return out;
+        }
 
         if (!options.resolve_default_joint_attachments) {
             if (!out.session->trace.empty()) out.session->trace += "\n";
-            out.session->trace += "[OK] composite.builder placement=source-only";
+            out.session->trace +=
+                "[OK] composite.builder placement=source-only stable-ids=1";
             return out;
         }
 
@@ -62,11 +83,13 @@ BuildResult build_mod_composite(
         if (!out.session->detail.empty()) out.session->detail += "\n";
         out.session->detail +=
             "CompositeBuilder: primaryHost=" + std::to_string(host_index) +
+            " primaryHostInstance=" + std::to_string(host.instance_id) +
             " defaultJointAttempts=" + std::to_string(out.stats.attachment_attempts) +
             " resolved=" + std::to_string(out.stats.attachments_resolved) +
             " unresolved=" + std::to_string(out.stats.attachments_unresolved);
         if (!out.session->trace.empty()) out.session->trace += "\n";
-        out.session->trace += "[OK] composite.builder default-joint-resolution";
+        out.session->trace +=
+            "[OK] composite.builder default-joint-resolution stable-ids=1";
         return out;
     } catch (...) {
         out.session.reset();
