@@ -81,6 +81,7 @@ namespace {
     std::size_t child_part_index,
     const Matrix4& root_matrix,
     CompositePlacementMode mode,
+    InstanceId host_instance_id,
     std::size_t host_part_index,
     std::uint32_t selector,
     PlacementStatus success_status) noexcept {
@@ -155,6 +156,7 @@ namespace {
         }
 
         part.placement.mode = mode;
+        part.placement.host_instance_id = host_instance_id;
         part.placement.host_part_index = host_part_index;
         part.placement.attachment_selector = selector;
         part.placement.root_matrix = root_matrix;
@@ -199,6 +201,10 @@ PlacementResult attach_to_host_joint(Session* session,
     }
 
     const auto& host = session->composite_parts[host_part_index];
+    if (host.instance_id == kInvalidInstanceId ||
+        session->workspace_graph.find_instance(host.instance_id) == nullptr) {
+        return {.status = PlacementStatus::InvalidSession};
+    }
     if (host_joint_index >= host.scene.nodes.size()) {
         return {.status = PlacementStatus::HostJointUnavailable};
     }
@@ -224,6 +230,7 @@ PlacementResult attach_to_host_joint(Session* session,
         child_part_index,
         host_joint.world,
         CompositePlacementMode::HostJoint,
+        host.instance_id,
         host_part_index,
         host_joint_index,
         PlacementStatus::Applied);
@@ -237,6 +244,7 @@ PlacementResult reset_to_source_coordinates(Session* session,
         child_part_index,
         identity,
         CompositePlacementMode::SourceCoordinates,
+        kInvalidInstanceId,
         kNoCompositePart,
         kNoAttachmentSelector,
         PlacementStatus::Reset);
