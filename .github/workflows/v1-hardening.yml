@@ -58,6 +58,10 @@ jobs:
           grep -Fq 'CXX_STANDARD 23' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_STANDARD_REQUIRED ON' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_EXTENSIONS OFF' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'Duplicate test entry in DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
           ! grep -F -- '-std=c++' app/build.gradle.kts
           grep -Fq 'ndkVersion = "30.0.16248370"' app/build.gradle.kts
           test -f app/src/main/cpp/include/dmcresource/cpp23_profile.h
@@ -101,10 +105,18 @@ jobs:
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          MAX_APK_BYTES=$((8 * 1024 * 1024))
+          MAX_NATIVE_BYTES=$((4 * 1024 * 1024))
           test -f "$DEBUG_APK"
           test -f "$RELEASE_APK"
           unzip -t "$DEBUG_APK"
           unzip -t "$RELEASE_APK"
+          test "$(stat -c%s "$DEBUG_APK")" -le "$MAX_APK_BYTES"
+          test "$(stat -c%s "$RELEASE_APK")" -le "$MAX_APK_BYTES"
+
+          # Duplicate ZIP names are never accepted in either package variant.
+          test -z "$(zipinfo -1 "$DEBUG_APK" | sort | uniq -d)"
+          test -z "$(zipinfo -1 "$RELEASE_APK" | sort | uniq -d)"
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$DEBUG_APK" | tee /tmp/debug-badging.txt
@@ -116,11 +128,18 @@ jobs:
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
 
-          mapfile -t LIBS < <(zipinfo -1 "$DEBUG_APK" | grep '^lib/.*\.so$')
-          test "${#LIBS[@]}" -eq 1
-          test "${LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
-          unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
-          strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
+          for APK in "$DEBUG_APK" "$RELEASE_APK"; do
+            mapfile -t LIBS < <(zipinfo -1 "$APK" | grep '^lib/.*\.so$')
+            test "${#LIBS[@]}" -eq 1
+            test "${LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
+          done
+
+          unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer-debug.so
+          unzip -p "$RELEASE_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer-release.so
+          test "$(stat -c%s /tmp/libdmcviewer-debug.so)" -le "$MAX_NATIVE_BYTES"
+          test "$(stat -c%s /tmp/libdmcviewer-release.so)" -le "$MAX_NATIVE_BYTES"
+
+          strings /tmp/libdmcviewer-debug.so > /tmp/native-markers.txt
           grep -Fq 'formats.mod.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
