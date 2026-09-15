@@ -1,5 +1,7 @@
 # DMC Native Reader v33 — modular architecture review — 2026-09-15
 
+> **HISTORICAL PRE-INTEGRATION REVIEW SNAPSHOT.** This document records the architecture state and recommendations at the time of that review. Several P0 items described below were implemented later the same day. Do **not** use this file as current architecture authority. For current rules/state read `docs/PROJECT_AI_CONTEXT.md`, `docs/MODULAR_SPIDER_V33.md`, `docs/STATUS.md`, Project card #46 and the active Phase/Review issues under #34.
+
 Target reviewed: PR #33, branch `feature/png-export-multi-mod-v27`.
 
 ## Review result
