@@ -132,7 +132,10 @@ def require_runtime_markers(apk: Path) -> None:
             fail(f"canonical runtime DSO missing from APK: {RUNTIME_DSO}")
     missing = [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS if marker not in native_bytes]
     if missing:
-        fail("runtime profile marker(s) missing from libdmcviewer.so: " + ", ".join(missing))
+        fail(
+            f"runtime profile marker(s) missing from {apk.name}/{RUNTIME_DSO}: " +
+            ", ".join(missing)
+        )
 
 
 def require_static_contract() -> None:
@@ -301,8 +304,7 @@ def main() -> int:
     for apk in (debug_apk, release_apk):
         if not apk.is_file():
             fail(f"expected APK missing: {apk}")
-
-    require_runtime_markers(debug_apk)
+        require_runtime_markers(apk)
 
     run_logged(
         "05-device-apk-verifier",
