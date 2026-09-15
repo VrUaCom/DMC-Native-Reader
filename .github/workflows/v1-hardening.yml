@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   hardening:
     runs-on: ubuntu-latest
@@ -15,7 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # pull_request defaults to the synthetic merge ref. Release evidence
+          # must bind to the exact candidate head that will be reviewed/tested.
+          ref: ${{ env.EXPECTED_SOURCE_SHA }}
           submodules: recursive
+
+      - name: Verify exact source checkout
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git status --short
 
       - uses: actions/setup-java@v4
         with:
@@ -51,6 +63,7 @@ jobs:
           test -f app/src/main/cpp/include/dmcresource/cpp23_profile.h
           test -f app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
           grep -Fq 'dmc.native-reader.cpp23' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'DMC_NATIVE_READER_LANGUAGE_LEVEL' app/src/main/cpp/include/dmcresource/cpp23_profile.h
           grep -Fq 'spider.cpp23' app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
           grep -Fq '#include "dmc_rengine/spider/native_executor.hpp"' \
             app/src/main/cpp/include/dmcresource/spider/crusader.h
@@ -76,16 +89,12 @@ jobs:
             "$(git ls-tree HEAD app/src/main/cpp/vendor/dmc-rengine-cpp | awk '{print $3}')"
           test -f app/src/main/cpp/vendor/dmc-rengine-cpp/cmake/reader_core.cmake
 
-      - name: Build host regressions
+      - name: Run exact-head Phase 2 host + Android evidence baseline
         run: |
-          set -euxo pipefail
-          cmake -S app/src/main/cpp -B build/host \
-            -DDMC_NATIVE_READER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build/host --parallel 2
-          ctest --test-dir build/host --output-on-failure
-
-      - name: Build clean debug and unsigned release APKs
-        run: gradle --no-daemon clean :app:assembleDebug :app:assembleRelease
+          python3 tools/run_phase2_exact_head.py \
+            --sdk "$ANDROID_SDK_ROOT" \
+            --gradle gradle \
+            --expected-head "$EXPECTED_SOURCE_SHA"
 
       - name: Verify v33 / 1.0.6 artifacts
         run: |
@@ -133,13 +142,6 @@ jobs:
           sha256sum "$DEBUG_APK" | tee /tmp/debug-apk.sha256
           sha256sum "$RELEASE_APK" | tee /tmp/release-apk.sha256
 
-      - name: Verify current-head device APK contract
-        run: |
-          set -euxo pipefail
-          python3 tools/verify_device_apk.py \
-            app/build/outputs/apk/debug/app-debug.apk \
-            --sdk "$ANDROID_SDK_ROOT" | tee /tmp/device-apk-verification.json
-
       - uses: actions/upload-artifact@v4
         with:
           name: dmc-native-reader-v33-debug
@@ -156,10 +158,10 @@ jobs:
         with:
           name: dmc-native-reader-v33-hardening-evidence
           path: |
+            build/phase2-evidence/
             /tmp/debug-badging.txt
             /tmp/release-badging.txt
             /tmp/debug-signing.txt
             /tmp/debug-apk.sha256
             /tmp/release-apk.sha256
-            /tmp/device-apk-verification.json
           if-no-files-found: error
