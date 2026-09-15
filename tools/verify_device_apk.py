@@ -23,7 +23,9 @@ ACCEPTED_V26_NATIVE_BYTES = 1_676_448
 MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
-NDK_VERSION = "28.2.13676358"
+NDK_VERSION = "30.0.16248370"
+CPP_STANDARD = "C++23"
+SPIDER_CPP_PROFILE = "spider.cpp23"
 PAGE_ALIGNMENT = 16 * 1024
 RENGINE_PIN = "caf445226c7d61841292384a10e93e4f58ae29f9"
 SCM_AUTHORITY_BASE = "809824882c60487962e99ee41f16bca7e3ccbc83"
@@ -171,8 +173,35 @@ def main():
     bridge = (root / "app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java").read_text()
     native_cpp = (root / "app/src/main/cpp/app_native.cpp").read_text()
     cmake = (root / "app/src/main/cpp/CMakeLists.txt").read_text()
+    app_gradle = (root / "app/build.gradle.kts").read_text()
+    cpp23_profile = (
+        root / "app/src/main/cpp/include/dmcresource/cpp23_profile.h").read_text()
+    spider_cpp = (
+        root / "app/src/main/cpp/include/dmcresource/spider/cpp23_language.h").read_text()
+    workspace_graph = (
+        root / "app/src/main/cpp/include/dmcresource/workspace_graph.h").read_text()
     resource_session_cpp = (
         root / "app/src/main/cpp/modules/resource_session.cpp").read_text()
+
+    require("cxx_std_23" in cmake and "cxx_std_20" not in cmake,
+            "Native Reader CMake targets must use canonical C++23 only")
+    require("DMC_NATIVE_READER_CPP23=1" in cmake and
+            "DMC_NATIVE_READER_SPIDER_CPP=1" in cmake,
+            "C++23 / Spider C++ compile definitions missing")
+    require('ndkVersion = "' + NDK_VERSION + '"' in app_gradle,
+            "Android Gradle NDK pin does not match canonical r30 LTS")
+    require('"-std=c++23"' in app_gradle,
+            "Android native flags must request C++23")
+    require("DMC Native Reader product core requires C++23" in cpp23_profile and
+            "std::expected" in cpp23_profile and
+            "dmc.native-reader.cpp23" in cpp23_profile,
+            "C++23 compile/profile contract missing")
+    require(SPIDER_CPP_PROFILE in spider_cpp and
+            '"dmcresource/spider/crusader.h"' in spider_cpp,
+            "Spider C++23 profile must remain a typed layer over Crusader")
+    require("WorkspaceResult" in workspace_graph and
+            "WorkspaceGraphError" in workspace_graph,
+            "WorkspaceGraph has not migrated to typed C++23 results")
 
     rengine_path = root / "app/src/main/cpp/vendor/dmc-rengine-cpp"
     rengine_gitlink = run(
@@ -223,10 +252,13 @@ def main():
         "modules/composite_builder.cpp",
         "modules/composite_placement.cpp",
         "modules/mod_attachment_resolver.cpp",
+        "modules/workspace_graph.cpp",
         "spider/session_compose_actions.cpp",
         "spider/session_texture_actions.cpp"):
         require(required_source in cmake,
                 "Portable core missing modular source: " + required_source)
+    require("cxx23_profile" in cmake,
+            "Portable regression set must include the C++23 profile gate")
     require("spider/session_actions.cpp" not in cmake,
             "Legacy monolithic Spider session_actions.cpp must not be compiled")
 
@@ -258,6 +290,9 @@ def main():
         "versionName": "1.0.6",
         "versionCode": 33,
         "abi": "arm64-v8a",
+        "cpp_standard": CPP_STANDARD,
+        "spider_cpp_profile": SPIDER_CPP_PROFILE,
+        "ndk_version": NDK_VERSION,
         "signer_sha256": expected_signer,
         "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
         "native_dso_count": 1,
