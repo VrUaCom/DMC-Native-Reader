@@ -5,12 +5,13 @@
 #include <utility>
 
 #include "dmcresource/composite_builder.h"
-#include "dmcresource/spider/crusader.h"
+#include "dmcresource/spider/cpp23_language.h"
 
 namespace dmcresource::spider::actions {
 namespace {
 
 namespace crusader = dmcresource::spider::crusader;
+namespace spider_cpp = dmcresource::spider::cpp23;
 constexpr crusader::OperationId kComposeMods = 1U;
 
 struct ComposeState final {
@@ -44,8 +45,8 @@ bool compose_operation(void* raw, std::uint32_t) noexcept {
         state->result = std::move(built.session);
         if (!state->result->trace.empty()) state->result->trace += "\n";
         state->result->trace += has_explicit_host
-            ? "[OK] spider.crusader.action.compose-mods primary-host"
-            : "[OK] spider.crusader.action.compose-mods source-only";
+            ? "[OK] spider.cpp23/crusader.action.compose-mods primary-host"
+            : "[OK] spider.cpp23/crusader.action.compose-mods source-only";
         return true;
     } catch (...) {
         state->result.reset();
@@ -83,7 +84,7 @@ const crusader::Plan& compose_plan() {
             .execute = &compose_operation,
         },
     };
-    const auto report = crusader::execute(compose_plan(), bindings, &state);
+    const auto report = spider_cpp::execute(compose_plan(), bindings, state);
     if (!report.ok()) return nullptr;
     return std::move(state.result);
 }
