@@ -6,13 +6,19 @@
 #include <utility>
 #include <version>
 
-// CMake is the authority that selects strict ISO C++23 for Native Reader
-// targets. Do not require one compiler-specific final __cplusplus date here:
-// some valid C++23 toolchains historically report an intermediate value such as
-// 202100L. Reject C++20-or-older, then prove the concrete product facilities via
-// SD-6 feature-test macros below.
-#if __cplusplus <= 202002L
-#error "DMC Native Reader product core requires C++23-or-later language mode"
+// MSVC reports the selected /std language mode through _MSVC_LANG even when
+// /Zc:__cplusplus is not enabled. Clang/GCC and conforming MSVC configurations
+// use __cplusplus. CMake remains the language-mode authority; this header only
+// proves that the active translation unit is newer than C++20 and provides the
+// concrete C++23 library facilities required by Native Reader.
+#if defined(_MSVC_LANG)
+#define DMC_NATIVE_READER_LANGUAGE_LEVEL _MSVC_LANG
+#else
+#define DMC_NATIVE_READER_LANGUAGE_LEVEL __cplusplus
+#endif
+
+#if DMC_NATIVE_READER_LANGUAGE_LEVEL <= 202002L
+#error "DMC Native Reader product core requires C++23"
 #endif
 
 #if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
@@ -30,7 +36,7 @@
 namespace dmcresource::cpp23 {
 
 inline constexpr std::string_view kProfile = "dmc.native-reader.cpp23";
-inline constexpr long kLanguageLevel = __cplusplus;
+inline constexpr long kLanguageLevel = DMC_NATIVE_READER_LANGUAGE_LEVEL;
 inline constexpr long kExpectedFeature = __cpp_lib_expected;
 inline constexpr long kByteswapFeature = __cpp_lib_byteswap;
 inline constexpr long kToUnderlyingFeature = __cpp_lib_to_underlying;
@@ -42,3 +48,5 @@ template <class E>
 using Status = std::expected<void, E>;
 
 }  // namespace dmcresource::cpp23
+
+#undef DMC_NATIVE_READER_LANGUAGE_LEVEL
