@@ -11,13 +11,6 @@ import subprocess
 import tempfile
 import zipfile
 
-# Accepted v26 device APK baseline:
-#   APK 597,665 bytes; one ARM64 libdmcviewer.so 1,676,448 bytes uncompressed.
-# v33 keeps its single mmap-ready DSO uncompressed, so the APK is expected to
-# be larger on disk, but it must still stay far below the rejected recovery
-# chain. These bounds deliberately leave substantial feature headroom while
-# making runtime duplication/bloat a hard build failure instead of a device-side
-# surprise.
 ACCEPTED_V26_APK_BYTES = 597_665
 ACCEPTED_V26_NATIVE_BYTES = 1_676_448
 MAX_APK_BYTES = 8 * 1024 * 1024
@@ -25,6 +18,7 @@ MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
 NDK_VERSION = "30.0.16248370"
 CPP_STANDARD = "C++23"
+CPP_STANDARD_AUTHORITY = "cmake-target-scoped"
 SPIDER_CPP_PROFILE = "spider.cpp23"
 PAGE_ALIGNMENT = 16 * 1024
 RENGINE_PIN = "caf445226c7d61841292384a10e93e4f58ae29f9"
@@ -122,15 +116,15 @@ def main():
     with zipfile.ZipFile(args.apk) as archive:
         require(archive.testzip() is None, "ZIP integrity failure")
         libs = sorted(
-            n for n in archive.namelist()
-            if n.startswith("lib/") and n.endswith(".so"))
+            name for name in archive.namelist()
+            if name.startswith("lib/") and name.endswith(".so"))
         expected_libs = ["lib/arm64-v8a/libdmcviewer.so"]
         require(libs == expected_libs,
                 "Modular APK must contain exactly one native DSO: libdmcviewer.so; "
                 "found: " + ", ".join(libs))
         native_entries = [
-            i for i in archive.infolist()
-            if i.filename.startswith("lib/") and i.filename.endswith(".so")
+            info for info in archive.infolist()
+            if info.filename.startswith("lib/") and info.filename.endswith(".so")
         ]
         require(len(native_entries) == 1 and
                 native_entries[0].filename == expected_libs[0],
@@ -152,11 +146,11 @@ def main():
         native_bytes = archive.read(native_info)
 
         require("classes.dex" in archive.namelist(), "Java shell missing")
-        dex_files = [i for i in archive.infolist() if i.filename.endswith(".dex")]
-        dex_bytes = sum(i.file_size for i in dex_files)
+        dex_files = [info for info in archive.infolist() if info.filename.endswith(".dex")]
+        dex_bytes = sum(info.file_size for info in dex_files)
         require(dex_bytes <= MAX_DEX_BYTES,
                 f"Java shell exceeds size budget: {dex_bytes} > {MAX_DEX_BYTES}")
-        require(not any(b"Lkotlin/" in archive.read(i) for i in dex_files),
+        require(not any(b"Lkotlin/" in archive.read(info) for info in dex_files),
                 "Unexpected Kotlin runtime in Java-only shell")
 
     for forbidden in (b"libdmcshim", b"libdmccore00"):
@@ -185,14 +179,19 @@ def main():
 
     require("cxx_std_23" in cmake and "cxx_std_20" not in cmake,
             "Native Reader CMake targets must use canonical C++23 only")
+    require("CXX_STANDARD 23" in cmake and
+            "CXX_STANDARD_REQUIRED ON" in cmake and
+            "CXX_EXTENSIONS OFF" in cmake,
+            "Native Reader targets must require strict ISO C++23")
     require("DMC_NATIVE_READER_CPP23=1" in cmake and
             "DMC_NATIVE_READER_SPIDER_CPP=1" in cmake,
             "C++23 / Spider C++ compile definitions missing")
     require('ndkVersion = "' + NDK_VERSION + '"' in app_gradle,
             "Android Gradle NDK pin does not match canonical r30 LTS")
-    require('"-std=c++23"' in app_gradle,
-            "Android native flags must request C++23")
+    require("-std=c++" not in app_gradle,
+            "Gradle must not own C++ language mode; use target-scoped CMake")
     require("DMC Native Reader product core requires C++23" in cpp23_profile and
+            "__cpp_lib_expected < 202202L" in cpp23_profile and
             "std::expected" in cpp23_profile and
             "dmc.native-reader.cpp23" in cpp23_profile,
             "C++23 compile/profile contract missing")
@@ -291,6 +290,7 @@ def main():
         "versionCode": 33,
         "abi": "arm64-v8a",
         "cpp_standard": CPP_STANDARD,
+        "cpp_standard_authority": CPP_STANDARD_AUTHORITY,
         "spider_cpp_profile": SPIDER_CPP_PROFILE,
         "ndk_version": NDK_VERSION,
         "signer_sha256": expected_signer,
