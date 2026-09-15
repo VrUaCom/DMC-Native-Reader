@@ -10,7 +10,8 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  
-**Production registry:** **MOD / SCM / DDS / PTX / EventTbl**
+**Production registry:** **MOD / SCM / DDS / PTX / EventTbl**  
+**Weight contract:** **APK <= 4 MiB; installed package/code <= 4 MiB on the acceptance Samsung**
 
 The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
 
@@ -68,7 +69,7 @@ The first production C++23 upgrades are:
 
 These early C++23 modernization pieces predate the formal phase/review-gate workflow and are therefore subject to explicit disposition at Review Gate #41 rather than being accepted merely because they already exist in the branch.
 
-Migration work is tracked through #34, with #35 review/research completed and #36 C++23 build baseline still active until a real exact-head build executes. #46 is the private Project `READ FIRST` context card.
+Migration work is tracked through #34, with #35 review/research completed and #36 C++23 build baseline still active until a real exact-head build executes. #46 is the private Project `READ FIRST` context card. #48 owns package/installed-size evidence and the 4 MiB device limit.
 
 ## Architecture
 
@@ -118,7 +119,9 @@ The canonical APK contains exactly one native runtime DSO:
 
 `lib/arm64-v8a/libdmcviewer.so`
 
-`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates target-scoped C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, size budgets and the exact Rengine gitlink.
+`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates target-scoped C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, absolute package-size/dedup rules and the exact Rengine gitlink.
+
+Package pre-gates are **APK <= 4 MiB, DSO <= 4 MiB and Dex <= 1 MiB**. Duplicate ZIP/runtime payloads and unexplained large duplicate payload waste are not accepted. Physical Samsung acceptance separately requires **installed package/code footprint <= 4 MiB**, excluding mutable user data/cache, tied to the exact reviewed APK SHA-256. `tools/measure_installed_footprint.py` owns only this downstream device measurement.
 
 ## Product boundary
 
@@ -133,7 +136,7 @@ Start with:
 - `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md` — C++23 review, research, migration plan and boundaries;
 - `docs/STATUS.md` — accepted baseline, candidate and verification state;
 - `docs/RESOURCE_DEPENDENCY_GRAPH_V33.md` — v33 resource/dependency model;
-- `docs/PUBLIC_RELEASE_CHECKLIST.md` — release acceptance gates;
+- `docs/PUBLIC_RELEASE_CHECKLIST.md` — public-opening/admin history, not v33 release authority;
 - `docs/MODULAR_REVIEW_2026-09-15.md` — historical pre-integration modular review snapshot; useful as decision history, not current architecture authority;
 - `CHANGELOG.md` — history.
 
