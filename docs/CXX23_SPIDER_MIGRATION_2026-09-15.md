@@ -32,6 +32,8 @@ C++23 is owned **only by Native Reader CMake targets**. `DMCNativeReader::Core`,
 
 Do not set repository-global `CMAKE_CXX_STANDARD` and do not pass `-std=` through Gradle `cppFlags`. Either mechanism could propagate Native Reader's language decision into vendored dependency targets. Gradle owns Android toolchain selection, ABI and packaging; CMake owns each Native Reader target's language contract.
 
+The pinned Rengine ReaderCore boundary has been audited directly at gitlink `caf445226c7d61841292384a10e93e4f58ae29f9`: `cmake/reader_core.cmake` declares `target_compile_features(dmc_rengine_reader_core PUBLIC cxx_std_20)` and does **not** set global `CMAKE_CXX_STANDARD`. Native Reader links that target as a dependency while declaring its own `cxx_std_23`; usage requirements propagate from the dependency into its consumer, not backward into the dependency compilation. The Phase-2 exact-head runner now fails closed if this pinned C++20 target-scoped Rengine contract changes.
+
 ## Review findings
 
 Before migration the Native Reader core and JNI targets were explicitly C++20, Gradle passed `-std=c++20`, and Android workflows/verifier pinned NDK r28c (`28.2.13676358`). Spider Crusader was already a zero-overhead facade over the Rengine native executor. Therefore a safe migration must preserve the executor authority and avoid creating a second Spider runtime.
@@ -61,8 +63,9 @@ The language/toolchain decision is backed by current upstream documentation, not
 - The three required C++23 library facilities predate the r30 toolchain by a wide margin in upstream libc++: `std::to_underlying` is complete since libc++/LLVM 13, `std::byteswap` since 14, and `std::expected` since 16.
 - Current libc++ feature-test macros expose the required product values (`__cpp_lib_to_underlying=202102L`, `__cpp_lib_byteswap=202110L`, and a `std::expected` macro newer than the product minimum). The build still validates these at compile time rather than trusting version numbers alone.
 - The product does not trust one exact `__cplusplus` date value as proof of C++23 because valid toolchains can report different transition values. CMake selects the language mode, while `cpp23_profile.h` rejects C++20-or-older and proves the concrete required library facilities using SD-6 feature-test macros. MSVC uses `_MSVC_LANG` for selected `/std` mode when necessary.
+- The pinned `DMCRengine::ReaderCore` remains target-scoped C++20 and contains no global C++ standard override; the exact-head runner validates this dependency boundary before compiling Native Reader.
 
-The canonical Phase-2 evidence runner records the **actual installed NDK `clang++ --version` output** in addition to the NDK package revision. This allows release evidence to prove the compiler actually used rather than infer it only from the configured NDK number.
+The canonical Phase-2 evidence runner records the **actual host C++ compiler identity/path** and the **actual installed NDK `clang++ --version` output** in addition to configured package revisions. This allows review/release evidence to prove the compilers actually selected rather than infer them only from CMake/NDK numbers.
 
 Source references used during migration research:
 - CMake 3.20 release notes: `https://cmake.org/cmake/help/latest/release/3.20.html`
@@ -121,7 +124,7 @@ Each review gate must inspect exact HEAD/evidence, classify blockers/corrections
 
 PR evidence must bind to the source head that will later be reviewed and handed to physical device acceptance. GitHub `pull_request` workflows normally expose a synthetic merge commit/ref, so active v33 workflows explicitly checkout `github.event.pull_request.head.sha || github.sha` and verify `git rev-parse HEAD` before build execution.
 
-`tools/run_phase2_exact_head.py` is the shared execution baseline used by hosted CI and authorized local/self-hosted recovery. It requires a clean worktree and exact submodule checkout, validates the canonical AGP/Gradle/JDK/SDK/CMake/NDK stack, records the actual NDK Clang version, runs full host CMake/CTest, clean Android debug/release builds and `tools/verify_device_apk.py`, then writes an evidence manifest with APK SHA-256 values.
+`tools/run_phase2_exact_head.py` is the shared execution baseline used by hosted CI and authorized local/self-hosted recovery. It requires a clean worktree and exact submodule checkout, validates the Native Reader C++23 contract plus the pinned Rengine target-scoped C++20 boundary, validates the canonical AGP/Gradle/JDK/SDK/CMake/NDK stack, records the actual host compiler and NDK Clang, runs full host CMake/CTest, clean Android debug/release builds and `tools/verify_device_apk.py`, requires `spider.crusader` + `spider.cpp23` in both built APK runtime DSOs, then writes an evidence manifest with APK SHA-256 values.
 
 ## Boundary rules
 
