@@ -32,6 +32,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
           git status --short
 
+      - name: Run APK package-policy unit regression
+        run: python3 tools/test_verify_device_apk.py
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
