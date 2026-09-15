@@ -80,7 +80,7 @@ Spider session actions are split by responsibility:
 - `spider/session_texture_actions.cpp` — PTX attachment;
 - `spider/model_placement_actions.cpp` — explicit placement/reset.
 
-The former monolithic `spider/session_actions.cpp` is retained only as historical source and is not compiled by v33.
+The former monolithic `spider/session_actions.cpp` has been removed from the v33 source tree; its history remains available in Git.
 
 ## Canonical Rengine authority
 
