@@ -56,7 +56,7 @@ Unknown and unpromoted resource families fail closed.
 
 C++23 is owned by the Native Reader **CMake targets**, not by a repository-global flag. `DMCNativeReader::Core`, Android JNI and Native Reader regression targets require `cxx_std_23`, `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`. Gradle pins Android to NDK r30 LTS `30.0.16248370` but does not pass `-std=c++*`, so vendored dependencies keep their own language contract.
 
-`cpp23_profile.h` requires final C++23 mode together with `std::expected`, `std::byteswap`, and `std::to_underlying`. CI/verifier gates reject fallback to the former C++20 contract or reintroduction of Gradle-owned language mode.
+`cpp23_profile.h` does not depend on one compiler-specific `__cplusplus == 202302L` value. CMake selects strict ISO C++23; the profile rejects C++20-or-older and proves the required product facilities through SD-6 feature checks for `std::expected`, `std::byteswap`, and `std::to_underlying`. CI/verifier gates reject fallback to the former C++20 contract or reintroduction of Gradle-owned language mode.
 
 **Spider C++** is the embedded C++23 product-language layer for orchestration. It supplies typed result/concept contracts above Spider Crusader while preserving the canonical Rengine native executor underneath. It is not a second runtime or a copy of Rengine format logic.
 
@@ -66,7 +66,9 @@ The first production C++23 upgrades are:
 - stable `AssetId` / `InstanceId` / `BindingId` remain native resource identity;
 - MOD composition executes through the typed `spider.cpp23` wrapper and then the existing Crusader/Rengine executor.
 
-Migration work is tracked through #34, with #35 review/research completed and #36 C++23 build baseline still active until a real exact-head build executes.
+These early C++23 modernization pieces predate the formal phase/review-gate workflow and are therefore subject to explicit disposition at Review Gate #41 rather than being accepted merely because they already exist in the branch.
+
+Migration work is tracked through #34, with #35 review/research completed and #36 C++23 build baseline still active until a real exact-head build executes. #46 is the private Project `READ FIRST` context card.
 
 ## Architecture
 
@@ -126,12 +128,13 @@ DMC Native Reader is read-only. Editing, writing and repacking belong to DMC Ren
 
 Start with:
 
+- `docs/PROJECT_AI_CONTEXT.md` — private project/AI architecture, standards, evidence rules and review-gate workflow; Project pointer: #46;
 - `docs/MODULAR_SPIDER_V33.md` — canonical v33 architecture contract;
 - `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md` — C++23 review, research, migration plan and boundaries;
-- `docs/MODULAR_REVIEW_2026-09-15.md` — latest modular review;
 - `docs/STATUS.md` — accepted baseline, candidate and verification state;
 - `docs/RESOURCE_DEPENDENCY_GRAPH_V33.md` — v33 resource/dependency model;
 - `docs/PUBLIC_RELEASE_CHECKLIST.md` — release acceptance gates;
+- `docs/MODULAR_REVIEW_2026-09-15.md` — historical pre-integration modular review snapshot; useful as decision history, not current architecture authority;
 - `CHANGELOG.md` — history.
 
 DMC Native Reader is an independent fan-made interoperability/modding project and is not affiliated with Capcom. See `NOTICE.md`.
