@@ -1,10 +1,13 @@
 #include "dmcresource/native_module.h"
 
 #include <array>
+#include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/adapters/mod_adapter.h"
 #include "dmcresource/adapters/scm_adapter.h"
 #include "dmcresource/module_support.h"
@@ -14,6 +17,7 @@ namespace dmcresource {
 namespace {
 
 namespace crusader = dmcresource::spider::crusader;
+namespace canonical_mod = dmc::rengine::formats::mod;
 
 constexpr crusader::OperationId kProjectModel = 1U;
 
@@ -24,6 +28,30 @@ struct ModelExecutionState final {
     const ProbeResult* probe{};
     PipelineResult result{};
 };
+
+void publish_mod_attachment_selector(ModelExecutionState* state) noexcept {
+    if (state == nullptr || !state->result.accepted ||
+        state->module == nullptr || state->module->format != Format::Mod ||
+        (state->size != 0U && state->bytes == nullptr)) {
+        return;
+    }
+
+    // Keep raw MOD layout knowledge in canonical Rengine. The MOD adapter owns
+    // the full format projection; this small post-projection bridge publishes
+    // only the already-proven +0x13 semantic into the platform-neutral scene.
+    // It can be folded into the adapter return object later without changing
+    // the public composition contract.
+    try {
+        const auto bytes = std::span<const std::byte>{
+            reinterpret_cast<const std::byte*>(state->bytes), state->size};
+        const auto parsed = canonical_mod::Parser::parse(bytes);
+        if (!parsed.ok()) return;
+        state->result.scene.default_attachment_selector =
+            static_cast<std::uint32_t>(parsed.document.header.default_joint_index());
+    } catch (...) {
+        state->result.scene.default_attachment_selector.reset();
+    }
+}
 
 // Spider owns execution/orchestration; the canonical adapters continue to own
 // MOD/SCM format projection. Keeping this switch inside the native operation
@@ -42,6 +70,7 @@ bool project_model_operation(void* raw, std::uint32_t) noexcept {
     case Format::Mod:
         state->result = adapters::run_mod_adapter(
             *state->probe, state->bytes, state->size, state->module->id);
+        publish_mod_attachment_selector(state);
         break;
     default:
         state->result = module_support::reject(
