@@ -99,6 +99,8 @@ Current flow:
 
 - #35 — review/research — completed;
 - #36 — target-scoped C++23 build baseline — active;
+- #47 — Phase-2 execution/runner evidence recovery — active blocker;
+- #48 — Phase-2 package/installed-size evidence and 4 MiB hard-limit contract — active review input;
 - #41 — Review Gate A: baseline -> modernization;
 - #37 — bounded C++23 modernization;
 - #42 — Review Gate B: modernization -> C++ Spider;
@@ -114,7 +116,7 @@ Each review gate must inspect exact HEAD/evidence, classify blockers/corrections
 ## Phase intent
 
 1. **Review/research** — inventory language locks, dependency boundaries, toolchain support, Spider authority and migration risks before implementation.
-2. **Toolchain baseline** — make target-scoped CMake the sole C++ standard authority; require strict C++23 and Android NDK r30 LTS without changing vendored dependency language mode.
+2. **Toolchain baseline** — make target-scoped CMake the sole C++ standard authority; require strict C++23 and Android NDK r30 LTS without changing vendored dependency language mode. This phase also freezes package-weight/dedup evidence policy so the language migration cannot silently bloat the product.
 3. **Bounded modernization** — adopt C++23 features only where they materially improve safety or clarity.
 4. **Spider C++** — evolve the embedded C++23 language/profile layer above Crusader without changing the Rengine executor.
 5. **Dependency graph** — move resource bindings onto stable native IDs instead of Java URI/vector-position semantics.
@@ -125,6 +127,17 @@ Each review gate must inspect exact HEAD/evidence, classify blockers/corrections
 PR evidence must bind to the source head that will later be reviewed and handed to physical device acceptance. GitHub `pull_request` workflows normally expose a synthetic merge commit/ref, so active v33 workflows explicitly checkout `github.event.pull_request.head.sha || github.sha` and verify `git rev-parse HEAD` before build execution.
 
 `tools/run_phase2_exact_head.py` is the shared execution baseline used by hosted CI and authorized local/self-hosted recovery. It requires a clean worktree and exact submodule checkout, validates the Native Reader C++23 contract plus the pinned Rengine target-scoped C++20 boundary, validates the canonical AGP/Gradle/JDK/SDK/CMake/NDK stack, records the actual host compiler and NDK Clang, runs full host CMake/CTest, clean Android debug/release builds and `tools/verify_device_apk.py`, requires `spider.crusader` + `spider.cpp23` in both built APK runtime DSOs, then writes an evidence manifest with APK SHA-256 values.
+
+The same evidence contract now includes product weight integrity:
+
+- debug and unsigned-release APK must each be **<= 4 MiB**;
+- DSO <= 4 MiB and Dex <= 1 MiB;
+- duplicate ZIP names/runtime payloads/large duplicate payload waste must be zero;
+- verifier reports absolute current sizes and largest package entries;
+- historical v26 package/native values are not growth authority without proven comparable provenance;
+- downstream Samsung acceptance requires installed package/code allocation **<= 4 MiB**, excluding mutable user data/cache, measured by `tools/measure_installed_footprint.py` and tied to exact APK SHA-256/device identity.
+
+`APK <= 4 MiB` is a necessary precondition for the installed gate, not a replacement for physical-device measurement.
 
 ## Boundary rules
 
@@ -140,7 +153,7 @@ PR evidence must bind to the source head that will later be reviewed and handed 
 
 Phase status is tied to exact HEAD. A GitHub Actions record with `runner_id=0`, `steps=[]`, skipped jobs, or another pre-run infrastructure failure is not compile/test evidence.
 
-Phase 2 does not close until real CMake/CTest execution plus clean Android debug/release builds and the package verifier succeed on the candidate SHA.
+Phase 2 does not close until real CMake/CTest execution plus clean Android debug/release builds and the package verifier succeed on the candidate SHA. The final 4 MiB installed package/code gate remains a downstream physical-device requirement and is not inferred from APK size alone.
 
 ## Legacy workflow note
 
