@@ -61,7 +61,11 @@ target_compile_definitions(dmc_native_reader_core PUBLIC
     DMC_NATIVE_READER_CPP23=1
     DMC_NATIVE_READER_SPIDER_CPP=1
 )
-target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
+if(MSVC)
+    target_compile_options(dmc_native_reader_core PRIVATE /W4)
+else()
+    target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 set_target_properties(dmc_native_reader_core PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
