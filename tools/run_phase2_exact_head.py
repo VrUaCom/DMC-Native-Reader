@@ -166,6 +166,10 @@ def require_static_contract() -> None:
     profile = (
         ROOT / "app/src/main/cpp/include/dmcresource/cpp23_profile.h"
     ).read_text(encoding="utf-8")
+    rengine_reader_cmake_path = ROOT / RENGINE_REL / "cmake/reader_core.cmake"
+    if not rengine_reader_cmake_path.is_file():
+        fail("pinned Rengine reader_core.cmake is missing")
+    rengine_reader_cmake = rengine_reader_cmake_path.read_text(encoding="utf-8")
 
     if f'version "{EXPECTED_AGP}"' not in root_gradle:
         fail(f"Android Gradle Plugin pin is not {EXPECTED_AGP}")
@@ -195,6 +199,11 @@ def require_static_contract() -> None:
     ):
         if marker not in profile:
             fail(f"C++23 profile marker missing: {marker}")
+
+    if "target_compile_features(dmc_rengine_reader_core PUBLIC cxx_std_20)" not in rengine_reader_cmake:
+        fail("pinned Rengine ReaderCore no longer exposes its C++20 target-scoped contract")
+    if "CMAKE_CXX_STANDARD" in rengine_reader_cmake:
+        fail("pinned Rengine ReaderCore must not impose a global C++ standard")
 
 
 def parse_args() -> argparse.Namespace:
@@ -369,6 +378,7 @@ def main() -> int:
             "android_ndk_clang_path": str(ndk_clang),
             "android_ndk_clang_version_output": ndk_clang_version_text.strip(),
         },
+        "rengine_language_contract": "target-scoped cxx_std_20",
         "runtime_markers": [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS],
         "java_version_output": java_version_text.strip(),
         "artifacts": {
