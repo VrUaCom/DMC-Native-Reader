@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Measure installed Android package/code footprint for release evidence.
+"""Measure authoritative installed Android app/code bytes for release evidence.
 
-This tool intentionally measures only the installed package code directory under
-/data/app. It does not include mutable user data/cache under /data/user or
-/data/data. The metric is allocated KiB reported by Android `du -sk`, converted
-to bytes with 1024-byte resolution.
+The acceptance metric is Android StorageStats.getAppBytes(), exposed on current
+Android builds through `pm get-package-storage-stats`. Android defines app bytes as
+APK files + optimized compiler output + unpacked native libraries (and OBB when
+present), separately from mutable data/cache.
 
-It is device evidence, not an APK verifier. `verify_device_apk.py` remains the
-package/build authority.
+This tool is device evidence, not an APK verifier. `verify_device_apk.py` remains
+the package/build authority. The tool fails closed when StorageStats is unavailable
+instead of silently substituting a directory-size heuristic.
 """
 
 from __future__ import annotations
@@ -15,15 +16,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import subprocess
-import sys
 from typing import NoReturn, Sequence
 
 DEFAULT_PACKAGE = "com.dmcrengine.nativereader"
-MAX_INSTALLED_CODE_KIB = 4096
-MAX_INSTALLED_CODE_BYTES = MAX_INSTALLED_CODE_KIB * 1024
+EXPECTED_VERSION_CODE = "33"
+EXPECTED_VERSION_NAME = "1.0.6"
+MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 
 
 def fail(message: str) -> NoReturn:
@@ -55,6 +56,27 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_adb_file(adb: str, serial: str, remote_path: str) -> str:
+    command = adb_command(adb, serial, "exec-out", "cat", remote_path)
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: process.stdout.read(1024 * 1024), b""):
+        digest.update(chunk)
+    stderr = process.stderr.read() if process.stderr is not None else b""
+    return_code = process.wait()
+    if return_code != 0:
+        fail(
+            f"could not hash installed APK {remote_path}; "
+            f"adb exited {return_code}: {stderr.decode(errors='replace').strip()}"
+        )
+    return digest.hexdigest()
+
+
 def parse_pm_paths(output: str) -> list[str]:
     paths: list[str] = []
     for raw_line in output.splitlines():
@@ -72,45 +94,45 @@ def parse_pm_paths(output: str) -> list[str]:
     return paths
 
 
-def package_code_dir(paths: Sequence[str]) -> str:
-    parents = {str(PurePosixPath(path).parent) for path in paths}
-    if len(parents) != 1:
+def require_single_base_apk(paths: Sequence[str]) -> str:
+    if len(paths) != 1:
         fail(
-            "installed APK/split paths do not share one package code directory: "
-            + ", ".join(sorted(parents))
+            "canonical Native Reader acceptance expects one installed base APK; "
+            "found package paths: " + ", ".join(paths)
         )
-    code_dir = next(iter(parents))
-    if not code_dir.startswith("/data/app/"):
-        fail(
-            "package code directory is outside /data/app; refusing ambiguous "
-            f"installed-size measurement: {code_dir}"
-        )
-    if code_dir.rstrip("/") == "/data/app":
-        fail("refusing to measure the /data/app root")
-    return code_dir
+    path = paths[0]
+    if not path.endswith("/base.apk"):
+        fail(f"installed package path is not a canonical base.apk: {path}")
+    return path
 
 
-def parse_du_kib(output: str, expected_path: str) -> int:
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    if len(lines) != 1:
-        fail(f"expected one `du -sk` result, got {len(lines)}")
-    fields = lines[0].split(maxsplit=1)
-    if len(fields) != 2:
-        fail(f"could not parse `du -sk` output: {lines[0]}")
-    try:
-        kib = int(fields[0], 10)
-    except ValueError as error:
-        fail(f"invalid KiB value from `du -sk`: {fields[0]}")
-        raise AssertionError from error
-    measured_path = fields[1].strip()
-    if measured_path != expected_path:
+def parse_storage_stats(output: str) -> dict[str, int]:
+    """Parse `pm get-package-storage-stats` byte fields.
+
+    Current AOSP output is `name: <N> bytes (...)`. Only the exact byte count is
+    accepted; human-readable suffixes are diagnostic and never parsed.
+    """
+    if "Error:" in output or "Unknown command" in output:
+        fail("Android package StorageStats shell command is unavailable: " + output.strip())
+
+    stats: dict[str, int] = {}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.fullmatch(r"([^:]+?)\s*:\s*(\d+)\s+bytes(?:\s+\(.*\))?", line)
+        if match is None:
+            continue
+        key = re.sub(r"\s+", "_", match.group(1).strip().lower())
+        value = int(match.group(2), 10)
+        stats[key] = value
+
+    if "code" not in stats:
         fail(
-            f"`du -sk` measured unexpected path {measured_path}; "
-            f"expected {expected_path}"
+            "StorageStats output did not expose authoritative `code` bytes; "
+            "do not substitute `du` or another heuristic. Output: " + output.strip()
         )
-    if kib < 0:
-        fail("negative installed footprint reported by `du`")
-    return kib
+    return stats
 
 
 def parse_package_version(dumpsys: str) -> tuple[str | None, str | None]:
@@ -138,11 +160,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--apk",
         type=Path,
-        help="Optional local reviewed APK. Its SHA-256 is recorded in the evidence.",
+        required=True,
+        help="Exact reviewed APK installed on the device; SHA-256 is verified against base.apk.",
     )
     parser.add_argument(
         "--expected-apk-sha256",
-        help="Optional SHA-256 guard for --apk; mismatch aborts before measurement.",
+        help="Optional expected SHA-256 guard for --apk; mismatch aborts before measurement.",
     )
     return parser.parse_args()
 
@@ -150,20 +173,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    apk_sha256: str | None = None
-    if args.expected_apk_sha256 and args.apk is None:
-        fail("--expected-apk-sha256 requires --apk")
-    if args.apk is not None:
-        apk = args.apk.expanduser().resolve()
-        if not apk.is_file():
-            fail(f"APK does not exist: {apk}")
-        apk_sha256 = sha256_file(apk)
-        if args.expected_apk_sha256:
-            expected = args.expected_apk_sha256.lower()
-            if not re.fullmatch(r"[0-9a-f]{64}", expected):
-                fail("--expected-apk-sha256 must be 64 lowercase/uppercase hex characters")
-            if apk_sha256 != expected:
-                fail(f"APK SHA-256 {apk_sha256} != expected {expected}")
+    apk = args.apk.expanduser().resolve()
+    if not apk.is_file():
+        fail(f"APK does not exist: {apk}")
+    reviewed_apk_sha256 = sha256_file(apk)
+    if args.expected_apk_sha256:
+        expected = args.expected_apk_sha256.lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            fail("--expected-apk-sha256 must be 64 hexadecimal characters")
+        if reviewed_apk_sha256 != expected:
+            fail(f"APK SHA-256 {reviewed_apk_sha256} != expected {expected}")
 
     state = capture(adb_command(args.adb, args.serial, "get-state")).strip()
     if state != "device":
@@ -178,18 +197,39 @@ def main() -> int:
     package_paths = parse_pm_paths(
         capture(adb_command(args.adb, serial, "shell", "pm", "path", args.package))
     )
-    code_dir = package_code_dir(package_paths)
-
-    du_output = capture(
-        adb_command(args.adb, serial, "shell", "du", "-sk", code_dir)
+    installed_base_apk = require_single_base_apk(package_paths)
+    installed_apk_sha256 = sha256_adb_file(
+        args.adb, serial, installed_base_apk
     )
-    installed_code_kib = parse_du_kib(du_output, code_dir)
-    installed_code_bytes = installed_code_kib * 1024
+    if installed_apk_sha256 != reviewed_apk_sha256:
+        fail(
+            "installed base.apk is not the reviewed APK: "
+            f"installed={installed_apk_sha256} reviewed={reviewed_apk_sha256}"
+        )
+
+    storage_output = capture(
+        adb_command(
+            args.adb,
+            serial,
+            "shell",
+            "pm",
+            "get-package-storage-stats",
+            args.package,
+        )
+    )
+    storage_stats = parse_storage_stats(storage_output)
+    installed_app_bytes = storage_stats["code"]
 
     dumpsys = capture(
         adb_command(args.adb, serial, "shell", "dumpsys", "package", args.package)
     )
     version_code, version_name = parse_package_version(dumpsys)
+    if version_code != EXPECTED_VERSION_CODE or version_name != EXPECTED_VERSION_NAME:
+        fail(
+            "installed package identity mismatch: "
+            f"versionCode={version_code} versionName={version_name}; "
+            f"expected {EXPECTED_VERSION_CODE}/{EXPECTED_VERSION_NAME}"
+        )
 
     model = capture(
         adb_command(args.adb, serial, "shell", "getprop", "ro.product.model")
@@ -200,27 +240,32 @@ def main() -> int:
     android_release = capture(
         adb_command(args.adb, serial, "shell", "getprop", "ro.build.version.release")
     ).strip()
+    sdk_level = capture(
+        adb_command(args.adb, serial, "shell", "getprop", "ro.build.version.sdk")
+    ).strip()
 
-    passed = installed_code_bytes <= MAX_INSTALLED_CODE_BYTES
+    passed = installed_app_bytes <= MAX_INSTALLED_APP_BYTES
     report = {
+        "schema": "dmc-native-reader.installed-footprint.v2",
         "package": args.package,
         "versionCode": version_code,
         "versionName": version_name,
         "device_serial": serial,
         "device_model": model,
         "android_release": android_release,
+        "android_sdk": sdk_level,
         "build_fingerprint": fingerprint,
         "package_paths": package_paths,
-        "package_code_dir": code_dir,
-        "measurement": "adb shell du -sk package_code_dir",
-        "measurement_resolution_bytes": 1024,
-        "installed_package_code_kib": installed_code_kib,
-        "installed_package_code_bytes": installed_code_bytes,
-        "max_installed_package_code_kib": MAX_INSTALLED_CODE_KIB,
-        "max_installed_package_code_bytes": MAX_INSTALLED_CODE_BYTES,
-        "mutable_user_data_cache_included": False,
-        "reviewed_apk": str(args.apk.expanduser().resolve()) if args.apk else None,
-        "reviewed_apk_sha256": apk_sha256,
+        "installed_base_apk": installed_base_apk,
+        "measurement": "Android StorageStats.getAppBytes via pm get-package-storage-stats",
+        "installed_app_bytes": installed_app_bytes,
+        "max_installed_app_bytes": MAX_INSTALLED_APP_BYTES,
+        "storage_stats_bytes": storage_stats,
+        "mutable_user_data_cache_included_in_gate": False,
+        "reviewed_apk": str(apk),
+        "reviewed_apk_sha256": reviewed_apk_sha256,
+        "installed_apk_sha256": installed_apk_sha256,
+        "artifact_sha256_match": True,
         "pass": passed,
     }
     print(json.dumps(report, indent=2, sort_keys=True))
