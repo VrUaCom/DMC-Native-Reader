@@ -138,6 +138,27 @@ def require_runtime_markers(apk: Path) -> None:
         )
 
 
+def read_host_compiler_evidence() -> tuple[str, str]:
+    configure_log = EVIDENCE_DIR / "01-cmake-configure.log"
+    cache_file = HOST_BUILD_DIR / "CMakeCache.txt"
+    if not configure_log.is_file() or not cache_file.is_file():
+        fail("host CMake compiler evidence files are missing after configure")
+
+    log_text = configure_log.read_text(encoding="utf-8", errors="replace")
+    compiler_id = re.search(
+        r"(?m)^-- The CXX compiler identification is\s+(.+?)\s*$", log_text)
+    if not compiler_id:
+        fail("could not identify the actual host C++ compiler from CMake configure log")
+
+    cache_text = cache_file.read_text(encoding="utf-8", errors="replace")
+    compiler_path = re.search(
+        r"(?m)^CMAKE_CXX_COMPILER:(?:FILEPATH|STRING)=(.+?)\s*$", cache_text)
+    if not compiler_path:
+        fail("could not identify CMAKE_CXX_COMPILER from CMakeCache.txt")
+
+    return compiler_id.group(1).strip(), compiler_path.group(1).strip()
+
+
 def require_static_contract() -> None:
     root_gradle = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
     app_gradle = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
@@ -282,6 +303,8 @@ def main() -> int:
         ],
         env=env,
     )
+    host_compiler_id, host_compiler_path = read_host_compiler_evidence()
+
     run_logged(
         "02-cmake-build",
         [args.cmake, "--build", str(HOST_BUILD_DIR.relative_to(ROOT)), "--parallel", "2"],
@@ -335,6 +358,8 @@ def main() -> int:
             "gradle": gradle_version,
             "java_major": EXPECTED_JAVA_MAJOR,
             "host_cmake": ".".join(map(str, cmake_version)),
+            "host_cxx_compiler": host_compiler_id,
+            "host_cxx_compiler_path": host_compiler_path,
             "ctest_version_output": ctest_version_text.strip(),
             "android_sdk": str(sdk),
             "android_platform": EXPECTED_ANDROID_PLATFORM,
