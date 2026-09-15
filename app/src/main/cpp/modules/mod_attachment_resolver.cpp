@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <vector>
 
 #include "dmc_rengine/formats/mod/attachment.hpp"
@@ -60,7 +61,8 @@ ResolveResult resolve_default_joint(
         }
 
         const auto resolved = canonical_attachment::resolve_default_joint(
-            static_cast<std::uint8_t>(selector32), host_world);
+            static_cast<std::uint8_t>(selector32),
+            std::span<const canonical_world::Matrix4f>{host_world});
         if (!resolved.ok()) {
             out.status = resolved.status == canonical_attachment::ResolveStatus::selector_out_of_range
                 ? ResolveStatus::SelectorOutOfRange
