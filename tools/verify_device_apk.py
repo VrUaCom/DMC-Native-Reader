@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import zipfile
 
-MAX_APK_BYTES = 8 * 1024 * 1024
+MAX_APK_BYTES = 4 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
 MAX_INSTALLED_PACKAGE_CODE_BYTES = 4 * 1024 * 1024
