@@ -26,10 +26,12 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - Android build stack: **AGP 9.3.0 / Gradle 9.5.0 / JDK 17 / Build Tools 36.0.0 / Android CMake 3.22.1**
 - production modules: **MOD / SCM / DDS / PTX / EventTbl**
 - canonical DMC Rengine ReaderCore pin: `caf445226c7d61841292384a10e93e4f58ae29f9`
+- package pre-gate: **APK <= 4 MiB**
+- physical acceptance gate: **installed package/code footprint <= 4 MiB**, excluding mutable user data/cache
 
 The current candidate SHA is deliberately **not hard-coded in this status file** because committing the document would immediately make that value stale. Exact source identity is taken from PR #33 at execution time and is recorded in the Phase-2 evidence manifest.
 
-PR #33 must not be merged until an exact-head build actually executes the full host regressions, passes `tools/verify_device_apk.py`, produces the canonical single-DSO APK, and passes Samsung device acceptance.
+PR #33 must not be merged until an exact-head build actually executes the full host regressions, passes `tools/verify_device_apk.py`, produces the canonical single-DSO APK, and passes Samsung device acceptance including the 4 MiB installed package/code limit.
 
 ## v33 architecture
 
@@ -76,14 +78,37 @@ The current candidate enforces C++23 as a product contract rather than merely ch
 11. `tools/run_phase2_exact_head.py` is the shared exact-head execution baseline for hosted CI and authorized local/self-hosted recovery: it checks the complete Native Reader + pinned-Rengine language/toolchain contract, runs host CMake/CTest, clean Android debug/release builds and the APK verifier, and writes toolchain/artifact SHA-256 evidence;
 12. the evidence manifest records the actual host C++ compiler identity/path and actual installed NDK `clang++ --version`, not only configured package numbers;
 13. both debug and unsigned-release APKs must contain the runtime `spider.crusader` and `spider.cpp23` markers;
-14. `tools/verify_device_apk.py` independently requires the built `spider.cpp23` DSO marker, one-DSO/ABI/JNI/signing/alignment/size contracts, exact Rengine checkout, and robustly accepts zero-valued `aapt2` representations of `extractNativeLibs=false`;
-15. active CI and the APK verifier gate the target-scoped C++23/NDK contract.
+14. `tools/verify_device_apk.py` independently requires the built `spider.cpp23` DSO marker, one-DSO/ABI/JNI/signing/alignment/absolute-size/dedup contracts, exact Rengine checkout, and robustly accepts zero-valued `aapt2` representations of `extractNativeLibs=false`;
+15. package policy and installed-footprint parsing/threshold logic share one canonical Python regression entrypoint, `tools/test_verify_device_apk.py`;
+16. `tools/measure_installed_footprint.py` is the bounded downstream Samsung evidence tool for the 4 MiB package/code limit;
+17. active CI and the APK verifier gate the target-scoped C++23/NDK contract.
 
 The `WorkspaceGraph std::expected` migration and initial Spider C++ seed entered the branch before formal Phase/Review gates were established. Phase 2 does not expand them further. Review Gate #41 must explicitly classify them retain/correct/defer/revert before Phase 3/4 progression.
 
 Migration review/research/plan: `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md`.
 Private project/AI context: `docs/PROJECT_AI_CONTEXT.md`, Project card #46.
-Program tracking: #34; Phase 1 (#35) completed; Phase 2 (#36) remains active until a real exact-head build executes. CI execution recovery is tracked in #47.
+Program tracking: #34; Phase 1 (#35) completed; Phase 2 (#36) remains active until a real exact-head build executes. CI execution recovery is tracked in #47. Size/installed-footprint evidence is tracked in #48.
+
+## Package weight and dedup authority
+
+Application size is an architecture constraint, not a final cleanup step.
+
+Current v33 rules:
+
+- debug and unsigned-release APK: **<= 4 MiB each**;
+- packaged native DSO: <= 4 MiB;
+- Dex total: <= 1 MiB;
+- installed package/code footprint on the exact Samsung acceptance artifact: **<= 4 MiB = 4,194,304 bytes**;
+- installed measurement excludes mutable user data/cache and is tied to exact APK SHA-256 plus device/build identity;
+- duplicate ZIP entry names: 0;
+- duplicate runtime `.so`/`.dex` payloads: 0;
+- accepted Phase-2 large duplicate payload waste: 0;
+- duplicate CMake core-source/test entries are configuration errors;
+- only one runtime DSO is allowed.
+
+`APK <= 4 MiB` is a necessary precondition for the installed-size gate because the installed package code contains the APK, but it is not sufficient: device-side compiled code/metadata may still push installed package/code allocation above 4 MiB.
+
+Historical v26 APK/native byte constants are **not accepted as v33 growth authority** unless their exact artifact, packaging model and measurement method are proven comparable. The verifier therefore reports absolute current metrics rather than a misleading v26 growth percentage.
 
 ## Multi-MOD / body-hair placement
 
@@ -113,7 +138,7 @@ The resolver does not infer a different host from filenames, visual proximity, `
 - `spider/session_texture_actions.cpp` — texture actions
 - `spider/model_placement_actions.cpp` — explicit placement/reset actions
 
-The old monolithic `spider/session_actions.cpp` is no longer compiled.
+The old monolithic `spider/session_actions.cpp` is neither compiled nor retained as a dead source duplicate.
 
 ## PTX transaction safety
 
@@ -132,6 +157,7 @@ Important v33-specific regressions now include:
 - `ptx_transaction_test` — failed per-part PTX replacement preserves live state;
 - `composite_mod_scene_test` — low-copy composition and shared PTX bank;
 - `scm_authority_test` — canonical SCM world-space authority;
+- `tools/test_verify_device_apk.py` — package duplicate policy, 4 MiB APK/installed thresholds and fail-closed installed-footprint parsing;
 - existing module/Spider/texture/PNG/render/inspection regressions.
 
 PR-wide static call-site review found the production `WorkspaceGraph` mutation use in `composite_builder` already handles `std::expected` explicitly; no stale caller that assumes direct integer-ID returns was found. This is static evidence only until compilation executes.
@@ -152,11 +178,13 @@ v33 requires:
 - exact Java `NativeBridge` ↔ JNI export parity;
 - no recovery `dmcshim` / `dmccore00` path;
 - direct Android Bitmap transport;
-- APK <= 8 MiB, DSO <= 4 MiB, Dex <= 1 MiB;
+- **APK <= 4 MiB, DSO <= 4 MiB, Dex <= 1 MiB**;
+- installed package/code footprint <= 4 MiB on Samsung, excluding mutable user data/cache;
+- duplicate packaged/runtime payload waste = 0;
 - exact Rengine gitlink and checkout at `caf445226c7d61841292384a10e93e4f58ae29f9`;
 - runtime `spider.crusader` + `spider.cpp23` presence in both debug and unsigned release APKs.
 
-`tools/verify_device_apk.py` gates C++23/Spider C++/NDK r30 plus the split compose/texture action modules and exact Rengine pin.
+`tools/verify_device_apk.py` gates C++23/Spider C++/NDK r30 plus the split compose/texture action modules, exact Rengine pin, absolute package metrics and dedup rules. `tools/measure_installed_footprint.py` owns only downstream device package/code measurement and does not duplicate APK verification.
 
 ## CI state
 
