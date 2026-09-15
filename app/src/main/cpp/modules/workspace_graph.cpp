@@ -1,6 +1,7 @@
 #include "dmcresource/workspace_graph.h"
 
 #include <algorithm>
+#include <expected>
 #include <limits>
 #include <utility>
 
@@ -25,9 +26,11 @@ template <typename Collection>
 
 }  // namespace
 
-AssetId WorkspaceGraph::add_asset(
+WorkspaceResult<AssetId> WorkspaceGraph::add_asset(
     ResourceAssetKind kind, std::string label) noexcept {
-    if (!can_allocate_id(next_asset_id_)) return kInvalidAssetId;
+    if (!can_allocate_id(next_asset_id_)) {
+        return std::unexpected(WorkspaceGraphError::IdExhausted);
+    }
     try {
         const AssetId id = next_asset_id_;
         assets_.push_back(ResourceAsset{
@@ -38,15 +41,21 @@ AssetId WorkspaceGraph::add_asset(
         ++next_asset_id_;
         return id;
     } catch (...) {
-        return kInvalidAssetId;
+        return std::unexpected(WorkspaceGraphError::AllocationFailed);
     }
 }
 
-InstanceId WorkspaceGraph::add_model_instance(AssetId model_asset) noexcept {
+WorkspaceResult<InstanceId> WorkspaceGraph::add_model_instance(
+    AssetId model_asset) noexcept {
     const auto* asset = find_asset(model_asset);
-    if (asset == nullptr || asset->kind != ResourceAssetKind::Model ||
-        !can_allocate_id(next_instance_id_)) {
-        return kInvalidInstanceId;
+    if (asset == nullptr) {
+        return std::unexpected(WorkspaceGraphError::AssetMissing);
+    }
+    if (asset->kind != ResourceAssetKind::Model) {
+        return std::unexpected(WorkspaceGraphError::AssetKindMismatch);
+    }
+    if (!can_allocate_id(next_instance_id_)) {
+        return std::unexpected(WorkspaceGraphError::IdExhausted);
     }
     try {
         const InstanceId id = next_instance_id_;
@@ -57,25 +66,32 @@ InstanceId WorkspaceGraph::add_model_instance(AssetId model_asset) noexcept {
         ++next_instance_id_;
         return id;
     } catch (...) {
-        return kInvalidInstanceId;
+        return std::unexpected(WorkspaceGraphError::AllocationFailed);
     }
 }
 
-BindingId WorkspaceGraph::add_binding(
+WorkspaceResult<BindingId> WorkspaceGraph::add_binding(
     AssetId source_asset,
     BindingRole role,
     std::span<const InstanceId> targets) noexcept {
-    if (find_asset(source_asset) == nullptr || targets.empty() ||
-        !can_allocate_id(next_binding_id_)) {
-        return kInvalidBindingId;
+    if (find_asset(source_asset) == nullptr) {
+        return std::unexpected(WorkspaceGraphError::AssetMissing);
+    }
+    if (targets.empty()) {
+        return std::unexpected(WorkspaceGraphError::EmptyTargets);
+    }
+    if (!can_allocate_id(next_binding_id_)) {
+        return std::unexpected(WorkspaceGraphError::IdExhausted);
     }
 
     for (std::size_t i = 0U; i < targets.size(); ++i) {
         if (targets[i] == kInvalidInstanceId || find_instance(targets[i]) == nullptr) {
-            return kInvalidBindingId;
+            return std::unexpected(WorkspaceGraphError::TargetMissing);
         }
         for (std::size_t j = i + 1U; j < targets.size(); ++j) {
-            if (targets[i] == targets[j]) return kInvalidBindingId;
+            if (targets[i] == targets[j]) {
+                return std::unexpected(WorkspaceGraphError::DuplicateTarget);
+            }
         }
     }
 
@@ -91,7 +107,7 @@ BindingId WorkspaceGraph::add_binding(
         ++next_binding_id_;
         return id;
     } catch (...) {
-        return kInvalidBindingId;
+        return std::unexpected(WorkspaceGraphError::AllocationFailed);
     }
 }
 
