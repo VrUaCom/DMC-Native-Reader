@@ -42,14 +42,10 @@ android {
         versionCode = 33
         versionName = "1.0.6"
 
-        externalNativeBuild {
-            cmake {
-                // CMake compile features are canonical; keep this explicit flag
-                // so Android's native configuration fails closed if a toolchain
-                // cannot parse the C++23 product standard.
-                cppFlags += listOf("-std=c++23", "-Wall", "-Wextra", "-Wpedantic")
-            }
-        }
+        // Do not set -std= or other semantic C++ flags here. Gradle's CMake
+        // cppFlags are global to the external native build and would also alter
+        // vendored dependency targets. Native Reader language mode is owned by
+        // its CMake targets so the Rengine dependency keeps its own contract.
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
