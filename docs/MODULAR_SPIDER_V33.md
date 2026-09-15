@@ -17,6 +17,8 @@ Android / future platform shell
             -> EventTbl -> Spider Crusader -> Rengine EVT parser
        -> explicit product modules
             -> Composite model state
+            -> Composite builder
+            -> Rengine-backed MOD attachment resolver
             -> Composite placement projection
             -> Texture companion binding
        -> Spider session actions
@@ -51,9 +53,11 @@ Unreachable static sections are removed with function/data sections and
 
 v33 pins DMC Rengine ReaderCore to:
 
-`660cd29909863dac4f8980b12d070ac3afd3036f`
+`caf445226c7d61841292384a10e93e4f58ae29f9`
 
-This commit descends directly from the SCM authority baseline:
+This pin adds the read-side MOD cross-model default-joint attachment contract while
+remaining on the canonical reverse/mod-completion line. SCM authority continues to
+descend from baseline:
 
 `809824882c60487962e99ee41f16bca7e3ccbc83`
 
@@ -90,7 +94,9 @@ Composition, placement and texture attachment are product actions, not JNI behav
 - attaching one shared PTX bank to a composite;
 - attaching PTX to one explicit composite part.
 
-JNI only maps bytes/handles and invokes these actions.
+The former monolithic `spider/session_actions.cpp` is no longer compiled. Compose
+and texture operations are split into `session_compose_actions.cpp` and
+`session_texture_actions.cpp`. JNI only maps bytes/handles and invokes these actions.
 
 ## Shared PTX — no per-part RGBA duplication
 
@@ -111,6 +117,11 @@ The pre-attachment composite may use synthetic non-overlapping slot ranges to ke
 source namespaces unambiguous. Once an explicit shared bank is accepted, the
 renderer projection switches to actual shared bank indices.
 
+Per-part PTX replacement is transactional. New textures and remapped triangle slots
+are staged independently; the live texture bank is replaced only after decode,
+range validation, required-slot validation and compaction all succeed. A failed
+replacement therefore preserves the previous valid bank and projection.
+
 ## Multi-MOD geometry ownership
 
 Each `CompositePart` retains its authoritative source-local `RenderScene`, node
@@ -123,21 +134,40 @@ Composite part data and placement state are defined outside the generic `Session
 contract in the composite-model module. Cross-MOD placement is implemented in a
 separate placement module rather than in the parser, renderer, JNI or texture path.
 
-Source coordinates remain the default. Weapon, cape, cloth, skeleton or other
-cross-file relationships must not be guessed from filenames, selection order or
-visual proximity.
+### Composite builder and primary host
 
-### Explicit host-joint placement
+Production composition enters through `composite_builder`. The product supplies an
+explicit primary/base MOD; in the current Android flow this is the model that was
+already open before the user adds additional MOD parts. Appended parts are not
+promoted to hosts merely because of filenames or visual proximity.
 
-The portable core may project one child part into one explicitly selected host
-joint matrix when that host joint has canonical spatial authority. This is a
-derived preview operation:
+After low-level source-scene composition, the builder may resolve each appended
+part against that explicit primary host. If resolution fails, the child remains in
+source coordinates.
+
+### Rengine-backed default-joint placement
+
+DMC Rengine owns the cross-model selector contract:
+
+```text
+child MOD header +0x13
+  -> Header::default_joint_index()
+  -> explicit host world-matrix domain
+  -> bounds-checked host joint matrix
+```
+
+Native Reader transports the typed selector in `RenderScene` and delegates selector
+indexing to `dmc::rengine::formats::mod::attachment`. It does not reread raw header
+offsets in the compositor.
+
+The composite builder then applies the resolved host joint as the child root
+placement:
 
 ```text
 source-local child RenderScene
-  + explicit host part
-  + explicit host joint
-  -> host joint current world matrix
+  + explicit primary host
+  + Rengine default-joint resolution
+  -> host joint current/model-space matrix
   -> child root placement projection
   -> derived composite vertices + hierarchy overlay
 ```
@@ -145,15 +175,11 @@ source-local child RenderScene
 The source-local child scene is never mutated. Reset reconstructs the derived child
 projection from that retained source scene without reparsing bytes.
 
-Placement must fail closed when the part/joint is invalid, the host joint lacks
-spatial authority, matrix data is rejected, or the flattened composite cache no
-longer matches the retained source-part ordering.
-
-The current v33 placement API deliberately does **not** infer host/child ownership
-from MOD header `+0x13`, names or ordering. Automatic DMC3 attachment binding may
-be promoted only after canonical DMC Rengine exposes the cross-model relation as
-an evidence-backed typed contract. Native Reader consumes that future contract; it
-must not independently rediscover EXE semantics.
+Placement fails closed when the selector is absent/out of range, the primary host
+lacks canonical spatial authority, matrix data is rejected, or the flattened
+composite cache no longer matches retained source-part ordering. Native Reader does
+not infer a different host from filenames, `runtime_metadata_u32`, visual proximity
+or an arbitrary scan of candidate models.
 
 ## SCM spatial authority
 
@@ -176,7 +202,7 @@ names. Current native flags include rendering, wireframe, hierarchy, UV, inspect
 PNG export, texture-companion state, add-model-part and stage-companion capability.
 
 Placement-specific UI capability must be added to Black Widow before any platform
-shell exposes host/joint placement controls.
+shell exposes manual host/joint placement controls.
 
 ## JNI boundary
 
@@ -211,7 +237,9 @@ The v33 verifier requires:
 - direct Bitmap ABI;
 - 16 KiB ZIP alignment;
 - 16 KiB-or-greater ELF `PT_LOAD` alignment;
-- Spider session actions present in the portable core and used by JNI.
+- canonical Rengine gitlink/checkout equality at `caf445226c7d61841292384a10e93e4f58ae29f9`;
+- modular composite builder/resolver/placement sources compiled into the portable core;
+- split Spider compose/texture action sources compiled instead of the old monolith.
 
 ## Regression gates before device acceptance
 
@@ -221,7 +249,9 @@ At minimum the complete host CTest suite must run. Critical v33 regressions incl
 - `spider_model_execution_test` — model/texture Spider routes and typed capability split;
 - `gdata_legacy_test` — PTX/TM2/EventTbl compatibility;
 - `composite_mod_scene_test` — Spider compose, shared PTX one-decode bank, no per-part RGBA duplication;
-- `composite_placement_test` — explicit host-joint root projection, DMC row-vector rotation order, reset and fail-closed authority checks;
+- `composite_builder_test` — primary-host default-joint auto placement plus source-coordinate fail-closed fallback;
+- `composite_placement_test` — explicit host-joint root projection, DMC row-vector rotation order, reset and authority checks;
+- `ptx_transaction_test` — failed per-part replacement preserves the previous live texture bank;
 - `scm_authority_test` — retail versions, header authority and world-space placement;
 - `ptx_model_texture_test` — canonical texture-slot binding;
 - `black_widow_state_test` — native action/UI policy;
