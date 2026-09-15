@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   dds-ptx-host:
     runs-on: ubuntu-latest
@@ -15,7 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.EXPECTED_SOURCE_SHA }}
           submodules: recursive
+
+      - name: Verify exact source checkout
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          grep -Fq 'cxx_std_23' app/src/main/cpp/CMakeLists.txt
+          ! grep -Fq 'cxx_std_20' app/src/main/cpp/CMakeLists.txt
 
       - name: Build DDS/PTX and model texture regressions
         run: |
