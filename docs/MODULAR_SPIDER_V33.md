@@ -8,7 +8,7 @@ This document is the canonical architecture boundary for the v33 line.
 Android / future platform shell
   -> file descriptors, URI lifecycle, save/open dialogs, widgets
   -> JNI transport only
-  -> DMCNativeReader::Core (portable C++20)
+  -> DMCNativeReader::Core (portable C++23)
        -> bounded probe
        -> NativeModuleRegistry
             -> MOD      -> Spider Crusader -> MOD adapter -> Rengine ReaderCore
@@ -21,6 +21,11 @@ Android / future platform shell
             -> Rengine-backed MOD attachment resolver
             -> Composite placement projection
             -> Texture companion binding
+            -> WorkspaceGraph / stable resource identity
+       -> Spider C++23 product language
+            -> typed Result / Status contracts
+            -> compile-time concepts
+            -> typed facade over Spider Crusader
        -> Spider session actions
             -> Compose MOD parts
             -> Explicit host-joint placement / reset
@@ -64,6 +69,10 @@ descend from baseline:
 Native Reader must consume format knowledge from Rengine rather than copy it into
 Android or create a second canonical parser.
 
+The Native Reader C++23 migration does not change Rengine's repository, submodule
+pin, format authority or language policy. `DMCRengine::ReaderCore` is an external
+boundary consumed by the C++23 Native Reader product target.
+
 ## Promoted production modules
 
 The production registry contains five promoted families:
@@ -82,6 +91,37 @@ A recognized resource without a registered module fails closed. Future MOT,
 physics, cloth, container or other families require their own evidence-backed
 native module and regression gate before becoming supported.
 
+## C++23 + Spider C++ product language
+
+C++23 is the canonical language standard for `DMCNativeReader::Core` and the
+Android JNI target. Android uses NDK r30 LTS (`30.0.16248370`). CMake requires
+`cxx_std_23`, and the Android native configuration explicitly requests
+`-std=c++23` so unsupported toolchains fail closed.
+
+`cpp23_profile.h` is the compile-time product profile. It requires final C++23
+language mode plus `std::expected`. Product modules may use C++23 facilities when
+they solve a bounded architectural problem; the first promoted use is typed
+`WorkspaceGraph` mutation results.
+
+**Spider C++** is the embedded C++23 orchestration language/profile for Native
+Reader. It is not a second executor or separate runtime. `spider/cpp23_language.h`
+adds typed result aliases, concepts and typed state execution while delegating to
+`spider::crusader`, which remains a zero-overhead facade over the pinned Rengine
+native executor.
+
+Current authority chain:
+
+```text
+Native Reader C++23 action
+  -> Spider C++ typed profile
+  -> Spider Crusader facade
+  -> pinned Rengine native executor
+```
+
+Future Spider C++ features may include compile-time plan declarations and stronger
+`consteval` validation, but they must not duplicate the executor, dependency graph
+runtime or canonical format knowledge.
+
 ## Spider session actions
 
 Composition, placement and texture attachment are product actions, not JNI behavior.
@@ -97,6 +137,10 @@ Composition, placement and texture attachment are product actions, not JNI behav
 The former monolithic `spider/session_actions.cpp` is no longer compiled. Compose
 and texture operations are split into `session_compose_actions.cpp` and
 `session_texture_actions.cpp`. JNI only maps bytes/handles and invokes these actions.
+
+The MOD compose path is the first production action routed through Spider C++23.
+Its typed wrapper still executes the canonical Crusader plan rather than replacing
+it.
 
 ## Shared PTX — no per-part RGBA duplication
 
@@ -133,6 +177,17 @@ source.
 Composite part data and placement state are defined outside the generic `Session`
 contract in the composite-model module. Cross-MOD placement is implemented in a
 separate placement module rather than in the parser, renderer, JNI or texture path.
+
+### WorkspaceGraph identity
+
+Each composite model part receives stable native `AssetId` and `InstanceId` values.
+Cross-resource bindings target stable instance identity instead of presentation
+vector positions. `CompositePlacement` retains `host_instance_id` as semantic
+identity; `host_part_index` is a derived cache for the current flattened order.
+
+Workspace graph mutations use C++23 `std::expected` through `WorkspaceResult`, so
+failures such as missing asset, wrong asset kind, missing target or duplicate target
+remain typed instead of collapsing to an invalid-ID sentinel.
 
 ### Composite builder and primary host
 
@@ -226,6 +281,10 @@ The v33 verifier requires:
 - package `com.dmcrengine.nativereader`;
 - versionCode `33`, versionName `1.0.6`;
 - ARM64 only;
+- canonical Native Reader standard C++23;
+- Android NDK r30 LTS `30.0.16248370`;
+- C++23 compile profile with `std::expected`;
+- Spider C++ profile layered over Crusader;
 - stable device-test signer;
 - exactly one native DSO;
 - APK <= 8 MiB;
@@ -239,12 +298,15 @@ The v33 verifier requires:
 - 16 KiB-or-greater ELF `PT_LOAD` alignment;
 - canonical Rengine gitlink/checkout equality at `caf445226c7d61841292384a10e93e4f58ae29f9`;
 - modular composite builder/resolver/placement sources compiled into the portable core;
+- native `WorkspaceGraph` compiled into the portable core;
 - split Spider compose/texture action sources compiled instead of the old monolith.
 
 ## Regression gates before device acceptance
 
 At minimum the complete host CTest suite must run. Critical v33 regressions include:
 
+- `cxx23_profile_test` — final C++23 mode, `std::expected` and Spider C++ concept/profile contract;
+- `workspace_graph_test` — stable identities and typed C++23 mutation failures;
 - `module_registry_test` — five promoted families;
 - `spider_model_execution_test` — model/texture Spider routes and typed capability split;
 - `gdata_legacy_test` — PTX/TM2/EventTbl compatibility;
