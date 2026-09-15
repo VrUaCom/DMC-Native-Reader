@@ -7,27 +7,13 @@
 #include <string_view>
 #include <vector>
 
+#include "dmcresource/composite_model.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
 
 namespace dmcresource {
-
-// One canonical source MOD inside a composite scene. The source RenderScene and
-// local texture-slot projection are retained intact so future animation / physics
-// work can address parts explicitly without reconstructing ownership from the
-// flattened render projection. A second per-part flattened Mesh is intentionally
-// not retained: PTX validation operates directly on the authoritative scene.
-struct CompositePart final {
-    std::string name;
-    RenderScene scene;
-    std::vector<std::uint32_t> render_triangle_texture_slots;
-    std::uint32_t texture_slot_base{};
-    std::uint32_t texture_slot_span{};
-    bool texture_companion_attached{};
-    std::string texture_attachment_detail;
-};
 
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
@@ -51,8 +37,9 @@ struct Session {
     bool texture_companion_attached{};
 
     // Non-empty only for an explicitly composed multi-MOD scene. Parts retain
-    // their source-local scene/node/texture namespaces. The top-level Session
-    // owns one derived flattened render cache; it is not a second format authority.
+    // source-local scene/node/texture namespaces and explicit placement state.
+    // The top-level Session owns derived render/hierarchy caches only; it is not
+    // a second format authority.
     std::vector<CompositePart> composite_parts;
 
     std::string detail;
