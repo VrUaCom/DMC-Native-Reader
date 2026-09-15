@@ -108,10 +108,14 @@ int main() {
 
     auto composite = actions::compose_mod_sessions(parts, names);
     assert(composite != nullptr);
+    assert(composite->workspace_graph.valid());
     assert(composite->composite_parts.size() == 2U);
+    assert(composite->composite_parts[0].instance_id != kInvalidInstanceId);
+    assert(composite->composite_parts[1].instance_id != kInvalidInstanceId);
     assert(composite->composite_parts[1].placement.mode ==
            dmcresource::CompositePlacementMode::SourceCoordinates);
     assert(!composite->composite_parts[1].placement.resolved);
+    assert(composite->composite_parts[1].placement.host_instance_id == kInvalidInstanceId);
     assert(composite->render_mesh.vertices[3].x == 2.0F);
     assert(composite->render_mesh.vertices[3].y == 0.0F);
 
@@ -123,6 +127,8 @@ int main() {
            dmcresource::CompositePlacementMode::HostJoint);
     assert(composite->composite_parts[1].placement.resolved);
     assert(composite->composite_parts[1].placement.host_part_index == 0U);
+    assert(composite->composite_parts[1].placement.host_instance_id ==
+           composite->composite_parts[0].instance_id);
     assert(composite->composite_parts[1].placement.attachment_selector == 1U);
 
     // This checks matrix order, not only translation. Source (2,0,0) under the
@@ -146,6 +152,7 @@ int main() {
     assert(composite->composite_parts[1].placement.mode ==
            dmcresource::CompositePlacementMode::SourceCoordinates);
     assert(!composite->composite_parts[1].placement.resolved);
+    assert(composite->composite_parts[1].placement.host_instance_id == kInvalidInstanceId);
     assert(composite->render_mesh.vertices[3].x == 2.0F);
     assert(composite->render_mesh.vertices[3].y == 0.0F);
     assert(composite->scene.nodes[2].world.values[12] == 0.0F);
