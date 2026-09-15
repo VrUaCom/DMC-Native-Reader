@@ -36,51 +36,62 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
             ["classes.dex", "res/a.xml"],
         )
 
-    def test_apk_and_installed_package_limits_are_four_mib(self):
+    def test_apk_and_installed_app_limits_are_four_mib(self):
         four_mib = 4 * 1024 * 1024
         self.assertEqual(verifier.MAX_APK_BYTES, four_mib)
         self.assertEqual(verifier.MAX_INSTALLED_PACKAGE_CODE_BYTES, four_mib)
-        self.assertEqual(measure.MAX_INSTALLED_CODE_KIB, 4096)
-        self.assertEqual(measure.MAX_INSTALLED_CODE_BYTES, four_mib)
+        self.assertEqual(measure.MAX_INSTALLED_APP_BYTES, four_mib)
 
     def test_historical_v26_growth_constants_are_not_acceptance_api(self):
         self.assertFalse(hasattr(verifier, "ACCEPTED_V26_APK_BYTES"))
         self.assertFalse(hasattr(verifier, "ACCEPTED_V26_NATIVE_BYTES"))
         self.assertFalse(hasattr(verifier, "growth_from_baseline"))
 
-    def test_installed_footprint_parsing_is_fail_closed(self):
+    def test_installed_storage_stats_parser(self):
+        stats = measure.parse_storage_stats(
+            "code: 4194304 bytes (4 Mb)\n"
+            "data: 12345 bytes (12 Kb)\n"
+            "cache: 2048 bytes (2 Kb)\n"
+            "apk: 3000000 bytes (2.8 Mb)\n"
+            "lib: 0 bytes\n"
+            "dexopt artifacts: 1194304 bytes (1.1 Mb)\n"
+        )
+        self.assertEqual(stats["code"], 4 * 1024 * 1024)
+        self.assertEqual(stats["data"], 12345)
+        self.assertEqual(stats["cache"], 2048)
+        self.assertEqual(stats["dexopt_artifacts"], 1194304)
+        self.assertLessEqual(stats["code"], measure.MAX_INSTALLED_APP_BYTES)
+        self.assertGreater(4194305, measure.MAX_INSTALLED_APP_BYTES)
+
+    def test_storage_stats_parser_fails_closed_without_code_bytes(self):
+        with self.assertRaises(SystemExit):
+            measure.parse_storage_stats(
+                "data: 123 bytes\ncache: 0 bytes\n"
+            )
+        with self.assertRaises(SystemExit):
+            measure.parse_storage_stats(
+                "Error: get_package_storage_stats flag is not enabled\n"
+            )
+
+    def test_installed_package_requires_one_base_apk(self):
         paths = measure.parse_pm_paths(
             "package:/data/app/~~abc/pkg-xyz/base.apk\n"
-            "package:/data/app/~~abc/pkg-xyz/split_config.arm64_v8a.apk\n"
         )
         self.assertEqual(
-            measure.package_code_dir(paths),
-            "/data/app/~~abc/pkg-xyz",
+            measure.require_single_base_apk(paths),
+            "/data/app/~~abc/pkg-xyz/base.apk",
         )
-        self.assertEqual(
-            measure.parse_du_kib(
-                "4096\t/data/app/~~abc/pkg-xyz\n",
-                "/data/app/~~abc/pkg-xyz",
-            ),
-            4096,
-        )
-        self.assertLessEqual(4096 * 1024, measure.MAX_INSTALLED_CODE_BYTES)
-        self.assertGreater(4097 * 1024, measure.MAX_INSTALLED_CODE_BYTES)
-
         with self.assertRaises(SystemExit):
-            measure.parse_pm_paths("")
-        with self.assertRaises(SystemExit):
-            measure.package_code_dir([
+            measure.require_single_base_apk([
                 "/data/app/a/base.apk",
-                "/data/app/b/split.apk",
+                "/data/app/a/split_config.arm64_v8a.apk",
             ])
         with self.assertRaises(SystemExit):
-            measure.package_code_dir(["/data/user/0/pkg/base.apk"])
+            measure.require_single_base_apk([
+                "/data/app/a/not-base.apk",
+            ])
         with self.assertRaises(SystemExit):
-            measure.parse_du_kib(
-                "4096\t/data/app/other\n",
-                "/data/app/expected",
-            )
+            measure.parse_pm_paths("")
 
     def test_installed_version_parser(self):
         version_code, version_name = measure.parse_package_version(
