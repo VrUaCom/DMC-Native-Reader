@@ -5,7 +5,7 @@ plugins {
 android {
     namespace = "com.dmcrengine.nativeviewer"
     compileSdk = 36
-    ndkVersion = "28.2.13676358"
+    ndkVersion = "30.0.16248370"
 
     buildFeatures {
         buildConfig = true
@@ -44,7 +44,10 @@ android {
 
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-Wpedantic")
+                // CMake compile features are canonical; keep this explicit flag
+                // so Android's native configuration fails closed if a toolchain
+                // cannot parse the C++23 product standard.
+                cppFlags += listOf("-std=c++23", "-Wall", "-Wextra", "-Wpedantic")
             }
         }
         ndk {
