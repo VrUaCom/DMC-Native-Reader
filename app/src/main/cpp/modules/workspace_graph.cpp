@@ -1,0 +1,157 @@
+#include "dmcresource/workspace_graph.h"
+
+#include <algorithm>
+#include <limits>
+#include <utility>
+
+namespace dmcresource {
+namespace {
+
+template <typename Id>
+[[nodiscard]] bool can_allocate_id(Id next) noexcept {
+    return next != 0U && next != std::numeric_limits<Id>::max();
+}
+
+template <typename Id>
+[[nodiscard]] bool unique_nonzero_ids(const auto& values) noexcept {
+    for (std::size_t i = 0U; i < values.size(); ++i) {
+        if (values[i].id == 0U) return false;
+        for (std::size_t j = i + 1U; j < values.size(); ++j) {
+            if (values[i].id == values[j].id) return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+AssetId WorkspaceGraph::add_asset(
+    ResourceAssetKind kind, std::string label) noexcept {
+    if (!can_allocate_id(next_asset_id_)) return kInvalidAssetId;
+    try {
+        const AssetId id = next_asset_id_;
+        assets_.push_back(ResourceAsset{
+            .id = id,
+            .kind = kind,
+            .label = std::move(label),
+        });
+        ++next_asset_id_;
+        return id;
+    } catch (...) {
+        return kInvalidAssetId;
+    }
+}
+
+InstanceId WorkspaceGraph::add_model_instance(AssetId model_asset) noexcept {
+    const auto* asset = find_asset(model_asset);
+    if (asset == nullptr || asset->kind != ResourceAssetKind::Model ||
+        !can_allocate_id(next_instance_id_)) {
+        return kInvalidInstanceId;
+    }
+    try {
+        const InstanceId id = next_instance_id_;
+        instances_.push_back(ModelInstance{
+            .id = id,
+            .model_asset = model_asset,
+        });
+        ++next_instance_id_;
+        return id;
+    } catch (...) {
+        return kInvalidInstanceId;
+    }
+}
+
+BindingId WorkspaceGraph::add_binding(
+    AssetId source_asset,
+    BindingRole role,
+    std::span<const InstanceId> targets) noexcept {
+    if (find_asset(source_asset) == nullptr || targets.empty() ||
+        !can_allocate_id(next_binding_id_)) {
+        return kInvalidBindingId;
+    }
+
+    for (std::size_t i = 0U; i < targets.size(); ++i) {
+        if (targets[i] == kInvalidInstanceId || find_instance(targets[i]) == nullptr) {
+            return kInvalidBindingId;
+        }
+        for (std::size_t j = i + 1U; j < targets.size(); ++j) {
+            if (targets[i] == targets[j]) return kInvalidBindingId;
+        }
+    }
+
+    try {
+        const BindingId id = next_binding_id_;
+        BindingEdge edge{
+            .id = id,
+            .source_asset = source_asset,
+            .role = role,
+        };
+        edge.targets.assign(targets.begin(), targets.end());
+        bindings_.push_back(std::move(edge));
+        ++next_binding_id_;
+        return id;
+    } catch (...) {
+        return kInvalidBindingId;
+    }
+}
+
+bool WorkspaceGraph::remove_binding(BindingId id) noexcept {
+    const auto it = std::find_if(
+        bindings_.begin(), bindings_.end(),
+        [id](const BindingEdge& edge) { return edge.id == id; });
+    if (it == bindings_.end()) return false;
+    bindings_.erase(it);
+    return true;
+}
+
+const ResourceAsset* WorkspaceGraph::find_asset(AssetId id) const noexcept {
+    if (id == kInvalidAssetId) return nullptr;
+    const auto it = std::find_if(
+        assets_.begin(), assets_.end(),
+        [id](const ResourceAsset& asset) { return asset.id == id; });
+    return it == assets_.end() ? nullptr : &*it;
+}
+
+const ModelInstance* WorkspaceGraph::find_instance(InstanceId id) const noexcept {
+    if (id == kInvalidInstanceId) return nullptr;
+    const auto it = std::find_if(
+        instances_.begin(), instances_.end(),
+        [id](const ModelInstance& instance) { return instance.id == id; });
+    return it == instances_.end() ? nullptr : &*it;
+}
+
+const BindingEdge* WorkspaceGraph::find_binding(BindingId id) const noexcept {
+    if (id == kInvalidBindingId) return nullptr;
+    const auto it = std::find_if(
+        bindings_.begin(), bindings_.end(),
+        [id](const BindingEdge& edge) { return edge.id == id; });
+    return it == bindings_.end() ? nullptr : &*it;
+}
+
+bool WorkspaceGraph::valid() const noexcept {
+    if (!unique_nonzero_ids<AssetId>(assets_) ||
+        !unique_nonzero_ids<InstanceId>(instances_) ||
+        !unique_nonzero_ids<BindingId>(bindings_)) {
+        return false;
+    }
+
+    for (const auto& instance : instances_) {
+        const auto* asset = find_asset(instance.model_asset);
+        if (asset == nullptr || asset->kind != ResourceAssetKind::Model) return false;
+    }
+
+    for (const auto& binding : bindings_) {
+        if (find_asset(binding.source_asset) == nullptr || binding.targets.empty()) {
+            return false;
+        }
+        for (std::size_t i = 0U; i < binding.targets.size(); ++i) {
+            if (find_instance(binding.targets[i]) == nullptr) return false;
+            for (std::size_t j = i + 1U; j < binding.targets.size(); ++j) {
+                if (binding.targets[i] == binding.targets[j]) return false;
+            }
+        }
+    }
+    return true;
+}
+
+}  // namespace dmcresource
