@@ -56,13 +56,21 @@ The language/toolchain decision is backed by current upstream documentation, not
 
 - CMake added `CXX_STANDARD 23` and the `cxx_std_23` compile-feature meta-feature in CMake **3.20**. The repository pins CMake **3.22.1**, so target-scoped C++23 selection is supported by the configured CMake version.
 - Android currently publishes **NDK r30 `30.0.16248370` as the latest LTS NDK**. This is the canonical Android NDK pin for the migration.
-- Android NDK uses LLVM libc++ as its C++ standard library; libc++ has been the NDK STL since r18.
-- The product does not trust one exact `__cplusplus` date value as proof of C++23 because valid toolchains can report different transition values. CMake selects the language mode, while `cpp23_profile.h` rejects C++20-or-older and proves the concrete required library facilities using SD-6 feature-test macros.
+- NDK r30 updates the Android LLVM toolchain to **`clang-r574158c`**.
+- Android NDK has sourced libc++ directly from its LLVM toolchain since r26, so an LLVM toolchain update also updates the NDK libc++ implementation.
+- The three required C++23 library facilities predate the r30 toolchain by a wide margin in upstream libc++: `std::to_underlying` is complete since libc++/LLVM 13, `std::byteswap` since 14, and `std::expected` since 16.
+- Current libc++ feature-test macros expose the required product values (`__cpp_lib_to_underlying=202102L`, `__cpp_lib_byteswap=202110L`, and a `std::expected` macro newer than the product minimum). The build still validates these at compile time rather than trusting version numbers alone.
+- The product does not trust one exact `__cplusplus` date value as proof of C++23 because valid toolchains can report different transition values. CMake selects the language mode, while `cpp23_profile.h` rejects C++20-or-older and proves the concrete required library facilities using SD-6 feature-test macros. MSVC uses `_MSVC_LANG` for selected `/std` mode when necessary.
+
+The canonical Phase-2 evidence runner records the **actual installed NDK `clang++ --version` output** in addition to the NDK package revision. This allows release evidence to prove the compiler actually used rather than infer it only from the configured NDK number.
 
 Source references used during migration research:
 - CMake 3.20 release notes: `https://cmake.org/cmake/help/latest/release/3.20.html`
 - Android NDK downloads: `https://developer.android.com/ndk/downloads`
+- Android NDK r30 release/changelog: `https://github.com/android/ndk/releases/tag/r30`
 - Android NDK C++ library support: `https://developer.android.com/ndk/guides/cpp-support`
+- libc++ C++23 status: `https://libcxx.llvm.org/Status/Cxx23.html`
+- libc++ feature-test macros: `https://libcxx.llvm.org/FeatureTestMacroTable.html`
 
 ## Spider C++
 
@@ -109,6 +117,12 @@ Each review gate must inspect exact HEAD/evidence, classify blockers/corrections
 5. **Dependency graph** — move resource bindings onto stable native IDs instead of Java URI/vector-position semantics.
 6. **Verification** — exact-head host CTest, clean APK build, package verifier, review gate and physical Samsung acceptance before merge/release.
 
+## Exact-head evidence contract
+
+PR evidence must bind to the source head that will later be reviewed and handed to physical device acceptance. GitHub `pull_request` workflows normally expose a synthetic merge commit/ref, so active v33 workflows explicitly checkout `github.event.pull_request.head.sha || github.sha` and verify `git rev-parse HEAD` before build execution.
+
+`tools/run_phase2_exact_head.py` is the shared execution baseline used by hosted CI and authorized local/self-hosted recovery. It requires a clean worktree and exact submodule checkout, validates the canonical AGP/Gradle/JDK/SDK/CMake/NDK stack, records the actual NDK Clang version, runs full host CMake/CTest, clean Android debug/release builds and `tools/verify_device_apk.py`, then writes an evidence manifest with APK SHA-256 values.
+
 ## Boundary rules
 
 - Do not modify any repository other than DMC Native Reader for this migration.
@@ -127,4 +141,4 @@ Phase 2 does not close until real CMake/CTest execution plus clean Android debug
 
 ## Legacy workflow note
 
-Historical release workflows that still target obsolete v1.0.1 branches/artifacts are not migration authority. Their broader release-semantic cleanup is a separate bounded task; the active v33 core/hardening/verifier paths define this C++23 migration gate.
+Historical release workflows that still target obsolete v1.0.1 branches/artifacts are not migration authority. Their broader release-semantic cleanup is deferred to Review Gate #44 / Phase #40 rather than mixed into the C++23 compatibility baseline.
