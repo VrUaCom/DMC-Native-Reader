@@ -52,6 +52,10 @@ target_link_libraries(dmc_native_reader_core
         DMCRengine::ReaderCore
 )
 
+# C++ language authority is target-scoped. Do not use repository-global
+# CMAKE_CXX_STANDARD or Gradle -std= flags: those would also alter vendored
+# dependency targets. Native Reader requires strict ISO C++23 with no silent
+# fallback to an older standard.
 target_compile_features(dmc_native_reader_core PUBLIC cxx_std_23)
 target_compile_definitions(dmc_native_reader_core PUBLIC
     DMC_NATIVE_READER_CPP23=1
@@ -59,6 +63,9 @@ target_compile_definitions(dmc_native_reader_core PUBLIC
 )
 target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(dmc_native_reader_core PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
     POSITION_INDEPENDENT_CODE ON
 )
 
@@ -83,6 +90,11 @@ if(ANDROID)
     )
 
     target_compile_features(dmcviewer PRIVATE cxx_std_23)
+    set_target_properties(dmcviewer PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
     target_compile_options(dmcviewer PRIVATE
         -Wall -Wextra -Wpedantic
         -ffunction-sections
@@ -111,6 +123,11 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         add_executable(${test_name}_test
             ../../test/native/${test_name}_test.cpp)
         target_link_libraries(${test_name}_test PRIVATE DMCNativeReader::Core)
+        set_target_properties(${test_name}_test PROPERTIES
+            CXX_STANDARD 23
+            CXX_STANDARD_REQUIRED ON
+            CXX_EXTENSIONS OFF
+        )
         # These regressions use assert; keep checks active in Release builds.
         if(MSVC)
             target_compile_options(${test_name}_test PRIVATE /UNDEBUG)
