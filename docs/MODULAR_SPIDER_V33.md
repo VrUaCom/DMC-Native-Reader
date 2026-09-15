@@ -2,6 +2,8 @@
 
 This document is the canonical architecture boundary for the v33 line.
 
+Project/AI governance, evidence rules and phase/review workflow are defined in `docs/PROJECT_AI_CONTEXT.md` and Project card #46. If this architecture contract and a historical review snapshot disagree, this contract plus the current Project review-gate decision are authoritative.
+
 ## Product layers
 
 ```text
@@ -93,15 +95,38 @@ native module and regression gate before becoming supported.
 
 ## C++23 + Spider C++ product language
 
-C++23 is the canonical language standard for `DMCNativeReader::Core` and the
-Android JNI target. Android uses NDK r30 LTS (`30.0.16248370`). CMake requires
-`cxx_std_23`, and the Android native configuration explicitly requests
-`-std=c++23` so unsupported toolchains fail closed.
+C++23 is the canonical language standard for `DMCNativeReader::Core`, the Android
+JNI target and Native Reader native regressions. Android uses NDK r30 LTS
+(`30.0.16248370`). The language decision is **target-scoped in CMake**:
 
-`cpp23_profile.h` is the compile-time product profile. It requires final C++23
-language mode plus `std::expected`. Product modules may use C++23 facilities when
-they solve a bounded architectural problem; the first promoted use is typed
-`WorkspaceGraph` mutation results.
+- `cxx_std_23`;
+- `CXX_STANDARD 23`;
+- `CXX_STANDARD_REQUIRED ON`;
+- `CXX_EXTENSIONS OFF`.
+
+Gradle owns Android toolchain selection, ABI and packaging, but deliberately does
+**not** pass a global `-std=c++*` flag. A Gradle-global language flag could also
+alter vendored dependency targets, which would violate the Native Reader/Rengine
+boundary.
+
+`cpp23_profile.h` is the compile-time product capability profile. CMake selects
+strict ISO C++23; the profile rejects C++20-or-older and proves the concrete
+required library facilities through SD-6 feature-test macros. The current required
+profile includes:
+
+- `std::expected`;
+- `std::byteswap`;
+- `std::to_underlying`.
+
+The profile intentionally does not require one compiler-specific
+`__cplusplus == 202302L` value. Product modules may use C++23 facilities when they
+solve a bounded architectural problem and pass the Project review process.
+
+The existing typed `WorkspaceGraph` results and initial Spider C++ seed entered the
+feature branch before the formal Phase/Review workflow was introduced. Their
+presence is not automatic acceptance: Review Gate #41 must explicitly classify
+those early changes as retain/correct/defer/revert before broader modernization.
+Phase 2 must not opportunistically expand them.
 
 **Spider C++** is the embedded C++23 orchestration language/profile for Native
 Reader. It is not a second executor or separate runtime. `spider/cpp23_language.h`
@@ -120,7 +145,8 @@ Native Reader C++23 action
 
 Future Spider C++ features may include compile-time plan declarations and stronger
 `consteval` validation, but they must not duplicate the executor, dependency graph
-runtime or canonical format knowledge.
+runtime or canonical format knowledge. Expansion beyond the current seed remains
+frozen until its designated Project phase/review gate.
 
 ## Spider session actions
 
@@ -138,9 +164,10 @@ The former monolithic `spider/session_actions.cpp` is no longer compiled. Compos
 and texture operations are split into `session_compose_actions.cpp` and
 `session_texture_actions.cpp`. JNI only maps bytes/handles and invokes these actions.
 
-The MOD compose path is the first production action routed through Spider C++23.
-Its typed wrapper still executes the canonical Crusader plan rather than replacing
-it.
+The MOD compose path is the first production action routed through the existing
+Spider C++ seed. Its typed wrapper still executes the canonical Crusader plan rather
+than replacing it; broader Spider C++ language work is governed by the Project
+phase/review sequence.
 
 ## Shared PTX — no per-part RGBA duplication
 
@@ -185,9 +212,12 @@ Cross-resource bindings target stable instance identity instead of presentation
 vector positions. `CompositePlacement` retains `host_instance_id` as semantic
 identity; `host_part_index` is a derived cache for the current flattened order.
 
-Workspace graph mutations use C++23 `std::expected` through `WorkspaceResult`, so
-failures such as missing asset, wrong asset kind, missing target or duplicate target
-remain typed instead of collapsing to an invalid-ID sentinel.
+Workspace graph mutations currently use C++23 `std::expected` through
+`WorkspaceResult`, so failures such as missing asset, wrong asset kind, missing
+target or duplicate target remain typed instead of collapsing to an invalid-ID
+sentinel. Because this modernization predates formal Phase gates, Review Gate #41
+must explicitly decide whether this implementation is retained, corrected, deferred
+or reverted before Phase 3 proceeds.
 
 ### Composite builder and primary host
 
@@ -281,9 +311,10 @@ The v33 verifier requires:
 - package `com.dmcrengine.nativereader`;
 - versionCode `33`, versionName `1.0.6`;
 - ARM64 only;
-- canonical Native Reader standard C++23;
+- canonical Native Reader standard C++23 selected target-scoped in CMake;
 - Android NDK r30 LTS `30.0.16248370`;
-- C++23 compile profile with `std::expected`;
+- C++23 product capability profile with required SD-6 library features;
+- no Gradle-global `-std=c++*` authority;
 - Spider C++ profile layered over Crusader;
 - stable device-test signer;
 - exactly one native DSO;
@@ -305,8 +336,8 @@ The v33 verifier requires:
 
 At minimum the complete host CTest suite must run. Critical v33 regressions include:
 
-- `cxx23_profile_test` — final C++23 mode, `std::expected` and Spider C++ concept/profile contract;
-- `workspace_graph_test` — stable identities and typed C++23 mutation failures;
+- `cxx23_profile_test` — target-scoped C++23 plus required SD-6 product facilities and Spider C++ concept/profile contract;
+- `workspace_graph_test` — stable identities and typed C++23 mutation failures, pending explicit Review Gate #41 disposition;
 - `module_registry_test` — five promoted families;
 - `spider_model_execution_test` — model/texture Spider routes and typed capability split;
 - `gdata_legacy_test` — PTX/TM2/EventTbl compatibility;
@@ -322,4 +353,5 @@ At minimum the complete host CTest suite must run. Critical v33 regressions incl
 
 A GitHub job that fails before runner assignment (`runner_id=0`, no steps) is neither
 green evidence nor a source regression. A canonical APK is accepted only after a
-real exact-head clean build, verifier pass and physical Samsung device test.
+real exact-head clean build, verifier pass, required review gates and physical
+Samsung device test.
