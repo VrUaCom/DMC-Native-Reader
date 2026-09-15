@@ -154,6 +154,22 @@ Canonical Android architecture:
 - 16 KiB ZIP/ELF page-alignment requirements;
 - package/native/Dex size budgets remain release gates.
 
+### Weight and duplicate discipline
+Application size is an architecture constraint, not a final release cleanup task.
+
+Every exact-head build/review must:
+- record APK, native DSO and Dex byte sizes;
+- preserve hard package/native/Dex budgets unless a review explicitly changes them with evidence;
+- record size delta against the accepted baseline when one exists;
+- surface the largest packaged entries so unexpected growth is attributable;
+- reject duplicate ZIP entry names;
+- reject duplicate native/runtime implementations and duplicate `.so`/`.dex` payloads;
+- treat large identical packaged payloads as a blocker until deduplicated or explicitly justified by review;
+- reject duplicate CMake source/test entries rather than compiling the same responsibility twice;
+- prefer shared decoded/content storage where exact identity permits it, while preserving logical resource/slot/binding identity and provenance.
+
+Do not trade modularity for duplicated binaries, duplicated decoded banks, copied parsers, copied executors or parallel compatibility implementations. A smaller package is not allowed to erase semantic identity; deduplication must happen at the correct ownership/storage layer.
+
 ## 8. Repository hygiene
 
 Work only in the explicitly authorized repository/branch set.
@@ -188,7 +204,7 @@ Required promotion evidence:
 1. exact-head host build/tests actually execute and pass;
 2. clean Android debug/release build;
 3. package/APK verifier passes;
-4. exact APK hash is recorded;
+4. exact APK hash and package-size/dedup metrics are recorded;
 5. required physical Samsung scenarios pass on that artifact;
 6. Viktor explicitly approves merge/release.
 
