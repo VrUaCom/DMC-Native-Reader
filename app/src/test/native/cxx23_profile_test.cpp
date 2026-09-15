@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdint>
 #include <string_view>
 
 #include "dmcresource/cpp23_profile.h"
@@ -6,8 +7,8 @@
 
 namespace {
 
-enum class TestError {
-    Rejected,
+enum class TestError : std::uint8_t {
+    Rejected = 7U,
 };
 
 struct TestState {
@@ -15,11 +16,16 @@ struct TestState {
 };
 
 static_assert(__cplusplus >= 202302L);
+static_assert(dmcresource::cpp23::kExpectedFeature >= 202202L);
+static_assert(dmcresource::cpp23::kByteswapFeature >= 202110L);
+static_assert(dmcresource::cpp23::kToUnderlyingFeature >= 202102L);
 static_assert(dmcresource::cpp23::kProfile == "dmc.native-reader.cpp23");
 static_assert(dmcresource::spider::cpp23::kLanguageProfile == "spider.cpp23");
 static_assert(dmcresource::spider::cpp23::ErrorCode<TestError>);
 static_assert(dmcresource::spider::cpp23::StateObject<TestState>);
 static_assert(!dmcresource::spider::cpp23::StateObject<TestState*>);
+static_assert(std::byteswap<std::uint32_t>(0x11223344U) == 0x44332211U);
+static_assert(std::to_underlying(TestError::Rejected) == 7U);
 
 }  // namespace
 
