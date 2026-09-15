@@ -1,7 +1,6 @@
 #include "dmcresource/spider/model_placement_actions.h"
 
 #include <array>
-#include <string>
 
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/crusader.h"
@@ -21,6 +20,16 @@ struct PlacementState final {
     composite_placement::PlacementResult result{};
 };
 
+void append_trace(Session* session, const char* text) noexcept {
+    if (session == nullptr || text == nullptr) return;
+    try {
+        if (!session->trace.empty()) session->trace += "\n";
+        session->trace += text;
+    } catch (...) {
+        // Trace is diagnostic only and must never roll back an applied placement.
+    }
+}
+
 bool attach_operation(void* raw, std::uint32_t) noexcept {
     auto* state = static_cast<PlacementState*>(raw);
     if (state == nullptr || state->session == nullptr) return false;
@@ -30,12 +39,9 @@ bool attach_operation(void* raw, std::uint32_t) noexcept {
         state->child_part_index,
         state->joint_index);
     if (!state->result.ok()) return false;
-    try {
-        if (!state->session->trace.empty()) state->session->trace += "\n";
-        state->session->trace += "[OK] spider.crusader.action.attach-mod-part-to-host-joint";
-    } catch (...) {
-        return false;
-    }
+    append_trace(
+        state->session,
+        "[OK] spider.crusader.action.attach-mod-part-to-host-joint");
     return true;
 }
 
@@ -46,12 +52,9 @@ bool reset_operation(void* raw, std::uint32_t) noexcept {
         state->session,
         state->child_part_index);
     if (!state->result.ok()) return false;
-    try {
-        if (!state->session->trace.empty()) state->session->trace += "\n";
-        state->session->trace += "[OK] spider.crusader.action.reset-mod-part-placement";
-    } catch (...) {
-        return false;
-    }
+    append_trace(
+        state->session,
+        "[OK] spider.crusader.action.reset-mod-part-placement");
     return true;
 }
 
