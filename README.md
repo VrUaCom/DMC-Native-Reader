@@ -4,100 +4,113 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 ## Current state
 
-**Accepted `main`: Native Reader 1.0 / versionCode 24**  
-**Accepted v24 code baseline:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
+**Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
+**Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
+**Active candidate:** **v33 / versionName 1.0.6 / versionCode 33**  
+**Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36  
-**Production module registry:** exactly **MOD / SCM / DDS / PTX**
+**Production registry:** **MOD / SCM / DDS / PTX / EventTbl**
 
-The v24 APK was accepted on a physical Samsung device on 2026-09-10. The owner confirmed all four supported file families open successfully, PTX texture application works, and Android reported 2.32 MB installed size versus 6.27 MB before the v24 size/module cleanup.
+The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
 
-The latest development candidate is **v26** on `feature/dds-ptx-v1-acceptance` / draft PR #32. It adds per-texture-slot UV galleries and long-press information for UV, object/mesh structure and bone/node parent relationships. Its host/native/APK gates pass, but **device acceptance is still pending**, so v26 is not yet the accepted `main` baseline.
-
-## What the accepted v24 reader does
+## v33 capabilities
 
 ### MOD
 
-- canonical `dmc-rengine-cpp` structural parsing;
-- 3D geometry through `RenderScene`;
-- rotate / zoom / wireframe presentation;
-- hierarchy and spatial projection only when canonical authority is valid;
-- skin weights and typed inspection;
-- canonical texture-slot / legacy GS state projection;
-- PTX companion attachment for evidence-valid model texture bindings.
+- canonical DMC Rengine structural parsing;
+- 3D geometry, hierarchy and skin data;
+- rotate / zoom / wireframe;
+- typed inspection and UV projection;
+- PTX companion attachment;
+- multi-MOD composition through a dedicated `composite_builder`;
+- source-local scenes retained as authority;
+- Rengine-backed `default_joint_index` attachment resolution against the explicit primary/base MOD;
+- child placement applied only to the derived composite projection, never to source data.
 
 ### SCM
 
-- canonical `dmc-rengine-cpp` structural parsing;
-- scene hierarchy, transforms and geometry;
-- rotate / zoom / wireframe presentation;
-- typed inspection and texture-slot state;
-- PTX companion application through the shared native texture-binding path.
+- canonical retail SCM parsing through pinned Rengine ReaderCore;
+- hierarchy/object-binding/world-space geometry projection;
+- rotate / zoom / wireframe;
+- typed inspection, UV and texture-slot state;
+- shared PTX companion path.
 
-### DDS
+### DDS / PTX
 
-- bounded DXT1/DXT5 validation and decoding;
-- generic RGBA `ImagePreview`;
-- malformed/overflow rejection.
+- bounded DXT1/DXT5 decoding;
+- native RGBA previews;
+- PTX bundle framing and child resources;
+- native-backed PNG export;
+- shared texture banks without per-part RGBA duplication;
+- transactional per-part PTX replacement: failure preserves the previous live bank and slot projection.
 
-### PTX
+### EventTbl
 
-- bounded texture-bundle framing;
-- DDS child resources;
-- generic thumbnail/gallery presentation;
-- child image preview and parent-session navigation;
-- reusable `TextureSet` path for model companion attachment.
+- promoted fifth production module;
+- canonical native structural inspection through Spider execution.
 
 Unknown and unpromoted resource families fail closed.
 
 ## Architecture
 
 ```text
-resource / child resource
-        |
-        v
-bounded probe + DMC Rengine ReaderCore
-        |
-        v
-NativeModuleRegistry
-        |
-        +--> MOD adapter --> InspectionDocument + RenderScene
-        +--> SCM adapter --> InspectionDocument + RenderScene
-        +--> DDS module  --> ImagePreview
-        `--> PTX module  --> ChildResource[] / TextureSet
-        |
-        v
-DMCNativeReader::Core
-        |
-        +--> resource_session
-        +--> scene_projection
-        +--> texture/material binding
-        +--> Black Widow typed UI state
-        `--> direct C++ renderer
-        |
-        v
-thin Android JNI + Java shell
+resource bytes
+  -> bounded probe
+  -> NativeModuleRegistry
+  -> Spider Crusader
+      -> canonical MOD/SCM/texture/EventTbl modules
+  -> DMCNativeReader::Core
+      -> resource session
+      -> composite model state
+      -> composite builder
+      -> Rengine-backed MOD attachment resolver
+      -> composite placement
+      -> scene projection
+      -> texture companion binding
+      -> Black Widow capability state
+      -> renderer / inspection / UV / PNG export
+  -> thin Android JNI + Java shell
 ```
 
-The Android shell does not parse DMC binary layouts. Format knowledge belongs to canonical/native modules; `InspectionDocument`, `RenderScene`, `ImagePreview` and child/session contracts are presentation IR. The v24 JNI DSO exposes only the declared JNI boundary instead of thousands of C++ symbols.
+Multi-MOD product composition uses one explicit primary/base MOD: the model already open before additional MOD parts are appended. The builder may resolve each appended MOD's canonical `default_joint_index` against that primary host. It does not infer a different host from filenames, `runtime_metadata_u32`, visual proximity or arbitrary candidate scanning.
 
-## Product boundaries
+Spider session actions are split by responsibility:
 
-DMC Native Reader is intentionally **read-only**. Editing, writing and repacking belong to DMC Rengine / future authoring tooling, not to Android-only format writers.
+- `spider/session_compose_actions.cpp` — composition;
+- `spider/session_texture_actions.cpp` — PTX attachment;
+- `spider/model_placement_actions.cpp` — explicit placement/reset.
 
-The pre-cleanup multi-format implementation is preserved on branch `main.2` as backlog/reference. HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW and other families are not production modules until they are individually promoted through the current Architecture v2 contract with evidence and regression coverage.
+The former monolithic `spider/session_actions.cpp` is retained only as historical source and is not compiled by v33.
+
+## Canonical Rengine authority
+
+v33 pins `app/src/main/cpp/vendor/dmc-rengine-cpp` to:
+
+`caf445226c7d61841292384a10e93e4f58ae29f9`
+
+That pin contains the canonical read-side MOD cross-model default-joint attachment contract. Native Reader consumes this authority rather than duplicating the selector/index semantics in Android or JNI.
+
+## Android runtime contract
+
+The canonical APK contains exactly one native runtime DSO:
+
+`lib/arm64-v8a/libdmcviewer.so`
+
+`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, size budgets and the exact Rengine gitlink.
+
+## Product boundary
+
+DMC Native Reader is read-only. Editing, writing and repacking belong to DMC Rengine / future authoring tooling. HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, MOT, EFM/MRP/SHW and other families are not production modules merely because reverse-engineering work exists for them.
 
 ## Documentation
 
-Start with [`docs/README.md`](docs/README.md), then see:
+Start with:
 
-- [`docs/STATUS.md`](docs/STATUS.md) — accepted baseline and active candidate;
-- [`docs/ARCHITECTURE_V2.md`](docs/ARCHITECTURE_V2.md) — current module/session architecture;
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — completed and next work;
-- [`docs/SIZE_AND_MODULES_V24.md`](docs/SIZE_AND_MODULES_V24.md) — v24 size/module evidence;
-- [`CHANGELOG.md`](CHANGELOG.md) — release/development history.
+- `docs/MODULAR_SPIDER_V33.md` — canonical v33 architecture contract;
+- `docs/MODULAR_REVIEW_2026-09-15.md` — latest modular review;
+- `docs/STATUS.md` — accepted baseline, candidate and verification state;
+- `docs/RESOURCE_DEPENDENCY_GRAPH_V33.md` — v33 resource/dependency model;
+- `docs/PUBLIC_RELEASE_CHECKLIST.md` — release acceptance gates;
+- `CHANGELOG.md` — history.
 
-## Authority and evidence
-
-`MOD` and `SCM` read-side format authority is vendored through the pinned DMC Rengine `ReaderCore`. DDS/PTX framing/codec logic is likewise kept behind native reusable boundaries. Reverse-engineering claims remain evidence-scoped: unknown semantics stay unknown rather than being renamed from guesses.
-
-DMC Native Reader is an independent fan-made interoperability/modding project and is not affiliated with Capcom. See [`NOTICE.md`](NOTICE.md).
+DMC Native Reader is an independent fan-made interoperability/modding project and is not affiliated with Capcom. See `NOTICE.md`.
