@@ -36,7 +36,8 @@ MIN_HOST_CMAKE = (3, 22, 1)
 RUNTIME_DSO = "lib/arm64-v8a/libdmcviewer.so"
 REQUIRED_RUNTIME_MARKERS = (b"spider.crusader", b"spider.cpp23")
 EXPECTED_MAX_APK_BYTES = 4 * 1024 * 1024
-EXPECTED_MAX_INSTALLED_PACKAGE_CODE_BYTES = 4 * 1024 * 1024
+EXPECTED_MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
+EXPECTED_SIZE_AUTHORITY = "absolute-package-metrics+StorageStats.getAppBytes<=4MiB"
 
 
 def fail(message: str) -> NoReturn:
@@ -186,15 +187,17 @@ def read_verifier_report() -> dict:
             "APK verifier size policy drifted from 4 MiB: "
             f"{report.get('max_apk_bytes')}"
         )
-    if report.get("max_installed_package_code_bytes") != EXPECTED_MAX_INSTALLED_PACKAGE_CODE_BYTES:
+    if report.get("max_installed_app_bytes") != EXPECTED_MAX_INSTALLED_APP_BYTES:
         fail(
-            "installed package/code policy drifted from 4 MiB: "
-            f"{report.get('max_installed_package_code_bytes')}"
+            "installed StorageStats app-size policy drifted from 4 MiB: "
+            f"{report.get('max_installed_app_bytes')}"
         )
+    if report.get("installed_size_measurement") != \
+            "required-on-device-via-StorageStats.getAppBytes":
+        fail("APK verifier installed-size measurement authority marker is missing")
     if report.get("historical_v26_growth_comparable") is not False:
         fail("historical v26 package-growth data must not be acceptance authority")
-    if report.get("size_acceptance_authority") != \
-            "absolute-package-metrics+installed-package-code<=4MiB":
+    if report.get("size_acceptance_authority") != EXPECTED_SIZE_AUTHORITY:
         fail("APK verifier size authority marker is missing or unexpected")
     return report
 
@@ -206,6 +209,7 @@ def require_static_contract() -> None:
     profile = (
         ROOT / "app/src/main/cpp/include/dmcresource/cpp23_profile.h"
     ).read_text(encoding="utf-8")
+    measure_tool = (ROOT / "tools/measure_installed_footprint.py").read_text(encoding="utf-8")
     rengine_reader_cmake_path = ROOT / RENGINE_REL / "cmake/reader_core.cmake"
     if not rengine_reader_cmake_path.is_file():
         fail("pinned Rengine reader_core.cmake is missing")
@@ -243,6 +247,14 @@ def require_static_contract() -> None:
     ):
         if marker not in profile:
             fail(f"C++23 profile marker missing: {marker}")
+
+    if "get-package-storage-stats" not in measure_tool or \
+            "StorageStats.getAppBytes" not in measure_tool:
+        fail("installed-size tool must use Android StorageStats app bytes")
+    if "du -sk" in measure_tool or "parse_du" in measure_tool:
+        fail("installed-size tool must not retain a directory-size fallback")
+    if "installed_apk_sha256" not in measure_tool or "artifact_sha256_match" not in measure_tool:
+        fail("installed-size tool must bind device evidence to the reviewed APK hash")
 
     if "target_compile_features(dmc_rengine_reader_core PUBLIC cxx_std_20)" not in rengine_reader_cmake:
         fail("pinned Rengine ReaderCore no longer exposes its C++20 target-scoped contract")
@@ -439,7 +451,9 @@ def main() -> int:
         "java_version_output": java_version_text.strip(),
         "size_contract": {
             "max_apk_bytes": EXPECTED_MAX_APK_BYTES,
-            "max_installed_package_code_bytes": EXPECTED_MAX_INSTALLED_PACKAGE_CODE_BYTES,
+            "max_installed_app_bytes": EXPECTED_MAX_INSTALLED_APP_BYTES,
+            "installed_measurement_authority": "Android StorageStats.getAppBytes",
+            "installed_measurement_tool": "tools/measure_installed_footprint.py",
             "installed_measurement_required_on_device": True,
             "historical_v26_growth_comparable": False,
         },
