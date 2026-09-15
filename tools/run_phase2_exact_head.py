@@ -101,6 +101,26 @@ def parse_version_tuple(text: str, pattern: str, label: str) -> tuple[int, ...]:
     return tuple(int(piece) for piece in match.group(1).split("."))
 
 
+def find_ndk_clang(ndk_path: Path) -> Path:
+    prebuilt_root = ndk_path / "toolchains" / "llvm" / "prebuilt"
+    if not prebuilt_root.is_dir():
+        fail(f"NDK LLVM prebuilt directory missing: {prebuilt_root}")
+    candidates: list[Path] = []
+    for host_dir in sorted(prebuilt_root.iterdir()):
+        if not host_dir.is_dir():
+            continue
+        for name in ("clang++", "clang++.exe"):
+            candidate = host_dir / "bin" / name
+            if candidate.is_file():
+                candidates.append(candidate)
+    if len(candidates) != 1:
+        fail(
+            "expected exactly one host NDK clang++ executable; found: " +
+            ", ".join(str(path) for path in candidates)
+        )
+    return candidates[0]
+
+
 def require_static_contract() -> None:
     root_gradle = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
     app_gradle = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
@@ -184,8 +204,9 @@ def main() -> int:
     if not sdk.exists():
         fail(f"Android SDK does not exist: {sdk}")
 
+    ndk_path = sdk / "ndk" / EXPECTED_NDK
     required_sdk_paths = {
-        "NDK": sdk / "ndk" / EXPECTED_NDK,
+        "NDK": ndk_path,
         "Android platform": sdk / "platforms" / EXPECTED_ANDROID_PLATFORM,
         "SDK Build Tools": sdk / "build-tools" / EXPECTED_BUILD_TOOLS,
         "Android CMake": sdk / "cmake" / EXPECTED_ANDROID_CMAKE,
@@ -193,6 +214,11 @@ def main() -> int:
     for label, path in required_sdk_paths.items():
         if not path.exists():
             fail(f"{label} missing: {path}")
+
+    ndk_clang = find_ndk_clang(ndk_path)
+    ndk_clang_version_text = capture([str(ndk_clang), "--version"])
+    if "clang" not in ndk_clang_version_text.lower():
+        fail("NDK clang++ --version output does not identify a Clang toolchain")
 
     gradle_version_text = capture([args.gradle, "--version"])
     gradle_match = re.search(r"(?m)^Gradle\s+(\S+)\s*$", gradle_version_text)
@@ -297,6 +323,8 @@ def main() -> int:
             "build_tools": EXPECTED_BUILD_TOOLS,
             "android_cmake": EXPECTED_ANDROID_CMAKE,
             "android_ndk": EXPECTED_NDK,
+            "android_ndk_clang_path": str(ndk_clang),
+            "android_ndk_clang_version_output": ndk_clang_version_text.strip(),
         },
         "java_version_output": java_version_text.strip(),
         "artifacts": {
