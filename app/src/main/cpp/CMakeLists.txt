@@ -4,9 +4,11 @@ project(dmcviewer LANGUAGES CXX)
 set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 
 # Canonical portable read-only dependency slice owned by DMC Rengine.
+# Its own language/toolchain contract is external to this repository; Native
+# Reader consumes it without modifying the submodule during the C++23 migration.
 include(${DMC_RENGINE_VENDOR}/cmake/reader_core.cmake)
 
-# Native Reader product core: platform-neutral C++20 modules only. Android JNI,
+# Native Reader product core: platform-neutral C++23 modules only. Android JNI,
 # Swift/ObjC++, Win32 and Web/WASM shells must link this target rather than
 # enumerating parser/renderer sources themselves.
 add_library(dmc_native_reader_core STATIC
@@ -50,7 +52,11 @@ target_link_libraries(dmc_native_reader_core
         DMCRengine::ReaderCore
 )
 
-target_compile_features(dmc_native_reader_core PUBLIC cxx_std_20)
+target_compile_features(dmc_native_reader_core PUBLIC cxx_std_23)
+target_compile_definitions(dmc_native_reader_core PUBLIC
+    DMC_NATIVE_READER_CPP23=1
+    DMC_NATIVE_READER_SPIDER_CPP=1
+)
 target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(dmc_native_reader_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -76,7 +82,7 @@ if(ANDROID)
         jnigraphics
     )
 
-    target_compile_features(dmcviewer PRIVATE cxx_std_20)
+    target_compile_features(dmcviewer PRIVATE cxx_std_23)
     target_compile_options(dmcviewer PRIVATE
         -Wall -Wextra -Wpedantic
         -ffunction-sections
@@ -98,7 +104,7 @@ option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
 if(DMC_NATIVE_READER_BUILD_TESTS)
     enable_testing()
     foreach(test_name IN ITEMS
-        black_widow_state composite_builder composite_mod_scene composite_placement core_model_pipeline dds_ptx_v1
+        black_widow_state composite_builder composite_mod_scene composite_placement core_model_pipeline cxx23_profile dds_ptx_v1
         em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph)
