@@ -37,8 +37,21 @@ jobs:
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
+            "ndk;30.0.16248370" \
             "cmake;3.22.1"
+
+      - name: Verify C++23 and Spider C++ product contract
+        run: |
+          set -euxo pipefail
+          grep -Fq 'cxx_std_23' app/src/main/cpp/CMakeLists.txt
+          ! grep -Fq 'cxx_std_20' app/src/main/cpp/CMakeLists.txt
+          grep -F -- '-std=c++23' app/build.gradle.kts
+          grep -Fq 'ndkVersion = "30.0.16248370"' app/build.gradle.kts
+          test -f app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          test -f app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq 'std::expected' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'spider.cpp23' app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq 'cxx23_profile' app/src/main/cpp/CMakeLists.txt
 
       - name: Reject archived legacy source paths
         run: |
