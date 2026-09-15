@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 
 #include "dmcresource/render_scene.h"
 
@@ -10,7 +11,10 @@ namespace dmcresource::matrix_ops {
     for (const float value : matrix.values) {
         if (!std::isfinite(value)) return false;
     }
-    return std::fabs(matrix.values[15] - 1.0F) <= 0.0001F;
+    return std::fabs(matrix.values[3]) <= 0.0001F &&
+           std::fabs(matrix.values[7]) <= 0.0001F &&
+           std::fabs(matrix.values[11]) <= 0.0001F &&
+           std::fabs(matrix.values[15] - 1.0F) <= 0.0001F;
 }
 
 [[nodiscard]] inline bool transform_point(const Vec3& source,
