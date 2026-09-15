@@ -102,6 +102,16 @@ dmcresource::Session make_part(const char* name, float x) {
     return session;
 }
 
+void assert_same_images(const std::vector<dmcresource::ImagePreview>& a,
+                        const std::vector<dmcresource::ImagePreview>& b) {
+    assert(a.size() == b.size());
+    for (std::size_t index = 0U; index < a.size(); ++index) {
+        assert(a[index].width == b[index].width);
+        assert(a[index].height == b[index].height);
+        assert(a[index].rgba8 == b[index].rgba8);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -129,7 +139,7 @@ int main() {
     composite->render_triangle_texture_slots.pop_back();
     assert(!actions::attach_ptx_to_part(
         composite.get(), 1, "replacement.ptx", ptx.data(), ptx.size()));
-    assert(composite->attached_textures == retained_textures);
+    assert_same_images(composite->attached_textures, retained_textures);
     assert(composite->composite_parts[1].texture_companion_attached == retained_part_state);
 
     // Restore the deliberately damaged projection and prove a normal
