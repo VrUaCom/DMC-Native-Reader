@@ -15,7 +15,10 @@ struct TestState {
     int value{};
 };
 
-static_assert(__cplusplus >= 202302L);
+// CMake selects strict C++23; the profile rejects C++20-or-older and verifies
+// concrete C++23 library facilities instead of assuming every compiler reports
+// exactly 202302L in __cplusplus.
+static_assert(__cplusplus > 202002L);
 static_assert(dmcresource::cpp23::kExpectedFeature >= 202202L);
 static_assert(dmcresource::cpp23::kByteswapFeature >= 202110L);
 static_assert(dmcresource::cpp23::kToUnderlyingFeature >= 202102L);
