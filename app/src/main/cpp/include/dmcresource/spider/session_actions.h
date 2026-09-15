@@ -15,9 +15,10 @@ namespace dmcresource::spider::actions {
 // directly orchestrating session composition or texture attachment. Crusader
 // owns execution; resource_session remains the low-level data/session layer.
 //
-// Two-argument composition preserves source coordinates. Use the explicit
-// primary-host overload only when the platform/product has authoritative context
-// for which already-open MOD is the base host.
+// v33 Android compatibility: two-argument composition treats part 0 as the
+// primary host. The Add-MOD flow guarantees that the already-open base session
+// occupies part 0. Call the explicit overload with -1 when the caller has no
+// authoritative primary host and wants source-coordinate composition only.
 [[nodiscard]] std::unique_ptr<Session> compose_mod_sessions(
     const std::vector<const Session*>& parts,
     const std::vector<std::string>& names) noexcept;
