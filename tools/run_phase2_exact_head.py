@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from typing import NoReturn, Sequence
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIR = ROOT / "build" / "phase2-evidence"
@@ -32,6 +33,8 @@ EXPECTED_ANDROID_PLATFORM = "android-36"
 EXPECTED_BUILD_TOOLS = "36.0.0"
 EXPECTED_ANDROID_CMAKE = "3.22.1"
 MIN_HOST_CMAKE = (3, 22, 1)
+RUNTIME_DSO = "lib/arm64-v8a/libdmcviewer.so"
+REQUIRED_RUNTIME_MARKERS = (b"spider.crusader", b"spider.cpp23")
 
 
 def fail(message: str) -> NoReturn:
@@ -119,6 +122,17 @@ def find_ndk_clang(ndk_path: Path) -> Path:
             ", ".join(str(path) for path in candidates)
         )
     return candidates[0]
+
+
+def require_runtime_markers(apk: Path) -> None:
+    with zipfile.ZipFile(apk) as archive:
+        try:
+            native_bytes = archive.read(RUNTIME_DSO)
+        except KeyError as error:
+            fail(f"canonical runtime DSO missing from APK: {RUNTIME_DSO}")
+    missing = [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS if marker not in native_bytes]
+    if missing:
+        fail("runtime profile marker(s) missing from libdmcviewer.so: " + ", ".join(missing))
 
 
 def require_static_contract() -> None:
@@ -288,6 +302,8 @@ def main() -> int:
         if not apk.is_file():
             fail(f"expected APK missing: {apk}")
 
+    require_runtime_markers(debug_apk)
+
     run_logged(
         "05-device-apk-verifier",
         [
@@ -326,6 +342,7 @@ def main() -> int:
             "android_ndk_clang_path": str(ndk_clang),
             "android_ndk_clang_version_output": ndk_clang_version_text.strip(),
         },
+        "runtime_markers": [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS],
         "java_version_output": java_version_text.strip(),
         "artifacts": {
             "debug_apk": {
