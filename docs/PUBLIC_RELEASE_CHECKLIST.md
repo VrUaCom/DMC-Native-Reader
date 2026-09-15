@@ -1,31 +1,33 @@
 # DMC Native Reader — Public Repository Opening Checklist
 
-Last updated: 2026-09-10.
+> **PUBLIC-OPENING / ADMIN CHECKLIST, NOT v33 RELEASE AUTHORITY.** This document was originally anchored to the accepted/candidate state on 2026-09-10 and intentionally preserves that decision history. Current v33 product/release authority lives in `docs/PROJECT_AI_CONTEXT.md`, `docs/STATUS.md`, `docs/MODULAR_SPIDER_V33.md`, Program #34, release Phase #40 and Final Review Gate #45. Re-evaluate every version/module/C++ metadata statement below immediately before changing repository visibility.
+
+Last updated: 2026-09-10 baseline; classification clarified 2026-09-15.
 
 This checklist separates the **current private development repository**, a future **public source repository**, and any **official signed application distribution**. These are different milestones.
 
-## Current product truth
+## Current product truth at the 2026-09-10 public-opening review
 
-- [x] Accepted Android baseline is Native Reader `1.0` / versionCode `24` on `main`.
-- [x] Production `NativeModuleRegistry` contains exactly **MOD / SCM / DDS / PTX**.
+- [x] Accepted Android baseline is Native Reader `1.0` / versionCode `24` on `main` at that review point.
+- [x] Production `NativeModuleRegistry` contained exactly **MOD / SCM / DDS / PTX** at that review point.
 - [x] Unknown/unpromoted families fail closed.
 - [x] MOD/SCM use canonical DMC Rengine read-side authority through the pinned ReaderCore boundary.
 - [x] DDS/PTX use reusable native codec/framing/preview/TextureSet paths.
 - [x] Android is a thin shell; DMC format parsing and application decisions remain native/typed.
-- [x] Physical Samsung acceptance confirms all four supported families open and PTX model texture application works.
-- [x] v24 installed-size report is 2.32 MB, down from 6.27 MB before the size/module cleanup.
+- [x] Physical Samsung acceptance confirmed the then-supported families opened and PTX model texture application worked.
+- [x] v24 installed-size report was 2.32 MB, down from 6.27 MB before the size/module cleanup.
 - [x] Pre-cleanup wide-format work is preserved on `main.2` as backlog/reference rather than advertised as production support.
-- [x] Current v26 UV/focused-inspection work is clearly marked candidate/draft until device acceptance.
+- [x] The then-current v26 UV/focused-inspection work was marked candidate/draft until device acceptance.
 
-Do **not** advertise HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW or a 71-family registry as current Native Reader production support. Those statements belong to historical pre-cleanup development only.
+Do **not** use this historical module/version list as the current v33 release matrix. Current production/candidate truth must be read from `docs/STATUS.md` and the active Project phases/review gates.
 
 ## Public-facing repository material
 
-- [x] README describes the accepted v24 baseline and active v26 candidate separately.
-- [x] Current architecture and authority boundaries are documented.
-- [x] Status and roadmap distinguish completed work from pending candidate work.
-- [x] Changelog no longer presents obsolete development lines as current releases.
-- [x] Historical build documents are classified as historical evidence rather than current product instructions.
+- [x] README described the accepted baseline and active candidate separately at the time of review.
+- [x] Current architecture and authority boundaries were documented.
+- [x] Status and roadmap distinguished completed work from pending candidate work.
+- [x] Changelog no longer presented obsolete development lines as current releases.
+- [x] Historical build documents were classified as historical evidence rather than current product instructions.
 - [x] Contribution/security guidance preserves evidence and read-only boundaries.
 - [x] Capcom / Devil May Cry affiliation disclaimer is present.
 - [x] Repository does not intentionally contain Capcom game archives, proprietary game assets, proprietary source code or DMC executable binaries.
@@ -36,21 +38,21 @@ Do **not** advertise HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, EFM/MRP/SHW 
 
 **OPEN — owner decision required.**
 
-There is currently no root `LICENSE` file on accepted `main`. Until explicit licensing terms are committed, do not describe the repository as open source merely because source may later become publicly visible.
+There is currently no root `LICENSE` file on the reviewed baseline. Until explicit licensing terms are committed, do not describe the repository as open source merely because source may later become publicly visible.
 
 If custom/source-available terms are selected, public copy must use that wording consistently. If an OSI-approved license is selected, update README/NOTICE/contribution material accordingly.
 
 ### 2. Repository About and topics
 
-Recommended GitHub About description:
+Historical 2026-09-10 recommendation (must be regenerated from the accepted product state before public opening):
 
 > Native Android reader for Devil May Cry 3 HD resources — C++20 MOD/SCM 3D inspection, DDS/PTX previews and model texture attachment.
 
-Recommended topics:
+Historical recommended topics:
 
 `devil-may-cry` `dmc3` `reverse-engineering` `modding` `android` `cpp` `file-format` `binary-analysis` `dds` `3d-viewer`
 
-Recheck these immediately before public opening so metadata matches the then-accepted `main`, not an old milestone.
+The quoted C++20/module wording is intentionally retained as history and is **not** current v33 metadata. Recreate About/topics immediately before public opening from the then-accepted `main`.
 
 ### 3. Historical branches and stale PRs
 
@@ -59,9 +61,9 @@ Recheck these immediately before public opening so metadata matches the then-acc
 Repository visibility exposes historical refs that remain reachable. Review development/release/experiment branches before changing visibility. In particular:
 
 - preserve `main.2` only if its pre-cleanup backlog/history is intentionally public;
-- treat PR #28 public-opening preparation as stale relative to current v24 unless it is rebuilt/rebased on current `main`;
-- keep PR #29 iOS/Windows work explicitly preview/experimental until its own build/device acceptance;
-- keep PR #32 v26 draft until Samsung/device acceptance.
+- treat old public-opening preparation branches/PRs as stale unless rebuilt/rebased on current accepted `main`;
+- keep iOS/Windows work explicitly preview/experimental until its own build/device acceptance;
+- do not infer candidate acceptance from an old draft state.
 
 Do not merge an old public-prep branch simply because its documentation was once correct.
 
@@ -107,16 +109,17 @@ Do not publish a canonical “latest stable” asset until the chosen release li
 - correct production signing authority;
 - release notes and artifact hashes matching the exact delivered binary.
 
+For the active v33 program, detailed release evidence is governed by #40 and #45 rather than this public-opening checklist.
+
 ## Correct first-public messaging
 
-A future public repository should state:
+Before public opening, regenerate this section from the then-accepted `main`. The public repository should accurately state:
 
 - DMC Native Reader is a read-only native resource viewer/inspector for user-owned Devil May Cry 3 HD files;
-- Android is the accepted production shell;
-- current production modules are MOD, SCM, DDS and PTX;
+- which platform shells are accepted versus preview;
+- the exact promoted production modules at that time;
 - DMC Rengine is the canonical reverse/read-side authority for promoted format logic;
 - semantic completeness is evidence-gated;
-- archived/experimental formats are not current support claims;
-- iOS/Windows/Web remain preview/future directions until separately accepted.
+- archived/experimental formats are not current support claims.
 
 This wording can expand only when the corresponding capability has actually been promoted to accepted `main`.
