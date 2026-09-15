@@ -19,6 +19,9 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - PR: #33, draft
 - versionName: `1.0.6`
 - versionCode: `33`
+- canonical Native Reader language: **C++23**
+- Spider product language/profile: **Spider C++ (`spider.cpp23`)**
+- Android native toolchain: **NDK r30 LTS `30.0.16248370`**
 - production modules: **MOD / SCM / DDS / PTX / EventTbl**
 - canonical DMC Rengine ReaderCore pin: `caf445226c7d61841292384a10e93e4f58ae29f9`
 
@@ -30,10 +33,13 @@ PR #33 must not be merged until an exact-head build actually executes the full h
 resource bytes
   -> bounded probe
   -> NativeModuleRegistry
-  -> Spider Crusader
-      -> MOD / SCM / DDS / PTX / EventTbl native modules
-  -> portable DMCNativeReader::Core
+  -> Spider C++23
+      -> Spider Crusader
+          -> MOD / SCM / DDS / PTX / EventTbl native modules
+          -> pinned Rengine executor / ReaderCore
+  -> portable DMCNativeReader::Core (C++23)
       -> resource session
+      -> WorkspaceGraph / stable resource identity
       -> composite model state
       -> composite builder
       -> Rengine-backed default-joint resolver
@@ -46,6 +52,22 @@ resource bytes
 ```
 
 Android remains transport/presentation only. It must not parse DMC layouts, decide model attachment semantics or implement texture-binding policy.
+
+The C++23 migration is scoped to DMC Native Reader. The Rengine repository, gitlink and canonical format/runtime authority are unchanged. Spider C++ is a typed C++23 layer over Crusader; it does not duplicate the Rengine executor.
+
+## C++23 migration
+
+The current candidate now enforces C++23 as a real product contract rather than only changing a compiler flag:
+
+1. `DMCNativeReader::Core` and Android JNI require `cxx_std_23`;
+2. Android Gradle explicitly requests `-std=c++23` and pins NDK r30 LTS;
+3. `cpp23_profile.h` fails compilation without final C++23 mode and `std::expected`;
+4. `WorkspaceGraph` mutation APIs return typed `std::expected` results with explicit error codes;
+5. `spider/cpp23_language.h` defines the Spider C++ result/concept profile above Crusader;
+6. multi-MOD compose is the first production action executed through the Spider C++ typed wrapper;
+7. `cxx23_profile_test`, active CI and the APK verifier gate the new language/toolchain contract.
+
+Migration review/research/plan: `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md`.
 
 ## Multi-MOD / body-hair placement
 
@@ -64,11 +86,14 @@ The resolver does not infer a different host from filenames, visual proximity, `
 
 ## Modular split completed in this pass
 
+- `include/dmcresource/cpp23_profile.h` — canonical C++23 compile/result profile
+- `include/dmcresource/spider/cpp23_language.h` — Spider C++ typed product-language layer
+- `include/dmcresource/workspace_graph.h` / `modules/workspace_graph.cpp` — stable identities + typed C++23 mutation results
 - `include/dmcresource/composite_model.h` — source-part + placement state
 - `include/dmcresource/composite_builder.h` / `modules/composite_builder.cpp` — product composition policy
 - `include/dmcresource/mod_attachment_resolver.h` / `modules/mod_attachment_resolver.cpp` — Rengine-backed selector resolution
 - `include/dmcresource/composite_placement.h` / `modules/composite_placement.cpp` — derived placement projection
-- `spider/session_compose_actions.cpp` — compose action
+- `spider/session_compose_actions.cpp` — compose action, now routed through Spider C++23
 - `spider/session_texture_actions.cpp` — texture actions
 - `spider/model_placement_actions.cpp` — explicit placement/reset actions
 
@@ -78,12 +103,14 @@ The old monolithic `spider/session_actions.cpp` is no longer compiled.
 
 Per-part PTX replacement is now fully staged. Texture storage and triangle-slot projection are copied into temporary state; decode, range validation, slot validation and compaction complete before the live session is replaced. A failed replacement therefore preserves the previous valid texture bank and render projection.
 
-New regression: `ptx_transaction_test`.
+Regression: `ptx_transaction_test`.
 
 ## Current regression set added/strengthened
 
 Important v33-specific regressions now include:
 
+- `cxx23_profile_test` — C++23, `std::expected`, Spider C++ concepts/profile;
+- `workspace_graph_test` — stable identities + typed graph failures;
 - `composite_builder_test` — automatic primary-host/default-joint placement and fail-closed fallback;
 - `composite_placement_test` — explicit host-joint projection, row-vector transform order and reset;
 - `ptx_transaction_test` — failed per-part PTX replacement preserves live state;
@@ -95,6 +122,9 @@ Important v33-specific regressions now include:
 
 v33 requires:
 
+- C++23 Native Reader product core;
+- Spider C++ typed orchestration profile over Crusader;
+- Android NDK r30 LTS `30.0.16248370`;
 - exactly one packaged native DSO: `lib/arm64-v8a/libdmcviewer.so`;
 - static `DMCNativeReader::Core` + `DMCRengine::ReaderCore`;
 - `extractNativeLibs=false`;
@@ -106,7 +136,7 @@ v33 requires:
 - APK <= 8 MiB, DSO <= 4 MiB, Dex <= 1 MiB;
 - exact Rengine gitlink and checkout at `caf445226c7d61841292384a10e93e4f58ae29f9`.
 
-`tools/verify_device_apk.py` has been updated for the split compose/texture action modules and the new Rengine pin.
+`tools/verify_device_apk.py` gates C++23/Spider C++/NDK r30 plus the split compose/texture action modules and exact Rengine pin.
 
 ## CI state
 
