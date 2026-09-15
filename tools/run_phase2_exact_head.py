@@ -35,6 +35,8 @@ EXPECTED_ANDROID_CMAKE = "3.22.1"
 MIN_HOST_CMAKE = (3, 22, 1)
 RUNTIME_DSO = "lib/arm64-v8a/libdmcviewer.so"
 REQUIRED_RUNTIME_MARKERS = (b"spider.crusader", b"spider.cpp23")
+EXPECTED_MAX_APK_BYTES = 4 * 1024 * 1024
+EXPECTED_MAX_INSTALLED_PACKAGE_CODE_BYTES = 4 * 1024 * 1024
 
 
 def fail(message: str) -> NoReturn:
@@ -179,6 +181,21 @@ def read_verifier_report() -> dict:
             "APK contains avoidable large duplicate payloads; "
             f"wasted bytes={duplicate_waste} groups={report.get('duplicate_large_payload_groups')}"
         )
+    if report.get("max_apk_bytes") != EXPECTED_MAX_APK_BYTES:
+        fail(
+            "APK verifier size policy drifted from 4 MiB: "
+            f"{report.get('max_apk_bytes')}"
+        )
+    if report.get("max_installed_package_code_bytes") != EXPECTED_MAX_INSTALLED_PACKAGE_CODE_BYTES:
+        fail(
+            "installed package/code policy drifted from 4 MiB: "
+            f"{report.get('max_installed_package_code_bytes')}"
+        )
+    if report.get("historical_v26_growth_comparable") is not False:
+        fail("historical v26 package-growth data must not be acceptance authority")
+    if report.get("size_acceptance_authority") != \
+            "absolute-package-metrics+installed-package-code<=4MiB":
+        fail("APK verifier size authority marker is missing or unexpected")
     return report
 
 
@@ -369,6 +386,11 @@ def main() -> int:
     for apk in (debug_apk, release_apk):
         if not apk.is_file():
             fail(f"expected APK missing: {apk}")
+        if apk.stat().st_size > EXPECTED_MAX_APK_BYTES:
+            fail(
+                f"{apk.name} exceeds 4 MiB package pre-gate: "
+                f"{apk.stat().st_size} > {EXPECTED_MAX_APK_BYTES}"
+            )
         require_runtime_markers(apk)
 
     run_logged(
@@ -415,6 +437,12 @@ def main() -> int:
         "rengine_language_contract": "target-scoped cxx_std_20",
         "runtime_markers": [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS],
         "java_version_output": java_version_text.strip(),
+        "size_contract": {
+            "max_apk_bytes": EXPECTED_MAX_APK_BYTES,
+            "max_installed_package_code_bytes": EXPECTED_MAX_INSTALLED_PACKAGE_CODE_BYTES,
+            "installed_measurement_required_on_device": True,
+            "historical_v26_growth_comparable": False,
+        },
         "package_policy": package_policy,
         "artifacts": {
             "debug_apk": {
