@@ -35,8 +35,22 @@ jobs:
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
+            "ndk;30.0.16248370" \
             "cmake;3.22.1"
+
+      - name: Guard canonical C++23 / Spider C++ boundary
+        run: |
+          set -euxo pipefail
+          grep -Fq 'cxx_std_23' app/src/main/cpp/CMakeLists.txt
+          ! grep -Fq 'cxx_std_20' app/src/main/cpp/CMakeLists.txt
+          grep -F -- '-std=c++23' app/build.gradle.kts
+          grep -Fq 'ndkVersion = "30.0.16248370"' app/build.gradle.kts
+          test -f app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          test -f app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq 'dmc.native-reader.cpp23' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'spider.cpp23' app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq '#include "dmc_rengine/spider/native_executor.hpp"' \
+            app/src/main/cpp/include/dmcresource/spider/crusader.h
 
       - name: Guard signing boundary
         run: |
