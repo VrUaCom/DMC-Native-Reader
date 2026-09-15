@@ -99,7 +99,7 @@ def main():
     manifest = run(str(aapt2), "dump", "xmltree", str(args.apk),
                    "--file", "AndroidManifest.xml")
     require(re.search(
-        r"extractNativeLibs[^\n]*=(?:false\b|(?:\(type 0x12\))?0x00000000\b)",
+        r"extractNativeLibs[^\n]*=(?:false\b|(?:\(type 0x12\))?0x0+\b)",
         manifest), "extractNativeLibs must be false for the modular APK")
 
     signing = run(str(apksigner), "verify", "--verbose", "--print-certs",
@@ -158,10 +158,11 @@ def main():
                 "Recovery runtime dependency leaked into libdmcviewer.so")
 
     for marker in (
-        "spider.crusader", "native.texture-set", "native.uv-projection",
+        "spider.crusader", SPIDER_CPP_PROFILE,
+        "native.texture-set", "native.uv-projection",
         "formats.mod.mesh-reader", "formats.scm.mesh-reader",
         "formats.texture.spider-reader", "formats.evt.structural-reader"):
-        require(marker.encode() in native_bytes, "Missing native module: " + marker)
+        require(marker.encode() in native_bytes, "Missing native module/profile: " + marker)
 
     root = Path(__file__).resolve().parents[1]
     bridge = (root / "app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java").read_text()
