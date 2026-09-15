@@ -18,17 +18,23 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import Sequence
+from typing import NoReturn, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIR = ROOT / "build" / "phase2-evidence"
 HOST_BUILD_DIR = ROOT / "build" / "host-phase2"
 RENGINE_REL = Path("app/src/main/cpp/vendor/dmc-rengine-cpp")
-EXPECTED_NDK = "30.0.16248370"
+EXPECTED_AGP = "9.3.0"
 EXPECTED_GRADLE = "9.5.0"
+EXPECTED_JAVA_MAJOR = 17
+EXPECTED_NDK = "30.0.16248370"
+EXPECTED_ANDROID_PLATFORM = "android-36"
+EXPECTED_BUILD_TOOLS = "36.0.0"
+EXPECTED_ANDROID_CMAKE = "3.22.1"
+MIN_HOST_CMAKE = (3, 22, 1)
 
 
-def fail(message: str) -> "NoReturn":
+def fail(message: str) -> NoReturn:
     raise SystemExit(f"Phase 2 evidence failure: {message}")
 
 
@@ -88,12 +94,23 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def parse_version_tuple(text: str, pattern: str, label: str) -> tuple[int, ...]:
+    match = re.search(pattern, text, re.MULTILINE)
+    if not match:
+        fail(f"could not parse {label} version")
+    return tuple(int(piece) for piece in match.group(1).split("."))
+
+
 def require_static_contract() -> None:
+    root_gradle = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
+    app_gradle = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
     cmake = (ROOT / "app/src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8")
-    gradle = (ROOT / "app/build.gradle.kts").read_text(encoding="utf-8")
     profile = (
         ROOT / "app/src/main/cpp/include/dmcresource/cpp23_profile.h"
     ).read_text(encoding="utf-8")
+
+    if f'version "{EXPECTED_AGP}"' not in root_gradle:
+        fail(f"Android Gradle Plugin pin is not {EXPECTED_AGP}")
 
     required_cmake = (
         "cxx_std_23",
@@ -106,10 +123,12 @@ def require_static_contract() -> None:
             fail(f"CMake C++23 contract marker missing: {marker}")
     if "cxx_std_20" in cmake:
         fail("Native Reader CMake still contains cxx_std_20")
-    if "-std=c++" in gradle:
+    if "-std=c++" in app_gradle:
         fail("Gradle must not own the C++ language mode")
-    if f'ndkVersion = "{EXPECTED_NDK}"' not in gradle:
+    if f'ndkVersion = "{EXPECTED_NDK}"' not in app_gradle:
         fail(f"Gradle NDK pin is not {EXPECTED_NDK}")
+    if f'version = "{EXPECTED_ANDROID_CMAKE}"' not in app_gradle:
+        fail(f"Android externalNativeBuild CMake pin is not {EXPECTED_ANDROID_CMAKE}")
     for marker in (
         "std::expected",
         "std::byteswap",
@@ -128,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradle", default="gradle", help="Gradle executable (must be 9.5.0)")
     parser.add_argument("--cmake", default="cmake", help="CMake executable for host regressions")
     parser.add_argument("--ctest", default="ctest", help="CTest executable matching the host CMake")
-    parser.add_argument("--java", default="java", help="Java executable; canonical workflow uses JDK 17")
+    parser.add_argument("--java", default="java", help="Java executable (must be JDK 17)")
     parser.add_argument(
         "--expected-head",
         help="Optional SHA guard. The run aborts if HEAD differs before any build work.",
@@ -164,9 +183,16 @@ def main() -> int:
     sdk = Path(sdk_text).expanduser().resolve()
     if not sdk.exists():
         fail(f"Android SDK does not exist: {sdk}")
-    ndk_path = sdk / "ndk" / EXPECTED_NDK
-    if not ndk_path.exists():
-        fail(f"canonical NDK {EXPECTED_NDK} is not installed under {sdk / 'ndk'}")
+
+    required_sdk_paths = {
+        "NDK": sdk / "ndk" / EXPECTED_NDK,
+        "Android platform": sdk / "platforms" / EXPECTED_ANDROID_PLATFORM,
+        "SDK Build Tools": sdk / "build-tools" / EXPECTED_BUILD_TOOLS,
+        "Android CMake": sdk / "cmake" / EXPECTED_ANDROID_CMAKE,
+    }
+    for label, path in required_sdk_paths.items():
+        if not path.exists():
+            fail(f"{label} missing: {path}")
 
     gradle_version_text = capture([args.gradle, "--version"])
     gradle_match = re.search(r"(?m)^Gradle\s+(\S+)\s*$", gradle_version_text)
@@ -177,12 +203,24 @@ def main() -> int:
         fail(f"Gradle {gradle_version} != canonical {EXPECTED_GRADLE}")
 
     cmake_version_text = capture([args.cmake, "--version"])
+    cmake_version = parse_version_tuple(
+        cmake_version_text, r"^cmake version\s+(\d+(?:\.\d+)+)", "CMake"
+    )
+    if cmake_version < MIN_HOST_CMAKE:
+        fail(
+            "host CMake " + ".".join(map(str, cmake_version)) +
+            " is older than required 3.22.1"
+        )
+
     ctest_version_text = capture([args.ctest, "--version"])
     java_version_text = capture([args.java, "-version"])
+    java_match = re.search(r'version\s+"(?:1\.)?(\d+)', java_version_text)
+    if not java_match or int(java_match.group(1)) != EXPECTED_JAVA_MAJOR:
+        fail(f"canonical Android build requires JDK {EXPECTED_JAVA_MAJOR}")
 
     env = os.environ.copy()
     env["ANDROID_SDK_ROOT"] = str(sdk)
-    env.setdefault("ANDROID_HOME", str(sdk))
+    env["ANDROID_HOME"] = str(sdk)
 
     shutil.rmtree(HOST_BUILD_DIR, ignore_errors=True)
     shutil.rmtree(EVIDENCE_DIR, ignore_errors=True)
@@ -248,11 +286,18 @@ def main() -> int:
         "head": head,
         "rengine_gitlink": gitlink,
         "rengine_checkout": rengine_checkout,
-        "android_sdk": str(sdk),
-        "android_ndk": EXPECTED_NDK,
-        "gradle": gradle_version,
-        "cmake_version_output": cmake_version_text.strip(),
-        "ctest_version_output": ctest_version_text.strip(),
+        "toolchain": {
+            "agp": EXPECTED_AGP,
+            "gradle": gradle_version,
+            "java_major": EXPECTED_JAVA_MAJOR,
+            "host_cmake": ".".join(map(str, cmake_version)),
+            "ctest_version_output": ctest_version_text.strip(),
+            "android_sdk": str(sdk),
+            "android_platform": EXPECTED_ANDROID_PLATFORM,
+            "build_tools": EXPECTED_BUILD_TOOLS,
+            "android_cmake": EXPECTED_ANDROID_CMAKE,
+            "android_ndk": EXPECTED_NDK,
+        },
         "java_version_output": java_version_text.strip(),
         "artifacts": {
             "debug_apk": {
