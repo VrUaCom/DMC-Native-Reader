@@ -32,8 +32,10 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
           git status --short
 
-      - name: Run APK package-policy unit regression
-        run: python3 tools/test_verify_device_apk.py
+      - name: Run package and installed-footprint policy regressions
+        run: |
+          python3 tools/test_verify_device_apk.py
+          python3 tools/test_measure_installed_footprint.py
 
       - uses: actions/setup-java@v4
         with:
@@ -91,6 +93,7 @@ jobs:
             app/src/main/cpp/include/dmcresource/decode.h \
             app/src/main/cpp/include/dmcresource/hits_decode.h \
             app/src/main/cpp/include/dmcresource/text_decode.h \
+            app/src/main/cpp/spider/session_actions.cpp \
             app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
             app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java; do
             test ! -e "$path"
