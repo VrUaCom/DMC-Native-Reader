@@ -14,7 +14,7 @@ import zipfile
 MAX_APK_BYTES = 4 * 1024 * 1024
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
-MAX_INSTALLED_PACKAGE_CODE_BYTES = 4 * 1024 * 1024
+MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 DUPLICATE_PAYLOAD_MIN_BYTES = 64 * 1024
 NDK_VERSION = "30.0.16248370"
 CPP_STANDARD = "C++23"
@@ -394,10 +394,11 @@ def main():
         "max_apk_bytes": MAX_APK_BYTES,
         "max_native_bytes": MAX_NATIVE_BYTES,
         "max_dex_bytes": MAX_DEX_BYTES,
-        "max_installed_package_code_bytes": MAX_INSTALLED_PACKAGE_CODE_BYTES,
-        "installed_size_measurement": "required-on-device-via-measure_installed_footprint.py",
+        "max_installed_app_bytes": MAX_INSTALLED_APP_BYTES,
+        "installed_size_measurement": "required-on-device-via-StorageStats.getAppBytes",
+        "installed_size_tool": "tools/measure_installed_footprint.py",
         "historical_v26_growth_comparable": False,
-        "size_acceptance_authority": "absolute-package-metrics+installed-package-code<=4MiB",
+        "size_acceptance_authority": "absolute-package-metrics+StorageStats.getAppBytes<=4MiB",
         "modular_native_architecture": "pass",
         "device_test": "pending",
     }, indent=2))
