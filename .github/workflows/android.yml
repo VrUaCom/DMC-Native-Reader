@@ -129,6 +129,7 @@ jobs:
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
           grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
+          grep -Fq 'spider.cpp23' /tmp/native-markers.txt
           grep -Fq 'canonical.mod.topology-break' /tmp/native-markers.txt
           grep -Fq 'canonical.scm.topology' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
