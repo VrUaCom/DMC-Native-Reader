@@ -160,9 +160,10 @@ Composition, placement and texture attachment are product actions, not JNI behav
 - attaching one shared PTX bank to a composite;
 - attaching PTX to one explicit composite part.
 
-The former monolithic `spider/session_actions.cpp` is no longer compiled. Compose
-and texture operations are split into `session_compose_actions.cpp` and
-`session_texture_actions.cpp`. JNI only maps bytes/handles and invokes these actions.
+The former monolithic `spider/session_actions.cpp` is no longer compiled or retained
+as a dead duplicate. Compose and texture operations are split into
+`session_compose_actions.cpp` and `session_texture_actions.cpp`. JNI only maps
+bytes/handles and invokes these actions.
 
 The MOD compose path is the first production action routed through the existing
 Spider C++ seed. Its typed wrapper still executes the canonical Crusader plan rather
@@ -318,9 +319,12 @@ The v33 verifier requires:
 - Spider C++ profile layered over Crusader;
 - stable device-test signer;
 - exactly one native DSO;
-- APK <= 8 MiB;
+- **APK <= 4 MiB**;
 - native DSO <= 4 MiB;
 - total Dex <= 1 MiB;
+- duplicate ZIP entry names = 0;
+- duplicate runtime `.so`/`.dex` payloads = 0;
+- accepted Phase-2 large duplicate payload waste = 0;
 - no Kotlin runtime;
 - Java `NativeBridge` / exported JNI symbol exact parity;
 - no recovery shim/core markers;
@@ -331,6 +335,17 @@ The v33 verifier requires:
 - modular composite builder/resolver/placement sources compiled into the portable core;
 - native `WorkspaceGraph` compiled into the portable core;
 - split Spider compose/texture action sources compiled instead of the old monolith.
+
+The physical Samsung acceptance additionally requires installed package/code
+allocation **<= 4 MiB (4,194,304 bytes)**, measured from the installed package code
+directory and excluding mutable user data/cache. `tools/measure_installed_footprint.py`
+records the device/build identity and reviewed APK SHA-256 and fails closed on
+ambiguous package-code location or measurement. APK <=4 MiB is necessary but not
+sufficient for this device gate.
+
+Historical v26 APK/native byte constants are not v33 growth authority unless their
+artifact/packaging/measurement provenance is proven comparable. v33 acceptance uses
+absolute current package metrics plus the installed 4 MiB hard gate.
 
 ## Regression gates before device acceptance
 
@@ -349,9 +364,10 @@ At minimum the complete host CTest suite must run. Critical v33 regressions incl
 - `ptx_model_texture_test` — canonical texture-slot binding;
 - `black_widow_state_test` — native action/UI policy;
 - `png_export_session_test` — export capability;
-- `render_scene_test` and `mod_spatial_adapter_test` — render/spatial contracts.
+- `render_scene_test` and `mod_spatial_adapter_test` — render/spatial contracts;
+- `tools/test_verify_device_apk.py` — package duplicate policy, 4 MiB APK/installed thresholds and fail-closed installed-footprint parsing.
 
 A GitHub job that fails before runner assignment (`runner_id=0`, no steps) is neither
 green evidence nor a source regression. A canonical APK is accepted only after a
 real exact-head clean build, verifier pass, required review gates and physical
-Samsung device test.
+Samsung device test including the installed 4 MiB gate.
