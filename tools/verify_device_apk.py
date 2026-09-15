@@ -134,10 +134,13 @@ def main():
         entries = archive.infolist()
         entry_names = [info.filename for info in entries]
         seen_names = set()
-        duplicate_entry_names = sorted({
-            name for name in entry_names
-            if name in seen_names or not seen_names.add(name)
-        })
+        duplicate_names = set()
+        for name in entry_names:
+            if name in seen_names:
+                duplicate_names.add(name)
+            else:
+                seen_names.add(name)
+        duplicate_entry_names = sorted(duplicate_names)
         require(not duplicate_entry_names,
                 "APK contains duplicate ZIP entry names: " +
                 ", ".join(duplicate_entry_names))
