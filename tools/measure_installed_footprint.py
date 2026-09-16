@@ -31,6 +31,15 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(f"Installed-footprint evidence failure: {message}")
 
 
+def normalize_user_arg(value: str) -> str:
+    """Restrict device evidence to one explicit Android user/profile scope."""
+    if value == "current":
+        return value
+    if re.fullmatch(r"\d+", value):
+        return str(int(value, 10))
+    fail("--user must be `current` or a non-negative integer Android user ID")
+
+
 def capture(command: Sequence[str]) -> str:
     completed = subprocess.run(
         list(command),
@@ -158,6 +167,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--serial", help="ADB device serial; recommended for release evidence")
     parser.add_argument("--package", default=DEFAULT_PACKAGE)
     parser.add_argument(
+        "--user",
+        default="current",
+        help="Android user/profile to measure (`current` or a numeric user ID).",
+    )
+    parser.add_argument(
         "--apk",
         type=Path,
         required=True,
@@ -172,6 +186,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    requested_user = normalize_user_arg(args.user)
 
     apk = args.apk.expanduser().resolve()
     if not apk.is_file():
@@ -194,8 +209,24 @@ def main() -> int:
     if args.serial and serial != args.serial:
         fail(f"ADB serial {serial} != requested {args.serial}")
 
+    current_user = capture(
+        adb_command(args.adb, serial, "shell", "am", "get-current-user")
+    ).strip()
+    if not re.fullmatch(r"\d+", current_user):
+        fail(f"could not determine current Android user ID: {current_user}")
+    resolved_user = current_user if requested_user == "current" else requested_user
+
     package_paths = parse_pm_paths(
-        capture(adb_command(args.adb, serial, "shell", "pm", "path", args.package))
+        capture(adb_command(
+            args.adb,
+            serial,
+            "shell",
+            "pm",
+            "path",
+            "--user",
+            requested_user,
+            args.package,
+        ))
     )
     installed_base_apk = require_single_base_apk(package_paths)
     installed_apk_sha256 = sha256_adb_file(
@@ -214,6 +245,8 @@ def main() -> int:
             "shell",
             "pm",
             "get-package-storage-stats",
+            "--user",
+            requested_user,
             args.package,
         )
     )
@@ -255,6 +288,9 @@ def main() -> int:
         "android_release": android_release,
         "android_sdk": sdk_level,
         "build_fingerprint": fingerprint,
+        "requested_android_user": requested_user,
+        "resolved_android_user": resolved_user,
+        "current_android_user": current_user,
         "package_paths": package_paths,
         "installed_base_apk": installed_base_apk,
         "measurement": "Android StorageStats.getAppBytes via pm get-package-storage-stats",
