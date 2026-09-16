@@ -1,6 +1,6 @@
 # DMC Native Reader — Project AI Context, Standards & Rules
 
-Date: 2026-09-15
+Date: 2026-09-16
 Scope: `VrUaCom/DMC-Native-Reader` only.
 Audience: project owner + AI/engineering agents working inside this private repository/project.
 
@@ -8,7 +8,7 @@ Audience: project owner + AI/engineering agents working inside this private repo
 
 ## 1. Product role
 
-DMC Native Reader is a **read-only inspection/preview product** built on top of canonical DMC Rengine read-side knowledge. Native Reader must not become a second reverse-engineering engine or duplicate canonical format/runtime semantics.
+DMC Native Reader is a **read-only inspection/preview product** built on top of canonical DMC Rengine read-side knowledge. Native Reader must not become a second general reverse-engineering engine or duplicate canonical format/runtime semantics without an explicit bounded owner decision and review.
 
 Canonical ownership direction:
 
@@ -50,7 +50,24 @@ They may be candidate evidence only.
 ## 3. Architecture boundaries
 
 ### DMC Rengine boundary
-Rengine remains canonical authority for reverse-engineered format/runtime semantics consumed by Native Reader. Do not modify another repository as part of a Native Reader task unless Viktor explicitly authorizes it.
+`VrUaCom/dmc-rengine-cpp` is an **absolute read-only external repository** for the Native Reader migration program. Native Reader work must not create or modify Rengine code, CMake, docs, tests, branches, commits, issues, PRs, comments, APIs, targets or submodule-side state.
+
+Rengine remains canonical authority for reverse-engineered format/runtime semantics consumed by Native Reader.
+
+#### Narrow PTX-only copy exception
+Viktor explicitly authorized one bounded exception to the normal “consume, do not copy canonical runtime implementation” rule:
+
+Native Reader may read the PTX reverse source/evidence at read-only Rengine commit `50d070e158e484937238d9cb02b2bc6affb2f502`, copy only the PTX runtime slice approved by Project Review #50 into `VrUaCom/DMC-Native-Reader`, port/adapt it to ISO C++23, and maintain that Reader-owned compatibility projection locally.
+
+This authorization:
+- does **not** permit any Rengine write;
+- applies only to the #50-approved PTX pool/config/placement/minimum-manager-reset slice;
+- is not general permission to copy other Rengine subsystems;
+- does not authorize a second serialized PTX parser;
+- does not authorize reverse harness/evidence tooling in production;
+- does not authorize guessed palette/finalizer/materializer/cleanup/lifecycle behavior.
+
+PTX Review #50 completed with `GO_WITH_CORRECTIONS`; implementation #51 is source-complete; Review #52 completed with `ARCHITECTURE GO / EXECUTION_PENDING`.
 
 ### Native Reader core
 Portable native product logic lives in `DMCNativeReader::Core`.
@@ -58,6 +75,20 @@ Portable native product logic lives in `DMCNativeReader::Core`.
 Normal direction:
 
 `resource bytes -> bounded probe -> NativeModuleRegistry -> canonical adapter/Rengine -> typed IR -> product modules -> renderer/inspection`
+
+### PTX two-layer invariant
+Native Reader exposes one PTX product route with two internal responsibilities:
+
+`Serialized PTX framing/TextureSet/DDS + lazy Reader-owned RuntimeCompat`
+
+Rules:
+- existing `TextureSlotFramingParser -> TextureSet -> DDS` remains the only serialized/disk-format PTX authority;
+- `PtxRuntimeCompat` models only the explicitly imported confirmed runtime state-machine behavior;
+- RuntimeCompat is lazy and is not created by ordinary preview/gallery/PNG flow;
+- no second user-facing PTX NativeModule is created;
+- no `TextureSet::Slot -> runtime 0x50 record` mapping may be inferred until separately evidenced/reviewed;
+- initializer represented storage is `0xCB50`, while placement/configure operate on the confirmed `0xCB48` prefix; the final 8 bytes remain opaque clear/preserved tail only;
+- palette `0x140331BD0`, finalizer `0x140331A80`, parser/backend runtime mapping `0x1403365B0`, full graphics-config type/live values, actual caller/teardown ordering and full manager acquire/release lifecycle remain deferred unless separately reviewed.
 
 ### Spider C++
 Spider C++ is the **typed C++23 product orchestration language/profile** of Native Reader.
@@ -77,6 +108,7 @@ Spider must not own:
 - binary-format parsing authority;
 - reverse-engineered field semantics;
 - a duplicate Rengine executor;
+- PTX RuntimeCompat semantics;
 - hidden UI/JNI semantic policy.
 
 A future standalone Spider language/compiler requires a separate research/review gate. Do not build one opportunistically inside normal feature work.
@@ -99,9 +131,10 @@ Derived-only examples:
 - world-space preview placement;
 - compact renderer texture bank;
 - presentation vector order;
-- UI projection.
+- UI projection;
+- Reader-owned PTX runtime compatibility state used for explicit runtime inspection/testing.
 
-Derived state must never silently replace source authority.
+Derived state must never silently replace source authority. PTX RuntimeCompat must not manufacture a serialized-slot-to-runtime-record relation that has not been proven.
 
 ## 5. Stable resource identity
 
@@ -137,6 +170,18 @@ C++23 facilities are adopted only when they solve a concrete product/architectur
 - `std::to_underlying` for typed enum boundaries;
 - monadic `optional/expected` flows where they clarify validation;
 - ranges only when binary invariants remain obvious.
+
+### Exception boundary contract
+Allocating Core/adapters/helpers must have truthful exception specifications. A helper that creates/appends `std::string`, vectors, streams, parser/IR data, decoded images or first-use dynamic plans must not rely on false `noexcept` unless every possible exception is caught locally.
+
+Explicit product/runtime boundaries remain fail-closed:
+- `run_decode_pipeline()` is the portable Core catch-all;
+- NativeModule `ModuleRun` and Crusader `OperationFn` remain `noexcept` and catch all;
+- public Spider actions intentionally marked `noexcept` catch first-use Plan/helper allocation;
+- JNI is the final platform catch-all; no C++ exception may cross JNI;
+- catch-path fallback must not depend on allocating a diagnostic string.
+
+`docs/NOEXCEPT_BOUNDARY_V33.md` is the current technical evidence note for this contract.
 
 Do not perform mass syntax modernization for style alone.
 
@@ -186,10 +231,20 @@ Work only in the explicitly authorized repository/branch set.
 For the current migration program:
 - repository: `VrUaCom/DMC-Native-Reader` only;
 - current candidate branch: `feature/png-export-multi-mod-v27`;
+- `VrUaCom/dmc-rengine-cpp` remains absolute READ-ONLY, including during the PTX copy exception;
 - do not create a new repository or branch without a separate technical reason;
 - do not duplicate modules, parsers, executors, workflows or compatibility files;
 - remove dead duplicates once the replacement is canonical and Git history preserves the old version;
 - keep changes bounded and reviewable.
+
+PTX documentation for this migration is intentionally consolidated. Canonical PTX addendum files are:
+- `PTX_RUNTIME_IMPORT_DECISION_V33.md`;
+- `PTX_RUNTIME_IMPORT_ARCHITECTURE_V33.md`;
+- `PTX_RUNTIME_IMPORT_TZ_V33.md`;
+- `PTX_RUNTIME_IMPORT_REVIEW_TEMPLATE_V33.md`;
+- `PTX_RUNTIME_IMPORT_STATUS_V33.md`.
+
+Do not recreate deleted marker/sync/queue/status-fragment documents. Execution state belongs in Project issues #50/#51/#52 and the canonical status file.
 
 ### Migration batching / CI budget discipline
 During a large migration such as the C++23 transition, do **not** spend hosted-runner minutes on every intermediate commit.
@@ -215,11 +270,14 @@ Important v33/C++23 gates include:
 - `workspace_graph_test`;
 - composite builder/placement regressions;
 - PTX transaction regression;
+- `ptx_runtime_compat_test` for the approved runtime slice and `0xCB48` placement boundary;
 - SCM authority regression;
 - module/Spider/texture/PNG/render/inspection regressions;
 - `tools/test_verify_device_apk.py` for package/dedup/4 MiB policy;
 - exact APK verifier;
 - physical Samsung acceptance for the release candidate.
+
+PTX #52 architecture acceptance does **not** mean the new runtime regression has executed. Until the final exact-head CMake/CTest checkpoint runs, its status is `EXECUTION_PENDING`.
 
 ## 10. Release/evidence rule
 
@@ -234,6 +292,8 @@ Required promotion evidence:
 6. Viktor explicitly approves merge/release.
 
 `runner_id=0`, `steps=[]`, skipped workflows or pre-run infrastructure failures are **not** compile/test evidence.
+
+The canonical alternate exact-head evidence entrypoint is `tools/run_phase2_exact_head.py`. It must verify the expected HEAD/toolchain/submodule identity and run the same host CMake/CTest + Android build/verifier contract used by active workflows. If GitHub hosted runners remain unavailable, an authorized local/self-hosted execution of this runner is acceptable evidence; static review alone is not.
 
 ## 11. Mandatory Project task format
 
@@ -262,7 +322,16 @@ On `NO-GO`, return work to the responsible phase. Do not bypass the gate.
 
 Current program flow:
 
-`#35 -> #36 -> #41 -> #37 -> #42 -> #38 -> #43 -> #39 -> #44 -> #40 -> #45`
+`#35 -> #36 -> (#49 + #50 -> #51 -> #52) -> #41 -> #37 -> #42 -> #38 -> #43 -> #39 -> #44 -> #40 -> #45`
+
+Current state:
+- #35 complete;
+- #49 source/static hardening complete; execution pending with Phase 2;
+- #50 complete: `GO_WITH_CORRECTIONS`;
+- #51 source complete;
+- #52 complete: `ARCHITECTURE GO / EXECUTION_PENDING`;
+- #36 remains open because #47 real runner/build execution is unresolved and #48 size evidence must flow into #41;
+- #41 must not issue global GO without one real exact-head CMake/CTest/Android verifier evidence set.
 
 Master tracker: `#34`.
 
@@ -279,4 +348,4 @@ Before implementing any fix:
 
 Working principle:
 
-**Rengine knows canonical game semantics. Native Reader models/presents them. Spider organizes product execution. Black Widow governs capabilities. JNI/UI transport and display. WorkspaceGraph owns stable product identity. No layer silently substitutes itself for another.**
+**Rengine knows canonical game semantics. Native Reader models/presents them. The explicit PTX RuntimeCompat exception is a bounded Reader-owned projection of reviewed evidence, not a second general reverse engine. Spider organizes product execution. Black Widow governs capabilities. JNI/UI transport and display. WorkspaceGraph owns stable product identity. No layer silently substitutes itself for another.**
