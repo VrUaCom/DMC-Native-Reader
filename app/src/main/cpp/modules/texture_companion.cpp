@@ -36,7 +36,7 @@ namespace {
     const std::uint8_t* bytes,
     std::size_t size,
     const model_texture_binding::RequiredSlots& required,
-    bool shared_bank) noexcept {
+    bool shared_bank) {
     AttachmentResult out;
     if (required.slots.empty()) {
         out.detail = "PTX companion rejected: no required texture slots";
@@ -125,7 +125,7 @@ AttachmentResult attach_ptx(
     std::string_view filename,
     const std::uint8_t* bytes,
     std::size_t size,
-    const ModelTextureView& model) noexcept {
+    const ModelTextureView& model) {
     if (model.mesh == nullptr && model.scene == nullptr) {
         AttachmentResult out;
         out.detail =
@@ -147,7 +147,7 @@ AttachmentResult attach_shared_ptx(
     std::string_view filename,
     const std::uint8_t* bytes,
     std::size_t size,
-    std::span<const ModelTextureView> models) noexcept {
+    std::span<const ModelTextureView> models) {
     AttachmentResult out;
     if (models.empty()) {
         out.detail = "Shared PTX rejected: no model parts supplied";
