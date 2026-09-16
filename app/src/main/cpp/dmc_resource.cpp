@@ -42,7 +42,7 @@ ProbeResult result(Format format,
 
 ProbeResult probe(std::string_view filename,
                   const std::uint8_t* bytes,
-                  std::size_t size) noexcept {
+                  std::size_t size) {
     // Strong byte identities always win over file names.
     if (magic4(bytes, size, 'S', 'C', 'M', ' ')) {
         return result(Format::Scm, true, "SCM", "geometry", "render-scene",
