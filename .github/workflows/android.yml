@@ -6,7 +6,9 @@ name: DMC Native Reader core architecture
 # - skip docs-only changes;
 # - cancel superseded runs for the same PR/ref;
 # - run the full candidate gate explicitly with workflow_dispatch or once when
-#   the migration PR is promoted to Ready for review.
+#   the migration PR is promoted to Ready for review;
+# - workflow_dispatch may target a repository self-hosted Linux x64 runner to
+#   bypass hosted-minute quota while preserving the same evidence contract.
 on:
   push:
     branches: ["main"]
@@ -20,6 +22,15 @@ on:
       - "docs/**"
       - "**/*.md"
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner pool for the exact-head candidate gate"
+        required: true
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - "ubuntu-latest"
+          - "self-hosted"
 
 permissions:
   contents: read
@@ -33,9 +44,16 @@ env:
 
 jobs:
   core:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
+      - name: Require canonical Linux x64 runner
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "${{ runner.os }}" = "Linux"
+          test "${{ runner.arch }}" = "X64"
+
       - uses: actions/checkout@v4
         with:
           # pull_request defaults to refs/pull/<n>/merge. Phase/release evidence
