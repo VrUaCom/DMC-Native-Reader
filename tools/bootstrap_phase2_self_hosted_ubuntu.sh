@@ -9,19 +9,14 @@ set -euo pipefail
 # - modify the vendored DMC Rengine submodule;
 # - change product source/build policy.
 #
-# It installs only the host/toolchain prerequisites needed by the already
-# canonical tools/run_phase2_exact_head.py path.
+# Canonical Phase-2 toolchain values are owned by run_phase2_exact_head.py.
+# This bootstrap imports those values instead of maintaining a second copy.
 
-EXPECTED_GRADLE="9.5.0"
-EXPECTED_NDK="30.0.16248370"
-EXPECTED_PLATFORM="android-36"
-EXPECTED_BUILD_TOOLS="36.0.0"
-EXPECTED_ANDROID_CMAKE="3.22.1"
 ANDROID_CMDLINE_TOOLS_REVISION="15859902"
 ANDROID_CMDLINE_TOOLS_SHA256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
-  echo "ERROR: Phase-2 self-hosted evidence requires Linux." >&2
+  echo "ERROR: Phase-2 direct evidence requires Linux." >&2
   exit 1
 fi
 
@@ -29,7 +24,7 @@ arch="$(uname -m)"
 case "$arch" in
   x86_64|amd64) ;;
   *)
-    echo "ERROR: Phase-2 self-hosted evidence requires x86_64; found: $arch" >&2
+    echo "ERROR: Phase-2 direct evidence requires x86_64; found: $arch" >&2
     exit 1
     ;;
 esac
@@ -99,18 +94,55 @@ if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
-python3 - <<'PY'
+mapfile -t phase2_contract < <(python3 - <<'PY'
+import importlib.util
+from pathlib import Path
+
+path = Path("tools/run_phase2_exact_head.py").resolve()
+spec = importlib.util.spec_from_file_location("dmc_phase2_exact_head", path)
+if spec is None or spec.loader is None:
+    raise SystemExit("ERROR: could not load canonical Phase-2 runner")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+print(module.EXPECTED_GRADLE)
+print(module.EXPECTED_JAVA_MAJOR)
+print(module.EXPECTED_NDK)
+print(module.EXPECTED_ANDROID_PLATFORM)
+print(module.EXPECTED_BUILD_TOOLS)
+print(module.EXPECTED_ANDROID_CMAKE)
+print(".".join(map(str, module.MIN_HOST_CMAKE)))
+PY
+)
+
+if [[ "${#phase2_contract[@]}" -ne 7 ]]; then
+  echo "ERROR: failed to import canonical Phase-2 toolchain contract." >&2
+  exit 1
+fi
+
+EXPECTED_GRADLE="${phase2_contract[0]}"
+EXPECTED_JAVA_MAJOR="${phase2_contract[1]}"
+EXPECTED_NDK="${phase2_contract[2]}"
+EXPECTED_PLATFORM="${phase2_contract[3]}"
+EXPECTED_BUILD_TOOLS="${phase2_contract[4]}"
+EXPECTED_ANDROID_CMAKE="${phase2_contract[5]}"
+MIN_HOST_CMAKE="${phase2_contract[6]}"
+
+python3 - "$MIN_HOST_CMAKE" <<'PY'
 import re
 import subprocess
+import sys
 
+minimum = tuple(int(part) for part in sys.argv[1].split("."))
 text = subprocess.check_output(["cmake", "--version"], text=True)
 match = re.search(r"cmake version\s+(\d+)\.(\d+)\.(\d+)", text)
 if not match:
     raise SystemExit("ERROR: could not parse CMake version")
 version = tuple(int(part) for part in match.groups())
-if version < (3, 22, 1):
+if version < minimum:
     raise SystemExit(
-        "ERROR: host CMake >= 3.22.1 is required; found " + ".".join(map(str, version))
+        "ERROR: host CMake >= " + ".".join(map(str, minimum)) +
+        " is required; found " + ".".join(map(str, version))
     )
 PY
 
@@ -142,8 +174,8 @@ fi
 
 java_home="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
 java_major="$(java -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p')"
-if [[ "$java_major" != "17" ]]; then
-  echo "ERROR: canonical Phase-2 build requires JDK 17; found major=$java_major" >&2
+if [[ "$java_major" != "$EXPECTED_JAVA_MAJOR" ]]; then
+  echo "ERROR: canonical Phase-2 build requires JDK $EXPECTED_JAVA_MAJOR; found major=$java_major" >&2
   exit 1
 fi
 
@@ -227,14 +259,14 @@ python_version="$(python3 --version 2>&1)"
 gradle_version="$($GRADLE_HOME/bin/gradle --version | sed -n 's/^Gradle //p' | head -n 1)"
 
 echo
-printf '%s\n' "Phase-2 self-hosted bootstrap: PASS"
+printf '%s\n' "Phase-2 direct-run bootstrap: PASS"
 printf '%s\n' "HEAD: $head_sha"
 printf '%s\n' "OS: $(uname -s)"
 printf '%s\n' "ARCH: $(uname -m)"
 printf '%s\n' "CMake: $cmake_version"
 printf '%s\n' "C++: $cxx_version"
 printf '%s\n' "Python: $python_version"
-printf '%s\n' "Java: 17"
+printf '%s\n' "Java: $EXPECTED_JAVA_MAJOR"
 printf '%s\n' "Gradle: $gradle_version"
 printf '%s\n' "Android SDK: $ANDROID_SDK_ROOT"
 printf '%s\n' "NDK: $EXPECTED_NDK"
