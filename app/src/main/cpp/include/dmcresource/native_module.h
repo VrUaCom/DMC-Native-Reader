@@ -19,6 +19,9 @@ enum class ModuleKind : std::uint8_t {
 
 struct NativeModule;
 
+// ModuleRun is the fail-closed ABI inside Native Reader. Implementations may
+// call allocating helpers internally, but every ModuleRun entry point must catch
+// all exceptions and return a minimal rejected PipelineResult.
 using ModuleRun = PipelineResult (*)(const NativeModule& module,
                                      std::string_view filename,
                                      const std::uint8_t* bytes,
@@ -37,13 +40,17 @@ struct NativeModule final {
 
 class NativeModuleRegistry final {
 public:
-    [[nodiscard]] static const NativeModule* find(std::string_view family) noexcept;
-    [[nodiscard]] static const std::vector<NativeModule>& modules() noexcept;
+    // Registry initialization uses std::vector and may allocate on first use;
+    // run_decode_pipeline owns the outer fail-closed exception boundary.
+    [[nodiscard]] static const NativeModule* find(std::string_view family);
+    [[nodiscard]] static const std::vector<NativeModule>& modules();
 };
 
+// Allocating internal helper. Exceptions propagate to the owning ModuleRun
+// boundary rather than being hidden behind a false noexcept promise.
 [[nodiscard]] PipelineResult structural_pipeline(const ProbeResult& probe,
                                                  const char* module_id,
-                                                 std::string detail) noexcept;
+                                                 std::string detail);
 
 // Native Reader routes geometry, texture and EVT inspection through portable
 // C++23 product modules. DDS and PTX intentionally share one texture
