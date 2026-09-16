@@ -1,8 +1,12 @@
 name: DMC Native Reader v1.x hardening
 
+# Migration batching policy: do not run this expensive release gate for every
+# synchronize commit while the PR is draft. Run it manually when needed or once
+# the complete migration candidate is promoted to Ready for review.
 on:
   pull_request:
     branches: ["main"]
+    types: [ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -105,9 +109,8 @@ jobs:
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          # Installed package/code hard limit is 4 MiB. Since base.apk is part
-          # of that footprint, any APK >4 MiB is already an impossible device
-          # candidate and must fail before Samsung acceptance.
+          # Installed app hard limit is 4 MiB. Since base.apk is part of that
+          # footprint, any APK >4 MiB is already an impossible device candidate.
           MAX_APK_BYTES=$((4 * 1024 * 1024))
           MAX_NATIVE_BYTES=$((4 * 1024 * 1024))
           test -f "$DEBUG_APK"
