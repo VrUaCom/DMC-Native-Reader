@@ -6,6 +6,7 @@
 #include "dmcresource/cpp23_profile.h"
 #include "dmcresource/native_module.h"
 #include "dmcresource/spider/cpp23_language.h"
+#include "dmcresource/texture_companion.h"
 
 namespace {
 
@@ -41,6 +42,22 @@ static_assert(noexcept(std::declval<dmcresource::ModuleRun>()(
     nullptr,
     0U,
     std::declval<const dmcresource::ProbeResult&>())));
+
+// Texture-companion attachment builds diagnostics and decoded banks, so it is
+// intentionally throwing-capable below the Spider OperationFn catch boundary.
+// The pure capability gate remains a fail-closed noexcept query.
+static_assert(noexcept(dmcresource::texture_companion::can_attach(
+    std::declval<const dmcresource::texture_companion::ModelTextureView&>())));
+static_assert(!noexcept(dmcresource::texture_companion::attach_ptx(
+    std::string_view{},
+    nullptr,
+    0U,
+    std::declval<const dmcresource::texture_companion::ModelTextureView&>())));
+static_assert(!noexcept(dmcresource::texture_companion::attach_shared_ptx(
+    std::string_view{},
+    nullptr,
+    0U,
+    std::span<const dmcresource::texture_companion::ModelTextureView>{})));
 
 }  // namespace
 
