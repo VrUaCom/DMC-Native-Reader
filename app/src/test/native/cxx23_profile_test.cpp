@@ -1,8 +1,10 @@
 #include <cassert>
 #include <cstdint>
 #include <string_view>
+#include <utility>
 
 #include "dmcresource/cpp23_profile.h"
+#include "dmcresource/native_module.h"
 #include "dmcresource/spider/cpp23_language.h"
 
 namespace {
@@ -26,6 +28,19 @@ static_assert(dmcresource::spider::cpp23::StateObject<TestState>);
 static_assert(!dmcresource::spider::cpp23::StateObject<TestState*>);
 static_assert(std::byteswap<std::uint32_t>(0x11223344U) == 0x44332211U);
 static_assert(std::to_underlying(TestError::Rejected) == 7U);
+
+// C++23 migration exception contract: allocating helpers are allowed to throw,
+// while the portable pipeline and NativeModule ABI remain explicit fail-closed
+// noexcept boundaries.
+static_assert(!noexcept(dmcresource::probe({}, nullptr, 0U)));
+static_assert(!noexcept(dmcresource::NativeModuleRegistry::modules()));
+static_assert(noexcept(dmcresource::run_decode_pipeline({}, nullptr, 0U)));
+static_assert(noexcept(std::declval<dmcresource::ModuleRun>()(
+    std::declval<const dmcresource::NativeModule&>(),
+    std::string_view{},
+    nullptr,
+    0U,
+    std::declval<const dmcresource::ProbeResult&>())));
 
 }  // namespace
 
