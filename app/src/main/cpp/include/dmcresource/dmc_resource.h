@@ -29,9 +29,12 @@ struct ProbeResult {
     const char* mime_type{"application/octet-stream"};
 };
 
+// Extension routing normalizes a std::string and can allocate. The decode
+// pipeline owns the fail-closed exception boundary; do not advertise noexcept
+// on this allocating helper.
 ProbeResult probe(std::string_view filename,
                   const std::uint8_t* bytes,
-                  std::size_t size) noexcept;
+                  std::size_t size);
 
 std::string describe_resource(std::string_view filename,
                               const std::uint8_t* bytes,
