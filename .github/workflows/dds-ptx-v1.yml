@@ -1,20 +1,17 @@
 name: DMC Native Reader DDS PTX core gate
 
-# Migration batching policy: this targeted host gate is cheap relative to the
-# full Android gate, but it still must not run for every synchronize commit in a
-# draft migration PR. Use workflow_dispatch during development, or run once when
-# the full candidate is marked Ready for review.
+# Migration batching policy: this is a targeted diagnostic/recovery gate only.
+# The canonical Phase-2 candidate runs through android.yml. Keep this workflow
+# manual-only so Ready-for-review cannot start a duplicate host build and burn
+# additional hosted-runner minutes.
 on:
-  pull_request:
-    branches: ["main"]
-    types: [ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  EXPECTED_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   dds-ptx-host:
