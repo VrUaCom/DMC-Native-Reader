@@ -1,5 +1,7 @@
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -47,10 +49,12 @@ static_assert(noexcept(std::declval<dmcresource::ModuleRun>()(
 // TextureSet builds std::string/vector/image storage. Keep those utilities
 // throwing-capable below the module/Spider catch boundaries; only pure lookup
 // and span helpers remain noexcept.
-static_assert(!noexcept(dmcresource::texture_set::parse_dds({})));
-static_assert(!noexcept(dmcresource::texture_set::parse_ptx({})));
+static_assert(!noexcept(dmcresource::texture_set::parse_dds(
+    std::span<const std::byte>{})));
+static_assert(!noexcept(dmcresource::texture_set::parse_ptx(
+    std::span<const std::byte>{})));
 static_assert(!noexcept(dmcresource::texture_set::decode_base_mip(
-    {},
+    std::span<const std::byte>{},
     std::declval<const dmcresource::texture_set::Slot&>(),
     nullptr,
     nullptr)));
@@ -78,7 +82,7 @@ static_assert(!noexcept(dmcresource::texture_companion::attach_shared_ptx(
 int main() {
     dmcresource::cpp23::Result<int, TestError> value = 42;
     assert(value.has_value());
-    assert(*value == 42;
+    assert(*value == 42);
 
     dmcresource::spider::cpp23::Result<int, TestError> rejected =
         std::unexpected(TestError::Rejected);
