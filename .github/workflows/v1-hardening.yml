@@ -1,19 +1,17 @@
 name: DMC Native Reader v1.x hardening
 
-# Migration batching policy: do not run this expensive release gate for every
-# synchronize commit while the PR is draft. Run it manually when needed or once
-# the complete migration candidate is promoted to Ready for review.
+# Migration batching policy: this expensive workflow is a manual hardening/
+# recovery gate only. The canonical Phase-2 candidate runs through android.yml.
+# Keeping this manual-only prevents Ready-for-review from launching a second
+# full host+Android evidence build and wasting hosted-runner minutes.
 on:
-  pull_request:
-    branches: ["main"]
-    types: [ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  EXPECTED_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   hardening:
@@ -22,8 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # pull_request defaults to the synthetic merge ref. Release evidence
-          # must bind to the exact candidate head that will be reviewed/tested.
           ref: ${{ env.EXPECTED_SOURCE_SHA }}
           submodules: recursive
 
@@ -109,8 +105,6 @@ jobs:
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          # Installed app hard limit is 4 MiB. Since base.apk is part of that
-          # footprint, any APK >4 MiB is already an impossible device candidate.
           MAX_APK_BYTES=$((4 * 1024 * 1024))
           MAX_NATIVE_BYTES=$((4 * 1024 * 1024))
           test -f "$DEBUG_APK"
@@ -120,7 +114,6 @@ jobs:
           test "$(stat -c%s "$DEBUG_APK")" -le "$MAX_APK_BYTES"
           test "$(stat -c%s "$RELEASE_APK")" -le "$MAX_APK_BYTES"
 
-          # Duplicate ZIP names are never accepted in either package variant.
           test -z "$(zipinfo -1 "$DEBUG_APK" | sort | uniq -d)"
           test -z "$(zipinfo -1 "$RELEASE_APK" | sort | uniq -d)"
 
