@@ -40,6 +40,21 @@ namespace dmcresource::module_support {
     return out;
 }
 
+// Literal diagnostics are common on early guard/catch paths that already sit in
+// noexcept adapters. Construct the std::string inside this boundary so an OOM
+// becomes a minimal rejected result instead of escaping before reject() starts.
+[[nodiscard]] inline PipelineResult reject(const ProbeResult& probe,
+                                           const char* module_id,
+                                           const char* detail) noexcept {
+    try {
+        return reject(
+            probe, module_id,
+            std::string{detail != nullptr ? detail : ""});
+    } catch (...) {
+        return reject_minimal(probe);
+    }
+}
+
 [[nodiscard]] inline bool magic4(const BinaryReader& reader,
                                  std::size_t offset,
                                  char a,
