@@ -41,11 +41,11 @@ fi
 "${SUDO[@]}" apt-get update
 "${SUDO[@]}" apt-get install -y --no-install-recommends \
   build-essential \
+  binutils \
   ca-certificates \
   cmake \
   curl \
   git \
-  binutils \
   ninja-build \
   python3 \
   unzip \
@@ -77,6 +77,48 @@ if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
+python3 - <<'PY'
+import re
+import subprocess
+
+text = subprocess.check_output(["cmake", "--version"], text=True)
+match = re.search(r"cmake version\s+(\d+)\.(\d+)\.(\d+)", text)
+if not match:
+    raise SystemExit("ERROR: could not parse CMake version")
+version = tuple(int(part) for part in match.groups())
+if version < (3, 22, 1):
+    raise SystemExit(
+        "ERROR: CMake >= 3.22.1 is required; found " + ".".join(map(str, version))
+    )
+PY
+
+probe_dir="$(mktemp -d)"
+trap 'rm -rf "$probe_dir"' EXIT
+cat > "$probe_dir/cpp23_probe.cpp" <<'CPP'
+#include <bit>
+#include <cstdint>
+#include <expected>
+#include <utility>
+
+enum class ProbeEnum : unsigned { value = 1 };
+
+int main() {
+    std::expected<int, int> value = 7;
+    const auto swapped = std::byteswap(std::uint32_t{0x01020304u});
+    const auto underlying = std::to_underlying(ProbeEnum::value);
+    return (!value.has_value() || swapped == 0u || underlying != 1u) ? 1 : 0;
+}
+CPP
+
+if ! c++ -std=c++23 "$probe_dir/cpp23_probe.cpp" -o "$probe_dir/cpp23_probe"; then
+  echo "ERROR: host C++ compiler/standard library lacks the required C++23 surface." >&2
+  echo "Required: std::expected, std::byteswap, std::to_underlying." >&2
+  echo "Use a newer Ubuntu/WSL x64 environment (Ubuntu 24.04 LTS recommended)." >&2
+  exit 1
+fi
+
+"$probe_dir/cpp23_probe"
+
 cmake_version="$(cmake --version | head -n 1)"
 cxx_version="$(c++ --version | head -n 1)"
 python_version="$(python3 --version 2>&1)"
@@ -88,6 +130,7 @@ printf '%s\n' "ARCH: $(uname -m)"
 printf '%s\n' "CMake: $cmake_version"
 printf '%s\n' "C++: $cxx_version"
 printf '%s\n' "Python: $python_version"
+printf '%s\n' "C++23 capability probe: PASS"
 echo
 printf '%s\n' "Next steps:"
 printf '%s\n' "1. In GitHub: Settings -> Actions -> Runners -> New self-hosted runner."
