@@ -1,10 +1,16 @@
 name: DMC Native Reader core architecture
 
+# Migration batching policy:
+# - protect main on every push;
+# - do not burn hosted-runner minutes on every synchronize commit in a draft PR;
+# - run the full candidate gate explicitly with workflow_dispatch or once when
+#   the migration PR is promoted to Ready for review.
 on:
   push:
-    branches: ["main", "feature/png-export-multi-mod-v27"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
+    types: [ready_for_review]
   workflow_dispatch:
 
 permissions:
