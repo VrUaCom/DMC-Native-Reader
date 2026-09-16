@@ -41,12 +41,14 @@ struct AttachmentResult final {
 // Attach a complete PTX companion to one neutral model texture-slot projection.
 // Physical PTX/DDS parsing and on-demand base-mip decode are delegated to the
 // reusable TextureSet module. The returned texture bank is indexed by local PTX
-// slot and decodes only the slots required by the model.
+// slot and decodes only the slots required by the model. Diagnostic/result
+// construction may allocate; the Spider OperationFn/public action boundary is
+// responsible for converting allocation failure into fail-closed behavior.
 [[nodiscard]] AttachmentResult attach_ptx(
     std::string_view filename,
     const std::uint8_t* bytes,
     std::size_t size,
-    const ModelTextureView& model) noexcept;
+    const ModelTextureView& model);
 
 // Decode one PTX bank for several source-local model projections. Required local
 // slots are unioned before decoding, so a shared companion used by several MOD
@@ -56,6 +58,6 @@ struct AttachmentResult final {
     std::string_view filename,
     const std::uint8_t* bytes,
     std::size_t size,
-    std::span<const ModelTextureView> models) noexcept;
+    std::span<const ModelTextureView> models);
 
 }  // namespace dmcresource::texture_companion
