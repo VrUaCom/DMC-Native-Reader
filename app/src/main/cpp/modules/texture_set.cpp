@@ -14,7 +14,7 @@ namespace dds_bc = dmc::rengine::codecs::dds_bc;
 namespace dmc3 = dmc::rengine::profiles::dmc3;
 
 [[nodiscard]] dds_bc::ParseResult parse_exact_dds(
-    std::span<const std::byte> bytes) noexcept {
+    std::span<const std::byte> bytes) {
     auto parsed = dds_bc::parse(bytes);
     if (parsed.ok() && parsed.document.total_size != bytes.size()) {
         return dds_bc::ParseResult{
@@ -60,7 +60,7 @@ namespace dmc3 = dmc::rengine::profiles::dmc3;
 
 }  // namespace
 
-ParseResult parse_dds(std::span<const std::byte> source) noexcept {
+ParseResult parse_dds(std::span<const std::byte> source) {
     ParseResult out;
     if (source.empty()) {
         out.detail = "DDS rejected: empty source";
@@ -112,7 +112,7 @@ ParseResult parse_dds(std::span<const std::byte> source) noexcept {
     return out;
 }
 
-ParseResult parse_ptx(std::span<const std::byte> source) noexcept {
+ParseResult parse_ptx(std::span<const std::byte> source) {
     ParseResult out;
     if (source.empty()) {
         out.detail = "PTX rejected: empty source";
@@ -167,7 +167,7 @@ bool decode_base_mip(
     std::span<const std::byte> source,
     const Slot& slot,
     ImagePreview* out,
-    std::string* detail) noexcept {
+    std::string* detail) {
     if (out == nullptr) return false;
     *out = {};
 
