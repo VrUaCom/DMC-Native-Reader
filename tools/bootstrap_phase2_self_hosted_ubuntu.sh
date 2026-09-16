@@ -18,6 +18,7 @@ EXPECTED_PLATFORM="android-36"
 EXPECTED_BUILD_TOOLS="36.0.0"
 EXPECTED_ANDROID_CMAKE="3.22.1"
 ANDROID_CMDLINE_TOOLS_REVISION="15859902"
+ANDROID_CMDLINE_TOOLS_SHA256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "ERROR: Phase-2 self-hosted evidence requires Linux." >&2
@@ -176,6 +177,7 @@ if [[ ! -x "$SDKMANAGER" ]]; then
   cmdline_unpack="$probe_dir/android-cmdline-tools"
   mkdir -p "$cmdline_unpack"
   curl -fsSL "$cmdline_url" -o "$cmdline_zip"
+  printf '%s  %s\n' "$ANDROID_CMDLINE_TOOLS_SHA256" "$cmdline_zip" | sha256sum -c -
   unzip -q "$cmdline_zip" -d "$cmdline_unpack"
   rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
   mv "$cmdline_unpack/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
