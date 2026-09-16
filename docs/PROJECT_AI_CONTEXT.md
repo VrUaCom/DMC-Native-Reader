@@ -116,8 +116,29 @@ A future standalone Spider language/compiler requires a separate research/review
 ### Black Widow
 Black Widow is typed application/capability state authority. Platform UI must not reconstruct capabilities from filenames, extensions or resource counts.
 
-### JNI / Android shell
-JNI/Java own platform transport/lifecycle only: URI/FD handling, Bitmap transport, dialogs/presentation wiring. Do not put DMC parsing, attachment resolution, graph semantics or texture ownership policy in Java/JNI.
+### JNI / Android shell — current phase
+Until Phase #54, JNI/Java own platform transport/lifecycle/presentation wiring only: URI/FD handling, Bitmap transport, dialogs, Views and Android lifecycle. Do not put DMC parsing, attachment resolution, graph semantics or texture ownership policy in Java/JNI.
+
+### Future native Android shell / Java retirement
+Phase #54 begins **only after** Phase 5 stable WorkspaceGraph bindings and Review Gate #44 GO.
+
+Authority split for that phase:
+- Spider C++ = product orchestration/actions;
+- Black Widow = capability/application-policy authority;
+- WorkspaceGraph = stable resource identity/binding authority;
+- portable C++ controller = navigation/session/presentation model;
+- Android platform layer = lifecycle/window/input/document transport/presentation only.
+
+Preferred target is zero authored Java/Kotlin application source and zero app DEX using supported `android.app.NativeActivity`/NDK contracts. This is evidence-gated, not an unconditional metric: current SAF open/create/tree workflows depend on result-returning Android Intents while documented `ANativeActivityCallbacks` has no `onActivityResult`. #54 must prove a supported public zero-DEX path end-to-end. If required UX cannot be preserved, only a #55-reviewed minimal framework callback shim may remain.
+
+Forbidden shortcuts:
+- hidden/private Android APIs;
+- reflection hacks;
+- generated/obfuscated DEX merely to claim “zero Java”;
+- removing required SAF/open/export functionality solely to hit the metric;
+- moving DMC semantics into the platform layer.
+
+No Android `Uri`, `Intent`, `Activity`, `View`, `Bitmap` or JNI object may become part of portable Core/WorkspaceGraph/format APIs.
 
 ### Session / product modules
 `Session` is state/container ownership, not a dumping ground for format/product logic. Composition, placement, texture actions and graph operations belong in bounded modules.
@@ -164,6 +185,8 @@ Current rule:
 - `CXX_EXTENSIONS OFF`;
 - Gradle must not impose a global `-std=` on vendored dependency targets.
 
+Pinned `DMCRengine::ReaderCore` remains an external read-only target-scoped C++20 dependency and must not be pulled globally into the Native Reader language policy.
+
 C++23 facilities are adopted only when they solve a concrete product/architecture problem. Preferred examples:
 - `std::expected` for typed fail-closed result/error APIs;
 - `std::byteswap` for explicit endian conversion;
@@ -181,48 +204,75 @@ Explicit product/runtime boundaries remain fail-closed:
 - JNI is the final platform catch-all; no C++ exception may cross JNI;
 - catch-path fallback must not depend on allocating a diagnostic string.
 
-`docs/NOEXCEPT_BOUNDARY_V33.md` is the current technical evidence note for this contract.
+`docs/NOEXCEPT_BOUNDARY_V33.md` is the current technical evidence note for this contract. #49 is DONE on the source/static side; real compile/CTest evidence remains part of Phase 2.
 
-Do not perform mass syntax modernization for style alone.
+Do not perform mass syntax modernization for style alone. C++26/C++29 may be researched separately but are not production dependencies for this migration program.
 
-C++26/C++29 may be researched separately but are not production dependencies for this migration program.
+## 7. Android/native runtime and package contract
 
-## 7. Android/native runtime contract
-
-Canonical Android architecture:
+Canonical current Android architecture:
 - exactly one packaged native runtime DSO: `lib/arm64-v8a/libdmcviewer.so`;
 - `DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into it;
 - no recovery shim/core DSO chain;
 - no `dlopen`/`dlsym` delegation architecture;
-- direct Bitmap transport;
+- direct Bitmap transport during the current Java-shell phase;
 - JNI export parity;
 - 16 KiB ZIP/ELF page-alignment requirements;
 - package/native/Dex size budgets remain release gates.
 
 ### Weight and duplicate discipline
-Application size is an architecture constraint, not a final release cleanup task.
+Application size is an architecture constraint, not a final cleanup task.
 
-Hard package pre-gates for the current v33 line:
-- **APK <= 4 MiB (4,194,304 bytes)**;
+Hard package pre-gates for the current v33 Java-shell phase:
+- **debug APK <= 4 MiB**;
+- **unsigned release APK <= 4 MiB**;
 - native DSO <= 4 MiB;
 - Dex total <= 1 MiB.
 
 Every exact-head build/review must:
 - record APK, native DSO and Dex byte sizes;
-- enforce the hard pre-gates above unless Viktor explicitly changes the architecture limit;
-- use historical size deltas only when the old artifact/packaging/measurement provenance is proven comparable;
-- surface the largest packaged entries so unexpected growth is attributable;
+- surface largest packaged entries;
 - reject duplicate ZIP entry names;
 - reject duplicate native/runtime implementations and duplicate `.so`/`.dex` payloads;
-- treat large identical packaged payloads as a blocker until deduplicated or explicitly justified by review;
-- reject duplicate CMake source/test entries rather than compiling the same responsibility twice;
-- prefer shared decoded/content storage where exact identity permits it, while preserving logical resource/slot/binding identity and provenance.
+- require unexplained large duplicate payload waste = 0;
+- reject duplicate CMake source/test entries;
+- prefer shared decoded/content storage where exact identity permits it while preserving logical identity/provenance.
 
-**Installed-size hard gate:** Android `StorageStats.getAppBytes()` on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed APK. This is the canonical installed-app metric because it covers APK files, optimized compiler output and unpacked native libraries while mutable data/cache are reported separately. Record the raw byte value, device/build identity and APK SHA-256 in device evidence. `tools/measure_installed_footprint.py` is the bounded device-evidence tool and must fail closed if authoritative StorageStats `code:` bytes are unavailable; do not fall back to filesystem-directory heuristics.
+Historical v26 growth percentages are not acceptance authority unless exact artifact, packaging and measurement provenance are proven comparable.
 
-`APK <= 4 MiB` is necessary but not sufficient for the installed hard gate: installed optimized/runtime artifacts can still make a sub-4-MiB APK exceed the 4 MiB app-byte allocation on device.
+### Phase-2 debug / unsigned-release evidence
+The canonical Phase-2 runner is `tools/run_phase2_exact_head.py`. It must use the live candidate HEAD and produce two independent SHA-bound verifier reports.
 
-Do not trade modularity for duplicated binaries, duplicated decoded banks, copied parsers, copied executors or parallel compatibility implementations. A smaller package is not allowed to erase semantic identity; deduplication must happen at the correct ownership/storage layer.
+Debug APK must prove:
+- package/version/ABI identity;
+- expected stable public test signer;
+- valid APK v2 signature;
+- structurally present APK Signing Block;
+- one DSO / JNI export parity;
+- ZIP + ELF 16 KiB alignment;
+- size and dedup contracts.
+
+Unsigned release APK must independently prove the same package/ABI/JNI/layout/size/dedup contract, plus:
+- no valid signer;
+- no APK Signing Block;
+- no JAR signature material.
+
+A broken/invalid signature is not accepted as “unsigned”. The runner independently validates critical signing fields from verifier JSON before writing the Phase-2 manifest.
+
+### Installed-size hard gate and Android user scope
+Android `StorageStats.getAppBytes()` on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed installable APK. Mutable data/cache are reported separately and are not part of this code-size gate.
+
+`tools/measure_installed_footprint.py` must:
+- use authoritative package StorageStats `code:` bytes;
+- fail closed if the metric is unavailable;
+- never substitute filesystem `du`;
+- require one installed `base.apk`;
+- hash installed `base.apk` and compare it to the reviewed local APK SHA-256;
+- use the **same explicit Android `--user` scope** for `pm path` and `pm get-package-storage-stats`;
+- default to `current` unless an explicit numeric user/profile is intentionally targeted;
+- record requested/resolved/current user identity, device identity, build fingerprint and package version.
+
+`APK <=4 MiB` is necessary but not sufficient: optimized/runtime artifacts can still make installed app bytes exceed the hard gate.
 
 ## 8. Repository hygiene
 
@@ -237,7 +287,7 @@ For the current migration program:
 - remove dead duplicates once the replacement is canonical and Git history preserves the old version;
 - keep changes bounded and reviewable.
 
-PTX documentation for this migration is intentionally consolidated. Canonical PTX addendum files are:
+Canonical PTX addendum files:
 - `PTX_RUNTIME_IMPORT_DECISION_V33.md`;
 - `PTX_RUNTIME_IMPORT_ARCHITECTURE_V33.md`;
 - `PTX_RUNTIME_IMPORT_TZ_V33.md`;
@@ -250,16 +300,15 @@ Do not recreate deleted marker/sync/queue/status-fragment documents. Execution s
 During a large migration such as the C++23 transition, do **not** spend hosted-runner minutes on every intermediate commit.
 
 Canonical migration mode:
-- keep the migration PR in **draft** while implementation is incomplete;
-- heavy PR workflows must not run on every `synchronize` event during draft migration;
-- `main` remains protected by its normal push gate;
-- use `workflow_dispatch` only for a deliberately chosen checkpoint when execution evidence is worth the cost;
-- run the complete PR evidence set once the whole bounded migration candidate is ready and the PR is promoted to **Ready for review**;
-- after that run, Review Gate #41 decides whether more execution is justified;
-- do not manually re-run runner-less jobs repeatedly when the known blocker is account/quota/runner allocation;
-- preserve local/static review and regression authoring between checkpoints without weakening final exact-head evidence.
+- keep the migration PR in draft while implementation/evidence is incomplete;
+- heavy PR workflows must not run on every draft `synchronize` event;
+- use one deliberately chosen exact-head checkpoint;
+- do not manually rerun known runner-less jobs repeatedly;
+- preserve static review/regression authoring without weakening final evidence.
 
-When tooling writes multiple remote commits during migration, that is not a reason to run CI for each commit. The final PR may be squash-merged so the release history retains one logical migration change while evidence remains attached to the exact reviewed head.
+Known hosted failure signature is `runner_id=0`, `steps=[]`: this is infrastructure evidence only, never compile/test PASS or FAIL.
+
+If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable, provided it uses the live exact candidate HEAD and complete canonical contract.
 
 ## 9. Testing is architecture
 
@@ -273,27 +322,38 @@ Important v33/C++23 gates include:
 - `ptx_runtime_compat_test` for the approved runtime slice and `0xCB48` placement boundary;
 - SCM authority regression;
 - module/Spider/texture/PNG/render/inspection regressions;
-- `tools/test_verify_device_apk.py` for package/dedup/4 MiB policy;
-- exact APK verifier;
-- physical Samsung acceptance for the release candidate.
+- `tools/test_verify_device_apk.py` for package/signing/dedup/4 MiB/user-scope policy;
+- exact APK verifier for **both** Phase-2 APKs;
+- physical Samsung acceptance for the final production-signed release candidate.
 
-PTX #52 architecture acceptance does **not** mean the new runtime regression has executed. Until the final exact-head CMake/CTest checkpoint runs, its status is `EXECUTION_PENDING`.
+PTX #52 architecture acceptance does **not** mean the new runtime regression has executed. Until the final exact-head CMake/CTest checkpoint runs, its execution status remains pending.
 
-## 10. Release/evidence rule
+## 10. Release and artifact-identity rule
 
 Never promote based on stale SHA or an unexecuted workflow.
 
-Required promotion evidence:
+Keep three artifact identities separate:
+1. **debug/device-test APK** — test-signed diagnostic/installable artifact;
+2. **unsigned release APK** — pre-signing structural/package evidence;
+3. **production-signed release APK** — final installable Samsung/promotion artifact.
+
+Production signing changes APK bytes and SHA-256. Therefore:
+- never use the unsigned release SHA as final Samsung/promotion identity;
+- after production signing, rerun the full applicable package/ABI/JNI/ZIP/ELF/16 KiB/dedup/size verifier on the signed APK;
+- verify the expected production certificate SHA-256, not merely “not the debug signer”;
+- record the exact post-signing APK SHA-256;
+- #45 and Samsung acceptance must use that same signed artifact/hash;
+- publication must consume that exact verified signed artifact rather than rebuild/re-sign a lookalike.
+
+Final device measurement must call `tools/measure_installed_footprint.py` with `--expected-apk-sha256 <post-signing-sha256>` and explicit `--user` scope. Installed `base.apk` SHA must equal the reviewed post-signing APK SHA.
+
+Required promotion evidence eventually includes:
 1. exact-head host build/tests actually execute and pass;
-2. clean Android debug/release builds, each APK <= 4 MiB;
-3. package/APK verifier passes;
-4. exact APK hash and absolute package-size/dedup metrics are recorded;
-5. required physical Samsung scenarios pass on that artifact, including `StorageStats.getAppBytes()` <= 4 MiB;
+2. clean Android debug + unsigned release structural evidence;
+3. production-signed post-signing verifier evidence;
+4. exact package/hash/size/dedup metrics;
+5. physical Samsung scenarios + `StorageStats.getAppBytes()` <=4 MiB on the exact signed artifact;
 6. Viktor explicitly approves merge/release.
-
-`runner_id=0`, `steps=[]`, skipped workflows or pre-run infrastructure failures are **not** compile/test evidence.
-
-The canonical alternate exact-head evidence entrypoint is `tools/run_phase2_exact_head.py`. It must verify the expected HEAD/toolchain/submodule identity and run the same host CMake/CTest + Android build/verifier contract used by active workflows. If GitHub hosted runners remain unavailable, an authorized local/self-hosted execution of this runner is acceptable evidence; static review alone is not.
 
 ## 11. Mandatory Project task format
 
@@ -301,7 +361,7 @@ Every Project phase/subtask must contain:
 1. **Objective** — intended outcome.
 2. **Substages** — bounded research/implementation slices where useful.
 3. **Additional work / evidence needed** — missing research, access, measurements, builds or device evidence.
-4. **AI ТЗ / execution prompt** — copy-ready prompt another AI/engineer can execute without guessing.
+4. **AI ТЗ / execution prompt** — copy-ready instruction another AI/engineer can execute without guessing.
 5. **Constraints / authority boundaries** — forbidden scope/shortcuts.
 6. **Exit criteria** — proof required to close.
 7. **Next review gate** — mandatory review before the next implementation phase.
@@ -313,7 +373,7 @@ A completed phase does **not** directly unlock the next phase. It unlocks a revi
 Each review gate must:
 - inspect exact HEAD and real evidence;
 - compare implementation against architecture/acceptance criteria;
-- classify findings as blocker / correction / optimization / deferred;
+- classify findings as `BLOCKER / CORRECTION / OPTIMIZATION / DEFERRED`;
 - re-read and update the next phase specification;
 - split/add subtasks if needed;
 - issue explicit `GO` or `NO-GO`.
@@ -322,18 +382,20 @@ On `NO-GO`, return work to the responsible phase. Do not bypass the gate.
 
 Current program flow:
 
-`#35 -> #36 -> (#49 + #50 -> #51 -> #52) -> #41 -> #37 -> #42 -> #38 -> #43 -> #39 -> #44 -> #40 -> #45`
+`#35 -> #36 -> (#49 + #50 -> #51 -> #52) -> #41 -> #37 -> #42 -> #38 -> #43 -> #39 -> #44 -> #54 -> #55 -> #40 -> #45`
 
 Current state:
 - #35 complete;
-- #49 source/static hardening complete; execution pending with Phase 2;
+- #49 complete on source/static hardening;
 - #50 complete: `GO_WITH_CORRECTIONS`;
 - #51 source complete;
 - #52 complete: `ARCHITECTURE GO / EXECUTION_PENDING`;
-- #36 remains open because #47 real runner/build execution is unresolved and #48 size evidence must flow into #41;
-- #41 must not issue global GO without one real exact-head CMake/CTest/Android verifier evidence set.
+- #36 source/static ready but open because #47 real exact-head execution is unresolved;
+- #48 waiting for real artifact/device evidence;
+- #41 is blocked until #36 has one real complete evidence set;
+- #54 is future platform migration and cannot start before #44 GO.
 
-Master tracker: `#34`.
+Master tracker: `#34`. Entry card: `#46`.
 
 ## 13. AI decision rule
 
@@ -348,4 +410,4 @@ Before implementing any fix:
 
 Working principle:
 
-**Rengine knows canonical game semantics. Native Reader models/presents them. The explicit PTX RuntimeCompat exception is a bounded Reader-owned projection of reviewed evidence, not a second general reverse engine. Spider organizes product execution. Black Widow governs capabilities. JNI/UI transport and display. WorkspaceGraph owns stable product identity. No layer silently substitutes itself for another.**
+**Rengine knows canonical game semantics. Native Reader models/presents them. The explicit PTX RuntimeCompat exception is a bounded Reader-owned projection of reviewed evidence, not a second general reverse engine. Spider organizes product execution. Black Widow governs capabilities. WorkspaceGraph owns stable product identity. The Android platform layer transports and presents. No layer silently substitutes itself for another.**
