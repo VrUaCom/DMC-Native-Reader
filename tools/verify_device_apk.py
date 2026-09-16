@@ -1,4 +1,4 @@
-"""Verify the modular 1.0.6/v33 DMC Native Reader device APK."""
+"""Verify the modular 1.0.6/v33 DMC Native Reader APK."""
 import argparse
 import hashlib
 import json
@@ -23,6 +23,10 @@ SPIDER_CPP_PROFILE = "spider.cpp23"
 PAGE_ALIGNMENT = 16 * 1024
 RENGINE_PIN = "caf445226c7d61841292384a10e93e4f58ae29f9"
 SCM_AUTHORITY_BASE = "809824882c60487962e99ee41f16bca7e3ccbc83"
+SIGNING_STABLE_DEBUG = "stable-debug"
+SIGNING_UNSIGNED_RELEASE = "unsigned-release"
+EXPECTED_DEBUG_SIGNER_SHA256 = (
+    "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
 
 
 def require(condition, message):
@@ -32,6 +36,38 @@ def require(condition, message):
 
 def run(*command):
     return subprocess.check_output(command, text=True, stderr=subprocess.STDOUT)
+
+
+def validate_signing_result(policy, returncode, output):
+    """Validate apksigner output without weakening package verification.
+
+    Debug/device-test APKs must carry the stable public test signer and a valid
+    v2 signature. Canonical release evidence is deliberately unsigned until the
+    external production-signing authority runs, so it must expose no valid
+    signer and must not verify as a signed APK.
+    """
+    digests = re.findall(
+        r"Signer #\d+ certificate SHA-256 digest: ([0-9a-f]+)", output)
+    v2_verified = (
+        "Verified using v2 scheme (APK Signature Scheme v2): true" in output)
+
+    if policy == SIGNING_STABLE_DEBUG:
+        require(returncode == 0, "Stable device-test APK signature verification failed")
+        require(digests == [EXPECTED_DEBUG_SIGNER_SHA256],
+                "Stable device-test signing certificate mismatch")
+        require(v2_verified, "APK v2 signature missing")
+        return True, EXPECTED_DEBUG_SIGNER_SHA256
+
+    if policy == SIGNING_UNSIGNED_RELEASE:
+        require(returncode != 0,
+                "Unsigned release APK unexpectedly verifies as signed")
+        require(not digests,
+                "Unsigned release APK unexpectedly exposes signer certificate")
+        require(not v2_verified,
+                "Unsigned release APK unexpectedly reports a valid v2 signature")
+        return False, None
+
+    raise SystemExit("Unknown signing policy: " + str(policy))
 
 
 def find_duplicate_names(names):
@@ -90,6 +126,12 @@ def main():
     parser.add_argument("apk", type=Path)
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_SDK_ROOT") or
                         os.environ.get("ANDROID_HOME"))
+    parser.add_argument(
+        "--signing-policy",
+        choices=(SIGNING_STABLE_DEBUG, SIGNING_UNSIGNED_RELEASE),
+        default=SIGNING_STABLE_DEBUG,
+        help="Expected APK signing state for this artifact.",
+    )
     args = parser.parse_args()
     require(args.sdk, "Provide --sdk or ANDROID_SDK_ROOT")
     sdk = Path(args.sdk)
@@ -115,16 +157,16 @@ def main():
         r"extractNativeLibs[^\n]*=(?:false\b|(?:\(type 0x12\))?0x0+\b)",
         manifest), "extractNativeLibs must be false for the modular APK")
 
-    signing = run(str(apksigner), "verify", "--verbose", "--print-certs",
-                  str(args.apk))
-    expected_signer = (
-        "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
-    digests = re.findall(
-        r"Signer #\d+ certificate SHA-256 digest: ([0-9a-f]+)", signing)
-    require(digests == [expected_signer],
-            "Stable device-test signing certificate mismatch")
-    require("Verified using v2 scheme (APK Signature Scheme v2): true" in signing,
-            "APK v2 signature missing")
+    signing_process = subprocess.run(
+        [str(apksigner), "verify", "--verbose", "--print-certs", str(args.apk)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    signing = signing_process.stdout or ""
+    signed, signer_sha256 = validate_signing_result(
+        args.signing_policy, signing_process.returncode, signing)
 
     duplicate_entry_names = []
     duplicate_large_payload_groups = []
@@ -369,7 +411,9 @@ def main():
         "cpp_standard_authority": CPP_STANDARD_AUTHORITY,
         "spider_cpp_profile": SPIDER_CPP_PROFILE,
         "ndk_version": NDK_VERSION,
-        "signer_sha256": expected_signer,
+        "signing_policy": args.signing_policy,
+        "signed": signed,
+        "signer_sha256": signer_sha256,
         "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
         "native_dso_count": 1,
         "native_dso": "lib/arm64-v8a/libdmcviewer.so",
