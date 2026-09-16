@@ -35,7 +35,9 @@ Confirmed false/noisy `noexcept` patterns existed in or around:
 - EventTbl projection and inspection construction;
 - texture projection/PTX child/diagnostic construction;
 - Spider compose/placement/texture action plan initialization;
-- some diagnostic string updates inside `noexcept` helpers.
+- lazy child-source retention followed by diagnostic string append;
+- TextureSet parse/decode utilities that build strings/vectors/RGBA storage;
+- TextureCompanion attachment functions that build diagnostic strings and decoded texture banks.
 
 ## Remediated in the current Phase-2 branch
 
@@ -46,16 +48,28 @@ Confirmed false/noisy `noexcept` patterns existed in or around:
 - model, texture and EventTbl ModuleRun/OperationFn boundaries catch all exceptions, including first-use dynamic Crusader Plan initialization.
 - Spider MOD composition and explicit model placement actions catch first-use Plan allocation.
 - Spider PTX whole-session/per-part actions catch first-use Plan allocation and operation/helper allocation while preserving transactional texture replacement semantics.
-- `cxx23_profile_test` statically checks the intended throwing/noexcept boundary shape.
+- `retain_lazy_child_sources()` is now a truthful throwing-capable internal Session helper; `open_session()` is already a throwing-capable product helper and no false noexcept boundary remains there.
+- `TextureSet::parse_dds`, `TextureSet::parse_ptx` and `TextureSet::decode_base_mip` are now truthful throwing-capable utilities; pure lookup/span helpers remain `noexcept`.
+- `TextureCompanion::attach_ptx` and `attach_shared_ptx` are now truthful throwing-capable utilities below the Spider OperationFn/public action catch boundary; `can_attach` remains `noexcept` because its lower required-slot collection catches allocation locally.
+- `cxx23_profile_test` statically checks the intended throwing/noexcept boundary shape for Core, TextureSet and TextureCompanion APIs.
 
-MOD/SCM canonical adapters already wrap their main allocating projections in catch-all blocks. Large semantic adapter files are not rewritten merely to change comments or style; functional/exception changes must remain bounded and evidence-backed.
+MOD/SCM canonical adapters keep their `noexcept` public adapter contract because their allocating main projections execute inside catch-all blocks and their early literal guard rejections use the dedicated `module_support::reject(..., const char*) noexcept` overload, which falls back to `reject_minimal()` if diagnostic allocation fails. Large semantic adapter files are not rewritten merely to change comments or style.
+
+Targeted re-audit also confirmed:
+- `composite_placement` catches allocation inside its noexcept projection boundary;
+- `model_texture_binding` catches vector allocation inside its noexcept slot-collection API;
+- Spider Black Widow capability evaluation performs no allocation;
+- Spider compose/model-placement/PTX action public noexcept boundaries catch first-use Plan/helper allocation;
+- model/EventTbl ModuleRun and OperationFn callbacks catch all allocating work.
+
+Repository search found no remaining literal `C++20` diagnostic string requiring a source-only wording rewrite.
 
 ## Remaining review items
 
-- audit remaining Native Reader `noexcept` helpers for string/vector writes outside a local or enclosing catch boundary;
-- specifically re-check resource/session diagnostic paths such as lazy-child retention;
-- remove or replace stale runtime diagnostics that call the product reader `C++20` without rewriting semantic adapters solely for wording;
-- perform the single final batched host CTest + Android APK/verifier run after source migration is complete.
+- perform the final source/diff review for this subtask on current HEAD;
+- perform the single final batched host CTest + Android APK/verifier run after all Phase-2 source migration is complete.
+
+No build/test PASS is implied by static review alone.
 
 ## Phase 2 rules
 
@@ -74,6 +88,9 @@ MOD/SCM canonical adapters already wrap their main allocating projections in cat
 - model / texture / EVT ModuleRun functions catch Plan initialization and post-execution diagnostic allocation.
 - model / texture / EVT OperationFn callbacks cannot terminate on helper allocation failure.
 - Spider compose / placement / texture public noexcept actions catch first-use Plan initialization.
+- Session lazy-child retention is not falsely noexcept.
+- TextureSet parse/decode allocation is below explicit catch boundaries.
+- TextureCompanion attachment allocation is below Spider catch boundaries.
 - no Android/JNI API appears in portable Core while fixing boundaries.
 - no duplicate executor, parser, Plan implementation, or compatibility module is introduced.
 - full native CTest and Android APK build are executed once at the end of the batched Phase 2 migration, not on every intermediate commit.
