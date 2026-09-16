@@ -42,11 +42,13 @@ constexpr crusader::OperationId kProjectEventTbl = 1U;
     return EvidenceLevel::PreservedUndecoded;
 }
 
+// Allocating projection helper. The OperationFn boundary below owns catch-all
+// conversion to a no-allocation rejected PipelineResult.
 PipelineResult project_evt(
     const NativeModule& module,
     const std::uint8_t* bytes,
     std::size_t size,
-    const ProbeResult& probe) noexcept {
+    const ProbeResult& probe) {
     if (bytes == nullptr) {
         return module_support::reject(
             probe, module.id, "EVT rejected: null input");
@@ -212,9 +214,14 @@ bool project_event_operation(void* raw, std::uint32_t) noexcept {
     if (state == nullptr || state->module == nullptr || state->probe == nullptr) {
         return false;
     }
-    state->result = project_evt(
-        *state->module, state->bytes, state->size, *state->probe);
-    return state->result.accepted;
+    try {
+        state->result = project_evt(
+            *state->module, state->bytes, state->size, *state->probe);
+        return state->result.accepted;
+    } catch (...) {
+        state->result = module_support::reject_minimal(*state->probe);
+        return false;
+    }
 }
 
 const crusader::Plan& event_plan() {
@@ -238,28 +245,34 @@ PipelineResult run_evt_module(
     const std::uint8_t* bytes,
     std::size_t size,
     const ProbeResult& probe) noexcept {
-    EventExecutionState state{
-        .module = &module,
-        .bytes = bytes,
-        .size = size,
-        .probe = &probe,
-    };
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kProjectEventTbl,
-            .execute = &project_event_operation,
-        },
-    };
+    try {
+        EventExecutionState state{
+            .module = &module,
+            .bytes = bytes,
+            .size = size,
+            .probe = &probe,
+        };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kProjectEventTbl,
+                .execute = &project_event_operation,
+            },
+        };
 
-    const auto report = crusader::execute(event_plan(), bindings, &state);
-    if (!report.ok()) {
-        if (!state.result.detail.empty()) return state.result;
-        std::string detail = "Crusader EventTbl execution failed: ";
-        detail += crusader::to_string(report.status);
-        return module_support::reject(probe, module.id, std::move(detail));
+        // event_plan() may allocate its NativePlan on first use; keep that
+        // initialization inside this ModuleRun exception boundary.
+        const auto report = crusader::execute(event_plan(), bindings, &state);
+        if (!report.ok()) {
+            if (!state.result.detail.empty()) return state.result;
+            std::string detail = "Crusader EventTbl execution failed: ";
+            detail += crusader::to_string(report.status);
+            return module_support::reject(probe, module.id, std::move(detail));
+        }
+        state.result.modules.push_back({"spider.crusader", true});
+        return state.result;
+    } catch (...) {
+        return module_support::reject_minimal(probe);
     }
-    state.result.modules.push_back({"spider.crusader", true});
-    return state.result;
 }
 
 } // namespace
