@@ -73,20 +73,28 @@ const crusader::Plan& compose_plan() {
     const std::vector<const Session*>& parts,
     const std::vector<std::string>& names,
     int primary_host_index) noexcept {
-    ComposeState state{
-        .parts = &parts,
-        .names = &names,
-        .primary_host_index = primary_host_index,
-    };
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kComposeMods,
-            .execute = &compose_operation,
-        },
-    };
-    const auto report = spider_cpp::execute(compose_plan(), bindings, state);
-    if (!report.ok()) return nullptr;
-    return std::move(state.result);
+    try {
+        ComposeState state{
+            .parts = &parts,
+            .names = &names,
+            .primary_host_index = primary_host_index,
+        };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kComposeMods,
+                .execute = &compose_operation,
+            },
+        };
+
+        // compose_plan() builds a dynamic NativePlan on first use. Keep that
+        // allocation inside this noexcept product boundary so failure returns
+        // no composite instead of terminating the process.
+        const auto report = spider_cpp::execute(compose_plan(), bindings, state);
+        if (!report.ok()) return nullptr;
+        return std::move(state.result);
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 }  // namespace
