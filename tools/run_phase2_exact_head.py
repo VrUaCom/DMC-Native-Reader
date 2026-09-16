@@ -192,9 +192,18 @@ def read_verifier_report(
         if report.get("signed") is not True or \
                 report.get("signer_sha256") != EXPECTED_DEBUG_SIGNER_SHA256:
             fail("debug APK verifier report is missing the stable test signing authority")
+        if report.get("apk_signing_block_present") is not True:
+            fail("debug APK report does not prove a structurally present APK Signing Block")
     elif expected_signing_policy == "unsigned-release":
         if report.get("signed") is not False or report.get("signer_sha256") is not None:
             fail("release APK verifier report does not prove the unsigned boundary")
+        if report.get("apk_signing_block_present") is not False:
+            fail("release APK report still contains an APK Signing Block")
+        if report.get("jar_signature_entries") != []:
+            fail(
+                "release APK report still contains JAR signature material: "
+                f"{report.get('jar_signature_entries')}"
+            )
     else:
         fail(f"unknown expected signing policy: {expected_signing_policy}")
     if report.get("duplicate_zip_entry_names"):
