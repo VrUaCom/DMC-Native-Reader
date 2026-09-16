@@ -121,10 +121,14 @@ void refresh_attachment_completion(Session* session) noexcept {
     }
 }
 
+// Allocating helpers intentionally propagate exceptions to attach_operation,
+// the Crusader OperationFn noexcept boundary. That keeps transactional PTX
+// logic unchanged while preventing diagnostic/allocation failure from calling
+// std::terminate.
 [[nodiscard]] bool attach_single(Session* session,
                                  std::string_view name,
                                  const std::uint8_t* bytes,
-                                 std::size_t size) noexcept {
+                                 std::size_t size) {
     if (session == nullptr) return false;
     auto attachment = texture_companion::attach_ptx(
         name, bytes, size,
@@ -147,7 +151,7 @@ void refresh_attachment_completion(Session* session) noexcept {
 [[nodiscard]] bool attach_shared(Session* session,
                                  std::string_view name,
                                  const std::uint8_t* bytes,
-                                 std::size_t size) noexcept {
+                                 std::size_t size) {
     if (session == nullptr || session->composite_parts.empty()) return false;
 
     std::vector<texture_companion::ModelTextureView> views;
@@ -214,7 +218,7 @@ void refresh_attachment_completion(Session* session) noexcept {
                                int part_index,
                                std::string_view name,
                                const std::uint8_t* bytes,
-                               std::size_t size) noexcept {
+                               std::size_t size) {
     if (session == nullptr || part_index < 0 ||
         static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
         return false;
@@ -319,8 +323,13 @@ void refresh_attachment_completion(Session* session) noexcept {
             return false;
         }
     } catch (...) {
-        session->texture_attachment_detail =
-            part.name + ": PTX rejected: texture binding allocation failed";
+        // This helper is throwing-capable; the OperationFn boundary will turn a
+        // diagnostic allocation failure here into a normal false result.
+        try {
+            session->texture_attachment_detail =
+                part.name + ": PTX rejected: texture binding allocation failed";
+        } catch (...) {
+        }
         return false;
     }
 
@@ -347,18 +356,23 @@ struct AttachState final {
 bool attach_operation(void* raw, std::uint32_t) noexcept {
     auto* state = static_cast<AttachState*>(raw);
     if (state == nullptr || state->session == nullptr) return false;
-    if (state->part_index >= 0) {
-        state->result = attach_part(
-            state->session, state->part_index,
-            state->name, state->bytes, state->size);
-    } else if (!state->session->composite_parts.empty()) {
-        state->result = attach_shared(
-            state->session, state->name, state->bytes, state->size);
-    } else {
-        state->result = attach_single(
-            state->session, state->name, state->bytes, state->size);
+    try {
+        if (state->part_index >= 0) {
+            state->result = attach_part(
+                state->session, state->part_index,
+                state->name, state->bytes, state->size);
+        } else if (!state->session->composite_parts.empty()) {
+            state->result = attach_shared(
+                state->session, state->name, state->bytes, state->size);
+        } else {
+            state->result = attach_single(
+                state->session, state->name, state->bytes, state->size);
+        }
+        return state->result;
+    } catch (...) {
+        state->result = false;
+        return false;
     }
-    return state->result;
 }
 
 const crusader::Plan& attach_plan() {
@@ -383,21 +397,27 @@ bool attach_ptx(
     std::string_view name,
     const std::uint8_t* bytes,
     std::size_t size) noexcept {
-    AttachState state{
-        .session = session,
-        .name = name,
-        .bytes = bytes,
-        .size = size,
-        .part_index = kWholeSession,
-    };
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kAttachPtx,
-            .execute = &attach_operation,
-        },
-    };
-    const auto report = crusader::execute(attach_plan(), bindings, &state);
-    return report.ok() && state.result;
+    try {
+        AttachState state{
+            .session = session,
+            .name = name,
+            .bytes = bytes,
+            .size = size,
+            .part_index = kWholeSession,
+        };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kAttachPtx,
+                .execute = &attach_operation,
+            },
+        };
+        // attach_plan() may allocate its NativePlan on first use. Keep it inside
+        // the public noexcept product boundary so failure stays fail-closed.
+        const auto report = crusader::execute(attach_plan(), bindings, &state);
+        return report.ok() && state.result;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool attach_ptx_to_part(
@@ -406,21 +426,25 @@ bool attach_ptx_to_part(
     std::string_view name,
     const std::uint8_t* bytes,
     std::size_t size) noexcept {
-    AttachState state{
-        .session = session,
-        .name = name,
-        .bytes = bytes,
-        .size = size,
-        .part_index = part_index,
-    };
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kAttachPtx,
-            .execute = &attach_operation,
-        },
-    };
-    const auto report = crusader::execute(attach_plan(), bindings, &state);
-    return report.ok() && state.result;
+    try {
+        AttachState state{
+            .session = session,
+            .name = name,
+            .bytes = bytes,
+            .size = size,
+            .part_index = part_index,
+        };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kAttachPtx,
+                .execute = &attach_operation,
+            },
+        };
+        const auto report = crusader::execute(attach_plan(), bindings, &state);
+        return report.ok() && state.result;
+    } catch (...) {
+        return false;
+    }
 }
 
 }  // namespace dmcresource::spider::actions
