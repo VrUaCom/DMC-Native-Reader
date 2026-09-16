@@ -38,6 +38,8 @@ REQUIRED_RUNTIME_MARKERS = (b"spider.crusader", b"spider.cpp23")
 EXPECTED_MAX_APK_BYTES = 4 * 1024 * 1024
 EXPECTED_MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 EXPECTED_SIZE_AUTHORITY = "absolute-package-metrics+StorageStats.getAppBytes<=4MiB"
+EXPECTED_DEBUG_SIGNER_SHA256 = (
+    "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
 
 
 def fail(message: str) -> NoReturn:
@@ -162,16 +164,39 @@ def read_host_compiler_evidence() -> tuple[str, str]:
     return compiler_id.group(1).strip(), compiler_path.group(1).strip()
 
 
-def read_verifier_report() -> dict:
-    verifier_log = EVIDENCE_DIR / "05-device-apk-verifier.log"
+def read_verifier_report(
+    log_name: str,
+    expected_apk: Path,
+    expected_signing_policy: str,
+) -> dict:
+    verifier_log = EVIDENCE_DIR / f"{log_name}.log"
     if not verifier_log.is_file():
-        fail("APK verifier log missing after successful verifier execution")
+        fail(f"APK verifier log missing after successful execution: {verifier_log}")
     try:
         report = json.loads(verifier_log.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         fail(f"APK verifier did not emit machine-readable JSON evidence: {error}")
     if not isinstance(report, dict):
         fail("APK verifier report is not a JSON object")
+    if report.get("sha256") != sha256_file(expected_apk):
+        fail(
+            f"APK verifier report is not bound to {expected_apk.name}: "
+            f"{report.get('sha256')}"
+        )
+    if report.get("signing_policy") != expected_signing_policy:
+        fail(
+            "APK verifier signing policy mismatch: "
+            f"{report.get('signing_policy')} != {expected_signing_policy}"
+        )
+    if expected_signing_policy == "stable-debug":
+        if report.get("signed") is not True or \
+                report.get("signer_sha256") != EXPECTED_DEBUG_SIGNER_SHA256:
+            fail("debug APK verifier report is missing the stable test signing authority")
+    elif expected_signing_policy == "unsigned-release":
+        if report.get("signed") is not False or report.get("signer_sha256") is not None:
+            fail("release APK verifier report does not prove the unsigned boundary")
+    else:
+        fail(f"unknown expected signing policy: {expected_signing_policy}")
     if report.get("duplicate_zip_entry_names"):
         fail("APK verifier reported duplicate ZIP entry names")
     duplicate_waste = report.get("duplicate_large_payload_waste_bytes")
@@ -406,17 +431,36 @@ def main() -> int:
         require_runtime_markers(apk)
 
     run_logged(
-        "05-device-apk-verifier",
+        "05-debug-apk-verifier",
         [
             sys.executable,
             "tools/verify_device_apk.py",
             str(debug_apk.relative_to(ROOT)),
             "--sdk",
             str(sdk),
+            "--signing-policy",
+            "stable-debug",
         ],
         env=env,
     )
-    package_policy = read_verifier_report()
+    debug_package_policy = read_verifier_report(
+        "05-debug-apk-verifier", debug_apk, "stable-debug")
+
+    run_logged(
+        "06-release-apk-verifier",
+        [
+            sys.executable,
+            "tools/verify_device_apk.py",
+            str(release_apk.relative_to(ROOT)),
+            "--sdk",
+            str(sdk),
+            "--signing-policy",
+            "unsigned-release",
+        ],
+        env=env,
+    )
+    release_package_policy = read_verifier_report(
+        "06-release-apk-verifier", release_apk, "unsigned-release")
 
     final_dirty = capture(["git", "status", "--porcelain", "--untracked-files=all"])
     if final_dirty.strip():
@@ -457,7 +501,11 @@ def main() -> int:
             "installed_measurement_required_on_device": True,
             "historical_v26_growth_comparable": False,
         },
-        "package_policy": package_policy,
+        "package_policy": debug_package_policy,
+        "package_policies": {
+            "debug": debug_package_policy,
+            "release": release_package_policy,
+        },
         "artifacts": {
             "debug_apk": {
                 "path": str(debug_apk.relative_to(ROOT)),
