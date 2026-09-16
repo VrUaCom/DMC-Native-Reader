@@ -62,23 +62,28 @@ bool project_model_operation(void* raw, std::uint32_t) noexcept {
         return false;
     }
 
-    switch (state->module->format) {
-    case Format::Scm:
-        state->result = adapters::run_scm_adapter(
-            *state->probe, state->bytes, state->size, state->module->id);
-        break;
-    case Format::Mod:
-        state->result = adapters::run_mod_adapter(
-            *state->probe, state->bytes, state->size, state->module->id);
-        publish_mod_attachment_selector(state);
-        break;
-    default:
-        state->result = module_support::reject(
-            *state->probe, state->module->id,
-            "Model pipeline rejected: invalid module route");
+    try {
+        switch (state->module->format) {
+        case Format::Scm:
+            state->result = adapters::run_scm_adapter(
+                *state->probe, state->bytes, state->size, state->module->id);
+            break;
+        case Format::Mod:
+            state->result = adapters::run_mod_adapter(
+                *state->probe, state->bytes, state->size, state->module->id);
+            publish_mod_attachment_selector(state);
+            break;
+        default:
+            state->result = module_support::reject(
+                *state->probe, state->module->id,
+                "Model pipeline rejected: invalid module route");
+            return false;
+        }
+        return state->result.accepted;
+    } catch (...) {
+        state->result = module_support::reject_minimal(*state->probe);
         return false;
     }
-    return state->result.accepted;
 }
 
 const crusader::Plan& model_plan() {
@@ -101,30 +106,37 @@ PipelineResult run_model_module(const NativeModule& module,
                                 const std::uint8_t* bytes,
                                 std::size_t size,
                                 const ProbeResult& probe) noexcept {
-    ModelExecutionState state{
-        .module = &module,
-        .bytes = bytes,
-        .size = size,
-        .probe = &probe,
-    };
+    try {
+        ModelExecutionState state{
+            .module = &module,
+            .bytes = bytes,
+            .size = size,
+            .probe = &probe,
+        };
 
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kProjectModel,
-            .execute = &project_model_operation,
-        },
-    };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kProjectModel,
+                .execute = &project_model_operation,
+            },
+        };
 
-    const auto report = crusader::execute(model_plan(), bindings, &state);
-    if (!report.ok()) {
-        if (!state.result.detail.empty()) return state.result;
-        std::string detail = "Crusader model execution failed: ";
-        detail += crusader::to_string(report.status);
-        return module_support::reject(probe, module.id, std::move(detail));
+        // model_plan() may allocate on first use. Keep that initialization inside
+        // the ModuleRun exception boundary so allocation failure is a rejected
+        // resource rather than std::terminate from this noexcept ABI.
+        const auto report = crusader::execute(model_plan(), bindings, &state);
+        if (!report.ok()) {
+            if (!state.result.detail.empty()) return state.result;
+            std::string detail = "Crusader model execution failed: ";
+            detail += crusader::to_string(report.status);
+            return module_support::reject(probe, module.id, std::move(detail));
+        }
+
+        state.result.modules.push_back({"spider.crusader", true});
+        return state.result;
+    } catch (...) {
+        return module_support::reject_minimal(probe);
     }
-
-    state.result.modules.push_back({"spider.crusader", true});
-    return state.result;
 }
 
 }  // namespace
