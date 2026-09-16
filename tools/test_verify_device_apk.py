@@ -83,6 +83,15 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
                 + "\nVerified using v2 scheme (APK Signature Scheme v2): true\n",
             )
 
+    def test_android_user_scope_is_explicit_and_single_user(self):
+        self.assertEqual(measure.normalize_user_arg("current"), "current")
+        self.assertEqual(measure.normalize_user_arg("0"), "0")
+        self.assertEqual(measure.normalize_user_arg("010"), "10")
+        for invalid in ("all", "-1", "owner", ""):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(SystemExit):
+                    measure.normalize_user_arg(invalid)
+
     def test_installed_storage_stats_parser(self):
         stats = measure.parse_storage_stats(
             "code: 4194304 bytes (4 Mb)\n"
