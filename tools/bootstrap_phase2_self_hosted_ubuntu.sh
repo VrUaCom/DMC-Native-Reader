@@ -72,8 +72,6 @@ required_commands=(
   cmake
   ctest
   c++
-  javac
-  java
   unzip
   zipinfo
   strings
@@ -172,8 +170,27 @@ if ! c++ -std=c++23 "$probe_dir/cpp23_probe.cpp" -o "$probe_dir/cpp23_probe"; th
 fi
 "$probe_dir/cpp23_probe"
 
-java_home="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
-java_major="$(java -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p')"
+java_home=""
+preferred_java_home="/usr/lib/jvm/java-17-openjdk-amd64"
+if [[ -x "$preferred_java_home/bin/java" && -x "$preferred_java_home/bin/javac" ]]; then
+  java_home="$preferred_java_home"
+else
+  while IFS= read -r candidate; do
+    candidate_home="$(dirname "$(dirname "$candidate")")"
+    candidate_major="$("$candidate_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p')"
+    if [[ "$candidate_major" == "$EXPECTED_JAVA_MAJOR" ]]; then
+      java_home="$candidate_home"
+      break
+    fi
+  done < <(find /usr/lib/jvm -type f -path '*/bin/javac' 2>/dev/null | sort)
+fi
+
+if [[ -z "$java_home" ]]; then
+  echo "ERROR: installed JDK $EXPECTED_JAVA_MAJOR could not be located under /usr/lib/jvm." >&2
+  exit 1
+fi
+
+java_major="$("$java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p')"
 if [[ "$java_major" != "$EXPECTED_JAVA_MAJOR" ]]; then
   echo "ERROR: canonical Phase-2 build requires JDK $EXPECTED_JAVA_MAJOR; found major=$java_major" >&2
   exit 1
@@ -192,6 +209,9 @@ if [[ ! -x "$GRADLE_HOME/bin/gradle" ]]; then
   printf '%s  %s\n' "$(tr -d '[:space:]' < "$gradle_sha")" "$gradle_zip" | sha256sum -c -
   unzip -q "$gradle_zip" -d "$TOOL_ROOT"
 fi
+
+export JAVA_HOME="$java_home"
+export PATH="$JAVA_HOME/bin:$PATH"
 
 if [[ "$($GRADLE_HOME/bin/gradle --version | sed -n 's/^Gradle //p' | head -n 1)" != "$EXPECTED_GRADLE" ]]; then
   echo "ERROR: Gradle $EXPECTED_GRADLE bootstrap verification failed." >&2
@@ -225,10 +245,9 @@ if [[ ! -x "$SDKMANAGER" || "$actual_cmdline_marker" != "$EXPECTED_CMDLINE_MARKE
   printf '%s\n' "$EXPECTED_CMDLINE_MARKER" > "$CMDLINE_MARKER"
 fi
 
-export JAVA_HOME="$java_home"
 export ANDROID_SDK_ROOT
 export ANDROID_HOME
-export PATH="$GRADLE_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+export PATH="$GRADLE_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$JAVA_HOME/bin:$PATH"
 
 yes | "$SDKMANAGER" --licenses >/dev/null || true
 "$SDKMANAGER" \
@@ -259,7 +278,7 @@ mkdir -p "$(dirname "$ENV_FILE")"
   printf 'export ANDROID_SDK_ROOT=%q\n' "$ANDROID_SDK_ROOT"
   printf 'export ANDROID_HOME=%q\n' "$ANDROID_HOME"
   printf 'export GRADLE_HOME=%q\n' "$GRADLE_HOME"
-  printf 'export PATH=%q\n' "$GRADLE_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+  printf 'export PATH=%q\n' "$GRADLE_HOME/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$JAVA_HOME/bin:$PATH"
 } > "$ENV_FILE"
 
 head_sha="$(git rev-parse HEAD)"
@@ -276,7 +295,7 @@ printf '%s\n' "ARCH: $(uname -m)"
 printf '%s\n' "CMake: $cmake_version"
 printf '%s\n' "C++: $cxx_version"
 printf '%s\n' "Python: $python_version"
-printf '%s\n' "Java: $EXPECTED_JAVA_MAJOR"
+printf '%s\n' "Java: $EXPECTED_JAVA_MAJOR ($JAVA_HOME)"
 printf '%s\n' "Gradle: $gradle_version"
 printf '%s\n' "Android SDK: $ANDROID_SDK_ROOT"
 printf '%s\n' "NDK: $EXPECTED_NDK"
@@ -284,8 +303,8 @@ printf '%s\n' "C++23 capability probe: PASS"
 echo
 printf '%s\n' "Direct exact-head evidence command:"
 printf '  source %q\n' "$ENV_FILE"
-printf '  python3 tools/run_phase2_exact_head.py --sdk %q --gradle %q --expected-head %q\n' \
-  "$ANDROID_SDK_ROOT" "$GRADLE_HOME/bin/gradle" "$head_sha"
+printf '  python3 tools/run_phase2_exact_head.py --sdk %q --gradle %q --java %q --expected-head %q\n' \
+  "$ANDROID_SDK_ROOT" "$GRADLE_HOME/bin/gradle" "$JAVA_HOME/bin/java" "$head_sha"
 echo
 printf '%s\n' "Optional GitHub self-hosted registration can still be added later."
 printf '%s\n' "Do not commit runner tokens, credentials, or local build outputs."
