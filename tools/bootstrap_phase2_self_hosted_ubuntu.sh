@@ -198,21 +198,31 @@ if [[ "$($GRADLE_HOME/bin/gradle --version | sed -n 's/^Gradle //p' | head -n 1)
   exit 1
 fi
 
-ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"
+# Use a Phase-2-owned Android SDK by default. This prevents an unrelated global
+# Android SDK / stale cmdline-tools/latest from influencing exact-head evidence.
+ANDROID_SDK_ROOT="${PHASE2_ANDROID_SDK_ROOT:-$TOOL_ROOT/android-sdk}"
 ANDROID_HOME="$ANDROID_SDK_ROOT"
 mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
 SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+CMDLINE_MARKER="$ANDROID_SDK_ROOT/cmdline-tools/.dmc-phase2-cli"
+EXPECTED_CMDLINE_MARKER="$ANDROID_CMDLINE_TOOLS_REVISION:$ANDROID_CMDLINE_TOOLS_SHA256"
+actual_cmdline_marker=""
+if [[ -f "$CMDLINE_MARKER" ]]; then
+  actual_cmdline_marker="$(cat "$CMDLINE_MARKER")"
+fi
 
-if [[ ! -x "$SDKMANAGER" ]]; then
+if [[ ! -x "$SDKMANAGER" || "$actual_cmdline_marker" != "$EXPECTED_CMDLINE_MARKER" ]]; then
   cmdline_zip="$probe_dir/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_REVISION}_latest.zip"
   cmdline_url="https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS_REVISION}_latest.zip"
   cmdline_unpack="$probe_dir/android-cmdline-tools"
+  rm -rf "$cmdline_unpack"
   mkdir -p "$cmdline_unpack"
   curl -fsSL "$cmdline_url" -o "$cmdline_zip"
   printf '%s  %s\n' "$ANDROID_CMDLINE_TOOLS_SHA256" "$cmdline_zip" | sha256sum -c -
   unzip -q "$cmdline_zip" -d "$cmdline_unpack"
   rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
   mv "$cmdline_unpack/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+  printf '%s\n' "$EXPECTED_CMDLINE_MARKER" > "$CMDLINE_MARKER"
 fi
 
 export JAVA_HOME="$java_home"
