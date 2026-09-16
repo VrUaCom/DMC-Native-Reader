@@ -1,20 +1,32 @@
 name: DMC Native Reader core architecture
 
-# Migration batching policy:
-# - protect main on every push;
-# - do not burn hosted-runner minutes on every synchronize commit in a draft PR;
+# Canonical candidate gate:
+# - protect main when product/build inputs change;
+# - do not burn hosted-runner minutes on draft synchronize commits;
+# - skip docs-only changes;
+# - cancel superseded runs for the same PR/ref;
 # - run the full candidate gate explicitly with workflow_dispatch or once when
 #   the migration PR is promoted to Ready for review.
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     branches: ["main"]
     types: [ready_for_review]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: native-reader-core-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
