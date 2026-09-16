@@ -30,9 +30,18 @@ inline constexpr std::size_t kPoolLimitUnitsOffset = 0xcb0cU;
 inline constexpr std::size_t kPoolUpperUnitsOffset = 0xcb10U;
 inline constexpr std::size_t kPoolReservedUnitsOffset = 0xcb14U;
 inline constexpr std::size_t kPoolRemainingUnitsOffset = 0xcb18U;
-inline constexpr std::size_t kPoolStorageSize = 0xcb50U;
+inline constexpr std::size_t kPoolPrefixSize = 0xcb48U;
+inline constexpr std::size_t kPoolTailSize = 8U;
 inline constexpr std::size_t kManagerEntryCount = 32U;
 inline constexpr std::size_t kOpaquePayloadSize = 0x208U;
+
+using PoolPrefix = std::array<std::byte, kPoolPrefixSize>;
+
+struct PoolStorage final {
+    PoolPrefix prefix{};
+    std::array<std::byte, kPoolTailSize> preserved_tail{};
+};
+static_assert(sizeof(PoolStorage) == 0xcb50U);
 
 struct ManagerEntryImage final {
     std::uint64_t resource_key{};
@@ -103,7 +112,7 @@ void reset_manager_keys(ManagerImage& manager) noexcept {
 }  // namespace
 
 struct PtxRuntimeCompat::State final {
-    std::array<std::byte, kPoolStorageSize> pool{};
+    PoolStorage pool_storage{};
     ManagerImage manager{};
 };
 
@@ -126,19 +135,21 @@ std::expected<void, RuntimeError> PtxRuntimeCompat::initialize(
         }
     }
 
-    // 0x140331910 clears the represented 0xCB50-byte pool extent. It does not
-    // perform a manager release/reset in the recovered function.
-    state_->pool.fill(std::byte{0});
+    // 0x140331910 clears 0xCB50 bytes. Placement/configure operate only on the
+    // 0xCB48 prefix; the additional 8-byte tail is confirmed only as cleared
+    // storage and must not silently widen placement's represented memory view.
+    state_->pool_storage = {};
+    auto& pool = state_->pool_storage.prefix;
 
     if (auto result = write_at(
-            state_->pool,
+            pool,
             kPoolBaseUnitsOffset,
             static_cast<std::uint32_t>(config.word_4c));
         !result) {
         return result;
     }
     if (auto result = write_at(
-            state_->pool,
+            pool,
             kPoolUpperUnitsOffset,
             static_cast<std::uint32_t>(config.word_4e));
         !result) {
@@ -148,7 +159,7 @@ std::expected<void, RuntimeError> PtxRuntimeCompat::initialize(
     const auto remaining =
         static_cast<std::uint32_t>(config.word_4e) -
         static_cast<std::uint32_t>(config.word_4c);
-    return write_at(state_->pool, kPoolRemainingUnitsOffset, remaining);
+    return write_at(pool, kPoolRemainingUnitsOffset, remaining);
 }
 
 std::expected<void, RuntimeError> PtxRuntimeCompat::configure_reservation(
@@ -158,24 +169,26 @@ std::expected<void, RuntimeError> PtxRuntimeCompat::configure_reservation(
         return std::unexpected(RuntimeError::not_initialized);
     }
 
+    auto& pool = state_->pool_storage.prefix;
+
     // Preserve modulo-2^32 behavior of the recovered blocks << 5 path.
     const auto reserved = static_cast<std::uint32_t>(blocks << 5U);
     const auto limit = static_cast<std::uint32_t>(config.word_4e) - reserved;
     const auto remaining = limit - static_cast<std::uint32_t>(config.word_4c);
 
-    if (auto result = write_at(state_->pool, kPoolReservedUnitsOffset, reserved);
+    if (auto result = write_at(pool, kPoolReservedUnitsOffset, reserved);
         !result) {
         return result;
     }
-    if (auto result = write_at(state_->pool, kPoolLimitUnitsOffset, limit);
+    if (auto result = write_at(pool, kPoolLimitUnitsOffset, limit);
         !result) {
         return result;
     }
-    if (auto result = write_at(state_->pool, kPoolUpperUnitsOffset, limit);
+    if (auto result = write_at(pool, kPoolUpperUnitsOffset, limit);
         !result) {
         return result;
     }
-    if (auto result = write_at(state_->pool, kPoolRemainingUnitsOffset, remaining);
+    if (auto result = write_at(pool, kPoolRemainingUnitsOffset, remaining);
         !result) {
         return result;
     }
@@ -196,27 +209,28 @@ std::expected<void, RuntimeError> PtxRuntimeCompat::seed_record_for_inspection(
         return std::unexpected(offset.error());
     }
 
-    std::fill_n(state_->pool.begin() + static_cast<std::ptrdiff_t>(*offset),
+    auto& pool = state_->pool_storage.prefix;
+    std::fill_n(pool.begin() + static_cast<std::ptrdiff_t>(*offset),
                 kRecordSize,
                 std::byte{0});
 
-    if (auto result = write_at(state_->pool, *offset + 0x0eU, fields.length_0e);
+    if (auto result = write_at(pool, *offset + 0x0eU, fields.length_0e);
         !result) {
         return result;
     }
-    if (auto result = write_at(state_->pool, *offset + 0x18U, fields.word_18);
+    if (auto result = write_at(pool, *offset + 0x18U, fields.word_18);
         !result) {
         return result;
     }
-    if (auto result = write_at(state_->pool, *offset + 0x1cU, fields.signed_1c);
+    if (auto result = write_at(pool, *offset + 0x1cU, fields.signed_1c);
         !result) {
         return result;
     }
-    if (auto result = write_at(state_->pool, *offset + 0x26U, fields.length_26);
+    if (auto result = write_at(pool, *offset + 0x26U, fields.length_26);
         !result) {
         return result;
     }
-    return write_at(state_->pool, *offset + 0x44U, fields.word_44);
+    return write_at(pool, *offset + 0x44U, fields.word_44);
 }
 
 std::expected<void, RuntimeError> PtxRuntimeCompat::set_allocation_cell_for_inspection(
@@ -226,6 +240,8 @@ std::expected<void, RuntimeError> PtxRuntimeCompat::set_allocation_cell_for_insp
         return std::unexpected(RuntimeError::not_initialized);
     }
 
+    auto& pool = state_->pool_storage.prefix;
+
     // Limit fixture mutation to the represented allocation-map region before
     // the confirmed numeric pool fields. The recovered placement itself has
     // its own branch-specific bounds/omissions, preserved in place_record().
@@ -233,7 +249,7 @@ std::expected<void, RuntimeError> PtxRuntimeCompat::set_allocation_cell_for_insp
     if (cell >= kAllocationMapBytes) {
         return std::unexpected(RuntimeError::memory_out_of_range);
     }
-    state_->pool[kAllocationMapOffset + cell] =
+    pool[kAllocationMapOffset + cell] =
         occupied ? std::byte{1} : std::byte{0};
     return {};
 }
@@ -274,9 +290,11 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
         return std::unexpected(offset.error());
     }
 
-    const auto signed_1c = read_at<std::int16_t>(state_->pool, *offset + 0x1cU);
-    const auto word_44 = read_at<std::uint16_t>(state_->pool, *offset + 0x44U);
-    const auto word_18 = read_at<std::uint16_t>(state_->pool, *offset + 0x18U);
+    auto& pool = state_->pool_storage.prefix;
+
+    const auto signed_1c = read_at<std::int16_t>(pool, *offset + 0x1cU);
+    const auto word_44 = read_at<std::uint16_t>(pool, *offset + 0x44U);
+    const auto word_18 = read_at<std::uint16_t>(pool, *offset + 0x18U);
     if (!signed_1c) return std::unexpected(signed_1c.error());
     if (!word_44) return std::unexpected(word_44.error());
     if (!word_18) return std::unexpected(word_18.error());
@@ -287,25 +305,23 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
     std::int32_t palette_length = 0;
     if (length_mode == 0) {
         image_length = 1;
-        if (auto result = write_at(
-                state_->pool, *offset + 0x0eU, std::int16_t{1});
+        if (auto result = write_at(pool, *offset + 0x0eU, std::int16_t{1});
             !result) {
             return std::unexpected(result.error());
         }
         if (palette) {
             palette_length = 1;
-            if (auto result = write_at(
-                    state_->pool, *offset + 0x26U, std::int16_t{1});
+            if (auto result = write_at(pool, *offset + 0x26U, std::int16_t{1});
                 !result) {
                 return std::unexpected(result.error());
             }
         }
     } else {
-        const auto image = read_at<std::int16_t>(state_->pool, *offset + 0x0eU);
+        const auto image = read_at<std::int16_t>(pool, *offset + 0x0eU);
         if (!image) return std::unexpected(image.error());
         image_length = *image;
         if (palette) {
-            const auto extra = read_at<std::int16_t>(state_->pool, *offset + 0x26U);
+            const auto extra = read_at<std::int16_t>(pool, *offset + 0x26U);
             if (!extra) return std::unexpected(extra.error());
             palette_length = *extra;
         }
@@ -315,17 +331,17 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
         return std::unexpected(RuntimeError::invalid_length);
     }
 
-    const auto base_value = read_at<std::int32_t>(state_->pool, kPoolBaseUnitsOffset);
+    const auto base_value = read_at<std::int32_t>(pool, kPoolBaseUnitsOffset);
     if (!base_value) return std::unexpected(base_value.error());
     auto start = *base_value / 32;
 
-    const auto read_cell = [this](std::int64_t offset_value)
+    const auto read_cell = [&pool](std::int64_t offset_value)
         -> std::expected<std::byte, RuntimeError> {
         if (offset_value < 0 ||
-            offset_value >= static_cast<std::int64_t>(state_->pool.size())) {
+            offset_value >= static_cast<std::int64_t>(pool.size())) {
             return std::unexpected(RuntimeError::memory_out_of_range);
         }
-        return state_->pool[static_cast<std::size_t>(offset_value)];
+        return pool[static_cast<std::size_t>(offset_value)];
     };
 
     if (requested_index == 0) {
@@ -342,7 +358,7 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
 
             if (*cell != std::byte{0}) {
                 const auto limit_value =
-                    read_at<std::int32_t>(state_->pool, kPoolLimitUnitsOffset);
+                    read_at<std::int32_t>(pool, kPoolLimitUnitsOffset);
                 if (!limit_value) return std::unexpected(limit_value.error());
                 const auto limit = *limit_value / 32;
                 auto candidate = wrap_add(run, start);
@@ -364,14 +380,13 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
                 ++cursor;
                 run = wrap_add(run, 1);
                 if (run == wrap_add(image_length, palette_length)) {
-                    if (auto result = write_at(
-                            state_->pool, *offset + 0x06U, units(start));
+                    if (auto result = write_at(pool, *offset + 0x06U, units(start));
                         !result) {
                         return std::unexpected(result.error());
                     }
                     if (*word_18 == 0U) {
                         if (auto result = write_at(
-                                state_->pool,
+                                pool,
                                 *offset + 0x1eU,
                                 units(wrap_add(start, image_length)));
                             !result) {
@@ -388,7 +403,7 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
     // requested_index >= start the pool limit is not read at all.
     if (requested_index < start) {
         const auto limit_value =
-            read_at<std::int32_t>(state_->pool, kPoolLimitUnitsOffset);
+            read_at<std::int32_t>(pool, kPoolLimitUnitsOffset);
         if (!limit_value) return std::unexpected(limit_value.error());
         if (requested_index >= *limit_value / 32) {
             return PlacementStatus::rejected;
@@ -408,15 +423,15 @@ std::expected<PlacementStatus, RuntimeError> PtxRuntimeCompat::place_record(
     }
 
     const auto chosen = wrap_add(start, requested_index);
-    if (auto result = write_at(state_->pool, *offset + 0x06U, units(chosen));
+    if (auto result = write_at(pool, *offset + 0x06U, units(chosen));
         !result) {
         return std::unexpected(result.error());
     }
 
-    const auto raw_length = read_at<std::uint16_t>(state_->pool, *offset + 0x0eU);
+    const auto raw_length = read_at<std::uint16_t>(pool, *offset + 0x0eU);
     if (!raw_length) return std::unexpected(raw_length.error());
     if (auto result = write_at(
-            state_->pool,
+            pool,
             *offset + 0x1eU,
             units(wrap_add(chosen, static_cast<std::int32_t>(*raw_length))));
         !result) {
@@ -434,13 +449,14 @@ std::expected<RecordView, RuntimeError> PtxRuntimeCompat::inspect_record(
     const auto offset = record_offset(record);
     if (!offset) return std::unexpected(offset.error());
 
-    const auto units_06 = read_at<std::uint16_t>(state_->pool, *offset + 0x06U);
-    const auto length_0e = read_at<std::int16_t>(state_->pool, *offset + 0x0eU);
-    const auto word_18 = read_at<std::uint16_t>(state_->pool, *offset + 0x18U);
-    const auto signed_1c = read_at<std::int16_t>(state_->pool, *offset + 0x1cU);
-    const auto units_1e = read_at<std::uint16_t>(state_->pool, *offset + 0x1eU);
-    const auto length_26 = read_at<std::int16_t>(state_->pool, *offset + 0x26U);
-    const auto word_44 = read_at<std::uint16_t>(state_->pool, *offset + 0x44U);
+    const auto& pool = state_->pool_storage.prefix;
+    const auto units_06 = read_at<std::uint16_t>(pool, *offset + 0x06U);
+    const auto length_0e = read_at<std::int16_t>(pool, *offset + 0x0eU);
+    const auto word_18 = read_at<std::uint16_t>(pool, *offset + 0x18U);
+    const auto signed_1c = read_at<std::int16_t>(pool, *offset + 0x1cU);
+    const auto units_1e = read_at<std::uint16_t>(pool, *offset + 0x1eU);
+    const auto length_26 = read_at<std::int16_t>(pool, *offset + 0x26U);
+    const auto word_44 = read_at<std::uint16_t>(pool, *offset + 0x44U);
 
     if (!units_06) return std::unexpected(units_06.error());
     if (!length_0e) return std::unexpected(length_0e.error());
@@ -466,11 +482,12 @@ std::expected<PoolView, RuntimeError> PtxRuntimeCompat::inspect_pool() const noe
         return std::unexpected(RuntimeError::not_initialized);
     }
 
-    const auto base = read_at<std::uint32_t>(state_->pool, kPoolBaseUnitsOffset);
-    const auto limit = read_at<std::uint32_t>(state_->pool, kPoolLimitUnitsOffset);
-    const auto upper = read_at<std::uint32_t>(state_->pool, kPoolUpperUnitsOffset);
-    const auto reserved = read_at<std::uint32_t>(state_->pool, kPoolReservedUnitsOffset);
-    const auto remaining = read_at<std::uint32_t>(state_->pool, kPoolRemainingUnitsOffset);
+    const auto& pool = state_->pool_storage.prefix;
+    const auto base = read_at<std::uint32_t>(pool, kPoolBaseUnitsOffset);
+    const auto limit = read_at<std::uint32_t>(pool, kPoolLimitUnitsOffset);
+    const auto upper = read_at<std::uint32_t>(pool, kPoolUpperUnitsOffset);
+    const auto reserved = read_at<std::uint32_t>(pool, kPoolReservedUnitsOffset);
+    const auto remaining = read_at<std::uint32_t>(pool, kPoolRemainingUnitsOffset);
 
     if (!base) return std::unexpected(base.error());
     if (!limit) return std::unexpected(limit.error());
