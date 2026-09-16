@@ -6,7 +6,7 @@
 
 namespace dmcresource {
 
-const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
+const std::vector<NativeModule>& NativeModuleRegistry::modules() {
     static const std::vector<NativeModule> registry{
         scm_module(),
         mod_module(),
@@ -17,7 +17,7 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() noexcept {
     return registry;
 }
 
-const NativeModule* NativeModuleRegistry::find(std::string_view family) noexcept {
+const NativeModule* NativeModuleRegistry::find(std::string_view family) {
     const auto& registry = modules();
     const auto it = std::find_if(
         registry.begin(), registry.end(),
@@ -29,7 +29,7 @@ const NativeModule* NativeModuleRegistry::find(std::string_view family) noexcept
 
 PipelineResult structural_pipeline(const ProbeResult& probe,
                                    const char* module_id,
-                                   std::string detail) noexcept {
+                                   std::string detail) {
     PipelineResult out;
     out.accepted = true;
     out.renderable = false;
