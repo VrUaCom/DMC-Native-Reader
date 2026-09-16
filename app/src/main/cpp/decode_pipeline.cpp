@@ -46,31 +46,43 @@ void ensure_minimal_inspection(PipelineResult& result) {
 PipelineResult run_decode_pipeline(std::string_view filename,
                                    const std::uint8_t* bytes,
                                    std::size_t size) noexcept {
+    // This is the portable Core exception boundary. Probing, registry first-use,
+    // diagnostics and typed IR projection may allocate internally; none of those
+    // exceptions are allowed to escape into Session/JNI callers.
     PipelineResult rejected;
-    rejected.probe = probe(filename, bytes, size);
+    try {
+        rejected.probe = probe(filename, bytes, size);
 
-    if (!rejected.probe.recognized) {
-        rejected.detail = "pipeline rejected: format is outside the Native Reader 1.0 core";
+        if (!rejected.probe.recognized) {
+            rejected.detail = "pipeline rejected: format is outside the Native Reader 1.0 core";
+            return rejected;
+        }
+
+        const auto* module = NativeModuleRegistry::find(
+            rejected.probe.family != nullptr
+                ? std::string_view{rejected.probe.family}
+                : std::string_view{});
+        if (module == nullptr || module->run == nullptr) {
+            rejected.detail = "recognized core resource has no registered native module";
+            return rejected;
+        }
+
+        auto authoritative_probe = rejected.probe;
+        authoritative_probe.format = module->format;
+
+        auto result = module->run(*module, filename, bytes, size, authoritative_probe);
+        result.capabilities = module->capabilities;
+        enforce_render_scene_contract(result);
+        ensure_minimal_inspection(result);
+        return result;
+    } catch (...) {
+        // Default/partially populated PipelineResult owns only already-created
+        // storage. Returning it moves that storage and requires no new diagnostic
+        // allocation, so allocation failure remains a normal rejected pipeline.
+        rejected.accepted = false;
+        rejected.renderable = false;
         return rejected;
     }
-
-    const auto* module = NativeModuleRegistry::find(
-        rejected.probe.family != nullptr
-            ? std::string_view{rejected.probe.family}
-            : std::string_view{});
-    if (module == nullptr || module->run == nullptr) {
-        rejected.detail = "recognized core resource has no registered native module";
-        return rejected;
-    }
-
-    auto authoritative_probe = rejected.probe;
-    authoritative_probe.format = module->format;
-
-    auto result = module->run(*module, filename, bytes, size, authoritative_probe);
-    result.capabilities = module->capabilities;
-    enforce_render_scene_contract(result);
-    ensure_minimal_inspection(result);
-    return result;
 }
 
 std::string pipeline_trace(const PipelineResult& result) {
