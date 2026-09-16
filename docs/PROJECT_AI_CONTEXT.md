@@ -173,9 +173,9 @@ Every exact-head build/review must:
 - reject duplicate CMake source/test entries rather than compiling the same responsibility twice;
 - prefer shared decoded/content storage where exact identity permits it, while preserving logical resource/slot/binding identity and provenance.
 
-**Installed-size hard gate:** the installed package/code footprint on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed APK. Measure package/code footprint separately from mutable user data and cache; record the raw byte value, device/build identity and APK SHA-256 in the device evidence. `tools/measure_installed_footprint.py` is the bounded device-evidence tool for this metric. A candidate above 4 MiB is NO-GO until the growth is removed or Viktor explicitly changes this architecture limit.
+**Installed-size hard gate:** Android `StorageStats.getAppBytes()` on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed APK. This is the canonical installed-app metric because it covers APK files, optimized compiler output and unpacked native libraries while mutable data/cache are reported separately. Record the raw byte value, device/build identity and APK SHA-256 in device evidence. `tools/measure_installed_footprint.py` is the bounded device-evidence tool and must fail closed if authoritative StorageStats `code:` bytes are unavailable; do not fall back to filesystem-directory heuristics.
 
-`APK <= 4 MiB` is necessary but not sufficient for the installed hard gate: installed compiled code/metadata can still make a sub-4-MiB APK exceed the 4 MiB package/code allocation on device.
+`APK <= 4 MiB` is necessary but not sufficient for the installed hard gate: installed optimized/runtime artifacts can still make a sub-4-MiB APK exceed the 4 MiB app-byte allocation on device.
 
 Do not trade modularity for duplicated binaries, duplicated decoded banks, copied parsers, copied executors or parallel compatibility implementations. A smaller package is not allowed to erase semantic identity; deduplication must happen at the correct ownership/storage layer.
 
@@ -190,6 +190,21 @@ For the current migration program:
 - do not duplicate modules, parsers, executors, workflows or compatibility files;
 - remove dead duplicates once the replacement is canonical and Git history preserves the old version;
 - keep changes bounded and reviewable.
+
+### Migration batching / CI budget discipline
+During a large migration such as the C++23 transition, do **not** spend hosted-runner minutes on every intermediate commit.
+
+Canonical migration mode:
+- keep the migration PR in **draft** while implementation is incomplete;
+- heavy PR workflows must not run on every `synchronize` event during draft migration;
+- `main` remains protected by its normal push gate;
+- use `workflow_dispatch` only for a deliberately chosen checkpoint when execution evidence is worth the cost;
+- run the complete PR evidence set once the whole bounded migration candidate is ready and the PR is promoted to **Ready for review**;
+- after that run, Review Gate #41 decides whether more execution is justified;
+- do not manually re-run runner-less jobs repeatedly when the known blocker is account/quota/runner allocation;
+- preserve local/static review and regression authoring between checkpoints without weakening final exact-head evidence.
+
+When tooling writes multiple remote commits during migration, that is not a reason to run CI for each commit. The final PR may be squash-merged so the release history retains one logical migration change while evidence remains attached to the exact reviewed head.
 
 ## 9. Testing is architecture
 
@@ -215,7 +230,7 @@ Required promotion evidence:
 2. clean Android debug/release builds, each APK <= 4 MiB;
 3. package/APK verifier passes;
 4. exact APK hash and absolute package-size/dedup metrics are recorded;
-5. required physical Samsung scenarios pass on that artifact, including installed package/code footprint <= 4 MiB;
+5. required physical Samsung scenarios pass on that artifact, including `StorageStats.getAppBytes()` <= 4 MiB;
 6. Viktor explicitly approves merge/release.
 
 `runner_id=0`, `steps=[]`, skipped workflows or pre-run infrastructure failures are **not** compile/test evidence.
