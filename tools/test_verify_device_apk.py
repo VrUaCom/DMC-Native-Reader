@@ -92,6 +92,39 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     measure.normalize_user_arg(invalid)
 
+    def test_android_user_scope_is_applied_to_both_pm_commands(self):
+        self.assertEqual(
+            measure.package_path_command(
+                "adb", "SERIAL", "current", "com.dmcrengine.nativereader"),
+            [
+                "adb", "-s", "SERIAL", "shell", "pm", "path",
+                "--user", "current", "com.dmcrengine.nativereader",
+            ],
+        )
+        self.assertEqual(
+            measure.storage_stats_command(
+                "adb", "SERIAL", "current", "com.dmcrengine.nativereader"),
+            [
+                "adb", "-s", "SERIAL", "shell", "pm",
+                "get-package-storage-stats", "--user", "current",
+                "com.dmcrengine.nativereader",
+            ],
+        )
+        self.assertEqual(
+            measure.package_path_command("adb", "SERIAL", "10", "pkg"),
+            [
+                "adb", "-s", "SERIAL", "shell", "pm", "path",
+                "--user", "10", "pkg",
+            ],
+        )
+        self.assertEqual(
+            measure.storage_stats_command("adb", "SERIAL", "10", "pkg"),
+            [
+                "adb", "-s", "SERIAL", "shell", "pm",
+                "get-package-storage-stats", "--user", "10", "pkg",
+            ],
+        )
+
     def test_installed_storage_stats_parser(self):
         stats = measure.parse_storage_stats(
             "code: 4194304 bytes (4 Mb)\n"
