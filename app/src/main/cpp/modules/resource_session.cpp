@@ -62,7 +62,7 @@ std::unique_ptr<Session> make_session(Source&& source, std::string trace) {
 
 void retain_lazy_child_sources(Session* session,
                                const std::uint8_t* bytes,
-                               std::size_t size) noexcept {
+                               std::size_t size) {
     if (session == nullptr || bytes == nullptr || size == 0U) return;
     bool allocation_failed = false;
     for (auto& child : session->children) {
