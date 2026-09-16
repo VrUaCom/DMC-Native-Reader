@@ -27,6 +27,10 @@ SIGNING_STABLE_DEBUG = "stable-debug"
 SIGNING_UNSIGNED_RELEASE = "unsigned-release"
 EXPECTED_DEBUG_SIGNER_SHA256 = (
     "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
+APK_SIGNING_BLOCK_MAGIC = b"APK Sig Block 42"
+ZIP_EOCD_SIGNATURE = b"PK\x05\x06"
+ZIP_EOCD_MIN_SIZE = 22
+ZIP_MAX_COMMENT_SIZE = 65535
 
 
 def require(condition, message):
@@ -43,8 +47,8 @@ def validate_signing_result(policy, returncode, output):
 
     Debug/device-test APKs must carry the stable public test signer and a valid
     v2 signature. Canonical release evidence is deliberately unsigned until the
-    external production-signing authority runs, so it must expose no valid
-    signer and must not verify as a signed APK.
+    external production-signing authority runs. Structural unsigned checks are
+    performed separately so a broken signature cannot masquerade as unsigned.
     """
     digests = re.findall(
         r"Signer #\d+ certificate SHA-256 digest: ([0-9a-f]+)", output)
@@ -68,6 +72,61 @@ def validate_signing_result(policy, returncode, output):
         return False, None
 
     raise SystemExit("Unknown signing policy: " + str(policy))
+
+
+def find_eocd_offset(apk_bytes: bytes) -> int:
+    """Locate the non-ZIP64 EOCD record using its exact trailing comment size."""
+    if len(apk_bytes) < ZIP_EOCD_MIN_SIZE:
+        raise SystemExit("APK is too small to contain a ZIP EOCD record")
+    lower_bound = max(
+        0, len(apk_bytes) - ZIP_EOCD_MIN_SIZE - ZIP_MAX_COMMENT_SIZE)
+    for offset in range(len(apk_bytes) - ZIP_EOCD_MIN_SIZE, lower_bound - 1, -1):
+        if apk_bytes[offset:offset + 4] != ZIP_EOCD_SIGNATURE:
+            continue
+        comment_size = struct.unpack_from("<H", apk_bytes, offset + 20)[0]
+        if offset + ZIP_EOCD_MIN_SIZE + comment_size == len(apk_bytes):
+            return offset
+    raise SystemExit("APK ZIP EOCD record not found")
+
+
+def has_apk_signing_block(apk: Path) -> bool:
+    """Return whether a structurally valid APK Signing Block precedes the ZIP CD."""
+    apk_bytes = apk.read_bytes()
+    eocd_offset = find_eocd_offset(apk_bytes)
+    central_dir_offset = struct.unpack_from("<I", apk_bytes, eocd_offset + 16)[0]
+    require(central_dir_offset != 0xffffffff,
+            "ZIP64 central-directory offset is unsupported for canonical APK evidence")
+    require(central_dir_offset <= len(apk_bytes),
+            "ZIP central-directory offset lies beyond APK bytes")
+    if central_dir_offset < 24:
+        return False
+
+    footer = apk_bytes[central_dir_offset - 24:central_dir_offset]
+    if footer[8:] != APK_SIGNING_BLOCK_MAGIC:
+        return False
+
+    block_size = struct.unpack_from("<Q", footer, 0)[0]
+    total_size = block_size + 8
+    require(block_size >= 24,
+            "APK Signing Block footer has an invalid size")
+    require(total_size <= central_dir_offset,
+            "APK Signing Block extends before the start of the APK")
+    block_offset = central_dir_offset - total_size
+    header_size = struct.unpack_from("<Q", apk_bytes, block_offset)[0]
+    require(header_size == block_size,
+            "APK Signing Block header/footer sizes disagree")
+    return True
+
+
+def find_jar_signature_entries(names):
+    """Return v1/JAR signature material, excluding an unsigned manifest alone."""
+    signature_suffixes = (".SF", ".RSA", ".DSA", ".EC")
+    result = []
+    for name in names:
+        upper = name.upper()
+        if upper.startswith("META-INF/") and upper.endswith(signature_suffixes):
+            result.append(name)
+    return sorted(result)
 
 
 def find_duplicate_names(names):
@@ -167,11 +226,13 @@ def main():
     signing = signing_process.stdout or ""
     signed, signer_sha256 = validate_signing_result(
         args.signing_policy, signing_process.returncode, signing)
+    apk_signing_block_present = has_apk_signing_block(args.apk)
 
     duplicate_entry_names = []
     duplicate_large_payload_groups = []
     duplicate_large_payload_waste_bytes = 0
     largest_entries = []
+    jar_signature_entries = []
 
     with zipfile.ZipFile(args.apk) as archive:
         require(archive.testzip() is None, "ZIP integrity failure")
@@ -181,6 +242,17 @@ def main():
         require(not duplicate_entry_names,
                 "APK contains duplicate ZIP entry names: " +
                 ", ".join(duplicate_entry_names))
+
+        jar_signature_entries = find_jar_signature_entries(entry_names)
+        if args.signing_policy == SIGNING_STABLE_DEBUG:
+            require(apk_signing_block_present,
+                    "v2-signed debug APK has no structurally valid APK Signing Block")
+        elif args.signing_policy == SIGNING_UNSIGNED_RELEASE:
+            require(not apk_signing_block_present,
+                    "Unsigned release APK still contains an APK Signing Block")
+            require(not jar_signature_entries,
+                    "Unsigned release APK still contains JAR signature material: " +
+                    ", ".join(jar_signature_entries))
 
         libs = sorted(
             name for name in entry_names
@@ -414,6 +486,8 @@ def main():
         "signing_policy": args.signing_policy,
         "signed": signed,
         "signer_sha256": signer_sha256,
+        "apk_signing_block_present": apk_signing_block_present,
+        "jar_signature_entries": jar_signature_entries,
         "sha256": hashlib.sha256(args.apk.read_bytes()).hexdigest(),
         "native_dso_count": 1,
         "native_dso": "lib/arm64-v8a/libdmcviewer.so",
