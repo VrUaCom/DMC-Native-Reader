@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 from importlib.util import module_from_spec, spec_from_file_location
+import io
 from pathlib import Path
+import struct
+import tempfile
 import unittest
+import zipfile
 
 import verify_device_apk as verifier
 
@@ -10,6 +14,34 @@ _measure_spec = spec_from_file_location("measure_installed_footprint", MEASURE_P
 assert _measure_spec is not None and _measure_spec.loader is not None
 measure = module_from_spec(_measure_spec)
 _measure_spec.loader.exec_module(measure)
+
+
+def make_test_zip() -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("classes.dex", b"dex\n")
+    return output.getvalue()
+
+
+def add_empty_apk_signing_block(apk_bytes: bytes) -> bytes:
+    data = bytearray(apk_bytes)
+    eocd_offset = verifier.find_eocd_offset(data)
+    central_dir_offset = struct.unpack_from("<I", data, eocd_offset + 16)[0]
+    block_size = 24
+    signing_block = (
+        struct.pack("<Q", block_size)
+        + struct.pack("<Q", block_size)
+        + verifier.APK_SIGNING_BLOCK_MAGIC
+    )
+    data[central_dir_offset:central_dir_offset] = signing_block
+    shifted_eocd = eocd_offset + len(signing_block)
+    struct.pack_into(
+        "<I",
+        data,
+        shifted_eocd + 16,
+        central_dir_offset + len(signing_block),
+    )
+    return bytes(data)
 
 
 class VerifyDeviceApkPolicyTest(unittest.TestCase):
@@ -82,6 +114,36 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
                 + verifier.EXPECTED_DEBUG_SIGNER_SHA256
                 + "\nVerified using v2 scheme (APK Signature Scheme v2): true\n",
             )
+
+    def test_apk_signing_block_detection_distinguishes_unsigned_structure(self):
+        unsigned = make_test_zip()
+        signed = add_empty_apk_signing_block(unsigned)
+        with tempfile.TemporaryDirectory() as temp:
+            unsigned_path = Path(temp) / "unsigned.apk"
+            signed_path = Path(temp) / "signed.apk"
+            unsigned_path.write_bytes(unsigned)
+            signed_path.write_bytes(signed)
+            self.assertFalse(verifier.has_apk_signing_block(unsigned_path))
+            self.assertTrue(verifier.has_apk_signing_block(signed_path))
+
+    def test_jar_signature_material_detection(self):
+        self.assertEqual(
+            verifier.find_jar_signature_entries([
+                "META-INF/MANIFEST.MF",
+                "META-INF/CERT.SF",
+                "META-INF/CERT.RSA",
+                "META-INF/other.txt",
+                "classes.dex",
+            ]),
+            ["META-INF/CERT.RSA", "META-INF/CERT.SF"],
+        )
+        self.assertEqual(
+            verifier.find_jar_signature_entries([
+                "META-INF/MANIFEST.MF",
+                "classes.dex",
+            ]),
+            [],
+        )
 
     def test_android_user_scope_is_explicit_and_single_user(self):
         self.assertEqual(measure.normalize_user_arg("current"), "current")
