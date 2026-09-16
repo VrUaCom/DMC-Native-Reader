@@ -161,6 +161,24 @@ def adb_command(adb: str, serial: str | None, *args: str) -> list[str]:
     return command
 
 
+def package_path_command(adb: str, serial: str, user: str, package: str) -> list[str]:
+    return adb_command(
+        adb, serial, "shell", "pm", "path", "--user", user, package)
+
+
+def storage_stats_command(adb: str, serial: str, user: str, package: str) -> list[str]:
+    return adb_command(
+        adb,
+        serial,
+        "shell",
+        "pm",
+        "get-package-storage-stats",
+        "--user",
+        user,
+        package,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adb", default="adb", help="adb executable")
@@ -217,16 +235,8 @@ def main() -> int:
     resolved_user = current_user if requested_user == "current" else requested_user
 
     package_paths = parse_pm_paths(
-        capture(adb_command(
-            args.adb,
-            serial,
-            "shell",
-            "pm",
-            "path",
-            "--user",
-            requested_user,
-            args.package,
-        ))
+        capture(package_path_command(
+            args.adb, serial, requested_user, args.package))
     )
     installed_base_apk = require_single_base_apk(package_paths)
     installed_apk_sha256 = sha256_adb_file(
@@ -239,16 +249,8 @@ def main() -> int:
         )
 
     storage_output = capture(
-        adb_command(
-            args.adb,
-            serial,
-            "shell",
-            "pm",
-            "get-package-storage-stats",
-            "--user",
-            requested_user,
-            args.package,
-        )
+        storage_stats_command(
+            args.adb, serial, requested_user, args.package)
     )
     storage_stats = parse_storage_stats(storage_output)
     installed_app_bytes = storage_stats["code"]
