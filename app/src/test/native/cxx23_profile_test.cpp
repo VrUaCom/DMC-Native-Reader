@@ -7,6 +7,7 @@
 #include "dmcresource/native_module.h"
 #include "dmcresource/spider/cpp23_language.h"
 #include "dmcresource/texture_companion.h"
+#include "dmcresource/texture_set.h"
 
 namespace {
 
@@ -43,6 +44,19 @@ static_assert(noexcept(std::declval<dmcresource::ModuleRun>()(
     0U,
     std::declval<const dmcresource::ProbeResult&>())));
 
+// TextureSet builds std::string/vector/image storage. Keep those utilities
+// throwing-capable below the module/Spider catch boundaries; only pure lookup
+// and span helpers remain noexcept.
+static_assert(!noexcept(dmcresource::texture_set::parse_dds({})));
+static_assert(!noexcept(dmcresource::texture_set::parse_ptx({})));
+static_assert(!noexcept(dmcresource::texture_set::decode_base_mip(
+    {},
+    std::declval<const dmcresource::texture_set::Slot&>(),
+    nullptr,
+    nullptr)));
+static_assert(noexcept(dmcresource::texture_set::find_slot(
+    std::declval<const dmcresource::texture_set::ParseResult&>(), 0U)));
+
 // Texture-companion attachment builds diagnostics and decoded banks, so it is
 // intentionally throwing-capable below the Spider OperationFn catch boundary.
 // The pure capability gate remains a fail-closed noexcept query.
@@ -64,7 +78,7 @@ static_assert(!noexcept(dmcresource::texture_companion::attach_shared_ptx(
 int main() {
     dmcresource::cpp23::Result<int, TestError> value = 42;
     assert(value.has_value());
-    assert(*value == 42);
+    assert(*value == 42;
 
     dmcresource::spider::cpp23::Result<int, TestError> rejected =
         std::unexpected(TestError::Rejected);
