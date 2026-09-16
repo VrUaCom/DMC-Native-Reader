@@ -1,10 +1,11 @@
 name: Publish Android and Windows releases
 
+# LEGACY / MANUAL ONLY during the C++23 migration.
+# Android here still targets the v1.0.1 / NDK r28 contract and the Windows job
+# builds a separate preview branch that still describes a C++20 core. Keep this
+# workflow available only for explicit historical/manual use. Gate #44 owns the
+# later C++23 release-pipeline rewrite after the current core migration closes.
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - ".github/workflows/publish-platform-releases.yml"
   workflow_dispatch:
 
 permissions:
