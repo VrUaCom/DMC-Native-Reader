@@ -91,43 +91,59 @@ composite_placement::PlacementResult attach_mod_part_to_host_joint(
     std::size_t host_part_index,
     std::size_t child_part_index,
     std::uint32_t host_joint_index) noexcept {
-    PlacementState state{
-        .session = session,
-        .host_part_index = host_part_index,
-        .child_part_index = child_part_index,
-        .joint_index = host_joint_index,
-    };
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kAttachModelPart,
-            .execute = &attach_operation,
-        },
-    };
-    const auto report = crusader::execute(one_step_plan(kAttachModelPart), bindings, &state);
-    if (!report.ok() && state.result.ok()) {
-        state.result.status = composite_placement::PlacementStatus::CompositeProjectionMismatch;
+    try {
+        PlacementState state{
+            .session = session,
+            .host_part_index = host_part_index,
+            .child_part_index = child_part_index,
+            .joint_index = host_joint_index,
+        };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kAttachModelPart,
+                .execute = &attach_operation,
+            },
+        };
+        const auto report = crusader::execute(
+            one_step_plan(kAttachModelPart), bindings, &state);
+        if (!report.ok() && state.result.ok()) {
+            state.result.status =
+                composite_placement::PlacementStatus::CompositeProjectionMismatch;
+        }
+        return state.result;
+    } catch (...) {
+        composite_placement::PlacementResult failed;
+        failed.status = composite_placement::PlacementStatus::AllocationFailed;
+        return failed;
     }
-    return state.result;
 }
 
 composite_placement::PlacementResult reset_mod_part_placement(
     Session* session,
     std::size_t child_part_index) noexcept {
-    PlacementState state{
-        .session = session,
-        .child_part_index = child_part_index,
-    };
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kResetModelPart,
-            .execute = &reset_operation,
-        },
-    };
-    const auto report = crusader::execute(one_step_plan(kResetModelPart), bindings, &state);
-    if (!report.ok() && state.result.ok()) {
-        state.result.status = composite_placement::PlacementStatus::CompositeProjectionMismatch;
+    try {
+        PlacementState state{
+            .session = session,
+            .child_part_index = child_part_index,
+        };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kResetModelPart,
+                .execute = &reset_operation,
+            },
+        };
+        const auto report = crusader::execute(
+            one_step_plan(kResetModelPart), bindings, &state);
+        if (!report.ok() && state.result.ok()) {
+            state.result.status =
+                composite_placement::PlacementStatus::CompositeProjectionMismatch;
+        }
+        return state.result;
+    } catch (...) {
+        composite_placement::PlacementResult failed;
+        failed.status = composite_placement::PlacementStatus::AllocationFailed;
+        return failed;
     }
-    return state.result;
 }
 
 }  // namespace dmcresource::spider::actions
