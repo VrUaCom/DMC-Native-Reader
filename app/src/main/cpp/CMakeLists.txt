@@ -8,6 +8,19 @@ set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 # Reader consumes it without modifying the submodule during the C++23 migration.
 include(${DMC_RENGINE_VENDOR}/cmake/reader_core.cmake)
 
+# Native Reader language authority is centralized here and remains target-scoped.
+# Do not use repository-global CMAKE_CXX_STANDARD or Gradle -std= flags because
+# those would also alter vendored dependency targets. Public is used only where
+# a target's headers expose C++23 types to consumers.
+function(dmc_native_reader_require_cpp23 target visibility)
+    target_compile_features(${target} ${visibility} cxx_std_23)
+    set_target_properties(${target} PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+endfunction()
+
 # Native Reader product core: platform-neutral C++23 modules only. Android JNI,
 # Swift/ObjC++, Win32 and Web/WASM shells must link this target rather than
 # enumerating parser/renderer sources themselves.
@@ -60,6 +73,8 @@ add_library(dmc_native_reader_core STATIC
 )
 add_library(DMCNativeReader::Core ALIAS dmc_native_reader_core)
 
+dmc_native_reader_require_cpp23(dmc_native_reader_core PUBLIC)
+
 target_include_directories(dmc_native_reader_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -70,11 +85,6 @@ target_link_libraries(dmc_native_reader_core
         DMCRengine::ReaderCore
 )
 
-# C++ language authority is target-scoped. Do not use repository-global
-# CMAKE_CXX_STANDARD or Gradle -std= flags: those would also alter vendored
-# dependency targets. Native Reader requires strict ISO C++23 with no silent
-# fallback to an older standard.
-target_compile_features(dmc_native_reader_core PUBLIC cxx_std_23)
 target_compile_definitions(dmc_native_reader_core PUBLIC
     DMC_NATIVE_READER_CPP23=1
     DMC_NATIVE_READER_SPIDER_CPP=1
@@ -85,9 +95,6 @@ else()
     target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 set_target_properties(dmc_native_reader_core PROPERTIES
-    CXX_STANDARD 23
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
     POSITION_INDEPENDENT_CODE ON
 )
 
@@ -106,17 +113,13 @@ if(ANDROID)
         app_native.cpp
     )
 
+    dmc_native_reader_require_cpp23(dmcviewer PRIVATE)
+
     target_link_libraries(dmcviewer PRIVATE
         DMCNativeReader::Core
         jnigraphics
     )
 
-    target_compile_features(dmcviewer PRIVATE cxx_std_23)
-    set_target_properties(dmcviewer PROPERTIES
-        CXX_STANDARD 23
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF
-    )
     target_compile_options(dmcviewer PRIVATE
         -Wall -Wextra -Wpedantic
         -ffunction-sections
@@ -157,12 +160,8 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
     foreach(test_name IN LISTS DMC_NATIVE_READER_TESTS)
         add_executable(${test_name}_test
             ../../test/native/${test_name}_test.cpp)
+        dmc_native_reader_require_cpp23(${test_name}_test PRIVATE)
         target_link_libraries(${test_name}_test PRIVATE DMCNativeReader::Core)
-        set_target_properties(${test_name}_test PROPERTIES
-            CXX_STANDARD 23
-            CXX_STANDARD_REQUIRED ON
-            CXX_EXTENSIONS OFF
-        )
         # These regressions use assert; keep checks active in Release builds.
         if(MSVC)
             target_compile_options(${test_name}_test PRIVATE /UNDEBUG)
