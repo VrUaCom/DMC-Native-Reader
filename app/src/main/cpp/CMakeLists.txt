@@ -44,6 +44,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/module_texture.cpp
     modules/module_evt.cpp
     modules/ptx_framing_compat.cpp
+    modules/ptx_runtime_compat.cpp
     modules/texture_companion.cpp
     modules/texture_set.cpp
     modules/workspace_graph.cpp
@@ -143,7 +144,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
     set(DMC_NATIVE_READER_TESTS
         black_widow_state composite_builder composite_mod_scene composite_placement core_model_pipeline cxx23_profile dds_ptx_v1
         em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
-        png_export_session ptx_model_texture ptx_transaction render_scene scm_authority
+        png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
