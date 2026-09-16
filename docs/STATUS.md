@@ -1,6 +1,6 @@
 # DMC Native Reader — Status
 
-Last updated: 2026-09-15.
+Last updated: 2026-09-16.
 
 ## Accepted baseline (`main`)
 
@@ -9,7 +9,6 @@ Last updated: 2026-09-15.
 - package: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
 - minSdk / targetSdk: `26 / 36`
-- later `main` maintenance added Android/Windows release-publishing workflow; it did not constitute a new device-accepted reader build
 
 The v26 line was physically tested on Samsung on 2026-09-10 and explicitly approved for promotion to `main`.
 
@@ -17,189 +16,286 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 
 - branch: `feature/png-export-multi-mod-v27`
 - PR: #33, draft
-- versionName: `1.0.6`
-- versionCode: `33`
-- canonical Native Reader language: **C++23**
-- C++ standard authority: **target-scoped CMake; strict ISO C++23**
-- Spider product language/profile: **Spider C++ (`spider.cpp23`)**
+- versionName / versionCode: `1.0.6 / 33`
+- Native Reader production language: **strict target-scoped ISO C++23**
+- Spider product profile: **`spider.cpp23`** over Crusader
 - Android native toolchain: **NDK r30 LTS `30.0.16248370`**
-- Android build stack: **AGP 9.3.0 / Gradle 9.5.0 / JDK 17 / Build Tools 36.0.0 / Android CMake 3.22.1**
+- build stack: **AGP 9.3.0 / Gradle 9.5.0 / JDK 17 / Android 36 / Build Tools 36.0.0 / Android CMake 3.22.1**
 - production modules: **MOD / SCM / DDS / PTX / EventTbl**
-- canonical DMC Rengine ReaderCore pin: `caf445226c7d61841292384a10e93e4f58ae29f9`
-- package pre-gate: **APK <= 4 MiB**
-- physical acceptance gate: **installed package/code footprint <= 4 MiB**, excluding mutable user data/cache
+- pinned Rengine ReaderCore gitlink: `caf445226c7d61841292384a10e93e4f58ae29f9`
+- package pre-gate: **debug APK <=4 MiB; unsigned release APK <=4 MiB**
+- physical acceptance hard gate: **StorageStats.getAppBytes() <=4 MiB** on the exact reviewed installable artifact
 
-The current candidate SHA is deliberately **not hard-coded in this status file** because committing the document would immediately make that value stale. Exact source identity is taken from PR #33 at execution time and is recorded in the Phase-2 evidence manifest.
+The candidate SHA is deliberately **not hard-coded in this status file**. Every execution/review must fetch PR #33 live `head_sha`; committing a SHA here would immediately make it stale.
 
-PR #33 must not be merged until an exact-head build actually executes the full host regressions, passes `tools/verify_device_apk.py`, produces the canonical single-DSO APK, and passes Samsung device acceptance including the 4 MiB installed package/code limit.
+## Current program state
 
-## v33 architecture
+Canonical flow:
+
+`#35 -> #36 -> (#49 + #50 -> #51 -> #52) -> #41 -> #37 -> #42 -> #38 -> #43 -> #39 -> #44 -> #54 -> #55 -> #40 -> #45`
+
+Current status:
+- #35 — DONE;
+- #49 — DONE source/static exception-boundary hardening;
+- #50 — DONE `GO_WITH_CORRECTIONS`;
+- #51 — source complete;
+- #52 — DONE `ARCHITECTURE GO / EXECUTION_PENDING`;
+- #36 — **SOURCE/STATIC READY, EXECUTION BLOCKED**;
+- #47 — current blocking task: real exact-head CMake/CTest/Android execution;
+- #53 — owner action: restore hosted capacity or start canonical direct Linux/WSL run;
+- #48 — waiting for real artifact/device size evidence;
+- #41 — blocked until #36 has one complete real evidence set;
+- #54/#55 — future native Android shell / Java-retirement phase and review, blocked until #44 GO.
+
+No Phase 3 implementation may start before #41 explicitly issues GO.
+
+## Why Phase 2 is still blocked
+
+Current source/static review is not the blocker. GitHub-hosted jobs have repeatedly failed **before runner assignment** with `runner_id=0` and no executed steps. The deliberate 2026-09-16 probe also failed with zero steps.
+
+Therefore:
+- these runs are infrastructure evidence only;
+- they do not prove source PASS or FAIL;
+- do not repeatedly rerun hosted jobs while capacity/account state is unresolved;
+- use an authorized Ubuntu/WSL2 x64 environment as the immediate fallback.
+
+Canonical direct path:
+
+```bash
+bash tools/bootstrap_phase2_self_hosted_ubuntu.sh
+source build/phase2-self-hosted-env.sh
+python3 tools/run_phase2_exact_head.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --expected-head "$(git rev-parse HEAD)"
+```
+
+This command must run on the live PR #33 candidate HEAD, not a SHA copied from historical comments.
+
+## Phase-2 evidence contract
+
+`tools/run_phase2_exact_head.py` is the canonical shared evidence runner. It must actually execute and record:
+- clean worktree + exact HEAD guard;
+- pinned Rengine gitlink/checkout identity;
+- package/evidence policy regressions;
+- host CMake configure/build;
+- full host CTest, including C++23/PTX regressions;
+- clean Android debug + unsigned-release builds;
+- full APK verifier on **both** artifacts;
+- actual compiler/CMake/CTest/Gradle/JDK/NDK identity;
+- exact APK SHA-256 values and machine-readable package metrics;
+- final clean-tree guard.
+
+Static inspection, YAML correctness, runner-less records or source review cannot substitute for this execution.
+
+## Symmetric debug / release package verification
+
+The earlier evidence gap where only debug received the full verifier has been closed.
+
+Both Phase-2 APKs now receive the same package/ABI/JNI/layout/dedup/size verification. Their only intentional difference is signing policy.
+
+### Debug APK
+Must prove:
+- expected package/version/ABI;
+- stable public test signer matches the expected SHA-256;
+- APK v2 verification succeeds;
+- an APK Signing Block is structurally present;
+- exactly one runtime DSO;
+- Java NativeBridge ↔ JNI export parity;
+- native DSO stored uncompressed and 16 KiB ZIP aligned;
+- every ELF PT_LOAD supports >=16 KiB;
+- APK/native/Dex hard budgets;
+- zero duplicate ZIP/runtime/large-payload waste.
+
+### Unsigned release APK
+Must independently prove the same structural/package contract, plus:
+- no valid signer;
+- **no APK Signing Block**;
+- **no JAR signature material** (`META-INF/*.SF`, `*.RSA`, `*.DSA`, `*.EC`).
+
+A failed signature verification by itself is no longer accepted as proof of “unsigned”; a broken signing block must fail closed.
+
+Each verifier report is SHA-256-bound to the exact APK, and the exact-head runner independently validates critical signing fields before accepting the manifest.
+
+## C++23 / Rengine language boundary
+
+Native Reader targets require:
+- `cxx_std_23`;
+- `CXX_STANDARD 23`;
+- `CXX_STANDARD_REQUIRED ON`;
+- `CXX_EXTENSIONS OFF`.
+
+Gradle does not own global `-std=c++*` policy.
+
+Pinned `DMCRengine::ReaderCore` remains a read-only external target with its own target-scoped `cxx_std_20` contract. Phase 2 must not leak Native Reader C++23 policy into Rengine.
+
+Important Native Reader C++23 facilities currently used/guarded:
+- `std::expected`;
+- `std::byteswap`;
+- `std::to_underlying`.
+
+## Exception boundary status
+
+#49 is DONE on source/static review.
+
+Current contract:
+- allocating internal helpers expose truthful throwing-capable semantics unless they catch locally;
+- `run_decode_pipeline()` is the portable Core catch-all;
+- NativeModule `ModuleRun` and Crusader `OperationFn` remain noexcept/fail-closed boundaries;
+- public Spider noexcept actions catch first-use Plan/helper allocation;
+- JNI is final platform catch-all;
+- no C++ exception may cross JNI;
+- catch-path fallback must not require allocating diagnostics.
+
+Real CTest/Android execution is still required before global acceptance.
+
+## PTX RuntimeCompat status
+
+Native Reader has one user-facing PTX route with two internal responsibilities:
+
+`TextureSlotFramingParser -> TextureSet -> DDS` + lazy Reader-owned `PtxRuntimeCompat`.
+
+Accepted architecture:
+- serialized framing/TextureSet/DDS remains the only disk-format PTX authority;
+- RuntimeCompat is not a second parser or NativeModule;
+- runtime state is lazy and ordinary preview/gallery/PNG does not instantiate it;
+- imported behavior is bounded to the reviewed Rengine `50d070e...` slice;
+- initializer represented storage = `0xCB50`;
+- placement/configure pool prefix = `0xCB48`;
+- final 8 bytes remain opaque tail storage;
+- no inferred `TextureSet::Slot -> runtime 0x50 record` materialization;
+- palette/finalizer/cleanup/materializer/full lifecycle remain explicit unknown/deferred.
+
+#52 issued architecture GO but explicitly left execution `PENDING`; `ptx_runtime_compat_test` still must run in the exact-head CTest checkpoint.
+
+## Android installed-size evidence
+
+Hard acceptance maximum: **4,194,304 bytes** from Android `StorageStats.getAppBytes()`.
+
+`tools/measure_installed_footprint.py` is device evidence, not an APK verifier. It must:
+- query authoritative package-storage `code:` bytes;
+- fail closed if unavailable;
+- never use `du` fallback;
+- require one installed `base.apk`;
+- compare installed `base.apk` SHA-256 byte-for-byte with the reviewed APK;
+- verify package version identity;
+- use the same explicit Android `--user` scope for both `pm path` and `pm get-package-storage-stats`;
+- default to `current` unless a numeric profile/user is intentionally targeted;
+- record requested/resolved/current user IDs, device model, Android version and build fingerprint.
+
+This closes the previous risk where Android shell defaults could mix USER_SYSTEM package-path lookup with USER_CURRENT StorageStats on multi-user/profile devices.
+
+## Current Android architecture
 
 ```text
 resource bytes
-  -> bounded probe
-  -> NativeModuleRegistry
-  -> Spider C++23
-      -> Spider Crusader
-          -> MOD / SCM / DDS / PTX / EventTbl native modules
-          -> pinned Rengine executor / ReaderCore
-  -> portable DMCNativeReader::Core (C++23)
-      -> resource session
-      -> WorkspaceGraph / stable resource identity
-      -> composite model state
-      -> composite builder
-      -> Rengine-backed default-joint resolver
-      -> composite placement
-      -> scene projection
-      -> texture companion binding
-      -> Black Widow typed capability state
-      -> renderer / inspection / UV / PNG export
-  -> thin JNI / Android shell
+  -> NativeModuleRegistry / canonical adapters
+  -> DMCNativeReader::Core (C++23)
+     -> Session / WorkspaceGraph / composite state
+     -> Spider C++ / Crusader actions
+     -> Black Widow capability state
+     -> renderer / inspection / UV / PNG
+  -> JNI
+  -> current Java Android transport/presentation shell
 ```
 
-Android remains transport/presentation only. It must not parse DMC layouts, decide model attachment semantics or implement texture-binding policy.
+Android/Java currently owns transport/presentation/lifecycle only. It must not own DMC parsing, graph semantics, model attachment policy or texture ownership semantics.
 
-The C++23 migration is scoped to DMC Native Reader. The Rengine repository, gitlink and canonical format/runtime authority are unchanged. Spider C++ is a typed C++23 layer over Crusader; it does not duplicate the Rengine executor.
+## Future Phase 6 — native Android shell / Java retirement
 
-## C++23 migration
+Java retirement is now an explicit governed phase, not an opportunistic rewrite.
 
-The current candidate enforces C++23 as a product contract rather than merely changing a compiler flag:
+It begins only after:
+- Phase 5 stable WorkspaceGraph bindings;
+- Review Gate #44 GO.
 
-1. `DMCNativeReader::Core`, JNI and Native Reader regression targets require `cxx_std_23` plus `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`;
-2. Android Gradle pins NDK r30 LTS but does **not** pass `-std=c++*`; CMake owns the Native Reader language mode so vendored dependency targets retain their own contract;
-3. `cpp23_profile.h` rejects C++20-or-older and requires concrete C++23 facilities: `std::expected`, `std::byteswap`, and `std::to_underlying`;
-4. the profile uses `_MSVC_LANG` on MSVC and `__cplusplus` elsewhere so portable core validation does not depend on one compiler's macro-reporting behavior;
-5. core warning flags are compiler-scoped: MSVC receives `/W4`, while GCC/Clang receive `-Wall -Wextra -Wpedantic`;
-6. pinned `DMCRengine::ReaderCore` was audited at `caf445226c7d61841292384a10e93e4f58ae29f9`: its own `reader_core.cmake` requires target-scoped `cxx_std_20` and does not impose global `CMAKE_CXX_STANDARD`; the Phase-2 runner fails closed if this boundary changes;
-7. `WorkspaceGraph` mutation APIs currently return typed `std::expected` results with explicit error codes;
-8. `spider/cpp23_language.h` defines the initial Spider C++ result/concept profile above Crusader;
-9. multi-MOD compose currently exercises the initial Spider C++ typed wrapper;
-10. active PR workflows explicitly checkout `${{ github.event.pull_request.head.sha || github.sha }}` so evidence is tied to the candidate source head rather than GitHub's synthetic pull-request merge ref;
-11. `tools/run_phase2_exact_head.py` is the shared exact-head execution baseline for hosted CI and authorized local/self-hosted recovery: it checks the complete Native Reader + pinned-Rengine language/toolchain contract, runs host CMake/CTest, clean Android debug/release builds and the APK verifier, and writes toolchain/artifact SHA-256 evidence;
-12. the evidence manifest records the actual host C++ compiler identity/path and actual installed NDK `clang++ --version`, not only configured package numbers;
-13. both debug and unsigned-release APKs must contain the runtime `spider.crusader` and `spider.cpp23` markers;
-14. `tools/verify_device_apk.py` independently requires the built `spider.cpp23` DSO marker, one-DSO/ABI/JNI/signing/alignment/absolute-size/dedup contracts, exact Rengine checkout, and robustly accepts zero-valued `aapt2` representations of `extractNativeLibs=false`;
-15. package policy and installed-footprint parsing/threshold logic share one canonical Python regression entrypoint, `tools/test_verify_device_apk.py`;
-16. `tools/measure_installed_footprint.py` is the bounded downstream Samsung evidence tool for the 4 MiB package/code limit;
-17. active CI and the APK verifier gate the target-scoped C++23/NDK contract.
+Target authority split:
+- Spider C++ = product orchestration/actions;
+- Black Widow = capability/application policy;
+- WorkspaceGraph = stable resource identity/bindings;
+- portable C++ controller = navigation/session/presentation model;
+- Android platform layer = lifecycle/window/input/document transport/presentation only.
 
-The `WorkspaceGraph std::expected` migration and initial Spider C++ seed entered the branch before formal Phase/Review gates were established. Phase 2 does not expand them further. Review Gate #41 must explicitly classify them retain/correct/defer/revert before Phase 3/4 progression.
+Preferred target: **0 authored Java/Kotlin application source + 0 app DEX** through supported NativeActivity/NDK APIs.
 
-Migration review/research/plan: `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md`.
-Private project/AI context: `docs/PROJECT_AI_CONTEXT.md`, Project card #46.
-Program tracking: #34; Phase 1 (#35) completed; Phase 2 (#36) remains active until a real exact-head build executes. CI execution recovery is tracked in #47. Size/installed-footprint evidence is tracked in #48.
+This target is evidence-gated because current SAF document flows use result-returning Intents and documented `ANativeActivityCallbacks` has no `onActivityResult`. #54 must prove a supported public zero-DEX route. If required SAF/UX cannot be preserved, only #55-approved minimal framework callback shim may remain.
+
+Forbidden:
+- hidden/private Android APIs;
+- reflection hacks;
+- generated/obfuscated DEX merely to claim zero Java;
+- deleting required open/export functionality to hit the metric.
+
+## Final release artifact identity
+
+Three different artifacts must never be conflated:
+1. debug/device-test APK;
+2. unsigned release APK — **pre-signing structural evidence only**;
+3. production-signed release APK — **final installable Samsung/promotion artifact**.
+
+Production signing changes APK bytes and SHA-256.
+
+Phase #40/#45 therefore requires:
+- production signing through the authorized release authority;
+- explicit expected production certificate SHA-256;
+- full applicable package/ABI/JNI/ZIP/ELF/16 KiB/dedup/size verification **after signing**;
+- exact post-signing APK SHA-256;
+- #45 review of that exact signed artifact;
+- Samsung installation/StorageStats measurement against that same signed artifact;
+- publication of that exact signed artifact/hash without rebuilding or re-signing a lookalike.
+
+The final footprint invocation must be guarded with `--expected-apk-sha256 <post-signing-sha256>` and explicit Android `--user` scope. Installed `base.apk` SHA must equal the reviewed **post-signing** APK SHA, never the unsigned predecessor.
 
 ## Package weight and dedup authority
 
-Application size is an architecture constraint, not a final cleanup step.
+Current v33 Java-shell rules:
+- debug APK <=4 MiB;
+- unsigned-release APK <=4 MiB;
+- packaged native DSO <=4 MiB;
+- Dex total <=1 MiB;
+- duplicate ZIP entry names = 0;
+- duplicate runtime `.so`/`.dex` payloads = 0;
+- unexplained large duplicate payload waste = 0;
+- one runtime DSO only.
 
-Current v33 rules:
+A sub-4-MiB APK can still fail Samsung acceptance because optimized/runtime app bytes can exceed 4 MiB.
 
-- debug and unsigned-release APK: **<= 4 MiB each**;
-- packaged native DSO: <= 4 MiB;
-- Dex total: <= 1 MiB;
-- installed package/code footprint on the exact Samsung acceptance artifact: **<= 4 MiB = 4,194,304 bytes**;
-- installed measurement excludes mutable user data/cache and is tied to exact APK SHA-256 plus device/build identity;
-- duplicate ZIP entry names: 0;
-- duplicate runtime `.so`/`.dex` payloads: 0;
-- accepted Phase-2 large duplicate payload waste: 0;
-- duplicate CMake core-source/test entries are configuration errors;
-- only one runtime DSO is allowed.
+Historical v26 size deltas are not v33 acceptance authority without proven comparable artifact/packaging/measurement provenance.
 
-`APK <= 4 MiB` is a necessary precondition for the installed-size gate because the installed package code contains the APK, but it is not sufficient: device-side compiled code/metadata may still push installed package/code allocation above 4 MiB.
+## Regression set relevant to current gate
 
-Historical v26 APK/native byte constants are **not accepted as v33 growth authority** unless their exact artifact, packaging model and measurement method are proven comparable. The verifier therefore reports absolute current metrics rather than a misleading v26 growth percentage.
+Important v33 regressions include:
+- `cxx23_profile_test`;
+- `workspace_graph_test`;
+- `composite_builder_test`;
+- `composite_placement_test`;
+- `ptx_transaction_test`;
+- `ptx_runtime_compat_test`;
+- `composite_mod_scene_test`;
+- `scm_authority_test`;
+- module/Spider/texture/PNG/render/inspection regressions;
+- `tools/test_verify_device_apk.py`, including signing-structure and Android user-scope policy checks.
 
-## Multi-MOD / body-hair placement
-
-The old v33 compositor flattened all MOD parts in source coordinates. That behavior explains the observed body/hair problem: separate parts were rendered around their own model-space origin instead of receiving the runtime-style host-joint root transform.
-
-The current candidate now has a modular attachment path:
-
-1. the MOD module publishes canonical `Header::default_joint_index()` as typed `RenderScene::default_attachment_selector`;
-2. `composite_builder` treats the already-open/base MOD as an explicit primary host;
-3. appended MOD parts resolve their selector through `dmc::rengine::formats::mod::attachment`;
-4. valid host spatial authority + in-range selector yields a host joint matrix;
-5. `composite_placement` applies that matrix only to the derived flattened render/hierarchy projection;
-6. the source-local child `RenderScene` remains unchanged and can be reset without reparsing.
-
-The resolver does not infer a different host from filenames, visual proximity, `runtime_metadata_u32` or arbitrary candidate scanning. Missing/out-of-range selectors and hosts without canonical spatial authority fail closed to source coordinates.
-
-## Modular split completed in this pass
-
-- `include/dmcresource/cpp23_profile.h` — canonical C++23 compile/result profile
-- `include/dmcresource/spider/cpp23_language.h` — initial Spider C++ typed product-language layer, pending formal gate disposition
-- `include/dmcresource/workspace_graph.h` / `modules/workspace_graph.cpp` — stable identities + typed C++23 mutation results, pending formal gate disposition
-- `include/dmcresource/composite_model.h` — source-part + placement state
-- `include/dmcresource/composite_builder.h` / `modules/composite_builder.cpp` — product composition policy
-- `include/dmcresource/mod_attachment_resolver.h` / `modules/mod_attachment_resolver.cpp` — Rengine-backed selector resolution
-- `include/dmcresource/composite_placement.h` / `modules/composite_placement.cpp` — derived placement projection
-- `spider/session_compose_actions.cpp` — compose action
-- `spider/session_texture_actions.cpp` — texture actions
-- `spider/model_placement_actions.cpp` — explicit placement/reset actions
-
-The old monolithic `spider/session_actions.cpp` is neither compiled nor retained as a dead source duplicate.
-
-## PTX transaction safety
-
-Per-part PTX replacement is fully staged. Texture storage and triangle-slot projection are copied into temporary state; decode, range validation, slot validation and compaction complete before the live session is replaced. A failed replacement therefore preserves the previous valid texture bank and render projection.
-
-Regression: `ptx_transaction_test`.
-
-## Current regression set added/strengthened
-
-Important v33-specific regressions now include:
-
-- `cxx23_profile_test` — statically validates the active C++23 language level, `std::expected`, `std::byteswap`, `std::to_underlying`, Spider C++ concepts/profile and success/error expected paths;
-- `workspace_graph_test` — stable identities + typed graph failures;
-- `composite_builder_test` — automatic primary-host/default-joint placement and fail-closed fallback;
-- `composite_placement_test` — explicit host-joint projection, row-vector transform order and reset;
-- `ptx_transaction_test` — failed per-part PTX replacement preserves live state;
-- `composite_mod_scene_test` — low-copy composition and shared PTX bank;
-- `scm_authority_test` — canonical SCM world-space authority;
-- `tools/test_verify_device_apk.py` — package duplicate policy, 4 MiB APK/installed thresholds and fail-closed installed-footprint parsing;
-- existing module/Spider/texture/PNG/render/inspection regressions.
-
-PR-wide static call-site review found the production `WorkspaceGraph` mutation use in `composite_builder` already handles `std::expected` explicitly; no stale caller that assumes direct integer-ID returns was found. This is static evidence only until compilation executes.
-
-## APK/runtime contract
-
-v33 requires:
-
-- strict target-scoped C++23 Native Reader product core;
-- pinned Rengine ReaderCore retaining its own target-scoped C++20 contract;
-- Spider C++ typed orchestration profile over Crusader, subject to formal review-gate disposition;
-- Android NDK r30 LTS `30.0.16248370`;
-- exactly one packaged native DSO: `lib/arm64-v8a/libdmcviewer.so`;
-- static `DMCNativeReader::Core` + `DMCRengine::ReaderCore`;
-- `extractNativeLibs=false`;
-- native DSO stored uncompressed and 16 KiB ZIP aligned;
-- every ELF `PT_LOAD` alignment >= 16 KiB;
-- exact Java `NativeBridge` ↔ JNI export parity;
-- no recovery `dmcshim` / `dmccore00` path;
-- direct Android Bitmap transport;
-- **APK <= 4 MiB, DSO <= 4 MiB, Dex <= 1 MiB**;
-- installed package/code footprint <= 4 MiB on Samsung, excluding mutable user data/cache;
-- duplicate packaged/runtime payload waste = 0;
-- exact Rengine gitlink and checkout at `caf445226c7d61841292384a10e93e4f58ae29f9`;
-- runtime `spider.crusader` + `spider.cpp23` presence in both debug and unsigned release APKs.
-
-`tools/verify_device_apk.py` gates C++23/Spider C++/NDK r30 plus the split compose/texture action modules, exact Rengine pin, absolute package metrics and dedup rules. `tools/measure_installed_footprint.py` owns only downstream device package/code measurement and does not duplicate APK verification.
-
-## CI state
-
-GitHub-hosted jobs on current heads continue to fail before runner assignment. The characteristic failure is `runner_id=0` with `steps=[]` / `steps=null`; checkout, CMake, Gradle and tests never start. Manual rerun of an earlier failed exact-head core job also produced a new attempt that queued briefly and then failed without steps.
-
-A recent exact-head example is source SHA `40050304120cfd185df4eca95002f0d563d20021`: core run `35005014015`, job `104502481063`, completed with no steps. This is retained as historical infrastructure evidence only; it is not a statement that this SHA remains the current PR head and it does not classify the source as passing or failing.
-
-Historical GitHub Status incidents affected Actions on Sep 13 and runner startup on Sep 14, matching the onset window, but GitHub Status later returned operational while this repository continued to exhibit runner-less failures. #47 therefore tracks hosted-runner/account availability separately from source correctness.
-
-Until a real exact-head build executes, v33 remains **not release-approved** and Phase 2 remains **in progress**. Review Gate #41 is not unlocked.
+These tests being present is not acceptance; they must execute on the reviewed exact HEAD.
 
 ## Release-infrastructure status
 
-Historical `.github/workflows/release-v1.yml` and `publish-platform-releases.yml` still encode old v1.0.1/versionCode21/28/NDK-r28/C++20-era assumptions. They are **not v33 release authority** and are intentionally deferred rather than opportunistically rewritten during Phase 2. Review Gate #44 must disposition them (retire/archive/migrate/replace) and update Phase #40 with one canonical exact-head Android release/signing/publish path. Windows preview must not accidentally block Android stable publication unless that coupling is explicitly accepted.
+Historical `.github/workflows/release-v1.yml` and `publish-platform-releases.yml` still encode old v1.0.1/versionCode21/NDK-r28-era assumptions. They are **not** v33 release authority and remain deferred until governed Phase 7 cleanup.
+
+#40 now explicitly requires one canonical post-signing release path and prevents Android stable publication from being accidentally coupled to unrelated Windows preview work unless that coupling is deliberately accepted.
 
 ## Production boundary
 
-DMC Native Reader is read-only. Editing/repacking belongs to DMC Rengine. HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, MOT, EFM/MRP/SHW and other researched formats remain outside the production Native Reader registry until individually promoted with native authority and regression coverage.
+DMC Native Reader is read-only. Editing/repacking belongs to DMC Rengine.
+
+HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, MOT, EFM/MRP/SHW and other researched formats remain outside the production Native Reader registry until individually promoted with native authority and regression coverage.
+
+## Immediate next action
+
+Do **not** add more source modernization merely because Phase 2 is waiting.
+
+The next meaningful state transition is one real exact-head execution:
+- restore hosted Actions capacity; or
+- use authorized Ubuntu/WSL2 x64 direct execution.
+
+If the run fails, fix the concrete build/test/package defect it reveals. If it passes, send the exact evidence set to #36/#48 and then Review Gate #41. No Phase 3 work begins before #41 GO.
