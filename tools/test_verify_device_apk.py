@@ -47,6 +47,42 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
         self.assertFalse(hasattr(verifier, "ACCEPTED_V26_NATIVE_BYTES"))
         self.assertFalse(hasattr(verifier, "growth_from_baseline"))
 
+    def test_stable_debug_signing_policy(self):
+        signing = (
+            "Signer #1 certificate SHA-256 digest: "
+            + verifier.EXPECTED_DEBUG_SIGNER_SHA256
+            + "\nVerified using v2 scheme (APK Signature Scheme v2): true\n"
+        )
+        signed, digest = verifier.validate_signing_result(
+            verifier.SIGNING_STABLE_DEBUG, 0, signing)
+        self.assertTrue(signed)
+        self.assertEqual(digest, verifier.EXPECTED_DEBUG_SIGNER_SHA256)
+
+        with self.assertRaises(SystemExit):
+            verifier.validate_signing_result(
+                verifier.SIGNING_STABLE_DEBUG,
+                1,
+                "DOES NOT VERIFY\n",
+            )
+
+    def test_unsigned_release_signing_policy(self):
+        signed, digest = verifier.validate_signing_result(
+            verifier.SIGNING_UNSIGNED_RELEASE,
+            1,
+            "DOES NOT VERIFY\n",
+        )
+        self.assertFalse(signed)
+        self.assertIsNone(digest)
+
+        with self.assertRaises(SystemExit):
+            verifier.validate_signing_result(
+                verifier.SIGNING_UNSIGNED_RELEASE,
+                0,
+                "Signer #1 certificate SHA-256 digest: "
+                + verifier.EXPECTED_DEBUG_SIGNER_SHA256
+                + "\nVerified using v2 scheme (APK Signature Scheme v2): true\n",
+            )
+
     def test_installed_storage_stats_parser(self):
         stats = measure.parse_storage_stats(
             "code: 4194304 bytes (4 Mb)\n"
