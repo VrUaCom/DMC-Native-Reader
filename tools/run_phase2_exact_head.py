@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from typing import NoReturn, Sequence
+import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,6 +155,14 @@ def find_ndk_clang(ndk_path: Path) -> Path:
     return candidates[0]
 
 
+def require_clean_checkout(path: Path, label: str) -> None:
+    dirty = capture([
+        "git", "-C", str(path), "status", "--porcelain", "--untracked-files=all",
+    ])
+    if dirty.strip():
+        fail(f"{label} checkout is dirty; exact-head evidence requires read-only source state")
+
+
 def require_runtime_markers(apk: Path) -> None:
     with zipfile.ZipFile(apk) as archive:
         try:
@@ -237,6 +246,61 @@ def read_ctest_inventory(ctest: str, env: dict[str, str]) -> list[str]:
         encoding="utf-8",
     )
     return sorted(names)
+
+
+def xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def read_ctest_junit(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        fail(f"CTest JUnit evidence is missing: {path}")
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as error:
+        fail(f"CTest JUnit evidence is not valid XML: {error}")
+
+    cases = [element for element in root.iter() if xml_local_name(element.tag) == "testcase"]
+    names: list[str] = []
+    skipped: list[str] = []
+    failures: list[str] = []
+    errors: list[str] = []
+    for case in cases:
+        name = case.get("name")
+        if not name:
+            fail("CTest JUnit contains a testcase without a name")
+        names.append(name)
+        child_tags = {xml_local_name(child.tag) for child in case}
+        if "skipped" in child_tags:
+            skipped.append(name)
+        if "failure" in child_tags:
+            failures.append(name)
+        if "error" in child_tags:
+            errors.append(name)
+
+    expected = set(EXPECTED_CTESTS)
+    actual = set(names)
+    if len(names) != len(EXPECTED_CTESTS) or actual != expected:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        fail(
+            "CTest execution drift: "
+            f"executed={len(names)} expected={len(EXPECTED_CTESTS)} "
+            f"missing={missing} unexpected={unexpected}"
+        )
+    if skipped or failures or errors:
+        fail(
+            "CTest JUnit did not prove an all-pass run: "
+            f"skipped={sorted(skipped)} failures={sorted(failures)} errors={sorted(errors)}"
+        )
+
+    return {
+        "executed_count": len(names),
+        "skipped_count": len(skipped),
+        "failure_count": len(failures),
+        "error_count": len(errors),
+        "tests": sorted(names),
+    }
 
 
 def read_verifier_report(
@@ -408,6 +472,7 @@ def main() -> int:
     rengine_checkout = capture(["git", "-C", str(rengine_path), "rev-parse", "HEAD"]).strip()
     if gitlink != rengine_checkout:
         fail(f"Rengine checkout {rengine_checkout} != gitlink {gitlink}")
+    require_clean_checkout(rengine_path, "Rengine submodule")
 
     sdk_text = args.sdk or os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
     if not sdk_text:
@@ -491,15 +556,24 @@ def main() -> int:
         [args.cmake, "--build", str(HOST_BUILD_DIR.relative_to(ROOT)), "--parallel", "2"],
         env=env,
     )
+    ctest_junit = EVIDENCE_DIR / "03-ctest-junit.xml"
     run_logged(
         "03-ctest",
-        [args.ctest, "--test-dir", str(HOST_BUILD_DIR.relative_to(ROOT)), "--output-on-failure"],
+        [
+            args.ctest,
+            "--test-dir",
+            str(HOST_BUILD_DIR.relative_to(ROOT)),
+            "--output-on-failure",
+            "--output-junit",
+            str(ctest_junit),
+        ],
         env=env,
     )
+    ctest_results = read_ctest_junit(ctest_junit)
 
     run_logged(
         "04-gradle-android",
-        [args.gradle, "--no-daemon", "clean", ":app:assembleDebug", ":app:assembleRelease"],
+        [args.gradle, "--no-daemon", ":app:clean", ":app:assembleDebug", ":app:assembleRelease"],
         env=env,
     )
 
@@ -547,6 +621,7 @@ def main() -> int:
     release_package_policy = read_verifier_report(
         "06-release-apk-verifier", release_apk, "unsigned-release")
 
+    require_clean_checkout(rengine_path, "Rengine submodule")
     final_dirty = capture(["git", "status", "--porcelain", "--untracked-files=all"])
     if final_dirty.strip():
         fail("build changed source/unignored files; evidence is not from a clean worktree")
@@ -559,6 +634,7 @@ def main() -> int:
         "head": head,
         "rengine_gitlink": gitlink,
         "rengine_checkout": rengine_checkout,
+        "rengine_worktree_clean": True,
         "toolchain": {
             "agp": EXPECTED_AGP,
             "gradle": gradle_version,
@@ -578,9 +654,15 @@ def main() -> int:
         "ctest": {
             "registered_count": len(ctest_inventory),
             "expected_count": len(EXPECTED_CTESTS),
+            "executed_count": ctest_results["executed_count"],
+            "skipped_count": ctest_results["skipped_count"],
+            "failure_count": ctest_results["failure_count"],
+            "error_count": ctest_results["error_count"],
             "tests": ctest_inventory,
+            "executed_tests": ctest_results["tests"],
             "passed": True,
             "log": "03-ctest.log",
+            "junit": "03-ctest-junit.xml",
         },
         "rengine_language_contract": "target-scoped cxx_std_20",
         "runtime_markers": [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS],
