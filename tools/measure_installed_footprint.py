@@ -40,6 +40,13 @@ def normalize_user_arg(value: str) -> str:
     fail("--user must be `current` or a non-negative integer Android user ID")
 
 
+def resolve_user_arg(requested_user: str, current_user: str) -> str:
+    """Freeze `current` to one numeric user ID before any package evidence calls."""
+    if not re.fullmatch(r"\d+", current_user):
+        fail(f"could not determine current Android user ID: {current_user}")
+    return current_user if requested_user == "current" else requested_user
+
+
 def capture(command: Sequence[str]) -> str:
     completed = subprocess.run(
         list(command),
@@ -230,13 +237,11 @@ def main() -> int:
     current_user = capture(
         adb_command(args.adb, serial, "shell", "am", "get-current-user")
     ).strip()
-    if not re.fullmatch(r"\d+", current_user):
-        fail(f"could not determine current Android user ID: {current_user}")
-    resolved_user = current_user if requested_user == "current" else requested_user
+    resolved_user = resolve_user_arg(requested_user, current_user)
 
     package_paths = parse_pm_paths(
         capture(package_path_command(
-            args.adb, serial, requested_user, args.package))
+            args.adb, serial, resolved_user, args.package))
     )
     installed_base_apk = require_single_base_apk(package_paths)
     installed_apk_sha256 = sha256_adb_file(
@@ -250,7 +255,7 @@ def main() -> int:
 
     storage_output = capture(
         storage_stats_command(
-            args.adb, serial, requested_user, args.package)
+            args.adb, serial, resolved_user, args.package)
     )
     storage_stats = parse_storage_stats(storage_output)
     installed_app_bytes = storage_stats["code"]
