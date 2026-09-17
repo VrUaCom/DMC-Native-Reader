@@ -262,6 +262,7 @@ def read_ctest_junit(path: Path) -> dict[str, object]:
 
     cases = [element for element in root.iter() if xml_local_name(element.tag) == "testcase"]
     names: list[str] = []
+    non_run: list[str] = []
     skipped: list[str] = []
     failures: list[str] = []
     errors: list[str] = []
@@ -270,6 +271,9 @@ def read_ctest_junit(path: Path) -> dict[str, object]:
         if not name:
             fail("CTest JUnit contains a testcase without a name")
         names.append(name)
+        status = case.get("status")
+        if status != "run":
+            non_run.append(f"{name}:{status or '<missing>'}")
         child_tags = {xml_local_name(child.tag) for child in case}
         if "skipped" in child_tags:
             skipped.append(name)
@@ -288,14 +292,16 @@ def read_ctest_junit(path: Path) -> dict[str, object]:
             f"executed={len(names)} expected={len(EXPECTED_CTESTS)} "
             f"missing={missing} unexpected={unexpected}"
         )
-    if skipped or failures or errors:
+    if non_run or skipped or failures or errors:
         fail(
-            "CTest JUnit did not prove an all-pass run: "
-            f"skipped={sorted(skipped)} failures={sorted(failures)} errors={sorted(errors)}"
+            "CTest JUnit did not prove an all-run/all-pass execution: "
+            f"non_run={sorted(non_run)} skipped={sorted(skipped)} "
+            f"failures={sorted(failures)} errors={sorted(errors)}"
         )
 
     return {
         "executed_count": len(names),
+        "non_run_count": len(non_run),
         "skipped_count": len(skipped),
         "failure_count": len(failures),
         "error_count": len(errors),
@@ -621,6 +627,21 @@ def main() -> int:
     release_package_policy = read_verifier_report(
         "06-release-apk-verifier", release_apk, "unsigned-release")
 
+    final_head = capture(["git", "rev-parse", "HEAD"]).strip()
+    final_gitlink = capture(["git", "rev-parse", f"HEAD:{RENGINE_REL.as_posix()}"]).strip()
+    final_rengine_checkout = capture(
+        ["git", "-C", str(rengine_path), "rev-parse", "HEAD"]
+    ).strip()
+    if final_head != head:
+        fail(f"repository HEAD changed during evidence run: {head} -> {final_head}")
+    if final_gitlink != gitlink:
+        fail(f"Rengine gitlink changed during evidence run: {gitlink} -> {final_gitlink}")
+    if final_rengine_checkout != rengine_checkout:
+        fail(
+            "Rengine checkout changed during evidence run: "
+            f"{rengine_checkout} -> {final_rengine_checkout}"
+        )
+
     require_clean_checkout(rengine_path, "Rengine submodule")
     final_dirty = capture(["git", "status", "--porcelain", "--untracked-files=all"])
     if final_dirty.strip():
@@ -632,6 +653,7 @@ def main() -> int:
         "repository": "VrUaCom/DMC-Native-Reader",
         "branch": branch,
         "head": head,
+        "source_identity_stable": True,
         "rengine_gitlink": gitlink,
         "rengine_checkout": rengine_checkout,
         "rengine_worktree_clean": True,
@@ -655,6 +677,7 @@ def main() -> int:
             "registered_count": len(ctest_inventory),
             "expected_count": len(EXPECTED_CTESTS),
             "executed_count": ctest_results["executed_count"],
+            "non_run_count": ctest_results["non_run_count"],
             "skipped_count": ctest_results["skipped_count"],
             "failure_count": ctest_results["failure_count"],
             "error_count": ctest_results["error_count"],
