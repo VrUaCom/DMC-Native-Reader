@@ -122,6 +122,25 @@ def require_single_base_apk(paths: Sequence[str]) -> str:
     return path
 
 
+def require_stable_installed_identity(
+    initial_path: str,
+    initial_sha256: str,
+    final_path: str,
+    final_sha256: str,
+) -> None:
+    """Reject package replacement/reinstall races during one evidence measurement."""
+    if final_path != initial_path:
+        fail(
+            "installed base.apk path changed during measurement: "
+            f"{initial_path} -> {final_path}"
+        )
+    if final_sha256 != initial_sha256:
+        fail(
+            "installed base.apk bytes changed during measurement: "
+            f"{initial_sha256} -> {final_sha256}"
+        )
+
+
 def parse_storage_stats(output: str) -> dict[str, int]:
     """Parse `pm get-package-storage-stats` byte fields.
 
@@ -284,6 +303,21 @@ def main() -> int:
         adb_command(args.adb, serial, "shell", "getprop", "ro.build.version.sdk")
     ).strip()
 
+    final_package_paths = parse_pm_paths(
+        capture(package_path_command(
+            args.adb, serial, resolved_user, args.package))
+    )
+    final_installed_base_apk = require_single_base_apk(final_package_paths)
+    final_installed_apk_sha256 = sha256_adb_file(
+        args.adb, serial, final_installed_base_apk
+    )
+    require_stable_installed_identity(
+        installed_base_apk,
+        installed_apk_sha256,
+        final_installed_base_apk,
+        final_installed_apk_sha256,
+    )
+
     passed = installed_app_bytes <= MAX_INSTALLED_APP_BYTES
     report = {
         "schema": "dmc-native-reader.installed-footprint.v2",
@@ -300,6 +334,8 @@ def main() -> int:
         "current_android_user": current_user,
         "package_paths": package_paths,
         "installed_base_apk": installed_base_apk,
+        "final_package_paths": final_package_paths,
+        "final_installed_base_apk": final_installed_base_apk,
         "measurement": "Android StorageStats.getAppBytes via pm get-package-storage-stats",
         "installed_app_bytes": installed_app_bytes,
         "max_installed_app_bytes": MAX_INSTALLED_APP_BYTES,
@@ -308,7 +344,9 @@ def main() -> int:
         "reviewed_apk": str(apk),
         "reviewed_apk_sha256": reviewed_apk_sha256,
         "installed_apk_sha256": installed_apk_sha256,
+        "final_installed_apk_sha256": final_installed_apk_sha256,
         "artifact_sha256_match": True,
+        "installed_package_identity_stable": True,
         "pass": passed,
     }
     print(json.dumps(report, indent=2, sort_keys=True))
