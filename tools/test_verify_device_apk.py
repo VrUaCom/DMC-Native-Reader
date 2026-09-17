@@ -161,6 +161,28 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     measure.normalize_user_arg(invalid)
 
+    def test_android_current_user_is_frozen_before_package_evidence(self):
+        self.assertEqual(measure.resolve_user_arg("current", "10"), "10")
+        self.assertEqual(measure.resolve_user_arg("7", "10"), "7")
+        with self.assertRaises(SystemExit):
+            measure.resolve_user_arg("current", "not-a-user")
+
+        frozen_user = measure.resolve_user_arg("current", "10")
+        self.assertEqual(
+            measure.package_path_command("adb", "SERIAL", frozen_user, "pkg"),
+            [
+                "adb", "-s", "SERIAL", "shell", "pm", "path",
+                "--user", "10", "pkg",
+            ],
+        )
+        self.assertEqual(
+            measure.storage_stats_command("adb", "SERIAL", frozen_user, "pkg"),
+            [
+                "adb", "-s", "SERIAL", "shell", "pm",
+                "get-package-storage-stats", "--user", "10", "pkg",
+            ],
+        )
+
     def test_android_user_scope_is_applied_to_both_pm_commands(self):
         self.assertEqual(
             measure.package_path_command(
