@@ -189,6 +189,26 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
             ],
         )
 
+    def test_installed_package_identity_must_remain_stable(self):
+        base = "/data/app/~~abc/pkg-xyz/base.apk"
+        digest = "a" * 64
+        measure.require_stable_installed_identity(base, digest, base, digest)
+
+        with self.assertRaises(SystemExit):
+            measure.require_stable_installed_identity(
+                base,
+                digest,
+                "/data/app/~~def/pkg-new/base.apk",
+                digest,
+            )
+        with self.assertRaises(SystemExit):
+            measure.require_stable_installed_identity(
+                base,
+                digest,
+                base,
+                "b" * 64,
+            )
+
     def test_android_user_scope_is_applied_to_both_pm_commands(self):
         self.assertEqual(
             measure.package_path_command(
