@@ -25,6 +25,9 @@ DEFAULT_PACKAGE = "com.dmcrengine.nativereader"
 EXPECTED_VERSION_CODE = "33"
 EXPECTED_VERSION_NAME = "1.0.6"
 MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
+ART_COMPILE_NONE = "none"
+ART_COMPILE_SPEED = "speed"
+ART_COMPILE_MODES = (ART_COMPILE_NONE, ART_COMPILE_SPEED)
 
 
 def fail(message: str) -> NoReturn:
@@ -170,6 +173,18 @@ def parse_storage_stats(output: str) -> dict[str, int]:
     return stats
 
 
+def acceptance_installed_app_bytes(
+    baseline_bytes: int,
+    stress_bytes: int | None,
+) -> int:
+    """Gate on the larger observed authoritative StorageStats code measurement."""
+    if baseline_bytes < 0 or (stress_bytes is not None and stress_bytes < 0):
+        fail("installed app byte measurements must be non-negative")
+    if stress_bytes is None:
+        return baseline_bytes
+    return max(baseline_bytes, stress_bytes)
+
+
 def parse_package_version(dumpsys: str) -> tuple[str | None, str | None]:
     code_match = re.search(r"(?m)^\s*versionCode=(\d+)\b", dumpsys)
     name_match = re.search(r"(?m)^\s*versionName=([^\s]+)\s*$", dumpsys)
@@ -205,6 +220,29 @@ def storage_stats_command(adb: str, serial: str, user: str, package: str) -> lis
     )
 
 
+def art_compile_command(
+    adb: str,
+    serial: str,
+    package: str,
+    mode: str,
+) -> list[str]:
+    """Build the package-scoped ART compile stress command."""
+    if mode != ART_COMPILE_SPEED:
+        fail(f"unsupported ART compile stress mode: {mode}")
+    return adb_command(
+        adb,
+        serial,
+        "shell",
+        "cmd",
+        "package",
+        "compile",
+        "-m",
+        mode,
+        "-f",
+        package,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adb", default="adb", help="adb executable")
@@ -224,6 +262,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--expected-apk-sha256",
         help="Optional expected SHA-256 guard for --apk; mismatch aborts before measurement.",
+    )
+    parser.add_argument(
+        "--art-compile-mode",
+        choices=ART_COMPILE_MODES,
+        default=ART_COMPILE_NONE,
+        help=(
+            "Optional package-scoped ART stress state. `speed` performs a full-AOT "
+            "compile after the baseline StorageStats measurement, then measures again."
+        ),
     )
     return parser.parse_args()
 
@@ -272,12 +319,36 @@ def main() -> int:
             f"installed={installed_apk_sha256} reviewed={reviewed_apk_sha256}"
         )
 
-    storage_output = capture(
+    baseline_storage_output = capture(
         storage_stats_command(
             args.adb, serial, resolved_user, args.package)
     )
-    storage_stats = parse_storage_stats(storage_output)
-    installed_app_bytes = storage_stats["code"]
+    baseline_storage_stats = parse_storage_stats(baseline_storage_output)
+    baseline_installed_app_bytes = baseline_storage_stats["code"]
+
+    art_compile_output: str | None = None
+    stress_storage_stats: dict[str, int] | None = None
+    stress_installed_app_bytes: int | None = None
+    if args.art_compile_mode == ART_COMPILE_SPEED:
+        art_compile_output = capture(
+            art_compile_command(
+                args.adb,
+                serial,
+                args.package,
+                args.art_compile_mode,
+            )
+        )
+        stress_storage_output = capture(
+            storage_stats_command(
+                args.adb, serial, resolved_user, args.package)
+        )
+        stress_storage_stats = parse_storage_stats(stress_storage_output)
+        stress_installed_app_bytes = stress_storage_stats["code"]
+
+    installed_app_bytes = acceptance_installed_app_bytes(
+        baseline_installed_app_bytes,
+        stress_installed_app_bytes,
+    )
 
     dumpsys = capture(
         adb_command(args.adb, serial, "shell", "dumpsys", "package", args.package)
@@ -320,7 +391,7 @@ def main() -> int:
 
     passed = installed_app_bytes <= MAX_INSTALLED_APP_BYTES
     report = {
-        "schema": "dmc-native-reader.installed-footprint.v2",
+        "schema": "dmc-native-reader.installed-footprint.v3",
         "package": args.package,
         "versionCode": version_code,
         "versionName": version_name,
@@ -337,9 +408,18 @@ def main() -> int:
         "final_package_paths": final_package_paths,
         "final_installed_base_apk": final_installed_base_apk,
         "measurement": "Android StorageStats.getAppBytes via pm get-package-storage-stats",
+        "baseline_installed_app_bytes": baseline_installed_app_bytes,
+        "baseline_storage_stats_bytes": baseline_storage_stats,
+        "art_compile_mode": args.art_compile_mode,
+        "art_compile_output": (
+            art_compile_output.strip() if art_compile_output is not None else None
+        ),
+        "stress_installed_app_bytes": stress_installed_app_bytes,
+        "stress_storage_stats_bytes": stress_storage_stats,
         "installed_app_bytes": installed_app_bytes,
+        "installed_app_bytes_acceptance_rule": "max(baseline, art-stress-if-requested)",
         "max_installed_app_bytes": MAX_INSTALLED_APP_BYTES,
-        "storage_stats_bytes": storage_stats,
+        "storage_stats_bytes": baseline_storage_stats,
         "mutable_user_data_cache_included_in_gate": False,
         "reviewed_apk": str(apk),
         "reviewed_apk_sha256": reviewed_apk_sha256,
