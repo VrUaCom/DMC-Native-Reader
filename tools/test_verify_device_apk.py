@@ -22,6 +22,12 @@ assert _measure_spec is not None and _measure_spec.loader is not None
 measure = module_from_spec(_measure_spec)
 _measure_spec.loader.exec_module(measure)
 
+RUNNER_PATH = Path(__file__).with_name("run_phase2_exact_head.py")
+_runner_spec = spec_from_file_location("run_phase2_exact_head", RUNNER_PATH)
+assert _runner_spec is not None and _runner_spec.loader is not None
+runner = module_from_spec(_runner_spec)
+_runner_spec.loader.exec_module(runner)
+
 
 def make_test_zip() -> bytes:
     output = io.BytesIO()
@@ -215,6 +221,40 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
                 "get-package-storage-stats", "--user", "10", "pkg",
             ],
         )
+
+    def test_ctest_junit_requires_every_canonical_test_to_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            junit = Path(temp) / "ctest.xml"
+
+            all_run_cases = "".join(
+                f'<testcase name="{name}" status="run" />'
+                for name in runner.EXPECTED_CTESTS
+            )
+            junit.write_text(
+                f'<testsuite tests="{len(runner.EXPECTED_CTESTS)}">'
+                f'{all_run_cases}</testsuite>',
+                encoding="utf-8",
+            )
+            result = runner.read_ctest_junit(junit)
+            self.assertEqual(result["executed_count"], len(runner.EXPECTED_CTESTS))
+            self.assertEqual(result["non_run_count"], 0)
+            self.assertEqual(result["skipped_count"], 0)
+            self.assertEqual(result["failure_count"], 0)
+            self.assertEqual(result["error_count"], 0)
+
+            disabled_name = runner.EXPECTED_CTESTS[0]
+            disabled_cases = "".join(
+                f'<testcase name="{name}" status="'
+                f'{"disabled" if name == disabled_name else "run"}" />'
+                for name in runner.EXPECTED_CTESTS
+            )
+            junit.write_text(
+                f'<testsuite tests="{len(runner.EXPECTED_CTESTS)}" disabled="1">'
+                f'{disabled_cases}</testsuite>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                runner.read_ctest_junit(junit)
 
     def test_installed_storage_stats_parser(self):
         stats = measure.parse_storage_stats(
