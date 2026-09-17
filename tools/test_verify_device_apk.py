@@ -209,6 +209,27 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
                 "b" * 64,
             )
 
+    def test_art_speed_compile_command_is_package_scoped(self):
+        self.assertEqual(
+            measure.art_compile_command(
+                "adb", "SERIAL", "com.dmcrengine.nativereader", "speed"),
+            [
+                "adb", "-s", "SERIAL", "shell", "cmd", "package", "compile",
+                "-m", "speed", "-f", "com.dmcrengine.nativereader",
+            ],
+        )
+        with self.assertRaises(SystemExit):
+            measure.art_compile_command("adb", "SERIAL", "pkg", "none")
+
+    def test_installed_app_acceptance_uses_larger_baseline_or_stress(self):
+        self.assertEqual(measure.acceptance_installed_app_bytes(100, None), 100)
+        self.assertEqual(measure.acceptance_installed_app_bytes(100, 120), 120)
+        self.assertEqual(measure.acceptance_installed_app_bytes(130, 120), 130)
+        with self.assertRaises(SystemExit):
+            measure.acceptance_installed_app_bytes(-1, None)
+        with self.assertRaises(SystemExit):
+            measure.acceptance_installed_app_bytes(1, -1)
+
     def test_android_user_scope_is_applied_to_both_pm_commands(self):
         self.assertEqual(
             measure.package_path_command(
