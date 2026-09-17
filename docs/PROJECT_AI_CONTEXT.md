@@ -1,6 +1,6 @@
 # DMC Native Reader — Project AI Context, Standards & Rules
 
-Date: 2026-09-16
+Date: 2026-09-17
 Scope: `VrUaCom/DMC-Native-Reader` only.
 Audience: project owner + AI/engineering agents working inside this private repository/project.
 
@@ -243,6 +243,16 @@ Historical v26 growth percentages are not acceptance authority unless exact arti
 ### Phase-2 debug / unsigned-release evidence
 The canonical Phase-2 runner is `tools/run_phase2_exact_head.py`. It must use the live candidate HEAD and produce two independent SHA-bound verifier reports.
 
+Exact native-test evidence is also machine-gated:
+- canonical inventory = 23 exact test names;
+- `registered_count == expected_count == 23`;
+- JUnit contains the exact same 23 names;
+- every testcase must have `status="run"`;
+- `executed_count == 23`;
+- `non_run_count == skipped_count == failure_count == error_count == 0`.
+
+A CTest return code alone is not sufficient acceptance, and a disabled/notrun test is not treated as executed.
+
 Debug APK must prove:
 - package/version/ABI identity;
 - expected stable public test signer;
@@ -259,20 +269,47 @@ Unsigned release APK must independently prove the same package/ABI/JNI/layout/si
 
 A broken/invalid signature is not accepted as “unsigned”. The runner independently validates critical signing fields from verifier JSON before writing the Phase-2 manifest.
 
-### Installed-size hard gate and Android user scope
+### Installed-size hard gate, package identity and Android user scope
 Android `StorageStats.getAppBytes()` on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed installable APK. Mutable data/cache are reported separately and are not part of this code-size gate.
 
-`tools/measure_installed_footprint.py` must:
+`tools/measure_installed_footprint.py` uses schema `dmc-native-reader.installed-footprint.v3` and must:
 - use authoritative package StorageStats `code:` bytes;
 - fail closed if the metric is unavailable;
 - never substitute filesystem `du`;
 - require one installed `base.apk`;
 - hash installed `base.apk` and compare it to the reviewed local APK SHA-256;
-- use the **same explicit Android `--user` scope** for `pm path` and `pm get-package-storage-stats`;
-- default to `current` unless an explicit numeric user/profile is intentionally targeted;
-- record requested/resolved/current user identity, device identity, build fingerprint and package version.
+- resolve `--user current` **once** to one numeric Android user/profile before package evidence;
+- use that same frozen numeric user for every `pm path` and StorageStats query;
+- record requested/resolved/current user identity, device identity, build fingerprint and package version;
+- re-read final `base.apk` path and SHA-256 at the end of measurement;
+- reject package reinstall/update races if final path or SHA differs from the initial identity;
+- report `installed_package_identity_stable=true` only after those checks pass.
 
-`APK <=4 MiB` is necessary but not sufficient: optimized/runtime artifacts can still make installed app bytes exceed the hard gate.
+`APK <=4 MiB` is necessary but not sufficient: optimized/runtime artifacts can make installed app bytes exceed the hard gate.
+
+#### ART policy is conditional on the final #55 artifact
+A single immediate post-install StorageStats snapshot can understate a **DEX-bearing** app because ART may create/replace optimized compiler artifacts later. The supported `speed` compiler filter is therefore used as a conservative package-scoped full-AOT stress state for DEX-bearing release candidates.
+
+**Path B / any DEX present**
+- final Samsung measurement uses `--art-compile-mode speed`;
+- record baseline StorageStats first;
+- run package-scoped `cmd package compile -m speed -f <package>`;
+- record stress StorageStats after successful compile;
+- gate on `max(baseline_installed_app_bytes, stress_installed_app_bytes) <= 4,194,304`.
+
+**Path A / exact machine-proven zero DEX**
+The ART stress exemption is valid only when package verification on the exact production-signed APK proves:
+- zero DEX entries; and
+- `android:hasCode=false`.
+
+Then:
+- final Samsung measurement uses `--art-compile-mode none`;
+- authoritative baseline StorageStats must be <=4,194,304;
+- ART stress is recorded as `NOT_APPLICABLE_ZERO_DEX` because there is no app DEX to dexopt.
+
+A minimal shim or any non-zero DEX remains Path B and must use `speed` stress. `speed` is a supported conservative stress state, not a claim of a mathematical upper bound over every future ART implementation.
+
+For **both** paths, final #40/#45 Samsung acceptance must pass `--expected-apk-sha256` for the exact **post-signing production APK**. If the target Samsung build does not expose authoritative package-storage `code:` bytes, including AOSP/OEM feature-flag disablement, the device-size gate is NO-GO until an equally authoritative separately reviewed path exists.
 
 ## 8. Repository hygiene
 
@@ -322,7 +359,7 @@ Important v33/C++23 gates include:
 - `ptx_runtime_compat_test` for the approved runtime slice and `0xCB48` placement boundary;
 - SCM authority regression;
 - module/Spider/texture/PNG/render/inspection regressions;
-- `tools/test_verify_device_apk.py` for package/signing/dedup/4 MiB/user-scope policy;
+- `tools/test_verify_device_apk.py` for package/signing/dedup/4 MiB/frozen-user/stable-installed-identity/ART-stress policy;
 - exact APK verifier for **both** Phase-2 APKs;
 - physical Samsung acceptance for the final production-signed release candidate.
 
@@ -345,14 +382,20 @@ Production signing changes APK bytes and SHA-256. Therefore:
 - #45 and Samsung acceptance must use that same signed artifact/hash;
 - publication must consume that exact verified signed artifact rather than rebuild/re-sign a lookalike.
 
-Final device measurement must call `tools/measure_installed_footprint.py` with `--expected-apk-sha256 <post-signing-sha256>` and explicit `--user` scope. Installed `base.apk` SHA must equal the reviewed post-signing APK SHA.
+Final device measurement must call `tools/measure_installed_footprint.py` with explicit `--expected-apk-sha256 <post-signing-sha256>` and explicit/frozen Android user scope.
+
+ART mode is selected from exact post-signing package evidence:
+- any DEX present -> `--art-compile-mode speed`, baseline + stress, gate on the larger value;
+- exact zero DEX + `android:hasCode=false` -> `--art-compile-mode none`, baseline-only, ART stress `NOT_APPLICABLE_ZERO_DEX`.
+
+Installed `base.apk` SHA must equal the reviewed post-signing APK SHA and its path/SHA must remain stable for the complete measurement.
 
 Required promotion evidence eventually includes:
 1. exact-head host build/tests actually execute and pass;
 2. clean Android debug + unsigned release structural evidence;
 3. production-signed post-signing verifier evidence;
 4. exact package/hash/size/dedup metrics;
-5. physical Samsung scenarios + `StorageStats.getAppBytes()` <=4 MiB on the exact signed artifact;
+5. physical Samsung scenarios + **path-correct** `StorageStats.getAppBytes()` <=4 MiB on the exact signed artifact;
 6. Viktor explicitly approves merge/release.
 
 ## 11. Mandatory Project task format
