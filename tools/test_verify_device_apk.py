@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+import sys
+
+# This policy test imports repository-local verifier/tool modules. Keep those
+# imports side-effect free for the exact-head clean-worktree contract: Python
+# must not create tools/__pycache__/*.pyc before or during the evidence run.
+sys.dont_write_bytecode = True
+
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 from pathlib import Path
