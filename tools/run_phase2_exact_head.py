@@ -40,6 +40,31 @@ EXPECTED_MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 EXPECTED_SIZE_AUTHORITY = "absolute-package-metrics+StorageStats.getAppBytes<=4MiB"
 EXPECTED_DEBUG_SIGNER_SHA256 = (
     "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
+EXPECTED_CTESTS = (
+    "black_widow_state",
+    "composite_builder",
+    "composite_mod_scene",
+    "composite_placement",
+    "core_model_pipeline",
+    "cxx23_profile",
+    "dds_ptx_v1",
+    "em028_corpus_contract",
+    "gdata_legacy",
+    "mod_spatial_adapter",
+    "module_registry",
+    "png_export_session",
+    "ptx_model_texture",
+    "ptx_runtime_compat",
+    "ptx_transaction",
+    "render_scene",
+    "scm_authority",
+    "spider_event_execution",
+    "spider_model_execution",
+    "uv_gallery",
+    "session_inspection",
+    "tm2_legacy",
+    "workspace_graph",
+)
 
 
 def fail(message: str) -> NoReturn:
@@ -162,6 +187,56 @@ def read_host_compiler_evidence() -> tuple[str, str]:
         fail("could not identify CMAKE_CXX_COMPILER from CMakeCache.txt")
 
     return compiler_id.group(1).strip(), compiler_path.group(1).strip()
+
+
+def read_ctest_inventory(ctest: str, env: dict[str, str]) -> list[str]:
+    output = capture(
+        [
+            ctest,
+            "--test-dir",
+            str(HOST_BUILD_DIR.relative_to(ROOT)),
+            "--show-only=json-v1",
+        ],
+        env=env,
+    )
+    try:
+        report = json.loads(output)
+    except json.JSONDecodeError as error:
+        fail(f"CTest inventory is not valid JSON: {error}")
+    tests = report.get("tests") if isinstance(report, dict) else None
+    if not isinstance(tests, list):
+        fail("CTest inventory JSON does not contain a tests array")
+    names: list[str] = []
+    for test in tests:
+        if not isinstance(test, dict) or not isinstance(test.get("name"), str):
+            fail("CTest inventory contains a test without a string name")
+        names.append(test["name"])
+
+    expected = set(EXPECTED_CTESTS)
+    actual = set(names)
+    if len(names) != len(EXPECTED_CTESTS) or actual != expected:
+        missing = sorted(expected - actual)
+        unexpected = sorted(actual - expected)
+        fail(
+            "CTest inventory drift: "
+            f"registered={len(names)} expected={len(EXPECTED_CTESTS)} "
+            f"missing={missing} unexpected={unexpected}"
+        )
+
+    inventory_path = EVIDENCE_DIR / "02-ctest-inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "registered_count": len(names),
+                "expected_count": len(EXPECTED_CTESTS),
+                "tests": sorted(names),
+            },
+            indent=2,
+            sort_keys=True,
+        ) + "\n",
+        encoding="utf-8",
+    )
+    return sorted(names)
 
 
 def read_verifier_report(
@@ -409,6 +484,7 @@ def main() -> int:
         env=env,
     )
     host_compiler_id, host_compiler_path = read_host_compiler_evidence()
+    ctest_inventory = read_ctest_inventory(args.ctest, env)
 
     run_logged(
         "02-cmake-build",
@@ -498,6 +574,13 @@ def main() -> int:
             "android_ndk": EXPECTED_NDK,
             "android_ndk_clang_path": str(ndk_clang),
             "android_ndk_clang_version_output": ndk_clang_version_text.strip(),
+        },
+        "ctest": {
+            "registered_count": len(ctest_inventory),
+            "expected_count": len(EXPECTED_CTESTS),
+            "tests": ctest_inventory,
+            "passed": True,
+            "log": "03-ctest.log",
         },
         "rengine_language_contract": "target-scoped cxx_std_20",
         "runtime_markers": [marker.decode("ascii") for marker in REQUIRED_RUNTIME_MARKERS],
