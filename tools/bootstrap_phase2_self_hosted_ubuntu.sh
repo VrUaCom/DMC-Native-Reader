@@ -92,7 +92,7 @@ if [[ "$missing" -ne 0 ]]; then
   exit 1
 fi
 
-mapfile -t phase2_contract < <(python3 - <<'PY'
+mapfile -t phase2_contract < <(python3 -B - <<'PY'
 import importlib.util
 from pathlib import Path
 
