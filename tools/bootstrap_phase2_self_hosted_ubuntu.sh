@@ -15,6 +15,34 @@ set -euo pipefail
 ANDROID_CMDLINE_TOOLS_REVISION="15859902"
 ANDROID_CMDLINE_TOOLS_SHA256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"
 
+EXPECTED_HEAD=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --expected-head)
+      if [[ "$#" -lt 2 ]]; then
+        echo "ERROR: --expected-head requires the live PR #33 SHA." >&2
+        exit 2
+      fi
+      EXPECTED_HEAD="${2,,}"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: $0 --expected-head <live-pr-33-head-sha>"
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      echo "Usage: $0 --expected-head <live-pr-33-head-sha>" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ ! "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: --expected-head must be the full 40-hex live PR #33 head SHA." >&2
+  exit 2
+fi
+
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "ERROR: Phase-2 direct evidence requires Linux." >&2
   exit 1
@@ -48,6 +76,13 @@ cd "$REPO_ROOT"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "ERROR: bootstrap must run from the DMC-Native-Reader checkout." >&2
+  exit 1
+fi
+
+initial_head="$(git rev-parse HEAD)"
+if [[ "$initial_head" != "$EXPECTED_HEAD" ]]; then
+  echo "ERROR: local checkout HEAD $initial_head != supplied live PR head $EXPECTED_HEAD" >&2
+  echo "Fetch/checkout the live PR #33 candidate before bootstrapping." >&2
   exit 1
 fi
 
@@ -271,6 +306,12 @@ done
 
 git submodule update --init --recursive
 
+post_submodule_head="$(git rev-parse HEAD)"
+if [[ "$post_submodule_head" != "$EXPECTED_HEAD" ]]; then
+  echo "ERROR: repository HEAD changed during bootstrap: $EXPECTED_HEAD -> $post_submodule_head" >&2
+  exit 1
+fi
+
 ENV_FILE="$REPO_ROOT/build/phase2-self-hosted-env.sh"
 mkdir -p "$(dirname "$ENV_FILE")"
 {
@@ -282,6 +323,10 @@ mkdir -p "$(dirname "$ENV_FILE")"
 } > "$ENV_FILE"
 
 head_sha="$(git rev-parse HEAD)"
+if [[ "$head_sha" != "$EXPECTED_HEAD" ]]; then
+  echo "ERROR: repository HEAD no longer matches supplied live PR head." >&2
+  exit 1
+fi
 cmake_version="$(cmake --version | head -n 1)"
 cxx_version="$(c++ --version | head -n 1)"
 python_version="$(python3 --version 2>&1)"
@@ -304,7 +349,7 @@ echo
 printf '%s\n' "Direct exact-head evidence command:"
 printf '  source %q\n' "$ENV_FILE"
 printf '  python3 tools/run_phase2_exact_head.py --sdk %q --gradle %q --java %q --expected-head %q\n' \
-  "$ANDROID_SDK_ROOT" "$GRADLE_HOME/bin/gradle" "$JAVA_HOME/bin/java" "$head_sha"
+  "$ANDROID_SDK_ROOT" "$GRADLE_HOME/bin/gradle" "$JAVA_HOME/bin/java" "$EXPECTED_HEAD"
 echo
 printf '%s\n' "Optional GitHub self-hosted registration can still be added later."
 printf '%s\n' "Do not commit runner tokens, credentials, or local build outputs."
