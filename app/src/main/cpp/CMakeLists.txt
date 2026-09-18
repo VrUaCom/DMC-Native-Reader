@@ -48,6 +48,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/texture_companion.cpp
     modules/texture_set.cpp
     modules/workspace_graph.cpp
+    spider/crusader.cpp
     spider/black_widow.cpp
     spider/model_placement_actions.cpp
     spider/session_compose_actions.cpp
