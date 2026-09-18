@@ -5,6 +5,7 @@
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/spider/session_actions.h"
 
 #include <cassert>
 #include <bit>
@@ -340,7 +341,7 @@ int main() {
     mesh.indices = {0U, 1U, 2U, 0U, 2U, 3U};
     mesh.uv0 = {{0.0F, 0.0F}, {1.0F, 0.0F}, {1.0F, 1.0F}, {0.0F, 1.0F}};
     std::vector<std::uint32_t> slots{1U, 3U};
-    const dmcresource::texture_companion::ModelTextureView model{&mesh, slots};
+    const dmcresource::texture_companion::ModelTextureView model{&mesh, nullptr, slots};
     const auto attachment = dmcresource::texture_companion::attach_ptx(
         "four-slots.ptx", bundle.data(), bundle.size(), model);
     assert(attachment.attached);
@@ -374,7 +375,7 @@ int main() {
         ResourceCapability::TextureBinding | ResourceCapability::UvCoordinates;
     session.render_mesh = mesh;
     session.render_triangle_texture_slots = slots;
-    assert(dmcresource::attach_session_ptx(&session, "bundle.ptx", bundle.data(), bundle.size()));
+    assert(dmcresource::spider::actions::attach_ptx(&session, "bundle.ptx", bundle.data(), bundle.size()));
     namespace widow = dmcresource::spider::black_widow;
     assert(widow::has_state(dmcresource::black_widow_state(&session),
                            widow::StateFlag::TextureCompanionAttached));
@@ -391,7 +392,7 @@ int main() {
     }
     assert(dmcresource::render_session(&session,128,128,0,0,view.zoom,0).pixels
            == rendered.pixels);
-    assert(!dmcresource::attach_session_ptx(&session, "bad.ptx", nullptr, 0U));
+    assert(!dmcresource::spider::actions::attach_ptx(&session, "bad.ptx", nullptr, 0U));
     assert(session.texture_companion_attached);
     assert(session.attached_textures[3].rgba8 == attachment.textures[3].rgba8);
 
