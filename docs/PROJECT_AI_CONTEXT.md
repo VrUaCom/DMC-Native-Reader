@@ -120,6 +120,8 @@ Black Widow is typed application/capability state authority. Platform UI must no
 Until Phase #54, JNI/Java own platform transport/lifecycle/presentation wiring only: URI/FD handling, Bitmap transport, dialogs, Views and Android lifecycle. Do not put DMC parsing, attachment resolution, graph semantics or texture ownership policy in Java/JNI.
 
 ### Future native Android shell / Java retirement
+
+Current pre-Gate-D research input: `docs/ANDROID_SHELL_RESEARCH_V33.md`. It records the current managed census and Path-B-first rationale; #44 remains the gate authority.
 Phase #54 begins **only after** Phase 5 stable WorkspaceGraph bindings and Review Gate #44 GO.
 
 Gate #44 must hand Phase #54 a complete census of the actual managed surface: authored Java/Kotlin, generated managed sources, DEX-contributing AAR/JAR/modules, manifest components and JNI-facing managed APIs. Historical file counts are context only.
@@ -131,7 +133,9 @@ Authority split for that phase:
 - portable C++ controller = navigation/session/presentation model;
 - Android platform layer = lifecycle/window/input/document transport/presentation only.
 
-Preferred target is zero authored Java/Kotlin application source and zero app DEX using supported `android.app.NativeActivity`/NDK contracts. Path A must prove zero DEX, `android:hasCode=false`, supported NativeActivity manifest wiring and exported `ANativeActivity_onCreate`. This is evidence-gated, not an unconditional metric: current SAF open/create/tree workflows depend on result-returning Android Intents while documented `ANativeActivityCallbacks` has no `onActivityResult`. #54 must prove a supported public zero-DEX path end-to-end, including repeated external-open delivery and lifecycle/recreation behavior. If required UX cannot be preserved, only a #55-reviewed minimal framework callback shim may remain.
+Phase #54 implementation default is **Path B-first**: C++23 NativeActivity/NDK shell plus one minimal audited `NativeActivity` subclass for public-framework callbacks not exposed by `ANativeActivityCallbacks`. Current v33 research identifies two independent gaps required by existing UX: result-returning SAF delivery and repeated `onNewIntent` external-open delivery.
+
+Path A zero authored Java/Kotlin + zero app DEX is an optional optimization, not the starting architecture. It may supersede Path B only after supported public mechanisms prove complete SAF/result and repeated external-open parity. Path A must prove zero DEX, `android:hasCode=false`, supported NativeActivity manifest wiring and exported `ANativeActivity_onCreate`.
 
 The native shell must also have an explicit thread/lifetime contract for application-state ownership, callback handoff, `ANativeWindow`, `AInputQueue` and stale-event rejection. Accessibility/UI behavior must be compared against the managed baseline and receive an explicit Gate-E disposition.
 
