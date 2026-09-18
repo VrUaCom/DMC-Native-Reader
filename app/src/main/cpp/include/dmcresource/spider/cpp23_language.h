@@ -10,9 +10,10 @@
 
 namespace dmcresource::spider::cpp23 {
 
-// Spider C++ is an embedded C++23 product-language profile over Crusader. It
-// adds typed result/concept contracts for Native Reader modules while the
-// canonical executor remains the pinned Rengine native executor.
+// Spider C++ is an embedded C++23 product-language profile over Reader-owned
+// Crusader. It adds typed result/concept contracts for Native Reader modules;
+// canonical Rengine remains read-only format/parser authority, not the product
+// orchestration executor.
 inline constexpr std::string_view kLanguageProfile = "spider.cpp23";
 inline constexpr std::string_view kExecutorProfile = "spider.crusader";
 
