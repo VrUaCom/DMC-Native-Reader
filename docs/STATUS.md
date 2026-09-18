@@ -62,13 +62,15 @@ Therefore:
 Canonical direct path:
 
 ```bash
-bash tools/bootstrap_phase2_self_hosted_ubuntu.sh
+EXPECTED_HEAD="<live PR #33 head_sha>"
+test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+bash tools/bootstrap_phase2_self_hosted_ubuntu.sh --expected-head "$EXPECTED_HEAD"
 source build/phase2-self-hosted-env.sh
 python3 tools/run_phase2_exact_head.py \
   --sdk "$ANDROID_SDK_ROOT" \
   --gradle "$GRADLE_HOME/bin/gradle" \
   --java "$JAVA_HOME/bin/java" \
-  --expected-head "$(git rev-parse HEAD)"
+  --expected-head "$EXPECTED_HEAD"
 ```
 
 The run must use live PR #33 HEAD, not a SHA copied from historical comments.
