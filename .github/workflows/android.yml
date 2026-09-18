@@ -232,7 +232,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dmc-native-reader-v33-phase2-failure-evidence
-          path: build/phase2-evidence/
+          path: |
+            build/phase2-evidence/
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: warn
           retention-days: 7
 
