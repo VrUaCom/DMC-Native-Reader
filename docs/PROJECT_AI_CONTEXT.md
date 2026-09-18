@@ -1,6 +1,6 @@
 # DMC Native Reader — Project AI Context, Standards & Rules
 
-Date: 2026-09-17
+Date: 2026-09-18
 Scope: `VrUaCom/DMC-Native-Reader` only.
 Audience: project owner + AI/engineering agents working inside this private repository/project.
 
@@ -122,6 +122,8 @@ Until Phase #54, JNI/Java own platform transport/lifecycle/presentation wiring o
 ### Future native Android shell / Java retirement
 Phase #54 begins **only after** Phase 5 stable WorkspaceGraph bindings and Review Gate #44 GO.
 
+Gate #44 must hand Phase #54 a complete census of the actual managed surface: authored Java/Kotlin, generated managed sources, DEX-contributing AAR/JAR/modules, manifest components and JNI-facing managed APIs. Historical file counts are context only.
+
 Authority split for that phase:
 - Spider C++ = product orchestration/actions;
 - Black Widow = capability/application-policy authority;
@@ -129,7 +131,9 @@ Authority split for that phase:
 - portable C++ controller = navigation/session/presentation model;
 - Android platform layer = lifecycle/window/input/document transport/presentation only.
 
-Preferred target is zero authored Java/Kotlin application source and zero app DEX using supported `android.app.NativeActivity`/NDK contracts. This is evidence-gated, not an unconditional metric: current SAF open/create/tree workflows depend on result-returning Android Intents while documented `ANativeActivityCallbacks` has no `onActivityResult`. #54 must prove a supported public zero-DEX path end-to-end. If required UX cannot be preserved, only a #55-reviewed minimal framework callback shim may remain.
+Preferred target is zero authored Java/Kotlin application source and zero app DEX using supported `android.app.NativeActivity`/NDK contracts. Path A must prove zero DEX, `android:hasCode=false`, supported NativeActivity manifest wiring and exported `ANativeActivity_onCreate`. This is evidence-gated, not an unconditional metric: current SAF open/create/tree workflows depend on result-returning Android Intents while documented `ANativeActivityCallbacks` has no `onActivityResult`. #54 must prove a supported public zero-DEX path end-to-end, including repeated external-open delivery and lifecycle/recreation behavior. If required UX cannot be preserved, only a #55-reviewed minimal framework callback shim may remain.
+
+The native shell must also have an explicit thread/lifetime contract for application-state ownership, callback handoff, `ANativeWindow`, `AInputQueue` and stale-event rejection. Accessibility/UI behavior must be compared against the managed baseline and receive an explicit Gate-E disposition.
 
 Forbidden shortcuts:
 - hidden/private Android APIs;
@@ -169,6 +173,20 @@ Long-term dependency direction:
 `typed ResourceAsset -> BindingEdge -> stable ModelInstance[]`
 
 Vector position and Java URI arrays are lifecycle/presentation state, not semantic identity.
+
+Before any stable ID is production authority, its lifecycle must be explicit and tested:
+- identified semantic object;
+- creation/owner;
+- uniqueness scope;
+- validity lifetime;
+- presentation reorder behavior;
+- reopen/reparse behavior;
+- semantic replacement behavior;
+- workspace/session reset behavior;
+- stale-ID rejection;
+- persistence guarantee, or explicit `RUNTIME_ONLY_IDENTITY`.
+
+A URI/path may remain provenance or platform transport data, but it must not silently become a semantic ID under another type name.
 
 Deduplication may reuse identical content/decoded storage, but must not erase logical slot/resource/binding identity or provenance.
 
@@ -345,7 +363,7 @@ Canonical migration mode:
 
 Known hosted failure signature is `runner_id=0`, `steps=[]`: this is infrastructure evidence only, never compile/test PASS or FAIL.
 
-If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable, provided it uses the live exact candidate HEAD and complete canonical contract.
+If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the live PR #33 HEAD is resolved externally immediately before execution and passed to both stages via `--expected-head`. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
 
 ## 9. Testing is architecture
 
@@ -364,6 +382,14 @@ Important v33/C++23 gates include:
 - physical Samsung acceptance for the final production-signed release candidate.
 
 PTX #52 architecture acceptance does **not** mean the new runtime regression has executed. Until the final exact-head CMake/CTest checkpoint runs, its execution status remains pending.
+
+### Cross-phase regression inheritance
+Phase 2 has an accepted historical exact inventory of 23 tests. Later phases may add focused tests, but each review gate must treat the full suite accepted by the previous gate as immutable baseline evidence:
+- inherited tests remain present and execute;
+- no silent rename/delete/disable;
+- intentional replacement requires explicit old -> new mapping and review;
+- new phase-specific tests are explicitly inventoried;
+- historical Phase-2 exact-23 evidence is never rewritten merely because later suites grow.
 
 ## 10. Release and artifact-identity rule
 
@@ -390,13 +416,20 @@ ART mode is selected from exact post-signing package evidence:
 
 Installed `base.apk` SHA must equal the reviewed post-signing APK SHA and its path/SHA must remain stable for the complete measurement.
 
+### Release publication authority
+Before final GO, inventory every workflow/script capable of signing, creating a GitHub Release, uploading distributable Android artifacts or otherwise publishing a release candidate.
+
+Exactly one reviewed path may be `ACTIVE_CURRENT` for Android publication. Historical workflows must be explicitly `MANUAL_DIAGNOSTIC_ONLY` or `RETIRED/ARCHIVED`; they must not be able to publish a competing stale artifact unnoticed.
+
 Required promotion evidence eventually includes:
-1. exact-head host build/tests actually execute and pass;
+1. exact-head full inherited regression suite + release additions actually execute and pass;
 2. clean Android debug + unsigned release structural evidence;
 3. production-signed post-signing verifier evidence;
 4. exact package/hash/size/dedup metrics;
 5. physical Samsung scenarios + **path-correct** `StorageStats.getAppBytes()` <=4 MiB on the exact signed artifact;
-6. Viktor explicitly approves merge/release.
+6. NativeActivity/managed-shim thread/lifetime and accessibility dispositions remain satisfied;
+7. publication consumes the exact reviewed signed artifact/hash through the single active release authority;
+8. Viktor explicitly approves merge/release.
 
 ## 11. Mandatory Project task format
 
