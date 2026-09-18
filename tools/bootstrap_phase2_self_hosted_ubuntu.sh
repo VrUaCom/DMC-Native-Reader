@@ -86,6 +86,13 @@ if [[ "$initial_head" != "$EXPECTED_HEAD" ]]; then
   exit 1
 fi
 
+initial_dirty="$(git status --porcelain --untracked-files=all)"
+if [[ -n "$initial_dirty" ]]; then
+  echo "ERROR: worktree must be clean before Phase-2 bootstrap." >&2
+  printf '%s\n' "$initial_dirty" >&2
+  exit 1
+fi
+
 "${SUDO[@]}" apt-get update
 "${SUDO[@]}" apt-get install -y --no-install-recommends \
   build-essential \
@@ -309,6 +316,12 @@ git submodule update --init --recursive
 post_submodule_head="$(git rev-parse HEAD)"
 if [[ "$post_submodule_head" != "$EXPECTED_HEAD" ]]; then
   echo "ERROR: repository HEAD changed during bootstrap: $EXPECTED_HEAD -> $post_submodule_head" >&2
+  exit 1
+fi
+post_submodule_dirty="$(git status --porcelain --untracked-files=all)"
+if [[ -n "$post_submodule_dirty" ]]; then
+  echo "ERROR: bootstrap left the source checkout dirty after submodule initialization." >&2
+  printf '%s\n' "$post_submodule_dirty" >&2
   exit 1
 fi
 
