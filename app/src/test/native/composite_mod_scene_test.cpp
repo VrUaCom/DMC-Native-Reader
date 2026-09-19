@@ -195,7 +195,7 @@ int main() {
     assert(composite->probe.format == Format::Mod);
     assert(composite->renderable);
     assert(composite->composite_parts.size() == 4U);
-    assert(composite->trace.find("spider.crusader.action.compose-mods") != std::string::npos);
+    assert(composite->trace.find("spider.cpp23/crusader.action.compose-mods primary-host") != std::string::npos);
     assert(session_composite_part_count(composite.get()) == 4U);
     assert(session_composite_part_name(composite.get(), 0) == "em028_001.mod");
     assert(session_composite_part_name(composite.get(), 1) == "em028_004.mod");
