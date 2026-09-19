@@ -92,6 +92,7 @@ dmcresource::Session make_part(const char* name, float x) {
     Mesh mesh;
     mesh.vertices = {{x, 0.0F, 0.0F}, {x + 1.0F, 0.0F, 0.0F}, {x, 1.0F, 0.0F}};
     mesh.indices = {0U, 1U, 2U};
+    mesh.uv0 = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}};
     MeshPrimitive primitive;
     primitive.name = name;
     primitive.mesh = mesh;
