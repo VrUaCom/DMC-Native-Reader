@@ -85,6 +85,8 @@ if(WIN32)
     target_link_libraries(dmc_native_reader_win PRIVATE
         DMCNativeReader::Core
         comdlg32
+        shlwapi
+        windowscodecs
     )
 
     target_compile_features(dmc_native_reader_win PRIVATE cxx_std_20)
