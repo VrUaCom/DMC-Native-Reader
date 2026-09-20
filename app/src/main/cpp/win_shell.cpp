@@ -1033,28 +1033,26 @@ void AddModPartDialog(HWND hwnd) {
         (void)reattach;
     }
 
-    // Placement: replay every part's previously-successful joint (same
-    // reason as textures above), and auto-place every newly-added part using
-    // that CHILD PART's OWN default joint (MOD header +0x13,
-    // default_joint_index(), exposed per-scene as
-    // RenderScene::default_attachment_selector -- see
-    // dmc3-mod-cross-model-default-joint-2026-09-15.md) -- not the host's.
-    // Each source MOD publishes its own selector (e.g. em028_004 -> joint 0,
-    // em028_005 -> joint 1), so reading it from composite_parts[i] rather
-    // than composite_parts.front() (the host) is what makes every part land
-    // on ITS correct socket instead of every new part piling onto whichever
-    // joint the host itself happens to prefer.
+    // Placement: replay only joints a part was EXPLICITLY, successfully
+    // placed on before -- never auto-apply a joint to a newly-added part.
+    // Tried defaulting new parts onto their own MOD header's
+    // default_joint_index() (dmc3-mod-cross-model-default-joint-2026-09-15.md)
+    // and it made real multi-part em028 compositions look worse, not better:
+    // that selector is evidence of a runtime default for THAT MOD in
+    // isolation (e.g. a weapon's own hand-attach convention), not a claim
+    // that it is correct to re-target every split-mesh piece of the same
+    // character onto a bone at all. Per the core's own composite-build
+    // comment, an unplaced part already renders in its own source
+    // coordinates, which is the correct shared space for same-character mesh
+    // pieces and was the visibly better result. Leave that as the default;
+    // only a part the user (or a future explicit action) actually placed
+    // keeps that placement across a recompose.
     const auto host_nodes = composite->composite_parts.empty()
         ? std::vector<dmcresource::RenderNode>{}
         : composite->composite_parts.front().scene.nodes;
     for (std::size_t i = 1;
         i < composite->composite_parts.size() && i < g_state.composite_part_joints.size(); ++i) {
-        int joint = g_state.composite_part_joints[i];
-        const bool is_new = i >= first_new_index;
-        if (joint < 0 && is_new) {
-            const auto own_selector = composite->composite_parts[i].scene.default_attachment_selector;
-            if (own_selector.has_value()) joint = static_cast<int>(*own_selector);
-        }
+        const int joint = g_state.composite_part_joints[i];
         if (joint < 0 || host_nodes.empty() || joint >= static_cast<int>(host_nodes.size())) {
             continue;
         }
