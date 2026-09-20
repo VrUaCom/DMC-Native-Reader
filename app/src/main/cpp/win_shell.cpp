@@ -880,29 +880,17 @@ void OpenFileDialog(HWND hwnd) {
     LoadFile(hwnd, path, true);
 }
 
-void AttachTextureDialog(HWND hwnd) {
+// Shared by AttachTextureDialog (file picker) and a single PTX/DDS file
+// dropped onto an already-open model (WM_DROPFILES) -- both just need to
+// attach a known path, differing only in how that path was obtained.
+void AttachTexturePath(HWND hwnd, const std::wstring& path) {
     if (!g_state.session) return;
-    wchar_t path[MAX_PATH] = L"";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = hwnd;
-    // attach_session_ptx (core: texture_companion::attach_ptx) accepts both a
-    // full PTX bundle and a lone standalone/wrapped DDS -- it tries PTX
-    // framing first and falls back to single-slot DDS parsing.
-    ofn.lpstrFilter = L"Texture companion (*.ptx;*.dds)\0*.ptx;*.dds\0"
-                      L"PTX bundle (*.ptx)\0*.ptx\0DDS texture (*.dds)\0*.dds\0"
-                      L"All files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    if (!GetOpenFileNameW(&ofn)) return;
-
     const int part_index = PickCompositePart(hwnd, *g_state.session);
     if (part_index < 0) return;  // Picker cancelled.
     const auto part_count = dmcresource::session_composite_part_count(g_state.session.get());
 
     const auto bytes = ReadFileBytes(path);
-    const std::string name = WideToUtf8(std::wstring(path));
+    const std::string name = WideToUtf8(path);
     const bool attached = part_count == 0
         ? dmcresource::spider::actions::attach_ptx(g_state.session.get(), name, bytes.data(),
                                                    bytes.size())
@@ -932,46 +920,33 @@ void AttachTextureDialog(HWND hwnd) {
     if (g_state.session->renderable) RenderMesh(hwnd);
 }
 
-void AddModPartDialog(HWND hwnd) {
+void AttachTextureDialog(HWND hwnd) {
     if (!g_state.session) return;
-    // Multi-select: matches Android's REQUEST_ADD_MOD_PARTS picker, which
-    // takes several URIs in one action rather than needing "+MOD" clicked
-    // once per part.
-    const auto picked =
-        PickMultipleFiles(hwnd, L"MOD model (*.mod)\0*.mod\0All files\0*.*\0");
-    if (picked.empty()) return;
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    // attach_session_ptx (core: texture_companion::attach_ptx) accepts both a
+    // full PTX bundle and a lone standalone/wrapped DDS -- it tries PTX
+    // framing first and falls back to single-slot DDS parsing.
+    ofn.lpstrFilter = L"Texture companion (*.ptx;*.dds)\0*.ptx;*.dds\0"
+                      L"PTX bundle (*.ptx)\0*.ptx\0DDS texture (*.dds)\0*.dds\0"
+                      L"All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return;
+    AttachTexturePath(hwnd, path);
+}
 
-    // compose_mod_sessions() rejects a composite Session used as a source
-    // (see the AppState::composite_source_paths comment), so 3+ parts means
-    // recomposing every original source from scratch rather than folding new
-    // ones into the existing composite in place.
-    if (g_state.composite_source_paths.empty()) {
-        if (g_state.current_path.empty()) {
-            MessageBoxW(hwnd, L"Open a MOD file first (not a freshly-composed session).",
-                       L"DMC Native Reader", MB_OK | MB_ICONWARNING);
-            return;
-        }
-        g_state.composite_source_paths.push_back(g_state.current_path);
-        g_state.composite_part_textures.push_back(L"");
-        g_state.composite_part_joints.push_back(-1);
-    }
-    const std::size_t first_new_index = g_state.composite_source_paths.size();
-    for (const auto& p : picked) {
-        bool duplicate = false;
-        for (const auto& existing : g_state.composite_source_paths) {
-            if (_wcsicmp(existing.c_str(), p.c_str()) == 0) { duplicate = true; break; }
-        }
-        if (duplicate) continue;
-        g_state.composite_source_paths.push_back(p);
-        g_state.composite_part_textures.push_back(L"");
-        g_state.composite_part_joints.push_back(-1);
-    }
-    if (g_state.composite_source_paths.size() == first_new_index) {
-        MessageBoxW(hwnd, L"Those MOD files are already part of this composite.",
-                   L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
-        return;
-    }
-
+// Reopens every path in composite_source_paths from scratch and recomposes
+// (see that field's declaration for why a composite can't just append one
+// more part in place), then reapplies tracked per-part textures/placements.
+// Shared by AddModPartDialog (+MOD button) and a multi-file MOD drop, which
+// differ only in how composite_source_paths was populated before the call.
+// first_new_index marks where THIS call's new entries begin, so a failure
+// rolls back only what this call added.
+bool RecomposeTrackedSources(HWND hwnd, std::size_t first_new_index) {
     std::vector<std::unique_ptr<Session>> opened;
     std::vector<const Session*> parts;
     std::vector<std::string> names;
@@ -995,7 +970,7 @@ void AddModPartDialog(HWND hwnd) {
             g_state.composite_source_paths.resize(first_new_index);
             g_state.composite_part_textures.resize(first_new_index);
             g_state.composite_part_joints.resize(first_new_index);
-            return;
+            return false;
         }
         names.push_back(WideToUtf8(std::wstring(PathFindFileNameW(source_path.c_str()))));
         parts.push_back(part.get());
@@ -1009,7 +984,7 @@ void AddModPartDialog(HWND hwnd) {
         g_state.composite_source_paths.resize(first_new_index);
         g_state.composite_part_textures.resize(first_new_index);
         g_state.composite_part_joints.resize(first_new_index);
-        return;
+        return false;
     }
     std::wstring title;
     for (const auto& source_path : g_state.composite_source_paths) {
@@ -1064,6 +1039,130 @@ void AddModPartDialog(HWND hwnd) {
     }
 
     ActivateSession(hwnd, std::move(composite), title, false);
+    return true;
+}
+
+void AddModPartDialog(HWND hwnd) {
+    if (!g_state.session) return;
+    // Multi-select: matches Android's REQUEST_ADD_MOD_PARTS picker, which
+    // takes several URIs in one action rather than needing "+MOD" clicked
+    // once per part.
+    const auto picked =
+        PickMultipleFiles(hwnd, L"MOD model (*.mod)\0*.mod\0All files\0*.*\0");
+    if (picked.empty()) return;
+
+    // compose_mod_sessions() rejects a composite Session used as a source
+    // (see the AppState::composite_source_paths comment), so 3+ parts means
+    // recomposing every original source from scratch rather than folding new
+    // ones into the existing composite in place.
+    if (g_state.composite_source_paths.empty()) {
+        if (g_state.current_path.empty()) {
+            MessageBoxW(hwnd, L"Open a MOD file first (not a freshly-composed session).",
+                       L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+            return;
+        }
+        g_state.composite_source_paths.push_back(g_state.current_path);
+        g_state.composite_part_textures.push_back(L"");
+        g_state.composite_part_joints.push_back(-1);
+    }
+    const std::size_t first_new_index = g_state.composite_source_paths.size();
+    for (const auto& p : picked) {
+        bool duplicate = false;
+        for (const auto& existing : g_state.composite_source_paths) {
+            if (_wcsicmp(existing.c_str(), p.c_str()) == 0) { duplicate = true; break; }
+        }
+        if (duplicate) continue;
+        g_state.composite_source_paths.push_back(p);
+        g_state.composite_part_textures.push_back(L"");
+        g_state.composite_part_joints.push_back(-1);
+    }
+    if (g_state.composite_source_paths.size() == first_new_index) {
+        MessageBoxW(hwnd, L"Those MOD files are already part of this composite.",
+                   L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    RecomposeTrackedSources(hwnd, first_new_index);
+}
+
+// A multi-file MOD drop either extends the currently-open MOD/composite (same
+// seeding rule as +MOD) or, if nothing MOD-shaped is open, starts a brand new
+// composite from just the dropped files.
+void ComposeDroppedModFiles(HWND hwnd, const std::vector<std::wstring>& paths) {
+    if (g_state.composite_source_paths.empty() && !g_state.current_path.empty()) {
+        const auto ext_pos = g_state.current_path.find_last_of(L'.');
+        const std::wstring ext =
+            ext_pos == std::wstring::npos ? L"" : g_state.current_path.substr(ext_pos);
+        if (_wcsicmp(ext.c_str(), L".mod") == 0) {
+            g_state.composite_source_paths.push_back(g_state.current_path);
+            g_state.composite_part_textures.push_back(L"");
+            g_state.composite_part_joints.push_back(-1);
+        }
+    }
+    const std::size_t first_new_index = g_state.composite_source_paths.size();
+    for (const auto& p : paths) {
+        bool duplicate = false;
+        for (const auto& existing : g_state.composite_source_paths) {
+            if (_wcsicmp(existing.c_str(), p.c_str()) == 0) { duplicate = true; break; }
+        }
+        if (duplicate) continue;
+        g_state.composite_source_paths.push_back(p);
+        g_state.composite_part_textures.push_back(L"");
+        g_state.composite_part_joints.push_back(-1);
+    }
+    if (g_state.composite_source_paths.size() == first_new_index) {
+        MessageBoxW(hwnd, L"Those MOD files are already part of this composite.",
+                   L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    RecomposeTrackedSources(hwnd, first_new_index);
+}
+
+bool HasExtensionCI(const std::wstring& path, const wchar_t* ext) {
+    const auto dot = path.find_last_of(L'.');
+    if (dot == std::wstring::npos) return false;
+    return _wcsicmp(path.substr(dot).c_str(), ext) == 0;
+}
+
+// One dropped resource behaves exactly like Open; several behave like +MOD
+// (compose) when they're all .mod parts; a single PTX/DDS dropped onto an
+// already-open renderable model attaches instead of replacing the session
+// (master plan section 5.1.A drag & drop leapfrog target). A folder drop or
+// a mixed-format multi-drop has no single correct interpretation, so this
+// fails closed with an explanatory message rather than guessing one.
+void HandleDroppedFiles(HWND hwnd, const std::vector<std::wstring>& paths) {
+    if (paths.empty()) return;
+
+    if (paths.size() == 1) {
+        const auto& path = paths.front();
+        if (GetFileAttributesW(path.c_str()) & FILE_ATTRIBUTE_DIRECTORY) {
+            MessageBoxW(hwnd,
+                       L"Folder drop (workspace mode) isn't supported yet -- drop a single "
+                       L".mod/.scm/.dds/.ptx/.evt file, or several .mod files together to "
+                       L"compose them.",
+                       L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        const bool is_texture = HasExtensionCI(path, L".dds") || HasExtensionCI(path, L".ptx");
+        if (is_texture && g_state.session && g_state.session->renderable) {
+            AttachTexturePath(hwnd, path);
+            return;
+        }
+        LoadFile(hwnd, path, true);
+        return;
+    }
+
+    bool all_mod = true;
+    for (const auto& p : paths) {
+        if (!HasExtensionCI(p, L".mod")) { all_mod = false; break; }
+    }
+    if (!all_mod) {
+        MessageBoxW(hwnd,
+                   L"Dropping several files together only composes them when they're all .mod "
+                   L"parts. Drop one file at a time for other resource/texture types.",
+                   L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    ComposeDroppedModFiles(hwnd, paths);
 }
 
 void ExportPngDialog(HWND hwnd) {
@@ -1794,9 +1893,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         }
         case WM_DROPFILES: {
             auto drop = reinterpret_cast<HDROP>(wparam);
-            wchar_t path[MAX_PATH];
-            if (DragQueryFileW(drop, 0, path, MAX_PATH)) LoadFile(hwnd, path, true);
+            const UINT count = DragQueryFileW(drop, 0xFFFFFFFFU, nullptr, 0);
+            std::vector<std::wstring> paths;
+            paths.reserve(count);
+            for (UINT i = 0; i < count; ++i) {
+                wchar_t path[MAX_PATH];
+                if (DragQueryFileW(drop, i, path, MAX_PATH)) paths.emplace_back(path);
+            }
             DragFinish(drop);
+            HandleDroppedFiles(hwnd, paths);
             UpdateButtonStates();
             InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
