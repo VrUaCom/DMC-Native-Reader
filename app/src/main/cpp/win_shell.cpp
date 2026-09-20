@@ -79,7 +79,13 @@ enum ButtonId : int {
     kBtnInfo = 115,
 };
 
-enum MenuId : int { kMenuRegisterFileTypes = 900, kMenuExportAll = 901 };
+enum MenuId : int {
+    kMenuRegisterFileTypes = 900,
+    kMenuExportAll = 901,
+    kMenuQualityLow = 910,
+    kMenuQualityMedium = 911,
+    kMenuQualityHigh = 912,
+};
 
 std::wstring Utf8ToWide(const std::string& utf8) {
     if (utf8.empty()) return {};
@@ -136,6 +142,18 @@ struct AppState {
     std::vector<NavEntry> nav_stack;
     std::wstring title = L"DMC Native Reader";
 
+    // compose_mod_sessions() only accepts raw, single-part MOD sessions as
+    // input -- a composite Session's own top-level RenderScene is never
+    // populated (only composite_parts[i].scene is), so has_geometry() on it
+    // is always false and feeding a composite back in as a "part" is
+    // rejected. There is no core primitive for incremental N-ary append, so
+    // adding a 3rd+ part means re-opening every original source file and
+    // recomposing all of them together from scratch. This tracks those
+    // original paths across the session's lifetime for that purpose; it is
+    // cleared whenever a fresh top-level resource is opened.
+    std::vector<std::wstring> composite_source_paths;
+    std::wstring current_path;
+
     RgbaImage rgba;   // Last rendered/previewed frame, RGBA (for PNG export).
     RgbaImage bgra;   // Same frame, byte-swapped for StretchDIBits.
     bool static_image = false;
@@ -154,6 +172,12 @@ struct AppState {
 
     bool child_browser_open = false;
     int child_hot = -1;
+    // Built once per ActivateSession, not per paint: session_child_preview()
+    // fully re-renders a UV map from scratch on every call (render_uv_map),
+    // so generating it inline in PaintChildBrowser would redo that render on
+    // every WM_PAINT -- including ones triggered by nothing more than a
+    // hover-highlight change.
+    std::vector<RgbaImage> gallery_thumbnails;  // BGRA, index-aligned with children.
 
     // Folder sibling navigation (Left/Right arrow keys), independent of the
     // parent/child resource stack above.
@@ -163,11 +187,17 @@ struct AppState {
     bool fullscreen = false;
     WINDOWPLACEMENT saved_placement{sizeof(WINDOWPLACEMENT)};
 
+    // Render resolution cap: lower trades sharpness for CPU rasterization
+    // speed on weaker machines; 1024 is both the default and the core's own
+    // hard ceiling (see ComputeRenderSize).
+    int render_quality = 1024;
+
     std::vector<ToolButton> header_buttons;
     std::vector<ToolButton> tool_buttons;
 
     HWND main_window = nullptr;
     HFONT ui_font = nullptr;
+    HFONT small_font = nullptr;
     HFONT title_font = nullptr;
 };
 
@@ -504,15 +534,19 @@ std::string BuildInspectionText() {
 }
 
 // render_session clamps each axis to [64, 1024] independently (see
-// resource_session.cpp). Requesting the viewport's raw width/height verbatim
-// lets a wide desktop window clamp only its (wider) width, returning an image
-// whose aspect ratio no longer matches the viewport -- then blitting that
-// mismatched image to fill the viewport distorts the model. Scale both axes
-// down together first, the same way DmcRenderView.renderWidth()/Height() cap
-// to a performance budget on Android, so the returned image's aspect always
+// resource_session.cpp) -- 1024 is a hard core ceiling this shell cannot
+// exceed no matter how high g_state.render_quality is set; the quality
+// setting only lets a weaker machine ask for *less* than that, trading
+// visible sharpness for rasterization speed, not exceed the core's own cap.
+// Requesting the viewport's raw width/height verbatim lets a wide desktop
+// window clamp only its (wider) width, returning an image whose aspect ratio
+// no longer matches the viewport -- then blitting that mismatched image to
+// fill the viewport distorts the model. Scale both axes down together
+// first, the same way DmcRenderView.renderWidth()/Height() cap to a
+// performance budget on Android, so the returned image's aspect always
 // matches the viewport it will be stretched into.
 void ComputeRenderSize(int viewport_w, int viewport_h, int* out_w, int* out_h) {
-    constexpr int kMaxDim = 1024;
+    const int kMaxDim = g_state.render_quality;
     const int w = (std::max)(16, viewport_w);
     const int h = (std::max)(16, viewport_h);
     if (w <= kMaxDim && h <= kMaxDim) {
@@ -526,8 +560,18 @@ void ComputeRenderSize(int viewport_w, int viewport_h, int* out_w, int* out_h) {
     *out_h = (std::max)(16, static_cast<int>(h * scale));
 }
 
+// render_session() has a special-case branch that renders a UV map straight
+// from Session::uv_gallery/uv_map_index -- it runs before the function's own
+// `if (!renderable) return {};` guard, so it works even though a UV-leaf
+// session (one specific map opened out of a gallery) is never marked
+// renderable itself. Gating the shell's own render call on `renderable`
+// alone skipped that branch entirely and left the viewport blank.
+bool IsUvLeaf(const Session& session) {
+    return static_cast<bool>(session.uv_gallery) && session.uv_map_index.has_value();
+}
+
 void RenderMesh(HWND hwnd) {
-    if (!g_state.session || !g_state.session->renderable) return;
+    if (!g_state.session || (!g_state.session->renderable && !IsUvLeaf(*g_state.session))) return;
     const RECT view = ViewportRect(hwnd);
     int width = 0, height = 0;
     ComputeRenderSize(view.right - view.left, view.bottom - view.top, &width, &height);
@@ -572,6 +616,7 @@ void ActivateSession(HWND hwnd, std::unique_ptr<Session> session, const std::wst
     g_state.hierarchy_available = false;
     g_state.static_image = false;
     g_state.child_browser_open = false;
+    g_state.gallery_thumbnails.clear();
     g_state.rgba = RgbaImage{};
     g_state.bgra = RgbaImage{};
 
@@ -585,10 +630,23 @@ void ActivateSession(HWND hwnd, std::unique_ptr<Session> session, const std::wst
     if (caps.uv_map_view) g_state.render_flags = dmcresource::render_flag(RenderFlag::UvLayout);
 
     if (caps.child_browser_mode) {
+        const auto count = dmcresource::session_child_count(g_state.session.get());
+        g_state.gallery_thumbnails.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            dmcresource::ImagePreview scratch;
+            const auto* preview = dmcresource::session_child_preview(
+                g_state.session.get(), static_cast<int>(i), &scratch);
+            if (preview == nullptr || !preview->available()) continue;
+            RgbaImage img;
+            img.width = static_cast<int>(preview->width);
+            img.height = static_cast<int>(preview->height);
+            img.pixels = preview->rgba8;
+            g_state.gallery_thumbnails[i] = ToBgra(img);
+        }
         InvalidateRect(hwnd, nullptr, TRUE);
     } else if (caps.can_preview_image) {
         LoadStaticPreview(hwnd);
-    } else if (g_state.session->renderable) {
+    } else if (g_state.session->renderable || IsUvLeaf(*g_state.session)) {
         RenderMesh(hwnd);
     } else {
         InvalidateRect(hwnd, nullptr, TRUE);
@@ -628,6 +686,7 @@ void RefreshSiblings(const std::wstring& path) {
 
 void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings) {
     g_state.nav_stack.clear();
+    g_state.composite_source_paths.clear();
     const auto bytes = ReadFileBytes(path);
     if (bytes.empty() && GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
         MessageBoxW(hwnd, L"Failed to open file.", L"DMC Native Reader", MB_OK | MB_ICONWARNING);
@@ -647,6 +706,7 @@ void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings) {
         MessageBoxW(hwnd, L"This resource was not accepted by any native module.",
                    L"DMC Native Reader", MB_OK | MB_ICONWARNING);
     } else {
+        g_state.current_path = path;
         ActivateSession(hwnd, std::move(session), filename, false);
     }
     if (refresh_siblings) RefreshSiblings(path);
@@ -712,10 +772,14 @@ void AttachTextureDialog(HWND hwnd) {
                                                    bytes.size())
         : dmcresource::spider::actions::attach_ptx_to_part(
               g_state.session.get(), part_index, name, bytes.data(), bytes.size());
-    const std::wstring detail = Utf8ToWide(part_count == 0 || part_index >= static_cast<int>(part_count)
-        ? g_state.session->texture_attachment_detail
-        : g_state.session->composite_parts[static_cast<std::size_t>(part_index)]
-              .texture_attachment_detail);
+    // attach_part() (behind attach_ptx_to_part) writes the rejection/success
+    // detail to the session-level field regardless of which part was
+    // targeted -- CompositePart::texture_attachment_detail is never set by
+    // it. Reading the per-part field here always produced an empty string on
+    // a per-part rejection, hiding the real reason (e.g. "model requests
+    // texture slot 1 but PTX does not expose that slot") behind a generic
+    // "not accepted" message.
+    const std::wstring detail = Utf8ToWide(g_state.session->texture_attachment_detail);
     MessageBoxW(hwnd, detail.empty() ? (attached ? L"Texture companion attached."
                                                  : L"Texture companion was not accepted.")
                                      : detail.c_str(),
@@ -735,37 +799,66 @@ void AddModPartDialog(HWND hwnd) {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
 
-    const auto bytes = ReadFileBytes(path);
-    const std::string name = WideToUtf8(std::wstring(path));
-    std::unique_ptr<Session> part;
-    try {
-        part = dmcresource::open_session(name, bytes.data(), bytes.size());
-    } catch (...) {
-        part.reset();
+    // compose_mod_sessions() rejects a composite Session used as a source
+    // (see the AppState::composite_source_paths comment), so a 3rd+ part
+    // means recomposing every original source from scratch rather than
+    // folding the new one into the existing composite in place.
+    if (g_state.composite_source_paths.empty()) {
+        if (g_state.current_path.empty()) {
+            MessageBoxW(hwnd, L"Open a MOD file first (not a freshly-composed session).",
+                       L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+            return;
+        }
+        g_state.composite_source_paths.push_back(g_state.current_path);
     }
-    if (!part) {
-        MessageBoxW(hwnd, L"This file was not accepted as a MOD part.", L"DMC Native Reader",
-                   MB_OK | MB_ICONWARNING);
-        return;
+    g_state.composite_source_paths.push_back(path);
+
+    std::vector<std::unique_ptr<Session>> opened;
+    std::vector<const Session*> parts;
+    std::vector<std::string> names;
+    opened.reserve(g_state.composite_source_paths.size());
+    parts.reserve(g_state.composite_source_paths.size());
+    names.reserve(g_state.composite_source_paths.size());
+    for (const auto& source_path : g_state.composite_source_paths) {
+        const auto bytes = ReadFileBytes(source_path);
+        std::unique_ptr<Session> part;
+        try {
+            part = dmcresource::open_session(WideToUtf8(source_path), bytes.data(), bytes.size());
+        } catch (...) {
+            part.reset();
+        }
+        if (!part) {
+            MessageBoxW(hwnd,
+                       (L"Could not reopen an earlier composite source: " +
+                        std::wstring(PathFindFileNameW(source_path.c_str())))
+                           .c_str(),
+                       L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+            g_state.composite_source_paths.pop_back();
+            return;
+        }
+        names.push_back(WideToUtf8(std::wstring(PathFindFileNameW(source_path.c_str()))));
+        parts.push_back(part.get());
+        opened.push_back(std::move(part));
     }
 
-    // Two-argument compose treats parts[0] as the primary host -- the
-    // already-open session stays authoritative for placement/hierarchy, the
-    // new part joins as an additional composite member.
-    const std::vector<const Session*> parts{g_state.session.get(), part.get()};
-    const std::vector<std::string> names{WideToUtf8(g_state.title),
-                                         WideToUtf8(std::wstring(PathFindFileNameW(path)))};
     auto composite = dmcresource::spider::actions::compose_mod_sessions(parts, names);
     if (!composite) {
         MessageBoxW(hwnd, L"Could not compose this MOD as an additional part.",
                    L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+        g_state.composite_source_paths.pop_back();
         return;
     }
-    const std::wstring title = g_state.title + L" + " + PathFindFileNameW(path);
+    std::wstring title;
+    for (const auto& source_path : g_state.composite_source_paths) {
+        if (!title.empty()) title += L" + ";
+        title += PathFindFileNameW(source_path.c_str());
+    }
 
-    // Offer joint placement while both the host's node list and the new
-    // part's index are unambiguous -- right after composition, host is
-    // always part 0 and the new part is always the last index.
+    // Offer joint placement for the part that was just added (always the
+    // last index after a full recompose). Re-adding a further part later
+    // rebuilds the composite from scratch, so any placement applied here is
+    // not retained across a subsequent "+MOD" -- the user is told below
+    // rather than that being a silent surprise.
     const auto host_nodes = composite->composite_parts.empty()
         ? std::vector<dmcresource::RenderNode>{}
         : composite->composite_parts.front().scene.nodes;
@@ -775,7 +868,9 @@ void AddModPartDialog(HWND hwnd) {
     if (!host_nodes.empty() &&
         MessageBoxW(hwnd,
                    L"Attach the new part to a skeleton joint on the host now?\n\n"
-                   L"(It renders at the host's origin until placed.)",
+                   L"(It renders at the host's origin until placed. Adding another part "
+                   L"later rebuilds the composite and this placement will need to be "
+                   L"redone.)",
                    L"DMC Native Reader", MB_YESNO | MB_ICONQUESTION) == IDYES) {
         const int joint = PickHostJoint(hwnd, host_nodes, default_selector);
         if (joint >= 0) {
@@ -949,23 +1044,29 @@ void LayoutButtons(HWND hwnd) {
         const wchar_t* glyph;
         const wchar_t* tip;
     };
+    // Short readable words rather than single-letter/symbol glyphs (W, H, i,
+    // ...) that read as cryptic -- plain ASCII also sidesteps GDI's spotty
+    // classic-DrawText fallback for pictographic Unicode/emoji glyphs, which
+    // Segoe UI itself doesn't carry and would otherwise risk showing tofu
+    // boxes instead of an icon.
     const Def defs[] = {
-        {kBtnOpen, L"↑", L"Open MOD / SCM / DDS / PTX"},
-        {kBtnResetExport, L"↻", L"Reset view / export PNG"},
-        {kBtnWireframe, L"W", L"Wireframe"},
-        {kBtnHierarchy, L"H", L"Bones / hierarchy"},
+        {kBtnOpen, L"OPEN", L"Open MOD / SCM / DDS / PTX"},
+        {kBtnResetExport, L"RESET", L"Reset view / export PNG"},
+        {kBtnWireframe, L"WIRE", L"Wireframe"},
+        {kBtnHierarchy, L"BONES", L"Bones / hierarchy"},
         {kBtnUv, L"UV", L"UV layout"},
-        {kBtnInfo, L"i", L"Resource information"},
+        {kBtnInfo, L"INFO", L"Resource information"},
     };
     const int count = static_cast<int>(sizeof(defs) / sizeof(defs[0]));
-    const int total_width = count * kBtnSize;
+    const int btn_width = 68;
+    const int total_width = count * btn_width;
     int bx = (client.right - total_width) / 2;
     const int by = client.bottom - kToolbarHeight + (kToolbarHeight - kBtnSize) / 2;
     for (const auto& d : defs) {
         ToolButton b{d.id, d.glyph, d.tip};
-        b.rect = {bx, by, bx + kBtnSize, by + kBtnSize};
+        b.rect = {bx, by, bx + btn_width, by + kBtnSize};
         g_state.tool_buttons.push_back(b);
-        bx += kBtnSize;
+        bx += btn_width;
     }
 }
 
@@ -992,7 +1093,7 @@ void UpdateButtonStates() {
                 b.enabled = true;
                 break;
             case kBtnResetExport:
-                b.glyph = caps.can_export_png ? L"↓" : L"↻";
+                b.glyph = caps.can_export_png ? L"SAVE" : L"RESET";
                 b.tooltip = caps.can_export_png ? L"Export PNG" : L"Reset view";
                 b.enabled = caps.can_export_png || (has_session && caps.can_render);
                 b.active = false;
@@ -1053,7 +1154,34 @@ void PaintChrome(HDC hdc, HWND hwnd) {
 
     SelectObject(hdc, g_state.ui_font);
     for (const auto& b : g_state.header_buttons) PaintButton(hdc, b);
+    SelectObject(hdc, g_state.small_font);
     for (const auto& b : g_state.tool_buttons) PaintButton(hdc, b);
+}
+
+constexpr int kThumbTile = 152;
+constexpr int kThumbImage = 128;
+constexpr int kThumbPad = 14;
+
+// Returns the tile rect for gallery index i, given the same left-to-right,
+// top-to-bottom flow the paint and hit-test code must agree on.
+RECT GalleryTileRect(const RECT& viewport, std::size_t i) {
+    const int usable_w =
+        (std::max)(kThumbTile, static_cast<int>(viewport.right - viewport.left) - kThumbPad);
+    const int cols = (std::max)(1, usable_w / (kThumbTile + kThumbPad));
+    const int col = static_cast<int>(i) % cols;
+    const int row = static_cast<int>(i) / cols;
+    const int left = viewport.left + kThumbPad + col * (kThumbTile + kThumbPad);
+    const int top = viewport.top + kThumbPad + row * (kThumbTile + kThumbPad);
+    return {left, top, left + kThumbTile, top + kThumbTile};
+}
+
+int GalleryHitTest(const RECT& viewport, POINT pt, std::size_t count) {
+    for (std::size_t i = 0; i < count; ++i) {
+        const RECT tile = GalleryTileRect(viewport, i);
+        if (tile.top > viewport.bottom) break;
+        if (PtInRect(&tile, pt)) return static_cast<int>(i);
+    }
+    return -1;
 }
 
 void PaintChildBrowser(HDC hdc, const RECT& viewport) {
@@ -1063,26 +1191,48 @@ void PaintChildBrowser(HDC hdc, const RECT& viewport) {
     if (!g_state.session) return;
 
     SetBkMode(hdc, TRANSPARENT);
-    SelectObject(hdc, g_state.ui_font);
+    SelectObject(hdc, g_state.small_font);
     const auto count = dmcresource::session_child_count(g_state.session.get());
-    const int row_h = 30;
     for (std::size_t i = 0; i < count; ++i) {
-        RECT row = {viewport.left + 12,
-                   viewport.top + 12 + static_cast<int>(i) * row_h, viewport.right - 12,
-                   viewport.top + 12 + static_cast<int>(i + 1) * row_h};
-        if (row.top > viewport.bottom) break;
+        const RECT tile = GalleryTileRect(viewport, i);
+        if (tile.top > viewport.bottom) break;
+
         if (static_cast<int>(i) == g_state.child_hot) {
             HBRUSH hot = CreateSolidBrush(kBtnHover);
-            FillRect(hdc, &row, hot);
+            FillRect(hdc, &tile, hot);
             DeleteObject(hot);
         }
+
+        RECT image_rect = {tile.left + (kThumbTile - kThumbImage) / 2, tile.top + 6,
+                          tile.left + (kThumbTile - kThumbImage) / 2 + kThumbImage,
+                          tile.top + 6 + kThumbImage};
+        const RgbaImage* thumb =
+            i < g_state.gallery_thumbnails.size() ? &g_state.gallery_thumbnails[i] : nullptr;
+        if (thumb != nullptr && thumb->width > 0 && thumb->height > 0) {
+            BITMAPINFO bmi{};
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = thumb->width;
+            bmi.bmiHeader.biHeight = -thumb->height;
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            StretchDIBits(hdc, image_rect.left, image_rect.top,
+                         image_rect.right - image_rect.left, image_rect.bottom - image_rect.top,
+                         0, 0, thumb->width, thumb->height, thumb->pixels.data(), &bmi,
+                         DIB_RGB_COLORS, SRCCOPY);
+        } else {
+            HBRUSH placeholder = CreateSolidBrush(RGB(30, 30, 36));
+            FillRect(hdc, &image_rect, placeholder);
+            DeleteObject(placeholder);
+        }
+
         SetTextColor(hdc, kText);
+        RECT label_rect = {tile.left + 4, image_rect.bottom + 4, tile.right - 4, tile.bottom - 2};
         const auto title =
             dmcresource::session_child_title(g_state.session.get(), static_cast<int>(i));
-        std::wstring wtitle = Utf8ToWide(title);
-        RECT text_rect = row;
-        text_rect.left += 8;
-        DrawTextW(hdc, wtitle.c_str(), -1, &text_rect, DT_VCENTER | DT_SINGLELINE);
+        const std::wstring wtitle = Utf8ToWide(title);
+        DrawTextW(hdc, wtitle.c_str(), -1, &label_rect,
+                 DT_CENTER | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
     }
 }
 
@@ -1157,7 +1307,7 @@ void HandleButtonClick(HWND hwnd, int id) {
             const auto caps = CurrentCapabilities();
             if (caps.can_export_png) {
                 ExportPngDialog(hwnd);
-            } else if (g_state.session && g_state.session->renderable) {
+            } else if (g_state.session && (g_state.session->renderable || IsUvLeaf(*g_state.session))) {
                 g_state.yaw = 0.65f;
                 g_state.pitch = -0.45f;
                 g_state.zoom = 1.0f;
@@ -1237,10 +1387,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             AppendMenuW(file_menu, MF_STRING, kMenuRegisterFileTypes,
                        L"&Register .scm/.ptx and add to \"Open with\"");
             AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
+
+            HMENU view_menu = CreatePopupMenu();
+            AppendMenuW(view_menu, MF_STRING, kMenuQualityLow,
+                       L"Render quality: &Low (512px, fastest)");
+            AppendMenuW(view_menu, MF_STRING, kMenuQualityMedium,
+                       L"Render quality: &Medium (768px)");
+            AppendMenuW(view_menu, MF_STRING, kMenuQualityHigh,
+                       L"Render quality: &High (1024px, sharpest)");
+            CheckMenuRadioItem(view_menu, kMenuQualityLow, kMenuQualityHigh, kMenuQualityHigh,
+                              MF_BYCOMMAND);
+            AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view_menu), L"&View");
             SetMenu(hwnd, menu_bar);
 
             g_state.ui_font =
                 CreateFontW(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                          DEFAULT_PITCH, L"Segoe UI");
+            g_state.small_font =
+                CreateFontW(13, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                           DEFAULT_PITCH, L"Segoe UI");
             g_state.title_font =
@@ -1267,13 +1432,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
             if (g_state.child_browser_open) {
                 const RECT viewport = ViewportRect(hwnd);
-                if (PtInRect(&viewport, pt)) {
-                    const int row = (pt.y - viewport.top - 12) / 30;
-                    const auto count = static_cast<int>(
-                        g_state.session ? dmcresource::session_child_count(g_state.session.get())
-                                        : 0);
-                    if (row >= 0 && row < count) OpenChildByIndex(hwnd, row);
-                }
+                const auto count = g_state.session
+                    ? dmcresource::session_child_count(g_state.session.get())
+                    : 0;
+                const int hit = GalleryHitTest(viewport, pt, count);
+                if (hit >= 0) OpenChildByIndex(hwnd, hit);
                 return 0;
             }
             g_state.dragging = false;
@@ -1304,14 +1467,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             if (g_state.child_browser_open) {
                 const RECT viewport = ViewportRect(hwnd);
-                int hot = -1;
-                if (PtInRect(&viewport, pt)) {
-                    const int row = (pt.y - viewport.top - 12) / 30;
-                    const auto count = static_cast<int>(
-                        g_state.session ? dmcresource::session_child_count(g_state.session.get())
-                                        : 0);
-                    if (row >= 0 && row < count) hot = row;
-                }
+                const auto count = g_state.session
+                    ? dmcresource::session_child_count(g_state.session.get())
+                    : 0;
+                const int hot = GalleryHitTest(viewport, pt, count);
                 if (hot != g_state.child_hot) {
                     g_state.child_hot = hot;
                     InvalidateRect(hwnd, &viewport, FALSE);
@@ -1334,7 +1493,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
         }
         case WM_MOUSEWHEEL: {
-            if (g_state.child_browser_open || !g_state.session || !g_state.session->renderable)
+            if (g_state.child_browser_open || !g_state.session ||
+                (!g_state.session->renderable && !IsUvLeaf(*g_state.session)))
                 return 0;
             const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
             g_state.zoom *= (delta > 0) ? 1.1f : (1.0f / 1.1f);
@@ -1384,6 +1544,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                            L".mod and .dds were added to \"Open with\" without changing your "
                            L"current default.",
                            L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+            } else if (LOWORD(wparam) == kMenuQualityLow ||
+                      LOWORD(wparam) == kMenuQualityMedium ||
+                      LOWORD(wparam) == kMenuQualityHigh) {
+                g_state.render_quality = LOWORD(wparam) == kMenuQualityLow    ? 512
+                                        : LOWORD(wparam) == kMenuQualityMedium ? 768
+                                                                               : 1024;
+                CheckMenuRadioItem(GetSubMenu(GetMenu(hwnd), 1), kMenuQualityLow,
+                                  kMenuQualityHigh, LOWORD(wparam), MF_BYCOMMAND);
+                RerenderThrottled(hwnd, true);
             }
             return 0;
         case WM_PAINT: {
