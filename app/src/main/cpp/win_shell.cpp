@@ -1035,26 +1035,25 @@ void AddModPartDialog(HWND hwnd) {
 
     // Placement: replay every part's previously-successful joint (same
     // reason as textures above), and auto-place every newly-added part using
-    // the host format's own evidence-backed default joint when it publishes
-    // one -- e.g. MOD's canonical Header::default_joint_index() -- instead
-    // of asking per part. There is no per-part automatic signal beyond that
-    // one host-wide default, so multiple new parts land on the same
-    // suggested joint; nothing here claims that placement is semantically
-    // correct beyond "the format's own suggested default", matching the
-    // fail-closed rule that a default selector alone doesn't authorize
-    // anything stronger.
+    // that CHILD PART's OWN default joint (MOD header +0x13,
+    // default_joint_index(), exposed per-scene as
+    // RenderScene::default_attachment_selector -- see
+    // dmc3-mod-cross-model-default-joint-2026-09-15.md) -- not the host's.
+    // Each source MOD publishes its own selector (e.g. em028_004 -> joint 0,
+    // em028_005 -> joint 1), so reading it from composite_parts[i] rather
+    // than composite_parts.front() (the host) is what makes every part land
+    // on ITS correct socket instead of every new part piling onto whichever
+    // joint the host itself happens to prefer.
     const auto host_nodes = composite->composite_parts.empty()
         ? std::vector<dmcresource::RenderNode>{}
         : composite->composite_parts.front().scene.nodes;
-    const auto default_selector = composite->composite_parts.empty()
-        ? std::nullopt
-        : composite->composite_parts.front().scene.default_attachment_selector;
     for (std::size_t i = 1;
         i < composite->composite_parts.size() && i < g_state.composite_part_joints.size(); ++i) {
         int joint = g_state.composite_part_joints[i];
         const bool is_new = i >= first_new_index;
-        if (joint < 0 && is_new && default_selector.has_value()) {
-            joint = static_cast<int>(*default_selector);
+        if (joint < 0 && is_new) {
+            const auto own_selector = composite->composite_parts[i].scene.default_attachment_selector;
+            if (own_selector.has_value()) joint = static_cast<int>(*own_selector);
         }
         if (joint < 0 || host_nodes.empty() || joint >= static_cast<int>(host_nodes.size())) {
             continue;
