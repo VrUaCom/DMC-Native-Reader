@@ -36,6 +36,7 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 
 #pragma comment(lib, "windowscodecs.lib")
@@ -559,7 +560,8 @@ void AttachTextureDialog(HWND hwnd) {
     const auto bytes = ReadFileBytes(path);
     const std::string name = WideToUtf8(std::wstring(path));
     const bool attached =
-        dmcresource::attach_session_ptx(g_state.session.get(), name, bytes.data(), bytes.size());
+        dmcresource::spider::actions::attach_ptx(g_state.session.get(), name, bytes.data(),
+                                                bytes.size());
     const std::wstring detail = Utf8ToWide(g_state.session->texture_attachment_detail);
     MessageBoxW(hwnd, detail.empty() ? (attached ? L"Texture companion attached."
                                                  : L"Texture companion was not accepted.")
