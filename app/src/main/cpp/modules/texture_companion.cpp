@@ -64,6 +64,20 @@ namespace {
         return out;
     }
 
+    // A standalone/wrapped DDS always parses in as slot 0 (see parse_dds) --
+    // it has no framing that could tell it which material slot it belongs
+    // to. When the model needs exactly one slot and the picked file exposes
+    // exactly one texture, there is only one sane pairing regardless of what
+    // index the container claims, so remap onto the slot the model actually
+    // asked for instead of failing a same-model DDS purely because its part
+    // happens to bind material slot 1+ rather than 0. A model that needs
+    // more than one slot still can't be satisfied by a single texture, so
+    // this can't silently paper over a genuinely incomplete attachment.
+    if (set.slots.size() == 1U && required.slots.size() == 1U &&
+        set.slots.front().index != required.slots.front()) {
+        set.slots.front().index = required.slots.front();
+    }
+
     out.required_slot_count = required.slots.size();
     out.source_texture_count = set.slots.size();
 

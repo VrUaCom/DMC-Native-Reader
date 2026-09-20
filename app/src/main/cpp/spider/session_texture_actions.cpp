@@ -256,6 +256,29 @@ void refresh_attachment_completion(Session* session) noexcept {
     try {
         staged_slots = session->render_triangle_texture_slots;
         staged_textures = session->attached_textures;
+
+        // Other composite parts' triangles can still carry a compose-time
+        // "this triangle wants material slot N" placeholder (see
+        // append_composite_projection) that was never resolved into a real
+        // attached_textures index, because no texture has been attached to
+        // that part yet. Those numbers are meaningless outside their own
+        // part's attach and must not be read as real indices here --
+        // compact_staged_textures below would otherwise reject attaching a
+        // texture to THIS part purely because some other, still-textureless
+        // part exists elsewhere in the composite. render_view already
+        // tolerates an out-of-range slot by falling back to untextured
+        // shading, so masking these to kNoTextureSlot for this transaction
+        // is exactly the state the renderer already treats them as.
+        const auto already_resolved = session->attached_textures.size();
+        const auto part_begin = begin;
+        const auto part_end = begin + part.render_triangle_texture_slots.size();
+        for (std::size_t i = 0U; i < staged_slots.size(); ++i) {
+            if (i >= part_begin && i < part_end) continue;
+            if (staged_slots[i] != kNoTextureSlot && staged_slots[i] >= already_resolved) {
+                staged_slots[i] = kNoTextureSlot;
+            }
+        }
+
         local_to_texture.assign(attachment.textures.size(), kNoTextureSlot);
         existing_by_local.assign(attachment.textures.size(), kNoTextureSlot);
         existing_conflict.assign(attachment.textures.size(), false);
