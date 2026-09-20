@@ -77,7 +77,7 @@ enum ButtonId : int {
     kBtnInfo = 115,
 };
 
-enum MenuId : int { kMenuRegisterFileTypes = 900 };
+enum MenuId : int { kMenuRegisterFileTypes = 900, kMenuExportAll = 901 };
 
 std::wstring Utf8ToWide(const std::string& utf8) {
     if (utf8.empty()) return {};
@@ -745,6 +745,77 @@ void ExportPngDialog(HWND hwnd) {
                MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
 }
 
+std::wstring SanitizeFilename(const std::wstring& s) {
+    std::wstring out;
+    for (wchar_t c : s) {
+        if (iswalnum(c) || c == L'-' || c == L'_') {
+            out += c;
+        } else if (!out.empty() && out.back() != L'_') {
+            out += L'_';
+        }
+    }
+    while (!out.empty() && out.back() == L'_') out.pop_back();
+    return out.empty() ? L"image" : out;
+}
+
+std::wstring PickFolder(HWND owner) {
+    BROWSEINFOW bi{};
+    bi.hwndOwner = owner;
+    bi.lpszTitle = L"Choose a folder for exported PNGs";
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+    if (pidl == nullptr) return L"";
+    wchar_t path[MAX_PATH];
+    std::wstring result;
+    if (SHGetPathFromIDListW(pidl, path)) result = path;
+    CoTaskMemFree(pidl);
+    return result;
+}
+
+// Android's MainActivity.exportGallery() equivalent: every child resource
+// (PTX bundle textures, UV maps) gets its own PNG, named
+// "<root>__<child title>.png" so a batch export never collides across
+// children and stays traceable back to its source without a manifest file.
+void ExportAllChildrenDialog(HWND hwnd) {
+    if (!g_state.session) return;
+    const auto count = dmcresource::session_child_count(g_state.session.get());
+    if (count == 0) {
+        MessageBoxW(hwnd, L"This resource has no gallery images to export.",
+                   L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const std::wstring folder = PickFolder(hwnd);
+    if (folder.empty()) return;
+
+    const std::wstring root_name = SanitizeFilename(g_state.title);
+    int saved = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto title =
+            dmcresource::session_child_title(g_state.session.get(), static_cast<int>(i));
+        RgbaImage image;
+        dmcresource::ImagePreview scratch;
+        const auto* preview = dmcresource::session_child_preview(
+            g_state.session.get(), static_cast<int>(i), &scratch);
+        if (preview != nullptr && preview->available()) {
+            image.width = static_cast<int>(preview->width);
+            image.height = static_cast<int>(preview->height);
+            image.pixels = preview->rgba8;
+        } else {
+            auto child =
+                dmcresource::open_session_child(g_state.session.get(), static_cast<int>(i));
+            if (!child || !child->renderable) continue;
+            image = dmcresource::render_session(child.get(), 1024, 1024, 0.65f, -0.45f, 1.0f, 0);
+        }
+        if (image.width <= 0 || image.height <= 0) continue;
+        const std::wstring filename =
+            folder + L"\\" + root_name + L"__" + SanitizeFilename(Utf8ToWide(title)) + L".png";
+        if (SavePng(filename, image)) ++saved;
+    }
+    const std::wstring msg =
+        L"Exported " + std::to_wstring(saved) + L" / " + std::to_wstring(count) + L" images.";
+    MessageBoxW(hwnd, msg.c_str(), L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+}
+
 void OpenChildByIndex(HWND hwnd, int index) {
     if (!g_state.session) return;
     try {
@@ -1093,6 +1164,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             g_state.main_window = hwnd;
             HMENU menu_bar = CreateMenu();
             HMENU file_menu = CreatePopupMenu();
+            AppendMenuW(file_menu, MF_STRING, kMenuExportAll, L"&Export all gallery images...");
+            AppendMenuW(file_menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(file_menu, MF_STRING, kMenuRegisterFileTypes,
                        L"&Register .scm/.ptx and add to \"Open with\"");
             AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
@@ -1229,7 +1302,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             }
         }
         case WM_COMMAND:
-            if (LOWORD(wparam) == kMenuRegisterFileTypes) {
+            if (LOWORD(wparam) == kMenuExportAll) {
+                ExportAllChildrenDialog(hwnd);
+            } else if (LOWORD(wparam) == kMenuRegisterFileTypes) {
                 RegisterFileAssociations();
                 MessageBoxW(hwnd,
                            L"Registered. .scm and .ptx now open with this reader by default; "
