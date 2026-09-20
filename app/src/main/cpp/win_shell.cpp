@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,7 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/model_placement_actions.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 
@@ -301,14 +303,14 @@ void ShowInfoDialog(HWND owner, const std::wstring& title, const std::string& te
     SetForegroundWindow(owner);
 }
 
-struct PartPickerState {
+struct ListPickerState {
     HWND list = nullptr;
     int result = -1;
     bool done = false;
 };
-PartPickerState g_part_picker;
+ListPickerState g_list_picker;
 
-LRESULT CALLBACK PartPickerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK ListPickerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLORSTATIC: {
@@ -319,19 +321,19 @@ LRESULT CALLBACK PartPickerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
             return reinterpret_cast<LRESULT>(brush);
         }
         case WM_COMMAND:
-            if (LOWORD(wparam) == 2) {  // Attach
+            if (LOWORD(wparam) == 2) {  // OK
                 const int sel =
-                    static_cast<int>(SendMessageW(g_part_picker.list, LB_GETCURSEL, 0, 0));
-                g_part_picker.result = sel;
-                g_part_picker.done = true;
+                    static_cast<int>(SendMessageW(g_list_picker.list, LB_GETCURSEL, 0, 0));
+                g_list_picker.result = sel;
+                g_list_picker.done = true;
                 DestroyWindow(hwnd);
             } else if (LOWORD(wparam) == 3) {  // Cancel
-                g_part_picker.done = true;
+                g_list_picker.done = true;
                 DestroyWindow(hwnd);
             }
             return 0;
         case WM_CLOSE:
-            g_part_picker.done = true;
+            g_list_picker.done = true;
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
@@ -342,46 +344,39 @@ LRESULT CALLBACK PartPickerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     }
 }
 
-// Composite sessions can attach a texture companion to any one part; a single
-// -part/non-composite session has nothing to disambiguate. Returns the chosen
-// part index, or -1 if the picker was cancelled.
-int PickCompositePart(HWND owner, const Session& session) {
-    const auto count = dmcresource::session_composite_part_count(&session);
-    if (count == 0) return 0;  // Non-composite: attach targets the whole session.
-
-    const wchar_t* kClass = L"DmcPartPicker";
+// Generic dark listbox modal shared by the composite-part and skeleton-joint
+// pickers. Returns the chosen index, or -1 if cancelled.
+int PickFromList(HWND owner, const std::wstring& title, const std::wstring& ok_label,
+                 const std::vector<std::wstring>& labels, int default_index) {
+    const wchar_t* kClass = L"DmcListPicker";
     WNDCLASSW wc{};
-    wc.lpfnWndProc = PartPickerProc;
+    wc.lpfnWndProc = ListPickerProc;
     wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(owner, GWLP_HINSTANCE));
     wc.lpszClassName = kClass;
     wc.hbrBackground = CreateSolidBrush(RGB(20, 20, 24));
     RegisterClassW(&wc);
 
-    g_part_picker = PartPickerState{};
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"Attach texture to which part?",
-                               WS_POPUP | WS_CAPTION | WS_SYSMENU,
-                               CW_USEDEFAULT, CW_USEDEFAULT, 380, 340, owner, nullptr,
-                               wc.hInstance, nullptr);
+    g_list_picker = ListPickerState{};
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, title.c_str(),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT,
+                               380, 340, owner, nullptr, wc.hInstance, nullptr);
     HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY, 8, 8, 348, 250,
                                 dlg, reinterpret_cast<HMENU>(1), wc.hInstance, nullptr);
-    g_part_picker.list = list;
-    for (std::size_t i = 0; i < count; ++i) {
-        const auto name = dmcresource::session_composite_part_name(&session, static_cast<int>(i));
-        std::wstring label =
-            L"[" + std::to_wstring(i) + L"] " + Utf8ToWide(name) + (i == 0 ? L" (primary host)" : L"");
+    g_list_picker.list = list;
+    for (const auto& label : labels) {
         SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
     }
-    SendMessageW(list, LB_SETCURSEL, 0, 0);
-    CreateWindowExW(0, L"BUTTON", L"Attach", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 188, 268,
-                   80, 28, dlg, reinterpret_cast<HMENU>(2), wc.hInstance, nullptr);
+    SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>((std::max)(0, default_index)), 0);
+    CreateWindowExW(0, L"BUTTON", ok_label.c_str(), WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 188,
+                   268, 80, 28, dlg, reinterpret_cast<HMENU>(2), wc.hInstance, nullptr);
     CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 268, 80,
                    28, dlg, reinterpret_cast<HMENU>(3), wc.hInstance, nullptr);
 
     EnableWindow(owner, FALSE);
     ShowWindow(dlg, SW_SHOW);
     MSG msg;
-    while (!g_part_picker.done && GetMessageW(&msg, nullptr, 0, 0)) {
+    while (!g_list_picker.done && GetMessageW(&msg, nullptr, 0, 0)) {
         if (!IsDialogMessageW(dlg, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -389,7 +384,50 @@ int PickCompositePart(HWND owner, const Session& session) {
     }
     EnableWindow(owner, TRUE);
     SetForegroundWindow(owner);
-    return g_part_picker.result;
+    return g_list_picker.result;
+}
+
+// Composite sessions can attach a texture companion to any one part; a single
+// -part/non-composite session has nothing to disambiguate. Returns the chosen
+// part index, or -1 if the picker was cancelled.
+int PickCompositePart(HWND owner, const Session& session) {
+    const auto count = dmcresource::session_composite_part_count(&session);
+    if (count == 0) return 0;  // Non-composite: attach targets the whole session.
+
+    std::vector<std::wstring> labels;
+    labels.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto name = dmcresource::session_composite_part_name(&session, static_cast<int>(i));
+        labels.push_back(L"[" + std::to_wstring(i) + L"] " + Utf8ToWide(name) +
+                         (i == 0 ? L" (primary host)" : L""));
+    }
+    return PickFromList(owner, L"Attach texture to which part?", L"Attach", labels, 0);
+}
+
+// Host joints come from the primary host's own RenderScene::nodes -- the same
+// named/indexed hierarchy the "H" inspection button already reads (see
+// session_inspection.cpp's append_hierarchy). default_attachment_selector is
+// the format's own evidence-backed suggested joint (e.g. Header::
+// default_joint_index() for MOD) and is pre-selected when present; it does
+// not by itself authorize placement, the user still confirms it here.
+int PickHostJoint(HWND owner, const std::vector<dmcresource::RenderNode>& nodes,
+                  std::optional<std::uint32_t> default_selector) {
+    if (nodes.empty()) return -1;
+    std::vector<std::wstring> labels;
+    labels.reserve(nodes.size());
+    int default_index = 0;
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const std::wstring name =
+            nodes[i].name.empty() ? L"Node " + std::to_wstring(i) : Utf8ToWide(nodes[i].name);
+        std::wstring label = L"[" + std::to_wstring(i) + L"] " + name;
+        if (default_selector && *default_selector == i) {
+            label += L" (suggested)";
+            default_index = static_cast<int>(i);
+        }
+        labels.push_back(std::move(label));
+    }
+    return PickFromList(owner, L"Attach new part to which host joint?", L"Attach", labels,
+                        default_index);
 }
 
 // ---- PNG export (Windows Imaging Component) --------------------------------
@@ -724,6 +762,36 @@ void AddModPartDialog(HWND hwnd) {
         return;
     }
     const std::wstring title = g_state.title + L" + " + PathFindFileNameW(path);
+
+    // Offer joint placement while both the host's node list and the new
+    // part's index are unambiguous -- right after composition, host is
+    // always part 0 and the new part is always the last index.
+    const auto host_nodes = composite->composite_parts.empty()
+        ? std::vector<dmcresource::RenderNode>{}
+        : composite->composite_parts.front().scene.nodes;
+    const auto default_selector = composite->composite_parts.empty()
+        ? std::nullopt
+        : composite->composite_parts.front().scene.default_attachment_selector;
+    if (!host_nodes.empty() &&
+        MessageBoxW(hwnd,
+                   L"Attach the new part to a skeleton joint on the host now?\n\n"
+                   L"(It renders at the host's origin until placed.)",
+                   L"DMC Native Reader", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+        const int joint = PickHostJoint(hwnd, host_nodes, default_selector);
+        if (joint >= 0) {
+            const auto child_index = composite->composite_parts.size() - 1;
+            const auto result = dmcresource::spider::actions::attach_mod_part_to_host_joint(
+                composite.get(), 0, child_index, static_cast<std::uint32_t>(joint));
+            if (!result.ok()) {
+                MessageBoxW(hwnd,
+                           (L"Placement not applied: " +
+                            Utf8ToWide(dmcresource::composite_placement::to_string(result.status)))
+                               .c_str(),
+                           L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+            }
+        }
+    }
+
     ActivateSession(hwnd, std::move(composite), title, false);
 }
 
