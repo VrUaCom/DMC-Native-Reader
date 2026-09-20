@@ -21,6 +21,10 @@
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
 
+#ifndef DMC_NATIVE_READER_BUILD_SHA
+#define DMC_NATIVE_READER_BUILD_SHA "unknown"
+#endif
+
 namespace fs = std::filesystem;
 using dmcresource::InspectionKind;
 using dmcresource::InspectionNode;
@@ -192,6 +196,7 @@ int CmdInspect(const fs::path& path) {
     }
 
     const auto& probe = session->probe;
+    std::cout << "build_sha: " << DMC_NATIVE_READER_BUILD_SHA << "\n";
     std::cout << "path: " << path.string() << "\n";
     std::cout << "family: " << probe.family << "\n";
     std::cout << "domain: " << probe.domain << "\n";
@@ -236,6 +241,7 @@ int CmdReport(const fs::path& path, const fs::path& out_path) {
     const auto& probe = session->probe;
     const auto bits = dmcresource::black_widow_state(session.get());
     out << "{";
+    out << "\"build_sha\":\"" << DMC_NATIVE_READER_BUILD_SHA << "\",";
     out << "\"path\":\"" << JsonEscape(path.string()) << "\",";
     out << "\"ok\":true,";
     out << "\"family\":\"" << JsonEscape(probe.family) << "\",";

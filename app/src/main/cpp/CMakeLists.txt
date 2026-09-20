@@ -143,6 +143,27 @@ endif()
 # only the window, file dialog and pixel blit. Parsing, inspection and
 # rendering all stay in DMCNativeReader::Core.
 if(WIN32)
+    # Diagnostics build identity (master plan section 5.1.I). Best-effort:
+    # falls back to "unknown" rather than failing the build when git isn't
+    # on PATH or this tree isn't a git checkout (e.g. a source archive).
+    set(DMC_NATIVE_READER_BUILD_SHA "unknown")
+    find_package(Git QUIET)
+    if(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE _dmc_native_reader_git_sha
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _dmc_native_reader_git_result
+        )
+        if(_dmc_native_reader_git_result EQUAL 0 AND _dmc_native_reader_git_sha)
+            set(DMC_NATIVE_READER_BUILD_SHA "${_dmc_native_reader_git_sha}")
+        endif()
+        unset(_dmc_native_reader_git_sha)
+        unset(_dmc_native_reader_git_result)
+    endif()
+
     add_executable(dmc_native_reader_win WIN32
         win_shell.cpp
     )
@@ -152,6 +173,9 @@ if(WIN32)
         comdlg32
         shlwapi
         windowscodecs
+    )
+    target_compile_definitions(dmc_native_reader_win PRIVATE
+        DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
     )
 
     dmc_native_reader_require_cpp23(dmc_native_reader_win PRIVATE)
@@ -163,6 +187,9 @@ if(WIN32)
     )
     target_link_libraries(dmc_native_reader_cli PRIVATE
         DMCNativeReader::Core
+    )
+    target_compile_definitions(dmc_native_reader_cli PRIVATE
+        DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
     )
     dmc_native_reader_require_cpp23(dmc_native_reader_cli PRIVATE)
 endif()

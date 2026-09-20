@@ -43,6 +43,10 @@
 
 #pragma comment(lib, "windowscodecs.lib")
 
+#ifndef DMC_NATIVE_READER_BUILD_SHA
+#define DMC_NATIVE_READER_BUILD_SHA "unknown"
+#endif
+
 void RegisterFileAssociations();
 
 namespace {
@@ -85,6 +89,7 @@ enum MenuId : int {
     kMenuQualityLow = 910,
     kMenuQualityMedium = 911,
     kMenuQualityHigh = 912,
+    kMenuOpenDiagnosticsLog = 920,
 };
 
 std::wstring Utf8ToWide(const std::string& utf8) {
@@ -784,6 +789,77 @@ void RefreshSiblings(const std::wstring& path) {
     }
 }
 
+// Windows diagnostics (master plan section 5.1.I): a deterministic,
+// append-only log of every open attempt with build identity, probe
+// classification, rejection detail and a capability snapshot, so a report
+// can be handed back without needing a live repro. Kept in one file rather
+// than a report-per-session so history survives across app restarts.
+std::wstring DiagnosticsLogPath() {
+    wchar_t buf[MAX_PATH];
+    const DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return L"";
+    const std::wstring base(buf);
+    CreateDirectoryW((base + L"\\DMC-Rengine").c_str(), nullptr);
+    const std::wstring dir = base + L"\\DMC-Rengine\\Native-Reader-GUI";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir + L"\\diagnostics.log";
+}
+
+std::string NowTimestampUtf8() {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04u-%02u-%02u %02u:%02u:%02u", st.wYear, st.wMonth, st.wDay,
+                 st.wHour, st.wMinute, st.wSecond);
+    return buf;
+}
+
+struct DiagnosticsFlag {
+    dmcresource::spider::black_widow::StateFlag flag;
+    const char* name;
+};
+constexpr DiagnosticsFlag kDiagnosticsFlags[] = {
+    {dmcresource::spider::black_widow::StateFlag::CanRender, "CanRender"},
+    {dmcresource::spider::black_widow::StateFlag::CanInspect, "CanInspect"},
+    {dmcresource::spider::black_widow::StateFlag::CanShowHierarchy, "CanShowHierarchy"},
+    {dmcresource::spider::black_widow::StateFlag::CanShowUv, "CanShowUv"},
+    {dmcresource::spider::black_widow::StateFlag::TextureCompanionAttachable,
+     "TextureCompanionAttachable"},
+    {dmcresource::spider::black_widow::StateFlag::CanAddModelPart, "CanAddModelPart"},
+    {dmcresource::spider::black_widow::StateFlag::CanExportPng, "CanExportPng"},
+};
+
+// Appends one entry; called from LoadFile on both the accept and reject
+// path so a rejected resource's reason is captured even though no Session
+// exists to inspect afterward.
+void AppendDiagnosticsLog(const std::wstring& path, bool opened_ok) {
+    const auto log_path = DiagnosticsLogPath();
+    if (log_path.empty()) return;
+    std::ofstream log(log_path, std::ios::app | std::ios::binary);
+    if (!log) return;
+
+    log << "[" << NowTimestampUtf8() << "] build=" << DMC_NATIVE_READER_BUILD_SHA
+        << " path=" << WideToUtf8(path) << "\n";
+    if (!opened_ok || !g_state.session) {
+        log << "  result=REJECTED detail=not accepted by any native module\n";
+        return;
+    }
+
+    const auto& probe = g_state.session->probe;
+    log << "  result=OPENED family=" << probe.family << " domain=" << probe.domain
+        << " support=" << probe.support << " evidence=" << probe.evidence
+        << " content_confirmed=" << (probe.content_confirmed ? "true" : "false") << "\n";
+    if (!g_state.session->detail.empty()) {
+        log << "  detail=" << g_state.session->detail << "\n";
+    }
+    const auto bits = dmcresource::black_widow_state(g_state.session.get());
+    log << "  capabilities=";
+    for (const auto& f : kDiagnosticsFlags) {
+        if (has_state(bits, f.flag)) log << f.name << " ";
+    }
+    log << "\n";
+}
+
 void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings) {
     g_state.nav_stack.clear();
     g_state.composite_source_paths.clear();
@@ -805,11 +881,13 @@ void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings) {
     const wchar_t* filename = PathFindFileNameW(path.c_str());
     if (!session) {
         ActivateSession(hwnd, nullptr, filename, false);
+        AppendDiagnosticsLog(path, false);
         MessageBoxW(hwnd, L"This resource was not accepted by any native module.",
                    L"DMC Native Reader", MB_OK | MB_ICONWARNING);
     } else {
         g_state.current_path = path;
         ActivateSession(hwnd, std::move(session), filename, false);
+        AppendDiagnosticsLog(path, true);
     }
     if (refresh_siblings) RefreshSiblings(path);
 }
@@ -1686,6 +1764,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             AppendMenuW(file_menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(file_menu, MF_STRING, kMenuRegisterFileTypes,
                        L"&Register .scm/.ptx and add to \"Open with\"");
+            AppendMenuW(file_menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(file_menu, MF_STRING, kMenuOpenDiagnosticsLog, L"Open &diagnostics log");
             AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
 
             HMENU view_menu = CreatePopupMenu();
@@ -1872,6 +1952,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                            L".mod and .dds were added to \"Open with\" without changing your "
                            L"current default.",
                            L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+            } else if (LOWORD(wparam) == kMenuOpenDiagnosticsLog) {
+                const auto log_path = DiagnosticsLogPath();
+                if (log_path.empty() || GetFileAttributesW(log_path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+                    MessageBoxW(hwnd, L"No diagnostics recorded yet -- open a resource first.",
+                               L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+                } else {
+                    ShellExecuteW(hwnd, L"open", log_path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                }
             } else if (LOWORD(wparam) == kMenuQualityLow ||
                       LOWORD(wparam) == kMenuQualityMedium ||
                       LOWORD(wparam) == kMenuQualityHigh) {
