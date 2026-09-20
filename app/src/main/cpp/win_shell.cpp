@@ -358,11 +358,34 @@ std::string BuildInspectionText() {
     return text;
 }
 
+// render_session clamps each axis to [64, 1024] independently (see
+// resource_session.cpp). Requesting the viewport's raw width/height verbatim
+// lets a wide desktop window clamp only its (wider) width, returning an image
+// whose aspect ratio no longer matches the viewport -- then blitting that
+// mismatched image to fill the viewport distorts the model. Scale both axes
+// down together first, the same way DmcRenderView.renderWidth()/Height() cap
+// to a performance budget on Android, so the returned image's aspect always
+// matches the viewport it will be stretched into.
+void ComputeRenderSize(int viewport_w, int viewport_h, int* out_w, int* out_h) {
+    constexpr int kMaxDim = 1024;
+    const int w = (std::max)(16, viewport_w);
+    const int h = (std::max)(16, viewport_h);
+    if (w <= kMaxDim && h <= kMaxDim) {
+        *out_w = w;
+        *out_h = h;
+        return;
+    }
+    const float scale =
+        (std::min)(static_cast<float>(kMaxDim) / w, static_cast<float>(kMaxDim) / h);
+    *out_w = (std::max)(16, static_cast<int>(w * scale));
+    *out_h = (std::max)(16, static_cast<int>(h * scale));
+}
+
 void RenderMesh(HWND hwnd) {
     if (!g_state.session || !g_state.session->renderable) return;
     const RECT view = ViewportRect(hwnd);
-    const int width = (std::max)(16L, view.right - view.left);
-    const int height = (std::max)(16L, view.bottom - view.top);
+    int width = 0, height = 0;
+    ComputeRenderSize(view.right - view.left, view.bottom - view.top, &width, &height);
     g_state.rgba = dmcresource::render_session(g_state.session.get(), width, height,
                                                g_state.yaw, g_state.pitch, g_state.zoom,
                                                g_state.render_flags);
@@ -516,13 +539,18 @@ void OpenFileDialog(HWND hwnd) {
     LoadFile(hwnd, path, true);
 }
 
-void AttachPtxDialog(HWND hwnd) {
+void AttachTextureDialog(HWND hwnd) {
     if (!g_state.session) return;
     wchar_t path[MAX_PATH] = L"";
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFilter = L"PTX texture (*.ptx)\0*.ptx\0All files\0*.*\0";
+    // attach_session_ptx (core: texture_companion::attach_ptx) accepts both a
+    // full PTX bundle and a lone standalone/wrapped DDS -- it tries PTX
+    // framing first and falls back to single-slot DDS parsing.
+    ofn.lpstrFilter = L"Texture companion (*.ptx;*.dds)\0*.ptx;*.dds\0"
+                      L"PTX bundle (*.ptx)\0*.ptx\0DDS texture (*.dds)\0*.dds\0"
+                      L"All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -532,8 +560,10 @@ void AttachPtxDialog(HWND hwnd) {
     const std::string name = WideToUtf8(std::wstring(path));
     const bool attached =
         dmcresource::attach_session_ptx(g_state.session.get(), name, bytes.data(), bytes.size());
-    MessageBoxW(hwnd,
-               attached ? L"PTX texture companion attached." : L"PTX companion was not accepted.",
+    const std::wstring detail = Utf8ToWide(g_state.session->texture_attachment_detail);
+    MessageBoxW(hwnd, detail.empty() ? (attached ? L"Texture companion attached."
+                                                 : L"Texture companion was not accepted.")
+                                     : detail.c_str(),
                L"DMC Native Reader", MB_OK | (attached ? MB_ICONINFORMATION : MB_ICONWARNING));
     if (g_state.session->renderable) RenderMesh(hwnd);
 }
@@ -607,7 +637,7 @@ void LayoutButtons(HWND hwnd) {
     back.rect = {x, 0, x + kHeaderHeight, kHeaderHeight};
     g_state.header_buttons.push_back(back);
     x = client.right - kHeaderHeight;
-    ToolButton ptx{kBtnPtx, L"PTX", L"Attach PTX texture companion"};
+    ToolButton ptx{kBtnPtx, L"TEX", L"Attach texture companion (PTX or DDS)"};
     ptx.rect = {x, 0, x + kHeaderHeight, kHeaderHeight};
     g_state.header_buttons.push_back(ptx);
 
@@ -810,7 +840,7 @@ void HandleButtonClick(HWND hwnd, int id) {
             NavigateBack(hwnd);
             break;
         case kBtnPtx:
-            AttachPtxDialog(hwnd);
+            AttachTextureDialog(hwnd);
             break;
         case kBtnOpen:
             OpenFileDialog(hwnd);

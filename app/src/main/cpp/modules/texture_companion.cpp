@@ -51,10 +51,18 @@ AttachmentResult attach_ptx(
     }
 
     const auto source = as_bytes(bytes, size);
-    const auto set = texture_set::parse_ptx(source);
-    if (!set.ok() || set.kind != texture_set::Kind::ptx_bundle) {
+    // Try PTX-bundle framing first; a lone DDS is a valid single-slot
+    // companion too (parse_dds covers both standalone and descriptor-wrapped
+    // DDS), and both ParseResult kinds feed the same generic slot-matching
+    // below, so no format-specific branching is needed past this point.
+    auto set = texture_set::parse_ptx(source);
+    if (!set.ok()) {
+        auto dds_set = texture_set::parse_dds(source);
+        if (dds_set.ok()) set = std::move(dds_set);
+    }
+    if (!set.ok()) {
         out.detail = set.detail.empty()
-            ? "PTX companion rejected: selected file did not pass TextureSet validation"
+            ? "Texture companion rejected: selected file did not pass TextureSet validation"
             : set.detail;
         return out;
     }
@@ -89,11 +97,12 @@ AttachmentResult attach_ptx(
             textures[static_cast<std::size_t>(slot_index)] = std::move(decoded);
         }
 
+        const bool via_ptx = set.kind == texture_set::Kind::ptx_bundle;
         std::ostringstream detail;
-        detail << "PTX companion attached: " << filename
-               << " | requiredSlots=" << required.slots.size()
-               << " | bundleTextures=" << set.slots.size()
-               << " | route=TextureSet/Crusader/PTX->DDS->UV";
+        detail << (via_ptx ? "PTX companion attached: " : "DDS companion attached: ")
+               << filename << " | requiredSlots=" << required.slots.size()
+               << " | bundleTextures=" << set.slots.size() << " | route=TextureSet/Crusader/"
+               << (via_ptx ? "PTX->DDS->UV" : "DDS->UV");
         if (set.ptx_aux_compat_used) {
             detail << " | auxCompat=retail-DXT1";
         }
