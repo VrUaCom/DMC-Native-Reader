@@ -27,9 +27,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <shobjidl.h>
 #include <string>
 #include <vector>
 
@@ -86,10 +88,15 @@ enum ButtonId : int {
 enum MenuId : int {
     kMenuRegisterFileTypes = 900,
     kMenuExportAll = 901,
+    kMenuOpenWorkspace = 902,
     kMenuQualityLow = 910,
     kMenuQualityMedium = 911,
     kMenuQualityHigh = 912,
     kMenuOpenDiagnosticsLog = 920,
+    // Dynamic recent-workspace submenu, rebuilt on WM_INITMENUPOPUP;
+    // kMenuRecentWorkspaceBase + i selects g_state.recent_workspaces[i].
+    kMenuRecentWorkspaceBase = 930,
+    kMenuRecentWorkspaceMax = 939,
 };
 
 std::wstring Utf8ToWide(const std::string& utf8) {
@@ -140,6 +147,17 @@ struct ToolButton {
 struct NavEntry {
     std::unique_ptr<Session> session;
     std::wstring title;
+};
+
+// A workspace-scan entry is deliberately extension-classified only, not
+// content-probed -- probing every file's bytes at scan time would make
+// opening a large folder slow and isn't what the plan requires ("filter by
+// promoted resource family"); actual content confirmation still happens the
+// normal way (LoadFile -> open_session) the moment the user picks one.
+struct WorkspaceEntry {
+    std::wstring path;
+    std::wstring filename;
+    std::wstring family;  // "MOD"/"SCM"/"DDS"/"PTX"/"EVT"/"" (unsupported)
 };
 
 struct AppState {
@@ -221,6 +239,18 @@ struct AppState {
 
     std::vector<ToolButton> header_buttons;
     std::vector<ToolButton> tool_buttons;
+
+    // Folder workspace mode (master plan section 5.1.B). A separate overlay
+    // mode from child_browser_open: that one lists a Session's own children
+    // (composite parts/gallery), this one lists arbitrary files discovered
+    // on disk that haven't been opened/validated as any Session yet.
+    bool workspace_browser_open = false;
+    std::wstring workspace_folder;
+    std::vector<WorkspaceEntry> workspace_entries;
+    int workspace_hot = -1;
+    int workspace_scroll = 0;  // first visible row index
+    std::vector<std::wstring> recent_workspaces;  // MRU, newest first
+    HMENU recent_workspace_menu = nullptr;  // rebuilt on WM_INITMENUPOPUP
 
     HWND main_window = nullptr;
     HFONT ui_font = nullptr;
@@ -534,6 +564,7 @@ void ActivateSession(HWND hwnd, std::unique_ptr<Session> session, const std::wst
 void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings);
 void RefreshSiblings(const std::wstring& path);
 void Rerender(HWND hwnd);
+void UpdateButtonStates();
 
 // -----------------------------------------------------------------------------
 
@@ -789,6 +820,81 @@ void RefreshSiblings(const std::wstring& path) {
     }
 }
 
+std::wstring FamilyFromExtension(const std::wstring& name) {
+    const wchar_t* ext = PathFindExtensionW(name.c_str());
+    if (_wcsicmp(ext, L".mod") == 0) return L"MOD";
+    if (_wcsicmp(ext, L".scm") == 0) return L"SCM";
+    if (_wcsicmp(ext, L".dds") == 0) return L"DDS";
+    if (_wcsicmp(ext, L".ptx") == 0) return L"PTX";
+    if (_wcsicmp(ext, L".evt") == 0) return L"EVT";
+    return L"";
+}
+
+std::wstring RecentWorkspacesPath() {
+    wchar_t buf[MAX_PATH];
+    const DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) return L"";
+    const std::wstring base(buf);
+    CreateDirectoryW((base + L"\\DMC-Rengine").c_str(), nullptr);
+    const std::wstring dir = base + L"\\DMC-Rengine\\Native-Reader-GUI";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir + L"\\recent_workspaces.txt";
+}
+
+void LoadRecentWorkspaces() {
+    g_state.recent_workspaces.clear();
+    const auto list_path = RecentWorkspacesPath();
+    if (list_path.empty()) return;
+    std::wifstream file(list_path);
+    if (!file) return;
+    std::wstring line;
+    while (std::getline(file, line) && g_state.recent_workspaces.size() < 5) {
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (!line.empty()) g_state.recent_workspaces.push_back(line);
+    }
+}
+
+void RememberRecentWorkspace(const std::wstring& folder) {
+    auto& recents = g_state.recent_workspaces;
+    recents.erase(std::remove_if(recents.begin(), recents.end(),
+                                 [&](const std::wstring& p) { return _wcsicmp(p.c_str(), folder.c_str()) == 0; }),
+                 recents.end());
+    recents.insert(recents.begin(), folder);
+    if (recents.size() > 5) recents.resize(5);
+
+    const auto list_path = RecentWorkspacesPath();
+    if (list_path.empty()) return;
+    std::wofstream file(list_path, std::ios::trunc);
+    if (!file) return;
+    for (const auto& p : recents) file << p << L"\n";
+}
+
+// Bounded (section 11 stability goals) and non-recursive-explosion-safe:
+// std::filesystem::recursive_directory_iterator with skip_permission_denied
+// so one unreadable subfolder doesn't abort the whole scan.
+void ScanWorkspaceFolder(const std::wstring& folder) {
+    g_state.workspace_entries.clear();
+    constexpr std::size_t kMaxEntries = 5000;
+    std::error_code ec;
+    namespace fs = std::filesystem;
+    for (auto it = fs::recursive_directory_iterator(
+             folder, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator() && g_state.workspace_entries.size() < kMaxEntries;
+         it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec) || ec) continue;
+        WorkspaceEntry entry;
+        entry.path = it->path().wstring();
+        entry.filename = it->path().filename().wstring();
+        entry.family = FamilyFromExtension(entry.filename);
+        g_state.workspace_entries.push_back(std::move(entry));
+    }
+    std::sort(g_state.workspace_entries.begin(), g_state.workspace_entries.end(),
+             [](const WorkspaceEntry& a, const WorkspaceEntry& b) {
+                 return _wcsicmp(a.filename.c_str(), b.filename.c_str()) < 0;
+             });
+}
+
 // Windows diagnostics (master plan section 5.1.I): a deterministic,
 // append-only log of every open attempt with build identity, probe
 // classification, rejection detail and a capability snapshot, so a report
@@ -956,6 +1062,47 @@ void OpenFileDialog(HWND hwnd) {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
     LoadFile(hwnd, path, true);
+}
+
+std::wstring PickFolderDialog(HWND owner) {
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&dialog)))) {
+        return L"";
+    }
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM);
+    std::wstring result;
+    if (SUCCEEDED(dialog->Show(owner))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item))) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                result = path;
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+    dialog->Release();
+    return result;
+}
+
+// Entering workspace mode doesn't touch nav_stack or the currently-open
+// Session -- it's an independent browsing overlay (see
+// AppState::workspace_browser_open), not a child of whatever was open
+// before. Picking an entry (or Escape) is what returns to the normal
+// viewer.
+void OpenWorkspaceFolder(HWND hwnd, const std::wstring& folder) {
+    g_state.workspace_folder = folder;
+    ScanWorkspaceFolder(folder);
+    g_state.workspace_scroll = 0;
+    g_state.workspace_hot = -1;
+    g_state.workspace_browser_open = true;
+    RememberRecentWorkspace(folder);
+    UpdateButtonStates();
+    InvalidateRect(hwnd, nullptr, TRUE);
 }
 
 // Shared by AttachTextureDialog (file picker) and a single PTX/DDS file
@@ -1537,6 +1684,80 @@ int GalleryHitTest(const RECT& viewport, POINT pt, std::size_t count) {
     return -1;
 }
 
+constexpr int kWorkspaceRowHeight = 28;
+constexpr int kWorkspaceHeaderHeight = 32;
+
+// Index of the workspace entry under pt, or -1. Accounts for
+// g_state.workspace_scroll the same way PaintWorkspaceBrowser does, so the
+// two stay in agreement the same way GalleryTileRect/GalleryHitTest do for
+// the composite-part gallery.
+int WorkspaceHitTest(const RECT& viewport, POINT pt) {
+    if (pt.y < viewport.top + kWorkspaceHeaderHeight) return -1;
+    const int row = (pt.y - viewport.top - kWorkspaceHeaderHeight) / kWorkspaceRowHeight;
+    const int index = g_state.workspace_scroll + row;
+    if (index < 0 || static_cast<std::size_t>(index) >= g_state.workspace_entries.size()) return -1;
+    return index;
+}
+
+void PaintWorkspaceBrowser(HDC hdc, const RECT& viewport) {
+    HBRUSH bg = CreateSolidBrush(kViewportBg);
+    FillRect(hdc, &viewport, bg);
+    DeleteObject(bg);
+
+    SetBkMode(hdc, TRANSPARENT);
+    SelectObject(hdc, g_state.small_font);
+    SetTextColor(hdc, kTextDim);
+    std::size_t supported = 0;
+    for (const auto& e : g_state.workspace_entries) {
+        if (!e.family.empty()) ++supported;
+    }
+    const std::wstring header = g_state.workspace_folder + L"  (" +
+        std::to_wstring(g_state.workspace_entries.size()) + L" files, " +
+        std::to_wstring(supported) + L" supported)";
+    RECT header_rect = {viewport.left + kThumbPad, viewport.top, viewport.right - kThumbPad,
+                        viewport.top + kWorkspaceHeaderHeight};
+    DrawTextW(hdc, header.c_str(), -1, &header_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                                                          DT_END_ELLIPSIS | DT_NOPREFIX);
+
+    const int rows_visible = (std::max)(
+        0, static_cast<int>(viewport.bottom - viewport.top - kWorkspaceHeaderHeight) /
+               kWorkspaceRowHeight);
+    for (int row = 0; row < rows_visible; ++row) {
+        const std::size_t index = static_cast<std::size_t>(g_state.workspace_scroll + row);
+        if (index >= g_state.workspace_entries.size()) break;
+        const auto& entry = g_state.workspace_entries[index];
+        const int top = viewport.top + kWorkspaceHeaderHeight + row * kWorkspaceRowHeight;
+        RECT row_rect = {viewport.left, top, viewport.right, top + kWorkspaceRowHeight};
+
+        if (static_cast<int>(index) == g_state.workspace_hot) {
+            HBRUSH hot = CreateSolidBrush(kBtnHover);
+            FillRect(hdc, &row_rect, hot);
+            DeleteObject(hot);
+        }
+
+        RECT badge_rect = {viewport.left + kThumbPad, top, viewport.left + kThumbPad + 48,
+                           top + kWorkspaceRowHeight};
+        SetTextColor(hdc, entry.family.empty() ? kTextDim : kAccent);
+        DrawTextW(hdc, entry.family.empty() ? L"--" : entry.family.c_str(), -1, &badge_rect,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT name_rect = {badge_rect.right + 8, top, viewport.right - kThumbPad,
+                          top + kWorkspaceRowHeight};
+        SetTextColor(hdc, entry.family.empty() ? kTextDim : kText);
+        DrawTextW(hdc, entry.filename.c_str(), -1, &name_rect,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+
+    if (g_state.workspace_entries.empty()) {
+        SetTextColor(hdc, kTextDim);
+        SelectObject(hdc, g_state.ui_font);
+        RECT empty_rect = viewport;
+        empty_rect.top += kWorkspaceHeaderHeight;
+        DrawTextW(hdc, L"No supported or unsupported files found in this folder.", -1,
+                 &empty_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
 void PaintChildBrowser(HDC hdc, const RECT& viewport) {
     HBRUSH bg = CreateSolidBrush(kViewportBg);
     FillRect(hdc, &viewport, bg);
@@ -1590,6 +1811,10 @@ void PaintChildBrowser(HDC hdc, const RECT& viewport) {
 }
 
 void PaintViewport(HDC hdc, const RECT& viewport) {
+    if (g_state.workspace_browser_open) {
+        PaintWorkspaceBrowser(hdc, viewport);
+        return;
+    }
     if (g_state.child_browser_open) {
         PaintChildBrowser(hdc, viewport);
         return;
@@ -1760,6 +1985,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             g_state.main_window = hwnd;
             HMENU menu_bar = CreateMenu();
             HMENU file_menu = CreatePopupMenu();
+            AppendMenuW(file_menu, MF_STRING, kMenuOpenWorkspace, L"Open &folder (workspace)...");
+            HMENU recent_menu = CreatePopupMenu();
+            AppendMenuW(file_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(recent_menu),
+                       L"Recent &workspaces");
+            g_state.recent_workspace_menu = recent_menu;
+            AppendMenuW(file_menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(file_menu, MF_STRING, kMenuExportAll, L"&Export all gallery images...");
             AppendMenuW(file_menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(file_menu, MF_STRING, kMenuRegisterFileTypes,
@@ -1767,6 +1998,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             AppendMenuW(file_menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(file_menu, MF_STRING, kMenuOpenDiagnosticsLog, L"Open &diagnostics log");
             AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
+            LoadRecentWorkspaces();
 
             HMENU view_menu = CreatePopupMenu();
             AppendMenuW(view_menu, MF_STRING, kMenuQualityLow,
@@ -1810,6 +2042,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 HandleButtonClick(hwnd, id);
                 return 0;
             }
+            if (g_state.workspace_browser_open) {
+                const RECT viewport = ViewportRect(hwnd);
+                const int hit = WorkspaceHitTest(viewport, pt);
+                if (hit >= 0) {
+                    g_state.workspace_browser_open = false;
+                    LoadFile(hwnd, g_state.workspace_entries[static_cast<std::size_t>(hit)].path,
+                            true);
+                    UpdateButtonStates();
+                    InvalidateRect(hwnd, nullptr, TRUE);
+                }
+                return 0;
+            }
             if (g_state.child_browser_open) {
                 const RECT viewport = ViewportRect(hwnd);
                 const auto count = g_state.session
@@ -1833,8 +2077,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case WM_LBUTTONDOWN: {
             POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             const RECT viewport = ViewportRect(hwnd);
-            if (!g_state.child_browser_open && PtInRect(&viewport, pt) && g_state.session &&
-                g_state.session->renderable) {
+            if (!g_state.child_browser_open && !g_state.workspace_browser_open &&
+                PtInRect(&viewport, pt) && g_state.session && g_state.session->renderable) {
                 g_state.dragging = true;
                 g_state.drag_start = pt;
                 g_state.drag_start_yaw = g_state.yaw;
@@ -1850,6 +2094,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             // then, so nothing else would ever clear it.
             TRACKMOUSEEVENT tme{sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0};
             TrackMouseEvent(&tme);
+            if (g_state.workspace_browser_open) {
+                const RECT viewport = ViewportRect(hwnd);
+                const int hot = WorkspaceHitTest(viewport, pt);
+                if (hot != g_state.workspace_hot) {
+                    g_state.workspace_hot = hot;
+                    InvalidateRect(hwnd, &viewport, FALSE);
+                }
+                return 0;
+            }
             if (g_state.child_browser_open) {
                 const RECT viewport = ViewportRect(hwnd);
                 const auto count = g_state.session
@@ -1897,10 +2150,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             bool changed = false;
             if (g_state.child_hot != -1) { g_state.child_hot = -1; changed = true; }
             if (g_state.hierarchy_hot != -1) { g_state.hierarchy_hot = -1; changed = true; }
+            if (g_state.workspace_hot != -1) { g_state.workspace_hot = -1; changed = true; }
             if (changed) InvalidateRect(hwnd, &viewport, FALSE);
             return 0;
         }
         case WM_MOUSEWHEEL: {
+            if (g_state.workspace_browser_open) {
+                const RECT viewport = ViewportRect(hwnd);
+                const int rows_visible = (std::max)(
+                    0, static_cast<int>(viewport.bottom - viewport.top - kWorkspaceHeaderHeight) /
+                           kWorkspaceRowHeight);
+                const int max_scroll =
+                    (std::max)(0, static_cast<int>(g_state.workspace_entries.size()) - rows_visible);
+                const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+                g_state.workspace_scroll -= (delta > 0 ? 3 : -3);
+                g_state.workspace_scroll =
+                    (std::max)(0, (std::min)(max_scroll, g_state.workspace_scroll));
+                InvalidateRect(hwnd, &viewport, FALSE);
+                return 0;
+            }
             if (g_state.child_browser_open || !g_state.session ||
                 (!g_state.session->renderable && !IsUvLeaf(*g_state.session)))
                 return 0;
@@ -1916,7 +2184,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     ToggleFullscreen(hwnd);
                     return 0;
                 case VK_ESCAPE:
-                    if (g_state.fullscreen) ToggleFullscreen(hwnd);
+                    if (g_state.workspace_browser_open) {
+                        g_state.workspace_browser_open = false;
+                        UpdateButtonStates();
+                        InvalidateRect(hwnd, nullptr, TRUE);
+                    } else if (g_state.fullscreen) {
+                        ToggleFullscreen(hwnd);
+                    }
                     return 0;
                 case VK_BACK:
                     NavigateBack(hwnd);
@@ -1952,6 +2226,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                            L".mod and .dds were added to \"Open with\" without changing your "
                            L"current default.",
                            L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+            } else if (LOWORD(wparam) == kMenuOpenWorkspace) {
+                const auto folder = PickFolderDialog(hwnd);
+                if (!folder.empty()) OpenWorkspaceFolder(hwnd, folder);
+            } else if (LOWORD(wparam) >= kMenuRecentWorkspaceBase &&
+                      LOWORD(wparam) <= kMenuRecentWorkspaceMax) {
+                const std::size_t index =
+                    static_cast<std::size_t>(LOWORD(wparam) - kMenuRecentWorkspaceBase);
+                if (index < g_state.recent_workspaces.size()) {
+                    OpenWorkspaceFolder(hwnd, g_state.recent_workspaces[index]);
+                }
             } else if (LOWORD(wparam) == kMenuOpenDiagnosticsLog) {
                 const auto log_path = DiagnosticsLogPath();
                 if (log_path.empty() || GetFileAttributesW(log_path.c_str()) == INVALID_FILE_ATTRIBUTES) {
@@ -1971,6 +2255,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 RerenderThrottled(hwnd, true);
             }
             return 0;
+        case WM_INITMENUPOPUP: {
+            HMENU popup = reinterpret_cast<HMENU>(wparam);
+            if (popup == g_state.recent_workspace_menu) {
+                while (GetMenuItemCount(popup) > 0) RemoveMenu(popup, 0, MF_BYPOSITION);
+                if (g_state.recent_workspaces.empty()) {
+                    AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, L"(none yet)");
+                } else {
+                    for (std::size_t i = 0; i < g_state.recent_workspaces.size(); ++i) {
+                        AppendMenuW(popup, MF_STRING,
+                                   kMenuRecentWorkspaceBase + static_cast<UINT>(i),
+                                   g_state.recent_workspaces[i].c_str());
+                    }
+                }
+            }
+            return 0;
+        }
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
