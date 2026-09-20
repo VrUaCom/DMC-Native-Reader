@@ -243,17 +243,34 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     }
 
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
-    const float scale = 0.42F *
-        static_cast<float>(std::min(image.width, image.height)) * zoom / radius;
+
+    // Pinhole perspective camera, framed so the model's bounding sphere fills
+    // most of the shorter image axis at zoom == 1. Previously this projected
+    // with a constant screen-space scale regardless of depth (r.x * scale,
+    // no divide by z) -- a parallel/orthographic projection, not perspective
+    // at all, which reads as flattened or inverted-depth ("reverse
+    // perspective") compared to a normal camera. camera_distance pushes a
+    // real camera back from the model center; dividing by z_cam is the
+    // actual perspective divide that was missing.
+    constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
+    const float camera_distance = 1.3F * radius / std::sin(kHalfFovRadians);
+    const float focal_px = 0.5F *
+        static_cast<float>(std::min(image.width, image.height)) / std::tan(kHalfFovRadians);
+
+    const auto project = [&](const Vec3& local) -> P2 {
+        const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
+        const float z_cam = r.z + camera_distance;
+        const float inv_z = 1.0F / std::max(z_cam, 1.0e-3F);
+        return {image.width * 0.5F + zoom * focal_px * r.x * inv_z,
+               image.height * 0.5F - zoom * focal_px * r.y * inv_z,
+               r.z};
+    };
 
     std::vector<P2> p;
     p.reserve(mesh.vertices.size());
     for (const auto& v : mesh.vertices) {
         const Vec3 local{v.x - center.x, v.y - center.y, v.z - center.z};
-        const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-        p.push_back({image.width * 0.5F + r.x * scale,
-                     image.height * 0.5F - r.y * scale,
-                     r.z});
+        p.push_back(project(local));
     }
 
     const bool textured = textures != nullptr && triangle_texture_slots != nullptr &&
@@ -340,10 +357,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         for (const auto& point : hierarchy->points) {
             const Vec3 local{
                 point.x - center.x, point.y - center.y, point.z - center.z};
-            const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-            hp.push_back({image.width * 0.5F + r.x * scale,
-                          image.height * 0.5F - r.y * scale,
-                          r.z});
+            hp.push_back(project(local));
         }
         for (const auto& edge_value : hierarchy->edges) {
             if (edge_value.parent >= hp.size() || edge_value.child >= hp.size()) continue;
