@@ -126,7 +126,12 @@ std::vector<std::uint8_t> ReadFileBytes(const std::wstring& path) {
 
 bool HasSupportedExtension(const std::wstring& name) {
     const wchar_t* ext = PathFindExtensionW(name.c_str());
-    for (const wchar_t* want : {L".mod", L".scm", L".dds", L".ptx", L".evt"}) {
+    // .tm2 is a DMC3-HD legacy logical name whose physical bytes are a small
+    // DMC descriptor wrapping a standard DDS -- dmc_resource.cpp's probe()
+    // already routes it through the same validated DDS path (see
+    // native_module.h). Not a distinct format, just another name the shell
+    // needs to recognize so the DDS path is actually reachable through it.
+    for (const wchar_t* want : {L".mod", L".scm", L".dds", L".ptx", L".evt", L".tm2"}) {
         if (_wcsicmp(ext, want) == 0) return true;
     }
     return false;
@@ -827,6 +832,7 @@ std::wstring FamilyFromExtension(const std::wstring& name) {
     if (_wcsicmp(ext, L".dds") == 0) return L"DDS";
     if (_wcsicmp(ext, L".ptx") == 0) return L"PTX";
     if (_wcsicmp(ext, L".evt") == 0) return L"EVT";
+    if (_wcsicmp(ext, L".tm2") == 0) return L"TM2";  // decodes via the DDS path
     return L"";
 }
 
@@ -1055,8 +1061,9 @@ void OpenFileDialog(HWND hwnd) {
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFilter = L"DMC resources (*.mod;*.scm;*.dds;*.ptx;*.evt)\0*.mod;*.scm;*.dds;*.ptx;*.evt\0"
-                      L"All files\0*.*\0";
+    ofn.lpstrFilter =
+        L"DMC resources (*.mod;*.scm;*.dds;*.ptx;*.evt;*.tm2)\0*.mod;*.scm;*.dds;*.ptx;*.evt;*.tm2\0"
+        L"All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -1153,9 +1160,11 @@ void AttachTextureDialog(HWND hwnd) {
     ofn.hwndOwner = hwnd;
     // attach_session_ptx (core: texture_companion::attach_ptx) accepts both a
     // full PTX bundle and a lone standalone/wrapped DDS -- it tries PTX
-    // framing first and falls back to single-slot DDS parsing.
-    ofn.lpstrFilter = L"Texture companion (*.ptx;*.dds)\0*.ptx;*.dds\0"
-                      L"PTX bundle (*.ptx)\0*.ptx\0DDS texture (*.dds)\0*.dds\0"
+    // framing first and falls back to single-slot DDS parsing, which already
+    // covers .tm2 (a DMC descriptor wrapping a standard DDS, same shape the
+    // wrapped-DDS fallback parses).
+    ofn.lpstrFilter = L"Texture companion (*.ptx;*.dds;*.tm2)\0*.ptx;*.dds;*.tm2\0"
+                      L"PTX bundle (*.ptx)\0*.ptx\0DDS/TM2 texture (*.dds;*.tm2)\0*.dds;*.tm2\0"
                       L"All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
@@ -1367,7 +1376,8 @@ void HandleDroppedFiles(HWND hwnd, const std::vector<std::wstring>& paths) {
                        L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
             return;
         }
-        const bool is_texture = HasExtensionCI(path, L".dds") || HasExtensionCI(path, L".ptx");
+        const bool is_texture = HasExtensionCI(path, L".dds") || HasExtensionCI(path, L".ptx") ||
+            HasExtensionCI(path, L".tm2");
         if (is_texture && g_state.session && g_state.session->renderable) {
             AttachTexturePath(hwnd, path);
             return;
@@ -1827,7 +1837,7 @@ void PaintViewport(HDC hdc, const RECT& viewport) {
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, kTextDim);
         SelectObject(hdc, g_state.ui_font);
-        const wchar_t* hint = L"Open a .mod / .scm / .dds / .ptx file";
+        const wchar_t* hint = L"Open a .mod / .scm / .dds / .ptx / .tm2 file";
         RECT r = viewport;
         DrawTextW(hdc, hint, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
@@ -2334,7 +2344,7 @@ void RegisterFileAssociations() {
 
     set_key(L"Software\\Classes\\Applications\\DMCNativeReader.exe\\shell\\open\\command",
            open_command);
-    for (const auto& ext : {L".dds", L".mod", L".scm", L".ptx"}) {
+    for (const auto& ext : {L".dds", L".mod", L".scm", L".ptx", L".tm2"}) {
         HKEY key;
         const std::wstring path = L"Software\\Classes\\" + std::wstring(ext) +
                                   L"\\OpenWithList\\DMCNativeReader.exe";
