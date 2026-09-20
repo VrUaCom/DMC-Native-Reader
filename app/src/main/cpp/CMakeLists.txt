@@ -155,6 +155,16 @@ if(WIN32)
     )
 
     dmc_native_reader_require_cpp23(dmc_native_reader_win PRIVATE)
+
+    # Headless CLI companion (master plan section 5.1.G): same core, console
+    # subsystem, no GUI/file-dialog dependencies.
+    add_executable(dmc_native_reader_cli
+        win_cli.cpp
+    )
+    target_link_libraries(dmc_native_reader_cli PRIVATE
+        DMCNativeReader::Core
+    )
+    dmc_native_reader_require_cpp23(dmc_native_reader_cli PRIVATE)
 endif()
 
 option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
