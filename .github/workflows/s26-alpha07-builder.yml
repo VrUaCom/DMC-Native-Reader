@@ -1,0 +1,67 @@
+name: S26 Scanner Lab alpha07 builder
+
+on:
+  push:
+    branches:
+      - "build/s26-alpha07-apk-20260920"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Verify Camera2 executor lifecycle
+        working-directory: s26-builder
+        run: python3 scripts/verify_camera_executor_lifecycle.py
+
+      - name: Build alpha07 APK
+        working-directory: s26-builder
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verify APK signature and identity
+        working-directory: s26-builder
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2" dump badging "$APK" | tee /tmp/s26-badging.txt
+          grep -Fq "package: name='com.vruacom.s26scannerlab'" /tmp/s26-badging.txt
+          grep -Fq "versionCode='7' versionName='0.1.0-alpha07'" /tmp/s26-badging.txt
+          sha256sum "$APK" | tee /tmp/s26-alpha07.sha256
+
+      - name: Stage named APK
+        working-directory: s26-builder
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk S26-Scanner-Lab-v0.1-alpha07.apk
+          cp /tmp/s26-alpha07.sha256 S26-Scanner-Lab-v0.1-alpha07.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: S26-Scanner-Lab-v0.1-alpha07
+          path: |
+            s26-builder/S26-Scanner-Lab-v0.1-alpha07.apk
+            s26-builder/S26-Scanner-Lab-v0.1-alpha07.sha256
+          if-no-files-found: error
+          retention-days: 7
