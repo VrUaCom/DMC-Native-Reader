@@ -68,6 +68,7 @@ constexpr int kBtnSize = 44;
 enum ButtonId : int {
     kBtnBack = 100,
     kBtnPtx = 101,
+    kBtnAddPart = 102,
     kBtnOpen = 110,
     kBtnResetExport = 111,
     kBtnWireframe = 112,
@@ -105,7 +106,7 @@ std::vector<std::uint8_t> ReadFileBytes(const std::wstring& path) {
 
 bool HasSupportedExtension(const std::wstring& name) {
     const wchar_t* ext = PathFindExtensionW(name.c_str());
-    for (const wchar_t* want : {L".mod", L".scm", L".dds", L".ptx"}) {
+    for (const wchar_t* want : {L".mod", L".scm", L".dds", L".ptx", L".evt"}) {
         if (_wcsicmp(ext, want) == 0) return true;
     }
     return false;
@@ -184,6 +185,7 @@ struct Capabilities {
     bool texture_companion_attached = false;
     bool uv_map_view = false;
     bool can_export_png = false;
+    bool can_add_model_part = false;
 };
 
 Capabilities CurrentCapabilities() {
@@ -201,6 +203,7 @@ Capabilities CurrentCapabilities() {
     c.texture_companion_attached = has_state(bits, StateFlag::TextureCompanionAttached);
     c.uv_map_view = has_state(bits, StateFlag::UvMapView);
     c.can_export_png = has_state(bits, StateFlag::CanExportPng);
+    c.can_add_model_part = has_state(bits, StateFlag::CanAddModelPart);
     return c;
 }
 
@@ -298,6 +301,97 @@ void ShowInfoDialog(HWND owner, const std::wstring& title, const std::string& te
     SetForegroundWindow(owner);
 }
 
+struct PartPickerState {
+    HWND list = nullptr;
+    int result = -1;
+    bool done = false;
+};
+PartPickerState g_part_picker;
+
+LRESULT CALLBACK PartPickerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    switch (msg) {
+        case WM_CTLCOLORLISTBOX:
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = reinterpret_cast<HDC>(wparam);
+            SetTextColor(hdc, kText);
+            SetBkColor(hdc, RGB(20, 20, 24));
+            static HBRUSH brush = CreateSolidBrush(RGB(20, 20, 24));
+            return reinterpret_cast<LRESULT>(brush);
+        }
+        case WM_COMMAND:
+            if (LOWORD(wparam) == 2) {  // Attach
+                const int sel =
+                    static_cast<int>(SendMessageW(g_part_picker.list, LB_GETCURSEL, 0, 0));
+                g_part_picker.result = sel;
+                g_part_picker.done = true;
+                DestroyWindow(hwnd);
+            } else if (LOWORD(wparam) == 3) {  // Cancel
+                g_part_picker.done = true;
+                DestroyWindow(hwnd);
+            }
+            return 0;
+        case WM_CLOSE:
+            g_part_picker.done = true;
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        default:
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+}
+
+// Composite sessions can attach a texture companion to any one part; a single
+// -part/non-composite session has nothing to disambiguate. Returns the chosen
+// part index, or -1 if the picker was cancelled.
+int PickCompositePart(HWND owner, const Session& session) {
+    const auto count = dmcresource::session_composite_part_count(&session);
+    if (count == 0) return 0;  // Non-composite: attach targets the whole session.
+
+    const wchar_t* kClass = L"DmcPartPicker";
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = PartPickerProc;
+    wc.hInstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtr(owner, GWLP_HINSTANCE));
+    wc.lpszClassName = kClass;
+    wc.hbrBackground = CreateSolidBrush(RGB(20, 20, 24));
+    RegisterClassW(&wc);
+
+    g_part_picker = PartPickerState{};
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"Attach texture to which part?",
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU,
+                               CW_USEDEFAULT, CW_USEDEFAULT, 380, 340, owner, nullptr,
+                               wc.hInstance, nullptr);
+    HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY, 8, 8, 348, 250,
+                                dlg, reinterpret_cast<HMENU>(1), wc.hInstance, nullptr);
+    g_part_picker.list = list;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto name = dmcresource::session_composite_part_name(&session, static_cast<int>(i));
+        std::wstring label =
+            L"[" + std::to_wstring(i) + L"] " + Utf8ToWide(name) + (i == 0 ? L" (primary host)" : L"");
+        SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+    }
+    SendMessageW(list, LB_SETCURSEL, 0, 0);
+    CreateWindowExW(0, L"BUTTON", L"Attach", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 188, 268,
+                   80, 28, dlg, reinterpret_cast<HMENU>(2), wc.hInstance, nullptr);
+    CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 276, 268, 80,
+                   28, dlg, reinterpret_cast<HMENU>(3), wc.hInstance, nullptr);
+
+    EnableWindow(owner, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    MSG msg;
+    while (!g_part_picker.done && GetMessageW(&msg, nullptr, 0, 0)) {
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(owner, TRUE);
+    SetForegroundWindow(owner);
+    return g_part_picker.result;
+}
+
 // ---- PNG export (Windows Imaging Component) --------------------------------
 
 bool SavePng(const std::wstring& path, const RgbaImage& rgba) {
@@ -355,6 +449,18 @@ std::string BuildInspectionText() {
     text += dmcresource::format_inspection_tree(g_state.session->inspection);
     if (!g_state.session->texture_attachment_detail.empty()) {
         text += "\r\n\r\n[PTX] " + g_state.session->texture_attachment_detail;
+    }
+    const auto part_count = dmcresource::session_composite_part_count(g_state.session.get());
+    if (part_count > 0) {
+        text += "\r\n\r\nCOMPOSITE PARTS (" + std::to_string(part_count) + ")\r\n";
+        for (std::size_t i = 0; i < part_count; ++i) {
+            const auto name =
+                dmcresource::session_composite_part_name(g_state.session.get(), static_cast<int>(i));
+            text += "  [" + std::to_string(i) + "] " + (i == 0 ? name + " (primary host)" : name);
+            const bool attached = i < g_state.session->composite_parts.size() &&
+                g_state.session->composite_parts[i].texture_companion_attached;
+            text += attached ? "  [textured]\r\n" : "\r\n";
+        }
     }
     return text;
 }
@@ -531,7 +637,7 @@ void OpenFileDialog(HWND hwnd) {
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
-    ofn.lpstrFilter = L"DMC resources (*.mod;*.scm;*.dds;*.ptx)\0*.mod;*.scm;*.dds;*.ptx\0"
+    ofn.lpstrFilter = L"DMC resources (*.mod;*.scm;*.dds;*.ptx;*.evt)\0*.mod;*.scm;*.dds;*.ptx;*.evt\0"
                       L"All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
@@ -557,17 +663,68 @@ void AttachTextureDialog(HWND hwnd) {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
 
+    const int part_index = PickCompositePart(hwnd, *g_state.session);
+    if (part_index < 0) return;  // Picker cancelled.
+    const auto part_count = dmcresource::session_composite_part_count(g_state.session.get());
+
     const auto bytes = ReadFileBytes(path);
     const std::string name = WideToUtf8(std::wstring(path));
-    const bool attached =
-        dmcresource::spider::actions::attach_ptx(g_state.session.get(), name, bytes.data(),
-                                                bytes.size());
-    const std::wstring detail = Utf8ToWide(g_state.session->texture_attachment_detail);
+    const bool attached = part_count == 0
+        ? dmcresource::spider::actions::attach_ptx(g_state.session.get(), name, bytes.data(),
+                                                   bytes.size())
+        : dmcresource::spider::actions::attach_ptx_to_part(
+              g_state.session.get(), part_index, name, bytes.data(), bytes.size());
+    const std::wstring detail = Utf8ToWide(part_count == 0 || part_index >= static_cast<int>(part_count)
+        ? g_state.session->texture_attachment_detail
+        : g_state.session->composite_parts[static_cast<std::size_t>(part_index)]
+              .texture_attachment_detail);
     MessageBoxW(hwnd, detail.empty() ? (attached ? L"Texture companion attached."
                                                  : L"Texture companion was not accepted.")
                                      : detail.c_str(),
                L"DMC Native Reader", MB_OK | (attached ? MB_ICONINFORMATION : MB_ICONWARNING));
     if (g_state.session->renderable) RenderMesh(hwnd);
+}
+
+void AddModPartDialog(HWND hwnd) {
+    if (!g_state.session) return;
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFilter = L"MOD model (*.mod)\0*.mod\0All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return;
+
+    const auto bytes = ReadFileBytes(path);
+    const std::string name = WideToUtf8(std::wstring(path));
+    std::unique_ptr<Session> part;
+    try {
+        part = dmcresource::open_session(name, bytes.data(), bytes.size());
+    } catch (...) {
+        part.reset();
+    }
+    if (!part) {
+        MessageBoxW(hwnd, L"This file was not accepted as a MOD part.", L"DMC Native Reader",
+                   MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    // Two-argument compose treats parts[0] as the primary host -- the
+    // already-open session stays authoritative for placement/hierarchy, the
+    // new part joins as an additional composite member.
+    const std::vector<const Session*> parts{g_state.session.get(), part.get()};
+    const std::vector<std::string> names{WideToUtf8(g_state.title),
+                                         WideToUtf8(std::wstring(PathFindFileNameW(path)))};
+    auto composite = dmcresource::spider::actions::compose_mod_sessions(parts, names);
+    if (!composite) {
+        MessageBoxW(hwnd, L"Could not compose this MOD as an additional part.",
+                   L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    const std::wstring title = g_state.title + L" + " + PathFindFileNameW(path);
+    ActivateSession(hwnd, std::move(composite), title, false);
 }
 
 void ExportPngDialog(HWND hwnd) {
@@ -642,6 +799,10 @@ void LayoutButtons(HWND hwnd) {
     ToolButton ptx{kBtnPtx, L"TEX", L"Attach texture companion (PTX or DDS)"};
     ptx.rect = {x, 0, x + kHeaderHeight, kHeaderHeight};
     g_state.header_buttons.push_back(ptx);
+    x -= kHeaderHeight;
+    ToolButton add_part{kBtnAddPart, L"+MOD", L"Add another MOD part to this composite"};
+    add_part.rect = {x, 0, x + kHeaderHeight, kHeaderHeight};
+    g_state.header_buttons.push_back(add_part);
 
     g_state.tool_buttons.clear();
     struct Def {
@@ -681,6 +842,9 @@ void UpdateButtonStates() {
             b.visible = caps.can_attach_texture_companion;
             b.enabled = b.visible;
             b.active = caps.texture_companion_attached;
+        } else if (b.id == kBtnAddPart) {
+            b.visible = caps.can_add_model_part;
+            b.enabled = b.visible;
         }
     }
     for (auto& b : g_state.tool_buttons) {
@@ -843,6 +1007,9 @@ void HandleButtonClick(HWND hwnd, int id) {
             break;
         case kBtnPtx:
             AttachTextureDialog(hwnd);
+            break;
+        case kBtnAddPart:
+            AddModPartDialog(hwnd);
             break;
         case kBtnOpen:
             OpenFileDialog(hwnd);
