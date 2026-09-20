@@ -152,6 +152,19 @@ struct AppState {
     // original paths across the session's lifetime for that purpose; it is
     // cleared whenever a fresh top-level resource is opened.
     std::vector<std::wstring> composite_source_paths;
+    // Parallel to composite_source_paths (same indices). A recompose builds a
+    // brand-new Session from scratch, so any texture attached to an earlier
+    // part is otherwise silently lost the moment a further part is added.
+    // Mirrors Android's MainActivity.modelPartPtxUris / reattachSavedPtxToComposite
+    // pattern (confirmed present in the same v33 merge): remember which
+    // texture file went on which part and reapply all of them right after
+    // every recompose.
+    std::vector<std::wstring> composite_part_textures;
+    // Parallel to composite_source_paths. -1 = not placed (renders at the
+    // host's origin); otherwise the host-joint index a recompose should
+    // silently replay placement onto, same reasoning as
+    // composite_part_textures above.
+    std::vector<int> composite_part_joints;
     std::wstring current_path;
 
     RgbaImage rgba;   // Last rendered/previewed frame, RGBA (for PNG export).
@@ -163,6 +176,15 @@ struct AppState {
     float zoom = 1.0f;
     std::uint32_t render_flags = 0;
     bool hierarchy_available = false;
+
+    // Rebuilt alongside g_state.bgra every RenderMesh() call, in the same
+    // image-pixel space as the rendered frame (see RenderMesh), so a
+    // WM_MOUSEMOVE hit-test lands on the exact marker render_view drew --
+    // not a second, possibly-drifted reimplementation of the camera math.
+    std::vector<std::wstring> hierarchy_point_labels;  // "id: name", index-aligned.
+    std::vector<dmcresource::HierarchyScreenPoint> hierarchy_screen_points;
+    int hierarchy_hot = -1;
+    POINT hierarchy_hover_pt{};
 
     bool dragging = false;
     POINT drag_start{};
@@ -560,6 +582,47 @@ void ComputeRenderSize(int viewport_w, int viewport_h, int* out_w, int* out_h) {
     *out_h = (std::max)(16, static_cast<int>(h * scale));
 }
 
+// Inverse of the StretchDIBits blit in PaintViewport's non-static-image
+// branch, which stretches g_state.bgra to fill the whole viewport rect.
+// ComputeRenderSize keeps the rendered image's aspect ratio equal to the
+// viewport's, so this is a uniform scale, not a letterboxed one.
+bool ViewportPointToImage(const RECT& viewport, int image_w, int image_h, POINT pt,
+                          float* out_x, float* out_y) {
+    if (image_w <= 0 || image_h <= 0 || !PtInRect(&viewport, pt)) return false;
+    const int vw = viewport.right - viewport.left;
+    const int vh = viewport.bottom - viewport.top;
+    if (vw <= 0 || vh <= 0) return false;
+    *out_x = static_cast<float>(pt.x - viewport.left) * image_w / vw;
+    *out_y = static_cast<float>(pt.y - viewport.top) * image_h / vh;
+    return true;
+}
+
+POINT ImagePointToViewport(const RECT& viewport, int image_w, int image_h, float ix, float iy) {
+    if (image_w <= 0 || image_h <= 0) return POINT{viewport.left, viewport.top};
+    const int vw = viewport.right - viewport.left;
+    const int vh = viewport.bottom - viewport.top;
+    return POINT{
+        viewport.left + static_cast<int>(std::lround(ix * vw / image_w)),
+        viewport.top + static_cast<int>(std::lround(iy * vh / image_h))};
+}
+
+int HierarchyHitTest(float image_x, float image_y) {
+    constexpr float kHitRadius = 10.0f;
+    int best = -1;
+    float best_dist_sq = kHitRadius * kHitRadius;
+    for (std::size_t i = 0; i < g_state.hierarchy_screen_points.size(); ++i) {
+        const auto& p = g_state.hierarchy_screen_points[i];
+        const float dx = p.x - image_x;
+        const float dy = p.y - image_y;
+        const float dist_sq = dx * dx + dy * dy;
+        if (dist_sq <= best_dist_sq) {
+            best_dist_sq = dist_sq;
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
+}
+
 // render_session() has a special-case branch that renders a UV map straight
 // from Session::uv_gallery/uv_map_index -- it runs before the function's own
 // `if (!renderable) return {};` guard, so it works even though a UV-leaf
@@ -568,6 +631,39 @@ void ComputeRenderSize(int viewport_w, int viewport_h, int* out_w, int* out_h) {
 // alone skipped that branch entirely and left the viewport blank.
 bool IsUvLeaf(const Session& session) {
     return static_cast<bool>(session.uv_gallery) && session.uv_map_index.has_value();
+}
+
+void RefreshHierarchyHitTestCache(int width, int height) {
+    g_state.hierarchy_point_labels.clear();
+    g_state.hierarchy_screen_points.clear();
+    g_state.hierarchy_hot = -1;
+    if (!g_state.session) return;
+    const bool showing_hierarchy = dmcresource::has_render_flag(
+        g_state.render_flags, RenderFlag::Hierarchy);
+    const auto& overlay = g_state.session->hierarchy_overlay;
+    if (!showing_hierarchy || !overlay.available()) return;
+
+    dmcresource::ViewState view;
+    view.yaw_radians = g_state.yaw;
+    view.pitch_radians = (std::max)(-1.55f, (std::min)(1.55f, g_state.pitch));
+    view.zoom = (std::max)(0.15f, (std::min)(8.0f, g_state.zoom));
+    // render_session() clamps its own width/height to [64, 1024] before it
+    // ever reaches render_view -- matching that here keeps this cache in the
+    // exact image-pixel space the marker was actually drawn in.
+    const int clamped_w = (std::max)(64, (std::min)(1024, width));
+    const int clamped_h = (std::max)(64, (std::min)(1024, height));
+    g_state.hierarchy_screen_points = dmcresource::project_hierarchy_points(
+        g_state.session->render_mesh, overlay, clamped_w, clamped_h, view);
+
+    const auto& nodes = g_state.session->scene.nodes;
+    g_state.hierarchy_point_labels.reserve(g_state.hierarchy_screen_points.size());
+    for (std::size_t i = 0; i < g_state.hierarchy_screen_points.size(); ++i) {
+        std::wstring label = L"#" + std::to_wstring(i);
+        if (i < nodes.size() && !nodes[i].name.empty()) {
+            label += L"  " + Utf8ToWide(nodes[i].name);
+        }
+        g_state.hierarchy_point_labels.push_back(std::move(label));
+    }
 }
 
 void RenderMesh(HWND hwnd) {
@@ -581,6 +677,7 @@ void RenderMesh(HWND hwnd) {
     g_state.bgra = ToBgra(g_state.rgba);
     g_state.static_image = false;
     g_state.last_render_tick = GetTickCount();
+    RefreshHierarchyHitTestCache(width, height);
     InvalidateRect(hwnd, &view, FALSE);
 }
 
@@ -614,6 +711,9 @@ void ActivateSession(HWND hwnd, std::unique_ptr<Session> session, const std::wst
     g_state.zoom = 1.0f;
     g_state.render_flags = 0;
     g_state.hierarchy_available = false;
+    g_state.hierarchy_point_labels.clear();
+    g_state.hierarchy_screen_points.clear();
+    g_state.hierarchy_hot = -1;
     g_state.static_image = false;
     g_state.child_browser_open = false;
     g_state.gallery_thumbnails.clear();
@@ -687,6 +787,8 @@ void RefreshSiblings(const std::wstring& path) {
 void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings) {
     g_state.nav_stack.clear();
     g_state.composite_source_paths.clear();
+    g_state.composite_part_textures.clear();
+    g_state.composite_part_joints.clear();
     const auto bytes = ReadFileBytes(path);
     if (bytes.empty() && GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
         MessageBoxW(hwnd, L"Failed to open file.", L"DMC Native Reader", MB_OK | MB_ICONWARNING);
@@ -728,6 +830,40 @@ void NavigateBack(HWND hwnd) {
     NavEntry entry = std::move(g_state.nav_stack.back());
     g_state.nav_stack.pop_back();
     ActivateSession(hwnd, std::move(entry.session), entry.title, false);
+}
+
+// OFN_ALLOWMULTISELECT packs the result as "<dir>\0name1\0name2\0...\0\0"
+// when 2+ files are picked in the same folder, or just "<full path>\0\0"
+// for exactly one -- matches Android's multi-select MOD-part picker
+// (MainActivity.selectedUris / REQUEST_ADD_MOD_PARTS) so adding several
+// parts at once doesn't need repeated "+MOD" clicks.
+std::vector<std::wstring> PickMultipleFiles(HWND owner, const wchar_t* filter) {
+    std::vector<wchar_t> buffer(32768, L'\0');
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = buffer.data();
+    ofn.nMaxFile = static_cast<DWORD>(buffer.size());
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
+    if (!GetOpenFileNameW(&ofn)) return {};
+
+    std::vector<std::wstring> result;
+    const wchar_t* p = buffer.data();
+    const std::wstring first(p);
+    p += first.size() + 1;
+    if (*p == L'\0') {
+        // Single selection: lpstrFile is the whole path already.
+        result.push_back(first);
+        return result;
+    }
+    const std::wstring dir = first;
+    while (*p != L'\0') {
+        const std::wstring name(p);
+        result.push_back(dir + L"\\" + name);
+        p += name.size() + 1;
+    }
+    return result;
 }
 
 void OpenFileDialog(HWND hwnd) {
@@ -784,25 +920,31 @@ void AttachTextureDialog(HWND hwnd) {
                                                  : L"Texture companion was not accepted.")
                                      : detail.c_str(),
                L"DMC Native Reader", MB_OK | (attached ? MB_ICONINFORMATION : MB_ICONWARNING));
+
+    // Remember it so a later "+MOD" recompose (which rebuilds the whole
+    // Session from scratch) can reapply it automatically instead of quietly
+    // dropping it -- see composite_part_textures' declaration.
+    if (attached && part_count > 0 &&
+        static_cast<std::size_t>(part_index) < g_state.composite_part_textures.size()) {
+        g_state.composite_part_textures[static_cast<std::size_t>(part_index)] = path;
+    }
+
     if (g_state.session->renderable) RenderMesh(hwnd);
 }
 
 void AddModPartDialog(HWND hwnd) {
     if (!g_state.session) return;
-    wchar_t path[MAX_PATH] = L"";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = hwnd;
-    ofn.lpstrFilter = L"MOD model (*.mod)\0*.mod\0All files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    if (!GetOpenFileNameW(&ofn)) return;
+    // Multi-select: matches Android's REQUEST_ADD_MOD_PARTS picker, which
+    // takes several URIs in one action rather than needing "+MOD" clicked
+    // once per part.
+    const auto picked =
+        PickMultipleFiles(hwnd, L"MOD model (*.mod)\0*.mod\0All files\0*.*\0");
+    if (picked.empty()) return;
 
     // compose_mod_sessions() rejects a composite Session used as a source
-    // (see the AppState::composite_source_paths comment), so a 3rd+ part
-    // means recomposing every original source from scratch rather than
-    // folding the new one into the existing composite in place.
+    // (see the AppState::composite_source_paths comment), so 3+ parts means
+    // recomposing every original source from scratch rather than folding new
+    // ones into the existing composite in place.
     if (g_state.composite_source_paths.empty()) {
         if (g_state.current_path.empty()) {
             MessageBoxW(hwnd, L"Open a MOD file first (not a freshly-composed session).",
@@ -810,8 +952,25 @@ void AddModPartDialog(HWND hwnd) {
             return;
         }
         g_state.composite_source_paths.push_back(g_state.current_path);
+        g_state.composite_part_textures.push_back(L"");
+        g_state.composite_part_joints.push_back(-1);
     }
-    g_state.composite_source_paths.push_back(path);
+    const std::size_t first_new_index = g_state.composite_source_paths.size();
+    for (const auto& p : picked) {
+        bool duplicate = false;
+        for (const auto& existing : g_state.composite_source_paths) {
+            if (_wcsicmp(existing.c_str(), p.c_str()) == 0) { duplicate = true; break; }
+        }
+        if (duplicate) continue;
+        g_state.composite_source_paths.push_back(p);
+        g_state.composite_part_textures.push_back(L"");
+        g_state.composite_part_joints.push_back(-1);
+    }
+    if (g_state.composite_source_paths.size() == first_new_index) {
+        MessageBoxW(hwnd, L"Those MOD files are already part of this composite.",
+                   L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
 
     std::vector<std::unique_ptr<Session>> opened;
     std::vector<const Session*> parts;
@@ -833,7 +992,9 @@ void AddModPartDialog(HWND hwnd) {
                         std::wstring(PathFindFileNameW(source_path.c_str())))
                            .c_str(),
                        L"DMC Native Reader", MB_OK | MB_ICONWARNING);
-            g_state.composite_source_paths.pop_back();
+            g_state.composite_source_paths.resize(first_new_index);
+            g_state.composite_part_textures.resize(first_new_index);
+            g_state.composite_part_joints.resize(first_new_index);
             return;
         }
         names.push_back(WideToUtf8(std::wstring(PathFindFileNameW(source_path.c_str()))));
@@ -843,9 +1004,11 @@ void AddModPartDialog(HWND hwnd) {
 
     auto composite = dmcresource::spider::actions::compose_mod_sessions(parts, names);
     if (!composite) {
-        MessageBoxW(hwnd, L"Could not compose this MOD as an additional part.",
-                   L"DMC Native Reader", MB_OK | MB_ICONWARNING);
-        g_state.composite_source_paths.pop_back();
+        MessageBoxW(hwnd, L"Could not compose these MOD parts together.", L"DMC Native Reader",
+                   MB_OK | MB_ICONWARNING);
+        g_state.composite_source_paths.resize(first_new_index);
+        g_state.composite_part_textures.resize(first_new_index);
+        g_state.composite_part_joints.resize(first_new_index);
         return;
     }
     std::wstring title;
@@ -854,36 +1017,52 @@ void AddModPartDialog(HWND hwnd) {
         title += PathFindFileNameW(source_path.c_str());
     }
 
-    // Offer joint placement for the part that was just added (always the
-    // last index after a full recompose). Re-adding a further part later
-    // rebuilds the composite from scratch, so any placement applied here is
-    // not retained across a subsequent "+MOD" -- the user is told below
-    // rather than that being a silent surprise.
+    // Reapply every previously-attached per-part texture -- a recompose
+    // rebuilds the Session from scratch, so without this an earlier "+MOD"
+    // would silently undo any DDS/PTX already attached to an existing part.
+    for (std::size_t i = 0;
+        i < composite->composite_parts.size() && i < g_state.composite_part_textures.size();
+        ++i) {
+        if (g_state.composite_part_textures[i].empty()) continue;
+        const auto tex_bytes = ReadFileBytes(g_state.composite_part_textures[i]);
+        // Best-effort: a failed reattach just leaves that part textureless
+        // again, same as if the user hadn't attached one yet.
+        const auto reattach = dmcresource::spider::actions::attach_ptx_to_part(
+            composite.get(), static_cast<int>(i), WideToUtf8(g_state.composite_part_textures[i]),
+            tex_bytes.data(), tex_bytes.size());
+        (void)reattach;
+    }
+
+    // Placement: replay every part's previously-successful joint (same
+    // reason as textures above), and auto-place every newly-added part using
+    // the host format's own evidence-backed default joint when it publishes
+    // one -- e.g. MOD's canonical Header::default_joint_index() -- instead
+    // of asking per part. There is no per-part automatic signal beyond that
+    // one host-wide default, so multiple new parts land on the same
+    // suggested joint; nothing here claims that placement is semantically
+    // correct beyond "the format's own suggested default", matching the
+    // fail-closed rule that a default selector alone doesn't authorize
+    // anything stronger.
     const auto host_nodes = composite->composite_parts.empty()
         ? std::vector<dmcresource::RenderNode>{}
         : composite->composite_parts.front().scene.nodes;
     const auto default_selector = composite->composite_parts.empty()
         ? std::nullopt
         : composite->composite_parts.front().scene.default_attachment_selector;
-    if (!host_nodes.empty() &&
-        MessageBoxW(hwnd,
-                   L"Attach the new part to a skeleton joint on the host now?\n\n"
-                   L"(It renders at the host's origin until placed. Adding another part "
-                   L"later rebuilds the composite and this placement will need to be "
-                   L"redone.)",
-                   L"DMC Native Reader", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-        const int joint = PickHostJoint(hwnd, host_nodes, default_selector);
-        if (joint >= 0) {
-            const auto child_index = composite->composite_parts.size() - 1;
-            const auto result = dmcresource::spider::actions::attach_mod_part_to_host_joint(
-                composite.get(), 0, child_index, static_cast<std::uint32_t>(joint));
-            if (!result.ok()) {
-                MessageBoxW(hwnd,
-                           (L"Placement not applied: " +
-                            Utf8ToWide(dmcresource::composite_placement::to_string(result.status)))
-                               .c_str(),
-                           L"DMC Native Reader", MB_OK | MB_ICONWARNING);
-            }
+    for (std::size_t i = 1;
+        i < composite->composite_parts.size() && i < g_state.composite_part_joints.size(); ++i) {
+        int joint = g_state.composite_part_joints[i];
+        const bool is_new = i >= first_new_index;
+        if (joint < 0 && is_new && default_selector.has_value()) {
+            joint = static_cast<int>(*default_selector);
+        }
+        if (joint < 0 || host_nodes.empty() || joint >= static_cast<int>(host_nodes.size())) {
+            continue;
+        }
+        const auto result = dmcresource::spider::actions::attach_mod_part_to_host_joint(
+            composite.get(), 0, i, static_cast<std::uint32_t>(joint));
+        if (result.ok()) {
+            g_state.composite_part_joints[i] = joint;
         }
     }
 
@@ -1278,6 +1457,31 @@ void PaintViewport(HDC hdc, const RECT& viewport) {
                      viewport.bottom - viewport.top, 0, 0, g_state.bgra.width,
                      g_state.bgra.height, g_state.bgra.pixels.data(), &bmi, DIB_RGB_COLORS,
                      SRCCOPY);
+
+        if (g_state.hierarchy_hot >= 0 &&
+            static_cast<std::size_t>(g_state.hierarchy_hot) < g_state.hierarchy_point_labels.size()) {
+            const std::wstring& label = g_state.hierarchy_point_labels[
+                static_cast<std::size_t>(g_state.hierarchy_hot)];
+            SetBkMode(hdc, OPAQUE);
+            SetTextColor(hdc, kText);
+            SetBkColor(hdc, RGB(28, 28, 34));
+            SelectObject(hdc, g_state.small_font);
+            RECT text_rect{};
+            DrawTextW(hdc, label.c_str(), -1, &text_rect, DT_CALCRECT | DT_SINGLELINE);
+            const int pad = 5;
+            const int lx = (std::min)(g_state.hierarchy_hover_pt.x + 14,
+                                      viewport.right - (text_rect.right - text_rect.left) - 2 * pad);
+            const int ly = (std::max)(viewport.top,
+                                      g_state.hierarchy_hover_pt.y - (text_rect.bottom - text_rect.top) - 14);
+            RECT box{lx, ly, lx + (text_rect.right - text_rect.left) + 2 * pad,
+                    ly + (text_rect.bottom - text_rect.top) + 2 * pad};
+            HBRUSH tip_bg = CreateSolidBrush(RGB(28, 28, 34));
+            FillRect(hdc, &box, tip_bg);
+            DeleteObject(tip_bg);
+            RECT text_box{box.left + pad, box.top + pad, box.right - pad, box.bottom - pad};
+            DrawTextW(hdc, label.c_str(), -1, &text_box, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            SetBkMode(hdc, TRANSPARENT);
+        }
     }
 }
 
@@ -1465,6 +1669,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         }
         case WM_MOUSEMOVE: {
             POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            // Needed so a hover highlight/label doesn't stay stuck on screen
+            // once the cursor leaves the window -- WM_MOUSEMOVE stops firing
+            // then, so nothing else would ever clear it.
+            TRACKMOUSEEVENT tme{sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0};
+            TrackMouseEvent(&tme);
             if (g_state.child_browser_open) {
                 const RECT viewport = ViewportRect(hwnd);
                 const auto count = g_state.session
@@ -1489,7 +1698,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 g_state.pitch = g_state.drag_start_pitch - dy * 0.008f;
                 g_state.pitch = (std::max)(-1.55f, (std::min)(1.55f, g_state.pitch));
                 RerenderThrottled(hwnd, false);
+            } else if (!g_state.hierarchy_screen_points.empty()) {
+                const RECT viewport = ViewportRect(hwnd);
+                float ix = 0.0f, iy = 0.0f;
+                const int hot = ViewportPointToImage(viewport, g_state.bgra.width,
+                                                     g_state.bgra.height, pt, &ix, &iy)
+                    ? HierarchyHitTest(ix, iy)
+                    : -1;
+                const bool moved_while_hot =
+                    hot >= 0 && (pt.x != g_state.hierarchy_hover_pt.x ||
+                                 pt.y != g_state.hierarchy_hover_pt.y);
+                if (hot != g_state.hierarchy_hot || moved_while_hot) {
+                    g_state.hierarchy_hot = hot;
+                    g_state.hierarchy_hover_pt = pt;
+                    InvalidateRect(hwnd, &viewport, FALSE);
+                }
             }
+            return 0;
+        }
+        case WM_MOUSELEAVE: {
+            const RECT viewport = ViewportRect(hwnd);
+            bool changed = false;
+            if (g_state.child_hot != -1) { g_state.child_hot = -1; changed = true; }
+            if (g_state.hierarchy_hot != -1) { g_state.hierarchy_hot = -1; changed = true; }
+            if (changed) InvalidateRect(hwnd, &viewport, FALSE);
             return 0;
         }
         case WM_MOUSEWHEEL: {

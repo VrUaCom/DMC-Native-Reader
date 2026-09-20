@@ -26,6 +26,61 @@ P3 rotate(const Vec3& v, float yaw, float pitch) {
     return {x1, cp * v.y - sp * z1, sp * v.y + cp * z1};
 }
 
+// Mesh-centered pinhole camera framing, factored out of render_view so
+// project_hierarchy_points() can reproduce the exact same screen position for
+// a hierarchy joint marker that render_view itself drew -- any drift between
+// two independent copies of this math would silently break hover hit-testing
+// against what's actually on screen.
+struct CameraFrame {
+    Vec3 center{};
+    float radius{1.0e-4F};
+    float camera_distance{};
+    float focal_px{};
+};
+
+constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
+
+CameraFrame compute_camera_frame(const Mesh& mesh, int width, int height) {
+    CameraFrame frame;
+    if (mesh.vertices.empty()) return frame;
+
+    for (const auto& v : mesh.vertices) {
+        frame.center.x += v.x;
+        frame.center.y += v.y;
+        frame.center.z += v.z;
+    }
+    const float inv_n = 1.0F / static_cast<float>(mesh.vertices.size());
+    frame.center.x *= inv_n;
+    frame.center.y *= inv_n;
+    frame.center.z *= inv_n;
+
+    for (const auto& v : mesh.vertices) {
+        const float dx = v.x - frame.center.x;
+        const float dy = v.y - frame.center.y;
+        const float dz = v.z - frame.center.z;
+        frame.radius = std::max(frame.radius, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+
+    // Pinhole perspective camera, framed so the model's bounding sphere fills
+    // most of the shorter image axis at zoom == 1 (see render_view for the
+    // perspective-divide rationale).
+    frame.camera_distance = 1.3F * frame.radius / std::sin(kHalfFovRadians);
+    frame.focal_px = 0.5F *
+        static_cast<float>(std::min(width, height)) / std::tan(kHalfFovRadians);
+    return frame;
+}
+
+P2 project_in_frame(const CameraFrame& frame, const Vec3& world, float yaw, float pitch,
+                    float zoom, int width, int height) {
+    const Vec3 local{
+        world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z};
+    const auto r = rotate(local, yaw, pitch);
+    const float z_cam = r.z + frame.camera_distance;
+    const float inv_z = 1.0F / std::max(z_cam, 1.0e-3F);
+    return {static_cast<float>(width) * 0.5F + zoom * frame.focal_px * r.x * inv_z,
+           static_cast<float>(height) * 0.5F - zoom * frame.focal_px * r.y * inv_z, r.z};
+}
+
 void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
     if (x < 0 || y < 0 || x >= image.width || y >= image.height) return;
     const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
@@ -223,54 +278,26 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         return image;
     }
 
-    Vec3 center{};
-    for (const auto& v : mesh.vertices) {
-        center.x += v.x;
-        center.y += v.y;
-        center.z += v.z;
-    }
-    const float inv_n = 1.0F / static_cast<float>(mesh.vertices.size());
-    center.x *= inv_n;
-    center.y *= inv_n;
-    center.z *= inv_n;
-
-    float radius = 1.0e-4F;
-    for (const auto& v : mesh.vertices) {
-        const float dx = v.x - center.x;
-        const float dy = v.y - center.y;
-        const float dz = v.z - center.z;
-        radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz));
-    }
-
+    // Previously this projected with a constant screen-space scale regardless
+    // of depth (r.x * scale, no divide by z) -- a parallel/orthographic
+    // projection, not perspective at all, which reads as flattened or
+    // inverted-depth ("reverse perspective") compared to a normal camera.
+    // compute_camera_frame's camera_distance pushes a real camera back from
+    // the model center; project_in_frame's divide by z_cam is the actual
+    // perspective divide that was missing.
+    const auto frame = compute_camera_frame(mesh, image.width, image.height);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float radius = frame.radius;
 
-    // Pinhole perspective camera, framed so the model's bounding sphere fills
-    // most of the shorter image axis at zoom == 1. Previously this projected
-    // with a constant screen-space scale regardless of depth (r.x * scale,
-    // no divide by z) -- a parallel/orthographic projection, not perspective
-    // at all, which reads as flattened or inverted-depth ("reverse
-    // perspective") compared to a normal camera. camera_distance pushes a
-    // real camera back from the model center; dividing by z_cam is the
-    // actual perspective divide that was missing.
-    constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
-    const float camera_distance = 1.3F * radius / std::sin(kHalfFovRadians);
-    const float focal_px = 0.5F *
-        static_cast<float>(std::min(image.width, image.height)) / std::tan(kHalfFovRadians);
-
-    const auto project = [&](const Vec3& local) -> P2 {
-        const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-        const float z_cam = r.z + camera_distance;
-        const float inv_z = 1.0F / std::max(z_cam, 1.0e-3F);
-        return {image.width * 0.5F + zoom * focal_px * r.x * inv_z,
-               image.height * 0.5F - zoom * focal_px * r.y * inv_z,
-               r.z};
+    const auto project = [&](const Vec3& world) -> P2 {
+        return project_in_frame(frame, world, view.yaw_radians, view.pitch_radians, zoom,
+                                image.width, image.height);
     };
 
     std::vector<P2> p;
     p.reserve(mesh.vertices.size());
     for (const auto& v : mesh.vertices) {
-        const Vec3 local{v.x - center.x, v.y - center.y, v.z - center.z};
-        p.push_back(project(local));
+        p.push_back(project(v));
     }
 
     const bool textured = textures != nullptr && triangle_texture_slots != nullptr &&
@@ -355,9 +382,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         std::vector<P2> hp;
         hp.reserve(hierarchy->points.size());
         for (const auto& point : hierarchy->points) {
-            const Vec3 local{
-                point.x - center.x, point.y - center.y, point.z - center.z};
-            hp.push_back(project(local));
+            hp.push_back(project(point));
         }
         for (const auto& edge_value : hierarchy->edges) {
             if (edge_value.parent >= hp.size() || edge_value.child >= hp.size()) continue;
@@ -367,6 +392,25 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     }
 
     return image;
+}
+
+std::vector<HierarchyScreenPoint> project_hierarchy_points(const Mesh& mesh,
+    const HierarchyOverlay& hierarchy, int width, int height, const ViewState& view) {
+    std::vector<HierarchyScreenPoint> out;
+    if (mesh.vertices.empty() || !hierarchy.available()) return out;
+
+    const int clamped_width = std::clamp(width, 1, 2048);
+    const int clamped_height = std::clamp(height, 1, 2048);
+    const auto frame = compute_camera_frame(mesh, clamped_width, clamped_height);
+    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+
+    out.reserve(hierarchy.points.size());
+    for (const auto& point : hierarchy.points) {
+        const auto p = project_in_frame(frame, point, view.yaw_radians, view.pitch_radians, zoom,
+                                        clamped_width, clamped_height);
+        out.push_back({p.x, p.y});
+    }
+    return out;
 }
 
 }  // namespace dmcresource

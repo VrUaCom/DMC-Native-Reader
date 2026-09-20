@@ -47,4 +47,18 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const std::vector<std::uint32_t>* triangle_texture_slots = nullptr,
                       const std::vector<ImagePreview>* textures = nullptr);
 
+// Image-pixel-space projection of hierarchy->points, one entry per point,
+// using the exact same camera framing (mesh-centered pinhole, matching
+// render_view's own hierarchy marker pass) so a caller can hit-test the
+// screen position render_view actually drew each joint marker at -- e.g. to
+// show a bone's name/id on hover -- without re-deriving that math itself.
+struct HierarchyScreenPoint {
+    float x{};
+    float y{};
+};
+
+[[nodiscard]] std::vector<HierarchyScreenPoint> project_hierarchy_points(
+    const Mesh& mesh, const HierarchyOverlay& hierarchy, int width, int height,
+    const ViewState& view);
+
 }  // namespace dmcresource
