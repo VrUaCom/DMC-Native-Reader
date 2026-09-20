@@ -5,20 +5,19 @@ plugins {
 android {
     namespace = "com.dmcrengine.nativeviewer"
     compileSdk = 36
-    ndkVersion = "28.2.13676358"
+    ndkVersion = "30.0.16248370"
 
     buildFeatures {
         buildConfig = true
     }
 
-    // Native Reader 1.0 recovery policy: package JNI libraries in the
-    // install-compatible legacy mode so Package Manager extracts them instead
-    // of requiring mmap-ready ZIP alignment from a manually recovered shell.
-    // This is a packaging decision only; native C++ module ownership and ABI
-    // remain unchanged.
+    // Canonical modular APK: keep the single mmap-ready JNI DSO inside the APK.
+    // DMCNativeReader::Core and DMCRengine::ReaderCore are static link-time
+    // dependencies of libdmcviewer.so and must never be packaged as duplicate
+    // runtime libraries.
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
         }
     }
 
@@ -40,14 +39,13 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 28
-        versionName = "1.0.1"
+        versionCode = 33
+        versionName = "1.0.6"
 
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-Wpedantic")
-            }
-        }
+        // Do not set -std= or other semantic C++ flags here. Gradle's CMake
+        // cppFlags are global to the external native build and would also alter
+        // vendored dependency targets. Native Reader language mode is owned by
+        // its CMake targets so the Rengine dependency keeps its own contract.
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -55,7 +53,9 @@ android {
 
     buildTypes {
         debug {
-            isJniDebuggable = true
+            // Device-test APKs use source/host regressions for diagnostics; the
+            // installed JNI image itself should remain stripped and compact.
+            isJniDebuggable = false
             signingConfig = signingConfigs.getByName("stableDebug")
         }
         release {

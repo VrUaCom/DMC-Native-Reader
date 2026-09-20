@@ -1,12 +1,17 @@
 name: DMC Native Reader v1.x hardening
 
+# Migration batching policy: this expensive workflow is a manual hardening/
+# recovery gate only. The canonical Phase-2 candidate runs through android.yml.
+# Keeping this manual-only prevents Ready-for-review from launching a second
+# full host+Android evidence build and wasting hosted-runner minutes.
 on:
-  pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  EXPECTED_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   hardening:
@@ -15,7 +20,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.EXPECTED_SOURCE_SHA }}
           submodules: recursive
+
+      - name: Verify exact source checkout
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git status --short
 
       - uses: actions/setup-java@v4
         with:
@@ -35,8 +47,30 @@ jobs:
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
+            "ndk;30.0.16248370" \
             "cmake;3.22.1"
+
+      - name: Guard canonical C++23 / Spider C++ boundary
+        run: |
+          set -euxo pipefail
+          grep -Fq 'cxx_std_23' app/src/main/cpp/CMakeLists.txt
+          ! grep -Fq 'cxx_std_20' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'CXX_STANDARD 23' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'CXX_STANDARD_REQUIRED ON' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'CXX_EXTENSIONS OFF' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'Duplicate test entry in DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
+          ! grep -F -- '-std=c++' app/build.gradle.kts
+          grep -Fq 'ndkVersion = "30.0.16248370"' app/build.gradle.kts
+          test -f app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          test -f app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq 'dmc.native-reader.cpp23' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'DMC_NATIVE_READER_LANGUAGE_LEVEL' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'spider.cpp23' app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq '#include "dmc_rengine/spider/native_executor.hpp"' \
+            app/src/main/cpp/include/dmcresource/spider/crusader.h
 
       - name: Guard signing boundary
         run: |
@@ -59,37 +93,62 @@ jobs:
             "$(git ls-tree HEAD app/src/main/cpp/vendor/dmc-rengine-cpp | awk '{print $3}')"
           test -f app/src/main/cpp/vendor/dmc-rengine-cpp/cmake/reader_core.cmake
 
-      - name: Build debug and unsigned release APKs
-        run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
+      - name: Run exact-head Phase 2 host + Android evidence baseline
+        run: |
+          python3 tools/run_phase2_exact_head.py \
+            --sdk "$ANDROID_SDK_ROOT" \
+            --gradle gradle \
+            --expected-head "$EXPECTED_SOURCE_SHA"
 
-      - name: Verify 1.0 artifacts
+      - name: Verify v33 / 1.0.6 artifacts
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
           RELEASE_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          MAX_APK_BYTES=$((4 * 1024 * 1024))
+          MAX_NATIVE_BYTES=$((4 * 1024 * 1024))
           test -f "$DEBUG_APK"
           test -f "$RELEASE_APK"
           unzip -t "$DEBUG_APK"
           unzip -t "$RELEASE_APK"
+          test "$(stat -c%s "$DEBUG_APK")" -le "$MAX_APK_BYTES"
+          test "$(stat -c%s "$RELEASE_APK")" -le "$MAX_APK_BYTES"
+
+          test -z "$(zipinfo -1 "$DEBUG_APK" | sort | uniq -d)"
+          test -z "$(zipinfo -1 "$RELEASE_APK" | sort | uniq -d)"
 
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$DEBUG_APK" | tee /tmp/debug-badging.txt
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='26'" "$BADGING"
-            grep -q "versionName='1.0'" "$BADGING"
+            grep -q "versionCode='33'" "$BADGING"
+            grep -q "versionName='1.0.6'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
 
-          unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
-          strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
+          for APK in "$DEBUG_APK" "$RELEASE_APK"; do
+            mapfile -t LIBS < <(zipinfo -1 "$APK" | grep '^lib/.*\.so$')
+            test "${#LIBS[@]}" -eq 1
+            test "${LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
+          done
+
+          unzip -p "$DEBUG_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer-debug.so
+          unzip -p "$RELEASE_APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer-release.so
+          test "$(stat -c%s /tmp/libdmcviewer-debug.so)" -le "$MAX_NATIVE_BYTES"
+          test "$(stat -c%s /tmp/libdmcviewer-release.so)" -le "$MAX_NATIVE_BYTES"
+
+          strings /tmp/libdmcviewer-debug.so > /tmp/native-markers.txt
           grep -Fq 'formats.mod.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
+          grep -Fq 'spider.cpp23' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
           grep -Fq 'native.uv-projection' /tmp/native-markers.txt
+          ! grep -Fq 'libdmcshim' /tmp/native-markers.txt
+          ! grep -Fq 'libdmccore00' /tmp/native-markers.txt
 
           APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$APKSIGNER" verify --verbose --print-certs "$DEBUG_APK" | tee /tmp/debug-signing.txt
@@ -104,23 +163,27 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0-debug
+          name: dmc-native-reader-v33-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0-unsigned-release
+          name: dmc-native-reader-v33-unsigned-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
+          retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v1.0-hardening-evidence
+          name: dmc-native-reader-v33-hardening-evidence
           path: |
+            build/phase2-evidence/
             /tmp/debug-badging.txt
             /tmp/release-badging.txt
             /tmp/debug-signing.txt
             /tmp/debug-apk.sha256
             /tmp/release-apk.sha256
           if-no-files-found: error
+          retention-days: 7

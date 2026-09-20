@@ -3,18 +3,14 @@
 #include <cstddef>
 #include <span>
 
-#include "dmc_rengine/profiles/dmc3/texture_slot_framing.hpp"
+#include "dmc_rengine/profiles/dmc3/texture_slot_framing_compat.hpp"
 
 namespace dmcresource::ptx_compat {
 
 namespace dmc3 = dmc::rengine::profiles::dmc3;
 
-// Temporary Native Reader compatibility boundary for the pinned ReaderCore
-// revision. This is not a second PTX parser: implementation retries the same
-// canonical TextureSlotFramingParser only for the corpus-confirmed retail DXT1
-// auxiliary-mode false negative. All physical framing/size/bounds authority
-// remains in ReaderCore. Raw descriptor offsets stay private to the .cpp so
-// callers cannot grow another format implementation around this workaround.
+// Product-side facade over DMC Rengine's canonical read compatibility layer.
+// Native Reader owns no descriptor constants or legacy framing grammar here.
 [[nodiscard]] dmc3::TextureSlotFramingResult parse_texture_bundle(
     std::span<const std::byte> source,
     bool* compatibility_used = nullptr);

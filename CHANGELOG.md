@@ -2,9 +2,101 @@
 
 This changelog distinguishes accepted `main` history from development candidates. Historical build/evidence documents remain useful provenance but are not current support claims.
 
-## Unreleased — Native Reader 1.0 v26 candidate
+## Unreleased — Native Reader 1.0.6 / v33 candidate
 
-**Status:** draft PR #32 on `feature/dds-ptx-v1-acceptance`; device acceptance pending; not yet part of accepted `main`.
+**Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; exact-head build/device acceptance pending; not yet part of accepted `main`.
+
+### Modular + Spider architecture
+
+- production `NativeModuleRegistry` contains five promoted families: MOD / SCM / DDS / PTX / EventTbl;
+- every promoted format route executes through Spider Crusader while canonical adapters/parsers remain format authorities;
+- composition and PTX attachment now use `dmcresource::spider::actions` instead of JNI orchestration;
+- Black Widow remains the native application-state/capability authority;
+- Android JNI is transport/handle/Bitmap glue only;
+- `DMCNativeReader::Core` is now the reusable portable **C++23** product target;
+- Android C++23 builds pin NDK r30 LTS `30.0.16248370`;
+- `cpp23_profile.h` enforces the C++23 + `std::expected` contract;
+- Spider C++ (`spider.cpp23`) is the embedded C++23 product-language layer above the existing Crusader/Rengine executor, not a duplicated runtime;
+- canonical architecture authority is `docs/MODULAR_SPIDER_V33.md`;
+- C++23 migration review/research/plan is recorded in `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md`.
+
+### Canonical Rengine / SCM
+
+- ReaderCore pin is `caf445226c7d61841292384a10e93e4f58ae29f9`, a descendant of SCM authority baseline `809824882c60487962e99ee41f16bca7e3ccbc83` and the canonical read-side MOD attachment authority consumed by Native Reader;
+- the C++23 migration does not modify the Rengine repository or submodule pin;
+- SCM retail versions 0.83 / 0.90 / 1.00 / 1.01 remain supported by the canonical parser contract;
+- `header +0x13` remains `lighting_reference_node_index` for SCM;
+- confirmed structural resource-code family domain includes 3 / 4 / 7 / 8;
+- SCM regression covers hierarchy/order/object binding/world transform through final world-space render vertices, protecting stage placement such as `st002`;
+- compatibility selector and confirmed material GIF packet authority remain regression-gated.
+
+### Multi-MOD + shared PTX bank
+
+- multi-select canonical MOD resources compose through Spider session actions;
+- the compose production action is the first path routed through the typed Spider C++23 profile while still executing the canonical Crusader plan;
+- each `CompositePart` retains source-local scene/node/texture-slot authority;
+- every composite part now carries stable native `AssetId` + `InstanceId` identity from `WorkspaceGraph`;
+- `WorkspaceGraph` mutation APIs use C++23 `std::expected` with typed failure reasons instead of collapsing all failures to invalid-ID sentinels;
+- pre-attachment synthetic slot ranges keep different source namespaces explicit;
+- shared PTX attachment unions required source-local slots, parses once and decodes each required slot once;
+- all compatible parts point into one slot-indexed decoded texture bank, eliminating per-part RGBA copies for the same local slot;
+- distinct PTX slot identities are never merged merely because their pixel payloads happen to match;
+- explicit per-part PTX replacement remains available and preserves local-slot identity;
+- `composite_mod_scene_test` uses the em028-style `001/004/005/006 + em028_000.ptx` layout and requires four decoded slots instead of the former synthetic ten-slot duplication.
+
+### PNG export + direct Bitmap transport
+
+- the shared reset control becomes `↓` only when native Black Widow exposes `CanExportPng`;
+- UV gallery exports every texture-slot map as PNG to a system-selected folder;
+- an opened UV map exports one 1024×1024 PNG;
+- PTX gallery exports DDS children and individual PTX/DDS images through Android SAF;
+- large PTX children can be lazily decoded from retained bounded encoded bytes;
+- JNI writes native RGBA directly into reusable Java-owned `ARGB_8888` Bitmaps;
+- legacy Java `int[]` frame transport remains forbidden;
+- JNI resource operations fail closed on C++ exceptions.
+
+### EventTbl / legacy texture routes
+
+- EventTbl identity requires `EVT\0` bytes and is exposed as the canonical `EventTbl` registry family;
+- EventTbl now has its own Spider Crusader execution regression;
+- logical `.tm2` names with DMC descriptor + DDS bytes continue through the validated wrapped-DDS path rather than a fabricated Sony TIM2 decoder;
+- PTX/DDS framing and model-texture authority are consumed from canonical DMC Rengine ReaderCore.
+
+### Android modular packaging and size gates
+
+- versionName / versionCode are `1.0.6` / `33`;
+- APK contains exactly one native DSO: `lib/arm64-v8a/libdmcviewer.so`;
+- `DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that one DSO;
+- recovery `libdmcshim*`, `libdmccore00.so`, `dlopen` and `dlsym` paths are forbidden;
+- `extractNativeLibs=false`; native DSO remains uncompressed for direct mmap;
+- verifier checks canonical C++23, Spider C++, NDK r30, 16 KiB APK ZIP data alignment **and** every ELF `PT_LOAD` alignment;
+- verifier checks Java/JNI exact symbol parity and that JNI composition/PTX actions route through Spider;
+- APK budget <= 8 MiB, native DSO <= 4 MiB, total Dex <= 1 MiB;
+- old v32 recovery build with four native DSOs is explicitly rejected and must not be used as a build base.
+
+### v33 regression cleanup
+
+- fixed `spider_model_execution_test` after EventTbl became the fifth production module;
+- fixed registry lookup from stale `EVT` to canonical `EventTbl`;
+- fixed EventTbl inspection identity expectation;
+- aligned `v1-hardening.yml` with v33 / 1.0.6 and added host CTest before APK packaging;
+- added `spider_event_execution_test`;
+- added `cxx23_profile_test` as a compile/runtime contract for C++23, `std::expected` and Spider C++;
+- added/extended `workspace_graph_test` for stable identities and typed C++23 errors;
+- retired the stale v27 Spider contract in favor of `MODULAR_SPIDER_V33.md`.
+
+### Current build boundary
+
+No v33 APK is accepted yet. Both `ubuntu-latest` and a bounded `macos-15` probe have been observed failing before runner assignment with `runner_id=0` and no executed steps. Checkout, CMake, Gradle and tests therefore did not run in those jobs; these failures are infrastructure evidence, not green or red source evidence. The temporary macOS probe workflow was removed after confirming the account-level behavior.
+
+PR #33 remains draft until a real exact-head clean C++23 build runs the full native suite, produces a verifier-clean ARM64 APK, and the Samsung device checklist is completed.
+
+## Native Reader 1.0 v26 — accepted `main`
+
+**Accepted:** 2026-09-10  
+**Accepted main:** `0148f0bd1b384fa1d2b43124b88423fd7b66c379`  
+**Merged through:** PR #32  
+**versionName / versionCode:** `1.0` / `26`
 
 ### v25 — UV slot gallery
 
@@ -12,23 +104,27 @@ This changelog distinguishes accepted `main` history from development candidates
 - each texture slot gets its own gallery entry and zoomable UV map with triangle count;
 - PTX and generated UV children share the same native gallery/session infrastructure;
 - model texture binding remains the single required-slot validation authority;
-- invalid/incomplete bindings fail closed instead of guessing slot ownership;
-- all eight portable/native regressions for the v25 slice pass.
+- invalid/incomplete bindings fail closed instead of guessing slot ownership.
 
 ### v26 — focused tool information
 
 - long-press UV shows texture slots and triangle counts;
 - long-press wireframe/model structure shows objects, nested mesh groups and counts;
 - long-press bones/hierarchy shows explicit parent relationships, roots and invalid/unknown references without fabricating hierarchy;
-- hierarchy information availability is separated from spatial hierarchy authority;
+- hierarchy information availability is separated from spatial-render authority;
 - focused reports reuse the typed `InspectionDocument` path rather than reparsing model bytes;
-- all nine portable/native regressions pass;
 - verified candidate APK: versionName `1.0`, versionCode `26`, arm64-v8a, 597,665 bytes, 19 declared JNI exports, no Kotlin runtime;
 - candidate APK SHA-256: `b80be422197ff8270f67049dbdd596603b0ebcf4f41884f6b22a5936fedf4596`.
 
-Promotion remains blocked only by the required physical-device/corpus acceptance pass.
+### Acceptance
 
-## Native Reader 1.0 v24 — accepted `main`
+- the owner confirmed the required Samsung/device tests on 2026-09-10 and explicitly approved PR #32 for merge;
+- the bounded v25/v26 regression and APK evidence was accepted with that physical-device confirmation;
+- GitHub-hosted jobs on the accepted line can fail before running any step, so hosted CI is not claimed green.
+
+See `docs/UV_GALLERY_V25.md` and `docs/TOOL_INSPECTION_V26.md`.
+
+## Native Reader 1.0 v24 — accepted historical baseline
 
 **Accepted:** 2026-09-10  
 **Accepted v24 code baseline:** `5a69a3cde2cd4af3534ad7056ea55b09f0e91659`  
@@ -74,8 +170,4 @@ The repository deliberately replaced the earlier broad multi-format/recognition 
 - DDS;
 - PTX.
 
-The old HITS/TXT/index/DCA/LIG/PAC/PNST/NBZ/partial-adapter surface was removed from the production registry/build and preserved on `main.2` as backlog/reference. Future families must be promoted individually through Architecture v2 with canonical/evidence-backed authority and regressions.
-
-## Historical development milestones
-
-Earlier v4-v9 and pre-cleanup debug builds established Android routing, packaging, modular-reader and device-testing foundations. Their build identities, module counts and unresolved routing notes are historical evidence only; consult `docs/STATUS.md` for the current accepted state.
+That four-module statement describes the historical v1 clean-core transition. The current v33 candidate promotes EventTbl as a fifth bounded production module. The old HITS/TXT/index/DCA/LIG/PAC/PNST/NBZ/partial-adapter surface remains excluded from the production registry/build and preserved as backlog/reference. Future families must be promoted individually through the current modular + Spider contract with canonical/evidence-backed authority and regressions.

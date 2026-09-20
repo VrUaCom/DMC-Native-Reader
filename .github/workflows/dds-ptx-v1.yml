@@ -1,12 +1,17 @@
 name: DMC Native Reader DDS PTX core gate
 
+# Migration batching policy: this is a targeted diagnostic/recovery gate only.
+# The canonical Phase-2 candidate runs through android.yml. Keep this workflow
+# manual-only so Ready-for-review cannot start a duplicate host build and burn
+# additional hosted-runner minutes.
 on:
-  pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  EXPECTED_SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   dds-ptx-host:
@@ -15,7 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.EXPECTED_SOURCE_SHA }}
           submodules: recursive
+
+      - name: Verify exact source checkout
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          grep -Fq 'cxx_std_23' app/src/main/cpp/CMakeLists.txt
+          ! grep -Fq 'cxx_std_20' app/src/main/cpp/CMakeLists.txt
 
       - name: Build DDS/PTX and model texture regressions
         run: |

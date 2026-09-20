@@ -10,8 +10,8 @@
 namespace dmcresource::spider::black_widow {
 
 // Black Widow owns platform-neutral application/UI decisions. Android/Java
-// consumes this typed state but must not reconstruct it from diagnostics or
-// raw ResourceCapabilities combinations.
+// consumes this typed state but must not reconstruct it from diagnostics,
+// filenames, retained URIs, or raw ResourceCapabilities combinations.
 enum class StateFlag : std::uint64_t {
     CanRender                  = 1ULL << 0U,
     CanWireframe               = 1ULL << 1U,
@@ -36,6 +36,8 @@ enum class StateFlag : std::uint64_t {
     CanInspectMeshes           = 1ULL << 20U,
     CanInspectHierarchy        = 1ULL << 21U,
     CanExportPng               = 1ULL << 22U,
+    CanAddModelPart            = 1ULL << 23U,
+    CanStageCompanion          = 1ULL << 24U,
 };
 
 using StateBits = std::uint64_t;
@@ -62,12 +64,16 @@ struct ModelSessionView final {
     bool uv_data_available{};
     std::size_t object_count{};
     std::size_t hierarchy_node_count{};
+    bool part_texture_attachment_available{};
     bool png_export_available{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral
 // sentinel for an unbound triangle; no PTX/MOD/SCM binary-format knowledge
-// lives here.
+// lives here. Composite sessions may explicitly advertise that at least one
+// retained part has a complete local PTX binding even when the merged scene is
+// not globally complete. Model-part/companion actions are exposed from typed
+// model capabilities, never reconstructed from file-name or URI state in Java.
 [[nodiscard]] StateBits evaluate_model_session(
     const ModelSessionView& session) noexcept;
 

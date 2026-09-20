@@ -10,16 +10,19 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 4U);
+    assert(modules.size() == 5U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
     const auto* dds = NativeModuleRegistry::find("DDS");
     const auto* ptx = NativeModuleRegistry::find("PTX");
+    const auto* event_tbl = NativeModuleRegistry::find("EventTbl");
     assert(scm != nullptr && scm->format == Format::Scm && scm->renderable);
     assert(mod != nullptr && mod->format == Format::Mod && mod->renderable);
     assert(dds != nullptr && dds->format == Format::Dds && !dds->renderable);
     assert(ptx != nullptr && ptx->format == Format::Ptx && !ptx->renderable);
+    assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
+           !event_tbl->renderable);
 
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
@@ -31,10 +34,13 @@ int main() {
     const std::array<std::uint8_t, 4> scm_magic{'S', 'C', 'M', ' '};
     const std::array<std::uint8_t, 4> mod_magic{'M', 'O', 'D', ' '};
     const std::array<std::uint8_t, 4> dds_magic{'D', 'D', 'S', ' '};
+    const std::array<std::uint8_t, 4> evt_magic{'E', 'V', 'T', 0U};
     assert(probe("renamed.bin", scm_magic.data(), scm_magic.size()).format == Format::Scm);
     assert(probe("renamed.bin", mod_magic.data(), mod_magic.size()).format == Format::Mod);
     assert(probe("renamed.bin", dds_magic.data(), dds_magic.size()).format == Format::Dds);
+    assert(probe("renamed.bin", evt_magic.data(), evt_magic.size()).format == Format::Evt);
     assert(probe("texture.ptx", nullptr, 0U).format == Format::Ptx);
+    assert(probe("legacy.tm2", nullptr, 0U).format == Format::Dds);
 
     assert(!probe("stage.hits", nullptr, 0U).recognized);
     assert(!probe("stage.dca", nullptr, 0U).recognized);

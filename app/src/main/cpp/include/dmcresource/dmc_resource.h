@@ -7,14 +7,15 @@
 
 namespace dmcresource {
 
-// Clean Native Reader 1.0 format surface. Other DMC families are intentionally
-// not registered in main until they are promoted to the same modular contract.
+// Clean Native Reader 1.0 format surface. Families are added only after they
+// have a bounded portable ReaderCore contract.
 enum class Format : std::uint8_t {
     Unknown = 0,
     Scm,
     Mod,
     Dds,
     Ptx,
+    Evt,
 };
 
 struct ProbeResult {
@@ -28,9 +29,12 @@ struct ProbeResult {
     const char* mime_type{"application/octet-stream"};
 };
 
+// Extension routing normalizes a std::string and can allocate. The decode
+// pipeline owns the fail-closed exception boundary; do not advertise noexcept
+// on this allocating helper.
 ProbeResult probe(std::string_view filename,
                   const std::uint8_t* bytes,
-                  std::size_t size) noexcept;
+                  std::size_t size);
 
 std::string describe_resource(std::string_view filename,
                               const std::uint8_t* bytes,

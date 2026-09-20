@@ -1,5 +1,6 @@
 #include "dmcresource/texture_companion.h"
 
+#include <algorithm>
 #include <span>
 #include <sstream>
 #include <utility>
@@ -17,32 +18,28 @@ namespace {
     return std::as_bytes(std::span<const std::uint8_t>{bytes, size});
 }
 
-}  // namespace
-
-bool can_attach(const ModelTextureView& model) noexcept {
-    if (model.mesh == nullptr) return false;
-    return model_texture_binding::can_attach_texture_companion(
-        *model.mesh, model.triangle_texture_slots);
+[[nodiscard]] bool collect_required(const ModelTextureView& model,
+                                    model_texture_binding::RequiredSlots* out) noexcept {
+    if (model.mesh != nullptr) {
+        return model_texture_binding::collect_required_slots(
+            *model.mesh, model.triangle_texture_slots, out);
+    }
+    if (model.scene != nullptr) {
+        return model_texture_binding::collect_required_slots(
+            *model.scene, model.triangle_texture_slots, out);
+    }
+    return false;
 }
 
-AttachmentResult attach_ptx(
+[[nodiscard]] AttachmentResult decode_required_ptx(
     std::string_view filename,
     const std::uint8_t* bytes,
     std::size_t size,
-    const ModelTextureView& model) noexcept {
+    const model_texture_binding::RequiredSlots& required,
+    bool shared_bank) {
     AttachmentResult out;
-
-    if (model.mesh == nullptr) {
-        out.detail =
-            "PTX companion rejected: current resource has no model texture projection";
-        return out;
-    }
-
-    model_texture_binding::RequiredSlots required;
-    if (!model_texture_binding::collect_required_slots(
-            *model.mesh, model.triangle_texture_slots, &required)) {
-        out.detail =
-            "PTX companion rejected: current resource has no complete UV + texture-slot render mapping";
+    if (required.slots.empty()) {
+        out.detail = "PTX companion rejected: no required texture slots";
         return out;
     }
     if (bytes == nullptr) {
@@ -71,8 +68,7 @@ AttachmentResult attach_ptx(
     out.source_texture_count = set.slots.size();
 
     try {
-        std::vector<ImagePreview> textures(
-            static_cast<std::size_t>(required.max_slot) + 1U);
+        out.textures.resize(static_cast<std::size_t>(required.max_slot) + 1U);
         for (const auto slot_index : required.slots) {
             const auto* slot = texture_set::find_slot(set, slot_index);
             if (slot == nullptr) {
@@ -80,6 +76,7 @@ AttachmentResult attach_ptx(
                 detail << "PTX companion rejected: model requests texture slot "
                        << slot_index << " but PTX does not expose that slot";
                 out.detail = detail.str();
+                out.textures.clear();
                 return out;
             }
 
@@ -92,29 +89,108 @@ AttachmentResult attach_ptx(
                        << " could not decode base mip";
                 if (!decode_detail.empty()) detail << " | " << decode_detail;
                 out.detail = detail.str();
+                out.textures.clear();
                 return out;
             }
-            textures[static_cast<std::size_t>(slot_index)] = std::move(decoded);
+            out.textures[static_cast<std::size_t>(slot_index)] = std::move(decoded);
         }
 
         const bool via_ptx = set.kind == texture_set::Kind::ptx_bundle;
         std::ostringstream detail;
-        detail << (via_ptx ? "PTX companion attached: " : "DDS companion attached: ")
-               << filename << " | requiredSlots=" << required.slots.size()
-               << " | bundleTextures=" << set.slots.size() << " | route=TextureSet/Crusader/"
-               << (via_ptx ? "PTX->DDS->UV" : "DDS->UV");
+        detail << (shared_bank ? "Shared PTX bank attached: "
+                               : (via_ptx ? "PTX companion attached: " : "DDS companion attached: "))
+               << filename
+               << " | requiredSlots=" << required.slots.size()
+               << " | bundleTextures=" << set.slots.size()
+               << " | decodePasses=1";
+        if (shared_bank) {
+            // One bank is shared by every composite part. This marker is a
+            // regression contract: identical local slot references do not cause
+            // a second RGBA allocation merely because another MOD part uses it.
+            detail << " | duplicateRgba=0";
+        }
+        detail << " | route=TextureSet/Crusader/" << (via_ptx ? "PTX->DDS->UV" : "DDS->UV");
         if (set.ptx_aux_compat_used) {
             detail << " | auxCompat=retail-DXT1";
         }
 
-        out.textures = std::move(textures);
         out.detail = detail.str();
         out.attached = true;
         return out;
     } catch (...) {
+        out.textures.clear();
         out.detail = "PTX companion rejected: texture attachment allocation failed";
         return out;
     }
+}
+
+}  // namespace
+
+bool can_attach(const ModelTextureView& model) noexcept {
+    model_texture_binding::RequiredSlots required;
+    return collect_required(model, &required);
+}
+
+AttachmentResult attach_ptx(
+    std::string_view filename,
+    const std::uint8_t* bytes,
+    std::size_t size,
+    const ModelTextureView& model) {
+    if (model.mesh == nullptr && model.scene == nullptr) {
+        AttachmentResult out;
+        out.detail =
+            "PTX companion rejected: current resource has no model texture projection";
+        return out;
+    }
+
+    model_texture_binding::RequiredSlots required;
+    if (!collect_required(model, &required)) {
+        AttachmentResult out;
+        out.detail =
+            "PTX companion rejected: current resource has no complete UV + texture-slot render mapping";
+        return out;
+    }
+    return decode_required_ptx(filename, bytes, size, required, false);
+}
+
+AttachmentResult attach_shared_ptx(
+    std::string_view filename,
+    const std::uint8_t* bytes,
+    std::size_t size,
+    std::span<const ModelTextureView> models) {
+    AttachmentResult out;
+    if (models.empty()) {
+        out.detail = "Shared PTX rejected: no model parts supplied";
+        return out;
+    }
+
+    model_texture_binding::RequiredSlots union_required;
+    try {
+        for (const auto& model : models) {
+            model_texture_binding::RequiredSlots local;
+            if (!collect_required(model, &local)) {
+                out.detail =
+                    "Shared PTX rejected: one or more model parts has no complete UV + texture-slot mapping";
+                return out;
+            }
+            union_required.slots.insert(
+                union_required.slots.end(), local.slots.begin(), local.slots.end());
+        }
+        std::sort(union_required.slots.begin(), union_required.slots.end());
+        union_required.slots.erase(
+            std::unique(union_required.slots.begin(), union_required.slots.end()),
+            union_required.slots.end());
+        if (union_required.slots.empty()) {
+            out.detail = "Shared PTX rejected: no required texture slots";
+            return out;
+        }
+        union_required.max_slot = union_required.slots.back();
+    } catch (...) {
+        out.detail = "Shared PTX rejected: required-slot union allocation failed";
+        return out;
+    }
+
+    return decode_required_ptx(filename, bytes, size, union_required, true);
 }
 
 }  // namespace dmcresource::texture_companion

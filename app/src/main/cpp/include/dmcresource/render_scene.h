@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,13 @@ struct RenderScene final {
     std::vector<RenderNode> nodes;
     std::vector<SkinBinding> skins;
     std::vector<TextureBinding> textures;
+
+    // Format adapters may publish an evidence-backed default attachment selector
+    // without exposing raw format layout to composition/UI code. For DMC3 MOD
+    // this is populated from canonical Rengine Header::default_joint_index().
+    // The selector alone does not identify a host and therefore authorizes no
+    // placement until a separate resolver produces one unambiguous host.
+    std::optional<std::uint32_t> default_attachment_selector;
 
     [[nodiscard]] bool has_geometry() const noexcept {
         for (const auto& primitive : meshes) {

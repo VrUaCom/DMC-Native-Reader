@@ -1,15 +1,26 @@
+# ARCHIVED WORKFLOW — NOT EXECUTED BY GITHUB ACTIONS
+#
+# Historical snapshot preserved for evidence/reference only.
+# Removed from .github/workflows during v33 C++23 migration because it can use
+# production signing authority under obsolete v1.0.1 / NDK r28 assumptions.
+# Do not copy this back as release authority. Phase 7 (#40) must create the
+# current release path from #55-reviewed architecture and exact signed-artifact
+# evidence.
+#
 name: DMC Native Reader v1 production release
 
+# LEGACY / MANUAL ONLY during the C++23 migration.
+# This workflow still encodes the v1.0.1 / NDK r28 release contract and must not
+# run automatically or become v33 release authority. Gate #44 owns its later
+# migration/replacement after the Native Reader core transition is complete.
 on:
-  pull_request:
-    branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   production-release:
-    if: github.head_ref == 'release/v1.0.1'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

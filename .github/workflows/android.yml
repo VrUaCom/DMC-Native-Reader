@@ -1,23 +1,75 @@
 name: DMC Native Reader core architecture
 
+# Canonical candidate gate:
+# - protect main when product/build inputs change;
+# - do not burn hosted-runner minutes on draft synchronize commits;
+# - skip docs-only changes;
+# - cancel superseded runs for the same PR/ref;
+# - run the full candidate gate explicitly with workflow_dispatch or once when
+#   the migration PR is promoted to Ready for review;
+# - workflow_dispatch may target a repository self-hosted Linux x64 runner to
+#   bypass hosted-minute quota while preserving the same evidence contract.
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     branches: ["main"]
+    types: [ready_for_review]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner pool for the exact-head candidate gate"
+        required: true
+        default: "ubuntu-latest"
+        type: choice
+        options:
+          - "ubuntu-latest"
+          - "self-hosted"
 
 permissions:
   contents: read
 
+concurrency:
+  group: native-reader-core-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   core:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
+      - name: Require canonical Linux x64 runner
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "${{ runner.os }}" = "Linux"
+          test "${{ runner.arch }}" = "X64"
+
       - uses: actions/checkout@v4
         with:
+          # pull_request defaults to refs/pull/<n>/merge. Phase/release evidence
+          # must instead bind to the exact candidate head that will be reviewed
+          # and handed to device acceptance.
+          ref: ${{ env.EXPECTED_SOURCE_SHA }}
           submodules: recursive
+
+      - name: Verify exact source checkout
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git status --short
+
+      - name: Run package and installed-footprint policy regressions
+        run: python3 tools/test_verify_device_apk.py
 
       - uses: actions/setup-java@v4
         with:
@@ -37,8 +89,29 @@ jobs:
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
+            "ndk;30.0.16248370" \
             "cmake;3.22.1"
+
+      - name: Verify C++23 and Spider C++ product contract
+        run: |
+          set -euxo pipefail
+          grep -Fq 'cxx_std_23' app/src/main/cpp/CMakeLists.txt
+          ! grep -Fq 'cxx_std_20' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'CXX_STANDARD 23' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'CXX_STANDARD_REQUIRED ON' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'CXX_EXTENSIONS OFF' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'Duplicate test entry in DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
+          ! grep -F -- '-std=c++' app/build.gradle.kts
+          grep -Fq 'ndkVersion = "30.0.16248370"' app/build.gradle.kts
+          test -f app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          test -f app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq 'std::expected' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'DMC_NATIVE_READER_LANGUAGE_LEVEL' app/src/main/cpp/include/dmcresource/cpp23_profile.h
+          grep -Fq 'spider.cpp23' app/src/main/cpp/include/dmcresource/spider/cpp23_language.h
+          grep -Fq 'cxx23_profile' app/src/main/cpp/CMakeLists.txt
 
       - name: Reject archived legacy source paths
         run: |
@@ -54,24 +127,30 @@ jobs:
             app/src/main/cpp/include/dmcresource/decode.h \
             app/src/main/cpp/include/dmcresource/hits_decode.h \
             app/src/main/cpp/include/dmcresource/text_decode.h \
+            app/src/main/cpp/spider/session_actions.cpp \
             app/src/main/java/com/dmcrengine/nativeviewer/ResourceUiState.java \
             app/src/test/java/com/dmcrengine/nativeviewer/ResourceUiStateTest.java; do
             test ! -e "$path"
           done
 
-      - name: Build and run native regressions through the product core
+          # DMC Rengine owns SCM strip-break semantics. Native Reader may only
+          # project the canonical strip into its renderer representation.
+          grep -Fq 'generate_triangle_strip_indices' app/src/main/cpp/adapters/scm_adapter.cpp
+          ! grep -Fq 'triangle_break_bit' app/src/main/cpp/adapters/scm_adapter.cpp
+
+          # DMC Rengine also owns MOD bit-15 topology state. Prefer the typed
+          # decoded skin flag and use the canonical mask only for zero-domain
+          # files; never restore a Reader-local control-word literal.
+          grep -Fq 'source.skin[vertex].skin.topology_break' app/src/main/cpp/adapters/mod_adapter.cpp
+          grep -Fq 'CanonicalMod::topology_break_mask' app/src/main/cpp/adapters/mod_adapter.cpp
+          ! grep -Eq 'control_words.*0x8000' app/src/main/cpp/adapters/mod_adapter.cpp
+
+      - name: Run exact-head Phase 2 host + Android evidence baseline
         run: |
-          set -euxo pipefail
-          cmake -S app/src/main/cpp -B build/host \
-            -DDMC_NATIVE_READER_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build/host --parallel 2
-          ctest --test-dir build/host --output-on-failure
-
-      - name: Build APK
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Verify device APK identity, signer, JNI and packaging
-        run: python3 tools/verify_device_apk.py app/build/outputs/apk/debug/app-debug.apk
+          python3 tools/run_phase2_exact_head.py \
+            --sdk "$ANDROID_SDK_ROOT" \
+            --gradle gradle \
+            --expected-head "$EXPECTED_SOURCE_SHA"
 
       - name: Verify APK modular core surface
         run: |
@@ -79,15 +158,30 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
           unzip -t "$APK"
+
+          # The Phase 2 runner/verifier above is authoritative for exact physical
+          # DSO count, 16 KiB ZIP alignment, Java/JNI export parity, signer,
+          # package-size budgets and duplicate-payload metrics. This step keeps
+          # capability/module checks readable in CI.
+          mapfile -t LIBS < <(zipinfo -1 "$APK" | grep '^lib/.*\.so$')
+          test "${#LIBS[@]}" -eq 1
+          test "${LIBS[0]}" = 'lib/arm64-v8a/libdmcviewer.so'
           unzip -p "$APK" lib/arm64-v8a/libdmcviewer.so > /tmp/libdmcviewer.so
           strings /tmp/libdmcviewer.so > /tmp/native-markers.txt
 
           grep -Fq 'formats.mod.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
+          grep -Fq 'spider.cpp23' /tmp/native-markers.txt
+          grep -Fq 'canonical.mod.topology-break' /tmp/native-markers.txt
+          grep -Fq 'canonical.scm.topology' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
           grep -Fq 'native.uv-projection' /tmp/native-markers.txt
+
+          ! grep -Fq 'libdmcshim' /tmp/native-markers.txt
+          ! grep -Fq 'libdmccore00' /tmp/native-markers.txt
 
           for legacy in \
             'formats.hits.collision-reader' \
@@ -110,17 +204,44 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='26' versionName='1.0'" /tmp/core-badging.txt
+          grep -Fq "versionCode='33' versionName='1.0.6'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.ptx' /tmp/manifest.txt
           grep -Fq 'image/vnd-ms.dds' /tmp/manifest.txt
+          grep -Fq 'application/vnd.dmc.eventtbl' /tmp/manifest.txt
           ! grep -Fq 'application/vnd.dmc.hits' /tmp/manifest.txt
           ! grep -Fq 'application/vnd.dmc.pac' /tmp/manifest.txt
           ! grep -Fq 'application/vnd.dmc.pnst' /tmp/manifest.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-core-debug
+          name: dmc-native-reader-v33-modular-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmc-native-reader-v33-modular-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 7
+
+      - name: Preserve Phase 2 failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmc-native-reader-v33-phase2-failure-evidence
+          path: |
+            build/phase2-evidence/
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: warn
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmc-native-reader-v33-phase2-evidence
+          path: build/phase2-evidence/
+          if-no-files-found: error
+          retention-days: 7

@@ -5,7 +5,8 @@ package com.dmcrengine.nativeviewer;
  *
  * Business decisions are evaluated in native C++ Black Widow. This class only
  * decodes a stable bitmask for Android widget presentation; it must not infer
- * state from diagnostics, file formats, or ResourceCapabilities combinations.
+ * state from diagnostics, file formats, filenames, retained URIs, or raw
+ * ResourceCapabilities combinations.
  */
 public final class BlackWidowState {
     private static final long CAN_RENDER = 1L << 0;
@@ -27,12 +28,13 @@ public final class BlackWidowState {
     private static final long TEXTURE_COMPANION_ATTACHABLE = 1L << 16;
     private static final long TEXTURE_COMPANION_ATTACHED = 1L << 17;
     private static final long UV_MAP_VIEW = 1L << 18;
+    private static final long CAN_INSPECT_UV = 1L << 19;
+    private static final long CAN_INSPECT_MESHES = 1L << 20;
+    private static final long CAN_INSPECT_HIERARCHY = 1L << 21;
     private static final long CAN_EXPORT_PNG = 1L << 22;
+    private static final long CAN_ADD_MODEL_PART = 1L << 23;
+    private static final long CAN_STAGE_COMPANION = 1L << 24;
 
-    public final boolean canInspectUv;
-    public final boolean canInspectMeshes;
-    public final boolean canInspectHierarchy;
-    public final boolean uvMapView;
     public final long bits;
     public final boolean canRender;
     public final boolean canWireframe;
@@ -52,14 +54,16 @@ public final class BlackWidowState {
     public final boolean childBrowserMode;
     public final boolean canAttachTextureCompanion;
     public final boolean textureCompanionAttached;
+    public final boolean uvMapView;
+    public final boolean canInspectUv;
+    public final boolean canInspectMeshes;
+    public final boolean canInspectHierarchy;
     public final boolean canExportPng;
+    public final boolean canAddModelPart;
+    public final boolean canStageCompanion;
 
     private BlackWidowState(long bits) {
         this.bits = bits;
-        canInspectUv = has(bits, 1L << 19);
-        canInspectMeshes = has(bits, 1L << 20);
-        canInspectHierarchy = has(bits, 1L << 21);
-        uvMapView = has(bits, UV_MAP_VIEW);
         canRender = has(bits, CAN_RENDER);
         canWireframe = has(bits, CAN_WIREFRAME);
         canInspect = has(bits, CAN_INSPECT);
@@ -78,7 +82,13 @@ public final class BlackWidowState {
         childBrowserMode = has(bits, CHILD_BROWSER_MODE);
         canAttachTextureCompanion = has(bits, TEXTURE_COMPANION_ATTACHABLE);
         textureCompanionAttached = has(bits, TEXTURE_COMPANION_ATTACHED);
+        uvMapView = has(bits, UV_MAP_VIEW);
+        canInspectUv = has(bits, CAN_INSPECT_UV);
+        canInspectMeshes = has(bits, CAN_INSPECT_MESHES);
+        canInspectHierarchy = has(bits, CAN_INSPECT_HIERARCHY);
         canExportPng = has(bits, CAN_EXPORT_PNG);
+        canAddModelPart = has(bits, CAN_ADD_MODEL_PART);
+        canStageCompanion = has(bits, CAN_STAGE_COMPANION);
     }
 
     public static BlackWidowState fromNative(long bits) {

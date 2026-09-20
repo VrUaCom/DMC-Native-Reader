@@ -10,9 +10,13 @@
 
 namespace dmcresource::module_support {
 
+// Normal diagnostic rejection may allocate strings/vector entries. It is an
+// internal helper and deliberately propagates allocation failure to the nearest
+// NativeModule/Spider noexcept boundary, where the failure is converted into a
+// minimal no-allocation rejection instead of terminating the process.
 [[nodiscard]] inline PipelineResult reject(const ProbeResult& probe,
                                            const char* module_id,
-                                           std::string detail) noexcept {
+                                           std::string detail) {
     PipelineResult out;
     out.probe = probe;
     out.accepted = false;
@@ -22,6 +26,33 @@ namespace dmcresource::module_support {
     out.modules.push_back({"bounded-read-guard", true});
     out.modules.push_back({module_id, false});
     return out;
+}
+
+// Catch-path fallback: default std::string/vector state performs no dynamic
+// allocation. Keep this helper noexcept so ABI callbacks can always fail closed
+// even when diagnostics themselves cannot be allocated.
+[[nodiscard]] inline PipelineResult reject_minimal(
+    const ProbeResult& probe) noexcept {
+    PipelineResult out;
+    out.probe = probe;
+    out.accepted = false;
+    out.renderable = false;
+    return out;
+}
+
+// Literal diagnostics are common on early guard/catch paths that already sit in
+// noexcept adapters. Construct the std::string inside this boundary so an OOM
+// becomes a minimal rejected result instead of escaping before reject() starts.
+[[nodiscard]] inline PipelineResult reject(const ProbeResult& probe,
+                                           const char* module_id,
+                                           const char* detail) noexcept {
+    try {
+        return reject(
+            probe, module_id,
+            std::string{detail != nullptr ? detail : ""});
+    } catch (...) {
+        return reject_minimal(probe);
+    }
 }
 
 [[nodiscard]] inline bool magic4(const BinaryReader& reader,

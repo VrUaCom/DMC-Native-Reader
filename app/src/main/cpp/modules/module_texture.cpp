@@ -154,7 +154,7 @@ PipelineResult run_ptx_set(
     std::span<const std::byte> source,
     const textures::ParseResult& set,
     const ProbeResult& probe,
-    const char* module_id) noexcept {
+    const char* module_id) {
     if (!set.ok() || set.kind != textures::Kind::ptx_bundle) {
         return module_support::reject(
             probe, module_id,
@@ -294,22 +294,27 @@ bool frame_ptx_operation(void* raw, std::uint32_t) noexcept {
     if (state == nullptr || state->probe == nullptr || state->module_id == nullptr) {
         return false;
     }
-    if (state->bytes == nullptr) {
-        state->result = module_support::reject(
-            *state->probe, state->module_id, "PTX rejected: null input");
-        return false;
-    }
+    try {
+        if (state->bytes == nullptr) {
+            state->result = module_support::reject(
+                *state->probe, state->module_id, "PTX rejected: null input");
+            return false;
+        }
 
-    state->set = textures::parse_ptx(as_bytes(state->bytes, state->size));
-    if (!state->set.ok() || state->set.kind != textures::Kind::ptx_bundle) {
-        state->result = module_support::reject(
-            *state->probe, state->module_id,
-            state->set.detail.empty()
-                ? "PTX rejected by TextureSet"
-                : state->set.detail);
+        state->set = textures::parse_ptx(as_bytes(state->bytes, state->size));
+        if (!state->set.ok() || state->set.kind != textures::Kind::ptx_bundle) {
+            state->result = module_support::reject(
+                *state->probe, state->module_id,
+                state->set.detail.empty()
+                    ? "PTX rejected by TextureSet"
+                    : state->set.detail);
+            return false;
+        }
+        return true;
+    } catch (...) {
+        state->result = module_support::reject_minimal(*state->probe);
         return false;
     }
-    return true;
 }
 
 bool project_texture_operation(void* raw, std::uint32_t) noexcept {
@@ -318,37 +323,42 @@ bool project_texture_operation(void* raw, std::uint32_t) noexcept {
         return false;
     }
 
-    if (state->probe->format == Format::Dds) {
-        if (state->bytes == nullptr) {
-            state->result = module_support::reject(
-                *state->probe, state->module_id, "DDS rejected: null input");
-            return false;
+    try {
+        if (state->probe->format == Format::Dds) {
+            if (state->bytes == nullptr) {
+                state->result = module_support::reject(
+                    *state->probe, state->module_id, "DDS rejected: null input");
+                return false;
+            }
+            state->set = textures::parse_dds(as_bytes(state->bytes, state->size));
+            state->result = run_dds_set(
+                as_bytes(state->bytes, state->size), state->set,
+                *state->probe, state->module_id);
+            return state->result.accepted;
         }
-        state->set = textures::parse_dds(as_bytes(state->bytes, state->size));
-        state->result = run_dds_set(
-            as_bytes(state->bytes, state->size), state->set,
-            *state->probe, state->module_id);
-        return state->result.accepted;
-    }
 
-    if (state->probe->format == Format::Ptx) {
-        if (state->bytes == nullptr || !state->set.ok() ||
-            state->set.kind != textures::Kind::ptx_bundle) {
-            state->result = module_support::reject(
-                *state->probe, state->module_id,
-                "PTX rejected: Crusader TextureSet dependency is unavailable");
-            return false;
+        if (state->probe->format == Format::Ptx) {
+            if (state->bytes == nullptr || !state->set.ok() ||
+                state->set.kind != textures::Kind::ptx_bundle) {
+                state->result = module_support::reject(
+                    *state->probe, state->module_id,
+                    "PTX rejected: Crusader TextureSet dependency is unavailable");
+                return false;
+            }
+            state->result = run_ptx_set(
+                as_bytes(state->bytes, state->size), state->set,
+                *state->probe, state->module_id);
+            return state->result.accepted;
         }
-        state->result = run_ptx_set(
-            as_bytes(state->bytes, state->size), state->set,
-            *state->probe, state->module_id);
-        return state->result.accepted;
-    }
 
-    state->result = module_support::reject(
-        *state->probe, state->module_id,
-        "Texture pipeline rejected: unsupported route");
-    return false;
+        state->result = module_support::reject(
+            *state->probe, state->module_id,
+            "Texture pipeline rejected: unsupported route");
+        return false;
+    } catch (...) {
+        state->result = module_support::reject_minimal(*state->probe);
+        return false;
+    }
 }
 
 const crusader::Plan& direct_dds_plan() {
@@ -395,46 +405,50 @@ PipelineResult run_texture_module(
     const std::uint8_t* bytes,
     std::size_t size,
     const ProbeResult& probe) noexcept {
-    TextureExecutionState state{
-        .bytes = bytes,
-        .size = size,
-        .probe = &probe,
-        .module_id = module.id,
-    };
+    try {
+        TextureExecutionState state{
+            .bytes = bytes,
+            .size = size,
+            .probe = &probe,
+            .module_id = module.id,
+        };
 
-    static const std::array bindings{
-        crusader::OperationBinding{
-            .operation = kTextureFramePtx,
-            .execute = &frame_ptx_operation,
-        },
-        crusader::OperationBinding{
-            .operation = kTextureProject,
-            .execute = &project_texture_operation,
-        },
-    };
+        static const std::array bindings{
+            crusader::OperationBinding{
+                .operation = kTextureFramePtx,
+                .execute = &frame_ptx_operation,
+            },
+            crusader::OperationBinding{
+                .operation = kTextureProject,
+                .execute = &project_texture_operation,
+            },
+        };
 
-    const crusader::Plan* plan = nullptr;
-    if (module.format == Format::Dds) {
-        plan = &direct_dds_plan();
-    } else if (module.format == Format::Ptx) {
-        plan = &ptx_plan();
+        const crusader::Plan* plan = nullptr;
+        if (module.format == Format::Dds) {
+            plan = &direct_dds_plan();
+        } else if (module.format == Format::Ptx) {
+            plan = &ptx_plan();
+        }
+
+        if (plan == nullptr) {
+            return module_support::reject(
+                probe, module.id, "Texture pipeline rejected: invalid module route");
+        }
+
+        const auto report = crusader::execute(*plan, bindings, &state);
+        if (!report.ok()) {
+            if (!state.result.detail.empty()) return state.result;
+            std::string detail = "Crusader texture execution failed: ";
+            detail += crusader::to_string(report.status);
+            return module_support::reject(probe, module.id, std::move(detail));
+        }
+
+        state.result.modules.push_back({"spider.crusader", true});
+        return state.result;
+    } catch (...) {
+        return module_support::reject_minimal(probe);
     }
-
-    if (plan == nullptr) {
-        return module_support::reject(
-            probe, module.id, "Texture pipeline rejected: invalid module route");
-    }
-
-    const auto report = crusader::execute(*plan, bindings, &state);
-    if (!report.ok()) {
-        if (!state.result.detail.empty()) return state.result;
-        std::string detail = "Crusader texture execution failed: ";
-        detail += crusader::to_string(report.status);
-        return module_support::reject(probe, module.id, std::move(detail));
-    }
-
-    state.result.modules.push_back({"spider.crusader", true});
-    return state.result;
 }
 
 } // namespace

@@ -42,7 +42,7 @@ ProbeResult result(Format format,
 
 ProbeResult probe(std::string_view filename,
                   const std::uint8_t* bytes,
-                  std::size_t size) noexcept {
+                  std::size_t size) {
     // Strong byte identities always win over file names.
     if (magic4(bytes, size, 'S', 'C', 'M', ' ')) {
         return result(Format::Scm, true, "SCM", "geometry", "render-scene",
@@ -56,10 +56,21 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Dds, true, "DDS", "texture", "image-preview",
                       "DATA_CONFIRMED", "image/vnd-ms.dds");
     }
+    if (magic4(bytes, size, 'E', 'V', 'T', '\0')) {
+        // Stock DMC3 paths are eventtbl\\EventTblNN.bin. "EVT" is the content
+        // magic/family tag, not evidence for a stock .evt filename extension.
+        return result(Format::Evt, true, "EventTbl", "event-script", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.eventtbl");
+    }
 
-    // PTX has no standalone four-byte identity gate in this viewer. Extension
-    // identity is only a routing candidate; the PTX module performs the bounded
-    // structural validation before accepting the resource.
+    // PTX and descriptor-wrapped textures have no standalone four-byte identity
+    // gate. Extensions are routing candidates only; the texture module validates
+    // bytes before accepting them. DMC3 HD also keeps legacy .tm2 logical names
+    // whose physical bytes are DMC descriptor + DDS rather than Sony TIM2.
+    //
+    // EventTbl intentionally has NO extension fallback here. The canonical EXE
+    // requests EventTblNN.bin, while .bin is a generic leaf extension shared by
+    // unrelated payloads. EventTbl identity therefore requires EVT\0 bytes.
     const auto extension = lower_extension(filename);
     if (extension == "scm") {
         return result(Format::Scm, false, "SCM", "geometry", "render-scene",
@@ -69,13 +80,13 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Mod, false, "MOD", "geometry", "render-scene",
                       "EXE_CONFIRMED", "application/vnd.dmc.mod");
     }
-    if (extension == "dds") {
+    if (extension == "dds" || extension == "tm2") {
         return result(Format::Dds, false, "DDS", "texture", "image-preview",
-                      "DATA_CONFIRMED", "image/vnd-ms.dds");
+                      "STRUCTURAL_CONFIRMED", "image/vnd-ms.dds");
     }
     if (extension == "ptx") {
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
-                      "EXE_CONFIRMED", "application/vnd.dmc.ptx");
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
     }
     return {};
 }
@@ -99,6 +110,7 @@ const char* format_name(Format format) noexcept {
     case Format::Mod: return "MOD";
     case Format::Dds: return "DDS";
     case Format::Ptx: return "PTX";
+    case Format::Evt: return "EventTbl";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

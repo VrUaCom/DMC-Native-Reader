@@ -52,7 +52,15 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
         has_capability(session.capabilities, ResourceCapability::UvCoordinates);
     const bool child_browser_mode =
         has_child_resources && !can_render && !can_preview_image && !session.uv_map_view;
-    const bool texture_companion_attachable = can_show_uv;
+    const bool texture_companion_attachable =
+        can_show_uv || session.part_texture_attachment_available;
+
+    // Native Reader currently promotes model composition/companion staging only
+    // for the MOD model family. MOD is the production model module that advertises
+    // SkeletalSkinning; SCM intentionally does not. This keeps Android from
+    // reconstructing format policy from filenames, URI collections, or titles.
+    const bool model_companion_actions =
+        can_render && has_skinning && !session.uv_map_view;
 
     set_if(&state, StateFlag::CanRender, can_render || session.uv_map_view);
     set_if(&state, StateFlag::CanWireframe, can_wireframe);
@@ -80,6 +88,8 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::CanInspectMeshes, session.object_count != 0U);
     set_if(&state, StateFlag::CanInspectHierarchy, session.hierarchy_node_count != 0U);
     set_if(&state, StateFlag::CanExportPng, session.png_export_available);
+    set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
+    set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;
 }
 

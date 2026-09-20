@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "dmc_rengine/formats/mod.hpp"
+#include "dmc_rengine/formats/mod_skin.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/module_support.h"
 #include "dmcresource/uv_projection.h"
@@ -23,12 +24,28 @@ namespace {
 
 using namespace dmcresource::resource_limits;
 
-using CanonicalParseResult = dmc::rengine::formats::mod::ParseResult;
-using CanonicalMesh = dmc::rengine::formats::mod::InnerMesh;
+namespace CanonicalMod = dmc::rengine::formats::mod;
+using CanonicalParseResult = CanonicalMod::ParseResult;
+using CanonicalMesh = CanonicalMod::InnerMesh;
 using ParseSeverity = dmc::rengine::formats::ParseSeverity;
-namespace CanonicalWorld = dmc::rengine::formats::mod::world_transform;
+namespace CanonicalWorld = CanonicalMod::world_transform;
 
 using namespace dmcresource::vector_math;
+
+[[nodiscard]] bool canonical_topology_break(const CanonicalMesh& source,
+                                            std::size_t vertex) noexcept {
+    if (vertex >= source.control_words.size()) return true;
+
+    // The canonical parser decodes topology independently of skin validity
+    // before validating weights/bone indices. Prefer that typed result whenever
+    // a transform domain exists. MOD files with no transform domain have no
+    // skin vector, so retain the exact same Rengine-owned high-bit contract via
+    // topology_break_mask rather than duplicating the 0x8000 literal here.
+    if (source.skin.size() == source.control_words.size()) {
+        return source.skin[vertex].skin.topology_break;
+    }
+    return (source.control_words[vertex] & CanonicalMod::topology_break_mask) != 0U;
+}
 
 [[nodiscard]] bool append_legacy_compatible_topology(const CanonicalMesh& source,
                                                      Mesh* out) {
@@ -58,7 +75,7 @@ using namespace dmcresource::vector_math;
     std::size_t p1 = 0U;
     std::size_t p2 = 1U;
     for (std::size_t p3 = 2U; p3 < vc; ++p3) {
-        const bool topology_break = (source.control_words[p3] & 0x8000U) != 0U;
+        const bool topology_break = canonical_topology_break(source, p3);
         if (!topology_break) {
             const Vec3 a{source.positions[p1].x, source.positions[p1].y,
                          source.positions[p1].z};
@@ -439,6 +456,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
         out.modules.push_back({"identity-probe", true});
         out.modules.push_back({"bounded-read-guard", true});
         out.modules.push_back({"canonical.mod.structural-parser", true});
+        out.modules.push_back({"canonical.mod.topology-break", true});
         out.modules.push_back({"canonical.mod.texture-state", true});
         out.modules.push_back({module_id, true});
 

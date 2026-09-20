@@ -24,8 +24,12 @@ int main() {
     assert(groups[0].indices == std::vector<std::uint32_t>({3,4,5}));
     assert(groups[1].indices == std::vector<std::uint32_t>({0,1,2,0,1,2}));
     assert(session_child_title(gallery.get(), 0).find("Slot 2") != std::string::npos);
-    assert(widow::has_state(black_widow_state(gallery.get()), widow::StateFlag::ChildBrowserMode));
-    assert(!widow::has_state(black_widow_state(gallery.get()), widow::StateFlag::CanShowUv));
+    const auto gallery_state = black_widow_state(gallery.get());
+    assert(widow::has_state(gallery_state, widow::StateFlag::ChildBrowserMode));
+    // Device regression: the reset control must become the PNG-download control
+    // for the whole UV gallery, not remain a disabled refresh button.
+    assert(widow::has_state(gallery_state, widow::StateFlag::CanExportPng));
+    assert(!widow::has_state(gallery_state, widow::StateFlag::CanShowUv));
     assert(!open_session_child(gallery.get(), -1));
     assert(!open_session_child(gallery.get(), 2));
     assert(session_child_preview_size(gallery.get(), -1).first == 0);
@@ -38,6 +42,8 @@ int main() {
     const auto state = black_widow_state(map2.get());
     assert(widow::has_state(state, widow::StateFlag::UvMapView));
     assert(widow::has_state(state, widow::StateFlag::CanRender));
+    // Device regression: an opened UV map must expose single-image PNG export.
+    assert(widow::has_state(state, widow::StateFlag::CanExportPng));
     assert(!widow::has_state(state, widow::StateFlag::CanWireframe));
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
     const auto image2 = render_session(map2.get(), 256,256,0,0,1,0);

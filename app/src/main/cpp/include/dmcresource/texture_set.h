@@ -41,15 +41,17 @@ struct ParseResult final {
 };
 
 // Parse exactly one standalone/descriptor-wrapped DDS source into a neutral
-// one-slot texture set. No Android/UI state participates here.
+// one-slot texture set. Result/diagnostic construction may allocate; callers
+// that expose noexcept ABI/action boundaries must catch and fail closed.
 [[nodiscard]] ParseResult parse_dds(
-    std::span<const std::byte> source) noexcept;
+    std::span<const std::byte> source);
 
 // Parse a PTX bundle through the Native Reader compatibility framing path and
 // validate every framed DDS child. This remains one framing authority for both
-// gallery browsing and model companion attachment.
+// gallery browsing and model companion attachment. Result/diagnostic storage is
+// intentionally throwing-capable below the module/Spider catch boundaries.
 [[nodiscard]] ParseResult parse_ptx(
-    std::span<const std::byte> source) noexcept;
+    std::span<const std::byte> source);
 
 [[nodiscard]] const Slot* find_slot(
     const ParseResult& set,
@@ -61,11 +63,11 @@ struct ParseResult final {
 
 // Decode only the requested slot. Callers decide whether/when to spend RGBA
 // memory; parsing and slot validation therefore do not depend on gallery
-// preview budgets.
+// preview budgets. RGBA/detail construction may allocate.
 [[nodiscard]] bool decode_base_mip(
     std::span<const std::byte> source,
     const Slot& slot,
     ImagePreview* out,
-    std::string* detail = nullptr) noexcept;
+    std::string* detail = nullptr);
 
 }  // namespace dmcresource::texture_set
