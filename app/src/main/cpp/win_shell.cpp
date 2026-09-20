@@ -256,9 +256,10 @@ LRESULT CALLBACK InfoDlgProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         case WM_CLOSE:
             DestroyWindow(hwnd);
             return 0;
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
+        // No PostQuitMessage here: this is a modal child window, not the main
+        // window. WM_QUIT is thread-wide -- posting it from a dialog's
+        // WM_DESTROY would terminate the whole app's message loop the moment
+        // any dialog (Info, part/joint picker) closed, not just the dialog.
         default:
             return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
@@ -336,9 +337,8 @@ LRESULT CALLBACK ListPickerProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
             g_list_picker.done = true;
             DestroyWindow(hwnd);
             return 0;
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
+        // Same reason as InfoDlgProc above: no PostQuitMessage in a modal
+        // child's WM_DESTROY.
         default:
             return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
@@ -1321,8 +1321,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             if (g_state.dragging) {
                 const int dx = pt.x - g_state.drag_start.x;
                 const int dy = pt.y - g_state.drag_start.y;
-                g_state.yaw = g_state.drag_start_yaw + dx * 0.008f;
-                g_state.pitch = g_state.drag_start_pitch + dy * 0.008f;
+                // Inverted relative to Android's touch convention (drag
+                // right there increases yaw) on purpose: a mouse-drag orbit
+                // on desktop reads as "grab and turn the model", so dragging
+                // right should turn the model's near side to the right, the
+                // opposite sign from a touch-swipe pan.
+                g_state.yaw = g_state.drag_start_yaw - dx * 0.008f;
+                g_state.pitch = g_state.drag_start_pitch - dy * 0.008f;
                 g_state.pitch = (std::max)(-1.55f, (std::min)(1.55f, g_state.pitch));
                 RerenderThrottled(hwnd, false);
             }
