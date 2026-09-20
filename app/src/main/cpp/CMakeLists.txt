@@ -43,7 +43,11 @@ target_link_libraries(dmc_native_reader_core
 )
 
 target_compile_features(dmc_native_reader_core PUBLIC cxx_std_20)
-target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
+if(MSVC)
+    target_compile_options(dmc_native_reader_core PRIVATE /W4)
+else()
+    target_compile_options(dmc_native_reader_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 set_target_properties(dmc_native_reader_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -68,6 +72,22 @@ if(ANDROID)
         "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map")
     set_property(TARGET dmcviewer APPEND PROPERTY LINK_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/jni_exports.map")
+endif()
+
+# Win32 is a thin shell too, mirroring the Android JNI boundary above: it owns
+# only the window, file dialog and pixel blit. Parsing, inspection and
+# rendering all stay in DMCNativeReader::Core.
+if(WIN32)
+    add_executable(dmc_native_reader_win WIN32
+        win_shell.cpp
+    )
+
+    target_link_libraries(dmc_native_reader_win PRIVATE
+        DMCNativeReader::Core
+        comdlg32
+    )
+
+    target_compile_features(dmc_native_reader_win PRIVATE cxx_std_20)
 endif()
 
 option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
