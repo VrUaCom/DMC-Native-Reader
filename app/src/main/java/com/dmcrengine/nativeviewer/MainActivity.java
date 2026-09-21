@@ -410,11 +410,11 @@ public final class MainActivity extends Activity {
             menu.getMenu().add(0, MENU_ATTACH_PTX, 4, "Attach .PTX texture");
         }
         if (isRootScene() && blackWidowState.canStageCompanion) {
-            menu.getMenu().add(0, MENU_ADD_MOTION, 3, "Add animation / motion…");
-            menu.getMenu().add(0, MENU_ADD_TEXTURE, 4, "Add texture asset (.TM2 / .DDS / …)");
-            menu.getMenu().add(0, MENU_ADD_PHYSICS, 5, "Add physics resource…");
-            menu.getMenu().add(0, MENU_ADD_CLOTH, 6, "Add cloth resource…");
-            menu.getMenu().add(0, MENU_ADD_OTHER, 7, "Add other companion…");
+            menu.getMenu().add(0, MENU_ADD_MOTION, 5, "Add animation / motion…");
+            menu.getMenu().add(0, MENU_ADD_TEXTURE, 6, "Add texture asset (.TM2 / .DDS / …)");
+            menu.getMenu().add(0, MENU_ADD_PHYSICS, 7, "Add physics resource…");
+            menu.getMenu().add(0, MENU_ADD_CLOTH, 8, "Add cloth resource…");
+            menu.getMenu().add(0, MENU_ADD_OTHER, 9, "Add other companion…");
         }
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
