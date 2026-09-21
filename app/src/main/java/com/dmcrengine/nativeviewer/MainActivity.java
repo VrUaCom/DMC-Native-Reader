@@ -61,6 +61,7 @@ public final class MainActivity extends Activity {
     private static final int MENU_ADD_OTHER = 8;
     private static final int MENU_PLACE_MOD = 9;
     private static final int MENU_RESET_MOD_PLACEMENT = 10;
+    private static final int MENU_COMPOSITE_PARTS = 11;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -403,18 +404,19 @@ public final class MainActivity extends Activity {
             menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
         }
         if (hasCompositePlacementContext()) {
-            menu.getMenu().add(0, MENU_PLACE_MOD, 2, "Place MOD part on host joint…");
-            menu.getMenu().add(0, MENU_RESET_MOD_PLACEMENT, 3, "Reset MOD part placement…");
+            menu.getMenu().add(0, MENU_COMPOSITE_PARTS, 2, "Composite parts / state…");
+            menu.getMenu().add(0, MENU_PLACE_MOD, 3, "Place MOD part on host joint…");
+            menu.getMenu().add(0, MENU_RESET_MOD_PLACEMENT, 4, "Reset MOD part placement…");
         }
         if (isRootScene() && canAttachPtx()) {
-            menu.getMenu().add(0, MENU_ATTACH_PTX, 4, "Attach .PTX texture");
+            menu.getMenu().add(0, MENU_ATTACH_PTX, 5, "Attach .PTX texture");
         }
         if (isRootScene() && blackWidowState.canStageCompanion) {
-            menu.getMenu().add(0, MENU_ADD_MOTION, 5, "Add animation / motion…");
-            menu.getMenu().add(0, MENU_ADD_TEXTURE, 6, "Add texture asset (.TM2 / .DDS / …)");
-            menu.getMenu().add(0, MENU_ADD_PHYSICS, 7, "Add physics resource…");
-            menu.getMenu().add(0, MENU_ADD_CLOTH, 8, "Add cloth resource…");
-            menu.getMenu().add(0, MENU_ADD_OTHER, 9, "Add other companion…");
+            menu.getMenu().add(0, MENU_ADD_MOTION, 6, "Add animation / motion…");
+            menu.getMenu().add(0, MENU_ADD_TEXTURE, 7, "Add texture asset (.TM2 / .DDS / …)");
+            menu.getMenu().add(0, MENU_ADD_PHYSICS, 8, "Add physics resource…");
+            menu.getMenu().add(0, MENU_ADD_CLOTH, 9, "Add cloth resource…");
+            menu.getMenu().add(0, MENU_ADD_OTHER, 10, "Add other companion…");
         }
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
@@ -423,6 +425,9 @@ public final class MainActivity extends Activity {
                     return true;
                 case MENU_ADD_MOD:
                     chooseAdditionalMods();
+                    return true;
+                case MENU_COMPOSITE_PARTS:
+                    showCompositePartsDialog();
                     return true;
                 case MENU_PLACE_MOD:
                     showPlaceModPartDialog();
@@ -594,6 +599,82 @@ public final class MainActivity extends Activity {
                 : name;
     }
 
+    private void showCompositePartsDialog() {
+        final int partCount = NativeBridge.compositePartCount(session);
+        if (!isRootScene() || partCount <= 1) return;
+
+        String[] rows = new String[partCount];
+        for (int index = 0; index < partCount; ++index) {
+            String state = NativeBridge.compositePartState(session, index);
+            rows[index] = state == null || state.isEmpty()
+                    ? compositePartLabel(index) + "\nstate unavailable"
+                    : state;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Composite MOD parts")
+                .setItems(rows, (dialog, which) ->
+                        showCompositePartActions(which))
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void showCompositePartActions(int partIndex) {
+        final String state = NativeBridge.compositePartState(session, partIndex);
+        final String title = compositePartLabel(partIndex);
+        if (partIndex <= 0) {
+            new AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setMessage(state == null || state.isEmpty()
+                            ? "State unavailable"
+                            : state)
+                    .setPositiveButton("Close", null)
+                    .show();
+            return;
+        }
+
+        String[] actions = new String[] {
+                "Place on primary host joint…",
+                "Reset to source coordinates",
+                "Show native state"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setItems(actions, (dialog, which) -> {
+                    if (which == 0) {
+                        showHostJointDialog(partIndex);
+                    } else if (which == 1) {
+                        resetCompositePartPlacement(partIndex);
+                    } else {
+                        new AlertDialog.Builder(this)
+                                .setTitle(title)
+                                .setMessage(state == null || state.isEmpty()
+                                        ? "State unavailable"
+                                        : state)
+                                .setPositiveButton("Close", null)
+                                .show();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void resetCompositePartPlacement(int childPartIndex) {
+        String status = NativeBridge.resetModPartPlacement(session, childPartIndex);
+        if ("reset".equals(status)) {
+            renderView.renderNow();
+            rebuildInfo(titleView.getText().toString());
+            applyResourceUiState();
+            Toast.makeText(this,
+                    "Part restored to source coordinates",
+                    Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(this,
+                    "Reset rejected: " + status,
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void showPlaceModPartDialog() {
         final int partCount = NativeBridge.compositePartCount(session);
         if (!isRootScene() || partCount <= 1) return;
@@ -683,20 +764,7 @@ public final class MainActivity extends Activity {
                 .setTitle("Reset MOD part placement")
                 .setItems(children, (dialog, which) -> {
                     final int childPartIndex = which + 1;
-                    String status = NativeBridge.resetModPartPlacement(
-                            session, childPartIndex);
-                    if ("reset".equals(status)) {
-                        renderView.renderNow();
-                        rebuildInfo(titleView.getText().toString());
-                        applyResourceUiState();
-                        Toast.makeText(this,
-                                "Part restored to source coordinates",
-                                Toast.LENGTH_LONG).show();
-                    } else {
-                        Toast.makeText(this,
-                                "Reset rejected: " + status,
-                                Toast.LENGTH_LONG).show();
-                    }
+                    resetCompositePartPlacement(childPartIndex);
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
