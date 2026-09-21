@@ -81,7 +81,7 @@ std::string black_widow_diagnostics(
     return out.str();
 }
 
-std::string diagnostics_for_session(const Session* session) {
+std::string diagnostics_for_session(const dmcresource::Session* session) {
     if (session == nullptr) return {};
     std::ostringstream out;
     out << "family=" << session->probe.family
@@ -91,7 +91,11 @@ std::string diagnostics_for_session(const Session* session) {
         << " content_confirmed="
         << (session->probe.content_confirmed ? "true" : "false");
     if (!session->detail.empty()) {
-        out << "\n  detail=" << session->detail;
+        std::string detail = session->detail;
+        for (char& ch : detail) {
+            if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+        }
+        out << "\n  detail=" << detail;
     }
     out << "\n  black_widow="
         << black_widow_diagnostics(dmcresource::black_widow_state(session));
