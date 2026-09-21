@@ -71,6 +71,25 @@ struct Session {
 
 [[nodiscard]] std::size_t session_composite_part_count(const Session* session) noexcept;
 [[nodiscard]] std::string session_composite_part_name(const Session* session, int index);
+struct CompositePartState final {
+    std::string name;
+    AssetId asset_id{kInvalidAssetId};
+    InstanceId instance_id{kInvalidInstanceId};
+    bool texture_companion_attached{};
+    CompositePlacementMode placement_mode{CompositePlacementMode::SourceCoordinates};
+    bool placement_resolved{};
+    InstanceId host_instance_id{kInvalidInstanceId};
+    std::size_t host_part_index{kNoCompositePart};
+    std::uint32_t attachment_selector{kNoAttachmentSelector};
+    std::string host_name;
+    std::string attachment_name;
+};
+
+[[nodiscard]] std::optional<CompositePartState> session_composite_part_state(
+    const Session* session, int index);
+[[nodiscard]] std::string describe_composite_part_state(
+    const Session* session, int index);
+
 [[nodiscard]] std::size_t session_composite_part_node_count(
     const Session* session, int part_index) noexcept;
 [[nodiscard]] std::string session_composite_part_node_name(
