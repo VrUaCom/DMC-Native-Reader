@@ -33,8 +33,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -50,6 +56,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_STAGE_PHYSICS = 1008;
     private static final int REQUEST_STAGE_CLOTH = 1009;
     private static final int REQUEST_STAGE_OTHER = 1010;
+    private static final int REQUEST_EXPORT_DIAGNOSTICS = 1011;
 
     private static final int MENU_OPEN = 1;
     private static final int MENU_ADD_MOD = 2;
@@ -62,6 +69,7 @@ public final class MainActivity extends Activity {
     private static final int MENU_PLACE_MOD = 9;
     private static final int MENU_RESET_MOD_PLACEMENT = 10;
     private static final int MENU_COMPOSITE_PARTS = 11;
+    private static final int MENU_DIAGNOSTICS = 12;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -72,6 +80,9 @@ public final class MainActivity extends Activity {
     private static final int TOOL_SIZE_DP = 48;
     private static final int TOOL_GAP_DP = 4;
     private static final int UV_EXPORT_SIZE = 1024;
+    private static final int DIAGNOSTICS_PREVIEW_BYTES = 64 * 1024;
+    private static final DateTimeFormatter DIAGNOSTICS_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
 
     private static final class NavigationEntry {
         final long session;
@@ -418,6 +429,7 @@ public final class MainActivity extends Activity {
             menu.getMenu().add(0, MENU_ADD_CLOTH, 9, "Add cloth resource…");
             menu.getMenu().add(0, MENU_ADD_OTHER, 10, "Add other companion…");
         }
+        menu.getMenu().add(0, MENU_DIAGNOSTICS, 11, "Diagnostics / build info…");
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case MENU_OPEN:
@@ -452,6 +464,9 @@ public final class MainActivity extends Activity {
                     return true;
                 case MENU_ADD_OTHER:
                     chooseStagedAssets(REQUEST_STAGE_OTHER, true);
+                    return true;
+                case MENU_DIAGNOSTICS:
+                    showDiagnosticsDialog();
                     return true;
                 default:
                     return false;
@@ -877,6 +892,12 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        if (requestCode == REQUEST_EXPORT_DIAGNOSTICS) {
+            Uri target = data.getData();
+            if (target != null) exportDiagnosticsToUri(target);
+            return;
+        }
+
         if (requestCode == REQUEST_ATTACH_PTX) {
             Uri uri = data.getData();
             final int targetPart = pendingPtxPart;
@@ -898,11 +919,11 @@ public final class MainActivity extends Activity {
             // This is especially important for ACTION_VIEW/file-manager grants,
             // which may be temporary even though the MOD itself is still live.
             if (session != 0 && NativeBridge.compositePartCount(session) == 0) {
-                composeCurrentWithAdditionalMods(added);
+                composeCurrentWithAdditionalMods(added, "add-mod");
             } else {
                 ArrayList<Uri> combined = new ArrayList<>(modelPartUris);
                 for (Uri uri : added) if (!combined.contains(uri)) combined.add(uri);
-                openCompositeUris(combined, true);
+                openCompositeUris(combined, true, "add-mod");
             }
             return;
         }
@@ -920,9 +941,9 @@ public final class MainActivity extends Activity {
         if (uris.isEmpty()) return;
         for (Uri uri : uris) persistUriPermission(uri, data.getFlags(), false);
         if (uris.size() == 1) {
-            openUri(uris.get(0));
+            openUri(uris.get(0), "picker");
         } else {
-            openCompositeUris(uris, false);
+            openCompositeUris(uris, false, "multi-mod");
         }
     }
 
@@ -1007,7 +1028,7 @@ public final class MainActivity extends Activity {
             }
             if (uris.size() > 1) {
                 for (Uri item : uris) persistUriPermission(item, intent.getFlags(), false);
-                openCompositeUris(uris, false);
+                openCompositeUris(uris, false, "external");
                 return;
             }
         }
@@ -1027,7 +1048,7 @@ public final class MainActivity extends Activity {
             showIdleStatus();
         } else {
             persistUriPermission(uri, intent.getFlags(), false);
-            openUri(uri);
+            openUri(uri, "external");
         }
     }
 
@@ -1046,6 +1067,7 @@ public final class MainActivity extends Activity {
         pendingExportSession = 0;
         resetCompositionState();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
+                + "Native build: " + nativeBuildIdentity() + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
                 + "Unpromoted DMC families are intentionally excluded from main.\n\n"
                 + "Open a supported resource from My Files or use ↑.\n"
