@@ -102,22 +102,24 @@ set_target_properties(dmc_native_reader_core PROPERTIES
 
 # Diagnostics build identity shared by platform shells only. Best-effort:
 # source archives/non-git builders fall back to "unknown" without failing.
-set(DMC_NATIVE_READER_BUILD_SHA "unknown")
-find_package(Git QUIET)
-if(GIT_EXECUTABLE)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        OUTPUT_VARIABLE _dmc_native_reader_git_sha
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-        RESULT_VARIABLE _dmc_native_reader_git_result
-    )
-    if(_dmc_native_reader_git_result EQUAL 0 AND _dmc_native_reader_git_sha)
-        set(DMC_NATIVE_READER_BUILD_SHA "${_dmc_native_reader_git_sha}")
+if(ANDROID OR WIN32)
+    set(DMC_NATIVE_READER_BUILD_SHA "unknown")
+    find_package(Git QUIET)
+    if(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE _dmc_native_reader_git_sha
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _dmc_native_reader_git_result
+        )
+        if(_dmc_native_reader_git_result EQUAL 0 AND _dmc_native_reader_git_sha)
+            set(DMC_NATIVE_READER_BUILD_SHA "${_dmc_native_reader_git_sha}")
+        endif()
+        unset(_dmc_native_reader_git_sha)
+        unset(_dmc_native_reader_git_result)
     endif()
-    unset(_dmc_native_reader_git_sha)
-    unset(_dmc_native_reader_git_result)
 endif()
 
 # Android is deliberately a thin shell. It owns JNI/FD/lifecycle integration
