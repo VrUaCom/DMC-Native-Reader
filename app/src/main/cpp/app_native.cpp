@@ -250,6 +250,16 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartName(
     } catch (...) { return env->NewStringUTF(""); }
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartState(
+        JNIEnv* env, jclass, jlong handle, jint index) {
+    try {
+        const auto text =
+            dmcresource::describe_composite_part_state(from_handle(handle), index);
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeCount(
         JNIEnv*, jclass, jlong handle, jint part_index) {

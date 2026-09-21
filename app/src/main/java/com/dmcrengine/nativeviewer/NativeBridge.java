@@ -21,6 +21,10 @@ public final class NativeBridge {
     public static native int compositePartCount(long handle);
     public static native String compositePartName(long handle, int index);
 
+    // Native-authoritative read-only projection for Android presentation.
+    // Java displays this state but does not reconstruct placement/binding semantics.
+    public static native String compositePartState(long handle, int index);
+
     public static native int compositePartNodeCount(long handle, int partIndex);
     public static native String compositePartNodeName(long handle, int partIndex, int nodeIndex);
     public static native int compositePartDefaultAttachmentSelector(long handle, int partIndex);
