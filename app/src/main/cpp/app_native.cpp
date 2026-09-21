@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,9 +23,80 @@
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 
+#ifndef DMC_NATIVE_READER_BUILD_SHA
+#define DMC_NATIVE_READER_BUILD_SHA "unknown"
+#endif
+
 namespace {
 
 constexpr auto kMaxMappedBytes = dmcresource::resource_limits::kMaxResourceBytes;
+
+std::string black_widow_diagnostics(
+        dmcresource::spider::black_widow::StateBits bits) {
+    using dmcresource::spider::black_widow::StateFlag;
+    using dmcresource::spider::black_widow::has_state;
+
+    struct NamedFlag final {
+        StateFlag flag;
+        const char* name;
+    };
+    static constexpr NamedFlag kFlags[] = {
+        {StateFlag::CanRender, "CanRender"},
+        {StateFlag::CanWireframe, "CanWireframe"},
+        {StateFlag::CanInspect, "CanInspect"},
+        {StateFlag::CanShowHierarchy, "CanShowHierarchy"},
+        {StateFlag::HasSkinning, "HasSkinning"},
+        {StateFlag::HasSkinWeights, "HasSkinWeights"},
+        {StateFlag::HasTextureBindings, "HasTextureBindings"},
+        {StateFlag::CanPreviewImage, "CanPreviewImage"},
+        {StateFlag::HasChildResources, "HasChildResources"},
+        {StateFlag::IsText, "IsText"},
+        {StateFlag::IsContainer, "IsContainer"},
+        {StateFlag::HasCollision, "HasCollision"},
+        {StateFlag::HasAdjacency, "HasAdjacency"},
+        {StateFlag::HasTransformSelectors, "HasTransformSelectors"},
+        {StateFlag::CanShowUv, "CanShowUv"},
+        {StateFlag::ChildBrowserMode, "ChildBrowserMode"},
+        {StateFlag::TextureCompanionAttachable, "TextureCompanionAttachable"},
+        {StateFlag::TextureCompanionAttached, "TextureCompanionAttached"},
+        {StateFlag::UvMapView, "UvMapView"},
+        {StateFlag::CanInspectUv, "CanInspectUv"},
+        {StateFlag::CanInspectMeshes, "CanInspectMeshes"},
+        {StateFlag::CanInspectHierarchy, "CanInspectHierarchy"},
+        {StateFlag::CanExportPng, "CanExportPng"},
+        {StateFlag::CanAddModelPart, "CanAddModelPart"},
+        {StateFlag::CanStageCompanion, "CanStageCompanion"},
+    };
+
+    std::ostringstream out;
+    out << "0x" << std::hex << bits << std::dec << " [";
+    bool first = true;
+    for (const auto& item : kFlags) {
+        if (!has_state(bits, item.flag)) continue;
+        if (!first) out << ",";
+        first = false;
+        out << item.name;
+    }
+    out << "]";
+    return out.str();
+}
+
+std::string diagnostics_for_session(const Session* session) {
+    if (session == nullptr) return {};
+    std::ostringstream out;
+    out << "family=" << session->probe.family
+        << " domain=" << session->probe.domain
+        << " support=" << session->probe.support
+        << " evidence=" << session->probe.evidence
+        << " content_confirmed="
+        << (session->probe.content_confirmed ? "true" : "false");
+    if (!session->detail.empty()) {
+        out << "\n  detail=" << session->detail;
+    }
+    out << "\n  black_widow="
+        << black_widow_diagnostics(dmcresource::black_widow_state(session));
+    return out.str();
+}
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -221,6 +293,21 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         const auto text = dmcresource::describe_session(session);
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF("Information unavailable"); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_buildIdentity(
+        JNIEnv* env, jclass) {
+    return env->NewStringUTF(DMC_NATIVE_READER_BUILD_SHA);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_diagnostics(
+        JNIEnv* env, jclass, jlong handle) {
+    try {
+        const auto text = diagnostics_for_session(from_handle(handle));
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
 }
 
 extern "C" JNIEXPORT jlong JNICALL
