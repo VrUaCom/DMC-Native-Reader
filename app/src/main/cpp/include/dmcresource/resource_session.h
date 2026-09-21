@@ -105,6 +105,7 @@ struct CompositePartState final {
     const Session* session, int index, ImagePreview* scratch);
 [[nodiscard]] std::unique_ptr<Session> open_session_child(const Session* session, int index);
 [[nodiscard]] std::string describe_session(const Session* session);
+[[nodiscard]] std::string describe_session_diagnostics(const Session* session);
 [[nodiscard]] spider::black_widow::StateBits black_widow_state(const Session* session) noexcept;
 
 // Texture attachment is intentionally absent from this generic session API.

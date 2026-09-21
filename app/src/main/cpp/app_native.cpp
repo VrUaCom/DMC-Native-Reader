@@ -22,6 +22,10 @@
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 
+#ifndef DMC_NATIVE_READER_BUILD_SHA
+#define DMC_NATIVE_READER_BUILD_SHA "unknown"
+#endif
+
 namespace {
 
 constexpr auto kMaxMappedBytes = dmcresource::resource_limits::kMaxResourceBytes;
@@ -221,6 +225,22 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_info(
         const auto text = dmcresource::describe_session(session);
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF("Information unavailable"); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_buildIdentity(
+        JNIEnv* env, jclass) {
+    return env->NewStringUTF(DMC_NATIVE_READER_BUILD_SHA);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_diagnostics(
+        JNIEnv* env, jclass, jlong handle) {
+    try {
+        const auto text =
+            dmcresource::describe_session_diagnostics(from_handle(handle));
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
 }
 
 extern "C" JNIEXPORT jlong JNICALL
