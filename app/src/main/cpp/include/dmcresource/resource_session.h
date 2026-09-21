@@ -71,6 +71,12 @@ struct Session {
 
 [[nodiscard]] std::size_t session_composite_part_count(const Session* session) noexcept;
 [[nodiscard]] std::string session_composite_part_name(const Session* session, int index);
+[[nodiscard]] std::size_t session_composite_part_node_count(
+    const Session* session, int part_index) noexcept;
+[[nodiscard]] std::string session_composite_part_node_name(
+    const Session* session, int part_index, int node_index);
+[[nodiscard]] std::optional<std::uint32_t> session_composite_part_default_attachment_selector(
+    const Session* session, int part_index) noexcept;
 [[nodiscard]] std::size_t session_child_count(const Session* session) noexcept;
 [[nodiscard]] std::string session_child_title(const Session* session, int index);
 [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> session_child_preview_size(

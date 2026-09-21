@@ -21,6 +21,13 @@ public final class NativeBridge {
     public static native int compositePartCount(long handle);
     public static native String compositePartName(long handle, int index);
 
+    public static native int compositePartNodeCount(long handle, int partIndex);
+    public static native String compositePartNodeName(long handle, int partIndex, int nodeIndex);
+    public static native int compositePartDefaultAttachmentSelector(long handle, int partIndex);
+    public static native String attachModPartToHostJoint(
+            long handle, int hostPartIndex, int childPartIndex, int hostJointIndex);
+    public static native String resetModPartPlacement(long handle, int childPartIndex);
+
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
     public static native boolean imagePreview(long handle, Bitmap target);

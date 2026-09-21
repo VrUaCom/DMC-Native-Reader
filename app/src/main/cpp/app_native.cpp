@@ -18,6 +18,7 @@
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/model_placement_actions.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 
@@ -247,6 +248,66 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartName(
         const auto name = dmcresource::session_composite_part_name(from_handle(handle), index);
         return env->NewStringUTF(name.c_str());
     } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeCount(
+        JNIEnv*, jclass, jlong handle, jint part_index) {
+    try {
+        const auto count = dmcresource::session_composite_part_node_count(
+            from_handle(handle), part_index);
+        if (count > static_cast<std::size_t>(std::numeric_limits<jint>::max())) return 0;
+        return static_cast<jint>(count);
+    } catch (...) { return 0; }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeName(
+        JNIEnv* env, jclass, jlong handle, jint part_index, jint node_index) {
+    try {
+        const auto name = dmcresource::session_composite_part_node_name(
+            from_handle(handle), part_index, node_index);
+        return env->NewStringUTF(name.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartDefaultAttachmentSelector(
+        JNIEnv*, jclass, jlong handle, jint part_index) {
+    try {
+        const auto selector =
+            dmcresource::session_composite_part_default_attachment_selector(
+                from_handle(handle), part_index);
+        if (!selector ||
+            *selector > static_cast<std::uint32_t>(std::numeric_limits<jint>::max())) {
+            return -1;
+        }
+        return static_cast<jint>(*selector);
+    } catch (...) { return -1; }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_attachModPartToHostJoint(
+        JNIEnv* env, jclass, jlong handle, jint host_part_index,
+        jint child_part_index, jint host_joint_index) {
+    if (host_part_index < 0 || child_part_index < 0 || host_joint_index < 0) {
+        return env->NewStringUTF("invalid-part-index");
+    }
+    const auto result = dmcresource::spider::actions::attach_mod_part_to_host_joint(
+        from_handle(handle),
+        static_cast<std::size_t>(host_part_index),
+        static_cast<std::size_t>(child_part_index),
+        static_cast<std::uint32_t>(host_joint_index));
+    return env->NewStringUTF(dmcresource::composite_placement::to_string(result.status));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_resetModPartPlacement(
+        JNIEnv* env, jclass, jlong handle, jint child_part_index) {
+    if (child_part_index < 0) return env->NewStringUTF("invalid-part-index");
+    const auto result = dmcresource::spider::actions::reset_mod_part_placement(
+        from_handle(handle), static_cast<std::size_t>(child_part_index));
+    return env->NewStringUTF(dmcresource::composite_placement::to_string(result.status));
 }
 
 extern "C" JNIEXPORT jint JNICALL

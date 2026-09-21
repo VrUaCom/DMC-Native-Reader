@@ -501,6 +501,41 @@ std::string session_composite_part_name(const Session* session, int index) {
     return session->composite_parts[static_cast<std::size_t>(index)].name;
 }
 
+std::size_t session_composite_part_node_count(
+        const Session* session, int part_index) noexcept {
+    if (session == nullptr || part_index < 0 ||
+        static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
+        return 0U;
+    }
+    return session->composite_parts[static_cast<std::size_t>(part_index)].scene.nodes.size();
+}
+
+std::string session_composite_part_node_name(
+        const Session* session, int part_index, int node_index) {
+    if (session == nullptr || part_index < 0 || node_index < 0 ||
+        static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
+        return {};
+    }
+    const auto& nodes =
+        session->composite_parts[static_cast<std::size_t>(part_index)].scene.nodes;
+    if (static_cast<std::size_t>(node_index) >= nodes.size()) return {};
+    return nodes[static_cast<std::size_t>(node_index)].name;
+}
+
+std::optional<std::uint32_t> session_composite_part_default_attachment_selector(
+        const Session* session, int part_index) noexcept {
+    if (session == nullptr || part_index < 0 ||
+        static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
+        return std::nullopt;
+    }
+    const auto& part = session->composite_parts[static_cast<std::size_t>(part_index)];
+    if (!part.scene.default_attachment_selector ||
+        *part.scene.default_attachment_selector >= part.scene.nodes.size()) {
+        return std::nullopt;
+    }
+    return part.scene.default_attachment_selector;
+}
+
 std::string describe_session(const Session* session) {
     if (session == nullptr) return "no session";
     std::ostringstream out;
