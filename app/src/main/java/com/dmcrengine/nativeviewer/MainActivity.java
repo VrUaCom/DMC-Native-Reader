@@ -574,6 +574,175 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
+    private String nativeBuildIdentity() {
+        try {
+            String identity = NativeBridge.buildIdentity();
+            if (identity == null || identity.trim().isEmpty()) return "unknown";
+            return identity.trim();
+        } catch (RuntimeException error) {
+            return "unknown";
+        }
+    }
+
+    private File diagnosticsFile() {
+        return new File(getFilesDir(), "diagnostics.log");
+    }
+
+    private String sanitizeDiagnosticField(String value) {
+        if (value == null || value.isEmpty()) return "unknown";
+        String sanitized = value.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
+        if (sanitized.contains("content://")) return "[content-uri]";
+        return sanitized.length() <= 180 ? sanitized : sanitized.substring(0, 180);
+    }
+
+    private void appendDiagnostics(String route, String name, long openedHandle,
+                                   String rejectedDetail) {
+        StringBuilder entry = new StringBuilder();
+        entry.append("[")
+                .append(LocalDateTime.now().format(DIAGNOSTICS_TIME_FORMAT))
+                .append("] build=")
+                .append(sanitizeDiagnosticField(nativeBuildIdentity()))
+                .append(" route=")
+                .append(sanitizeDiagnosticField(route))
+                .append(" name=")
+                .append(sanitizeDiagnosticField(name))
+                .append("\n");
+
+        if (openedHandle != 0) {
+            String nativeDiagnostic = "";
+            try {
+                nativeDiagnostic = NativeBridge.diagnostics(openedHandle);
+            } catch (RuntimeException ignored) {}
+            entry.append("  result=OPENED");
+            if (nativeDiagnostic == null || nativeDiagnostic.isEmpty()) {
+                entry.append(" detail=native diagnostics unavailable");
+            } else {
+                entry.append(" ")
+                        .append(nativeDiagnostic.replace("\r", "")
+                                .replace("\n", "\n  "));
+            }
+            entry.append("\n");
+        } else {
+            entry.append("  result=REJECTED detail=")
+                    .append(sanitizeDiagnosticField(
+                            rejectedDetail == null || rejectedDetail.isEmpty()
+                                    ? "not accepted by any native module"
+                                    : rejectedDetail))
+                    .append("\n");
+        }
+
+        try (FileOutputStream output = new FileOutputStream(diagnosticsFile(), true)) {
+            output.write(entry.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception ignored) {
+            // Diagnostics are evidence only. Logging failure must never block opening.
+        }
+    }
+
+    private String readDiagnosticsPreview() {
+        File file = diagnosticsFile();
+        if (!file.isFile() || file.length() == 0) return "No diagnostics recorded yet.";
+        try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+            long length = input.length();
+            long start = Math.max(0L, length - DIAGNOSTICS_PREVIEW_BYTES);
+            input.seek(start);
+            int count = (int) (length - start);
+            byte[] bytes = new byte[count];
+            input.readFully(bytes);
+            String text = new String(bytes, StandardCharsets.UTF_8);
+            if (start > 0) {
+                return "… showing last " + count + " of " + length + " bytes …\n\n" + text;
+            }
+            return text;
+        } catch (Exception error) {
+            return "Diagnostics log could not be read.";
+        }
+    }
+
+    private void showDiagnosticsDialog() {
+        File file = diagnosticsFile();
+        StringBuilder text = new StringBuilder();
+        text.append("DMC Native Reader ").append(BuildConfig.VERSION_NAME).append("\n")
+                .append("Native build: ").append(nativeBuildIdentity()).append("\n")
+                .append("Log: ")
+                .append(file.isFile() ? file.length() + " bytes" : "not created")
+                .append("\n\n")
+                .append(readDiagnosticsPreview());
+
+        TextView details = new TextView(this);
+        details.setText(text.toString());
+        details.setTextColor(Color.WHITE);
+        details.setTextSize(12f);
+        details.setTypeface(Typeface.MONOSPACE);
+        details.setTextIsSelectable(true);
+        details.setPadding(dp(16), dp(12), dp(16), dp(20));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(0xff141418);
+        scroll.addView(details, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT));
+
+        new AlertDialog.Builder(this)
+                .setTitle("Diagnostics / build info")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
+                .setNegativeButton("Export…", (dialog, which) ->
+                        chooseDiagnosticsExportDestination())
+                .setNeutralButton("Clear log", (dialog, which) ->
+                        confirmClearDiagnosticsLog())
+                .show();
+    }
+
+    private void chooseDiagnosticsExportDestination() {
+        File file = diagnosticsFile();
+        if (!file.isFile() || file.length() == 0) {
+            Toast.makeText(this, "No diagnostics to export", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("text/plain");
+        intent.putExtra(Intent.EXTRA_TITLE,
+                "dmc-native-reader-diagnostics-" + nativeBuildIdentity() + ".log");
+        startActivityForResult(intent, REQUEST_EXPORT_DIAGNOSTICS);
+    }
+
+    private void exportDiagnosticsToUri(Uri target) {
+        File file = diagnosticsFile();
+        if (!file.isFile()) {
+            Toast.makeText(this, "No diagnostics to export", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try (FileInputStream input = new FileInputStream(file);
+             OutputStream output = getContentResolver().openOutputStream(target, "w")) {
+            if (output == null) throw new FileNotFoundException("No output stream");
+            byte[] buffer = new byte[16 * 1024];
+            int count;
+            while ((count = input.read(buffer)) >= 0) {
+                if (count > 0) output.write(buffer, 0, count);
+            }
+            output.flush();
+            Toast.makeText(this, "Diagnostics exported", Toast.LENGTH_LONG).show();
+        } catch (Exception error) {
+            Toast.makeText(this, "Could not export diagnostics", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void confirmClearDiagnosticsLog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Clear diagnostics log?")
+                .setMessage("This removes only the private diagnostics history. Resources and sessions are unchanged.")
+                .setPositiveButton("Clear", (dialog, which) -> {
+                    File file = diagnosticsFile();
+                    boolean cleared = !file.exists() || file.delete();
+                    Toast.makeText(this,
+                            cleared ? "Diagnostics log cleared" : "Could not clear diagnostics log",
+                            Toast.LENGTH_LONG).show();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
     private void chooseFile() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -1133,7 +1302,7 @@ public final class MainActivity extends Activity {
         setInfo(details.toString());
     }
 
-    private void openUri(Uri uri) {
+    private void openUri(Uri uri, String route) {
         closeAllSessions();
         resetCompositionState();
         String name = displayName(uri);
@@ -1144,6 +1313,8 @@ public final class MainActivity extends Activity {
             if (pfd == null) throw new FileNotFoundException("No file descriptor");
             opened = NativeBridge.open(pfd.getFd(), name);
         } catch (Exception error) {
+            appendDiagnostics(route, name, 0,
+                    "platform transport failure: " + error.getClass().getSimpleName());
             setInfo(name + "\nOpen failed: " + error);
             applyResourceUiState();
             Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
@@ -1151,12 +1322,14 @@ public final class MainActivity extends Activity {
         }
 
         if (opened == 0) {
+            appendDiagnostics(route, name, 0, "not accepted by any native module");
             setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX.");
             applyResourceUiState();
             Toast.makeText(this, "Unsupported or malformed DMC resource", Toast.LENGTH_LONG).show();
             return;
         }
 
+        appendDiagnostics(route, name, opened, null);
         activateSession(opened, name);
         if (blackWidowState.canAddModelPart) {
             modelPartUris.add(uri);
@@ -1164,12 +1337,12 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void composeCurrentWithAdditionalMods(ArrayList<Uri> requested) {
+    private void composeCurrentWithAdditionalMods(ArrayList<Uri> requested, String route) {
         if (session == 0 || requested == null || requested.isEmpty()) return;
         if (NativeBridge.compositePartCount(session) != 0) {
             ArrayList<Uri> combined = new ArrayList<>(modelPartUris);
             for (Uri uri : requested) if (!combined.contains(uri)) combined.add(uri);
-            openCompositeUris(combined, true);
+            openCompositeUris(combined, true, route);
             return;
         }
 
@@ -1196,11 +1369,13 @@ public final class MainActivity extends Activity {
 
         long composite = 0;
         String failure = null;
+        String failureName = "MOD composite · " + totalParts + " parts";
         try {
             for (int index = 0; index < additions.size(); ++index) {
                 Uri uri = additions.get(index);
                 final int target = index + 1;
                 names[target] = displayName(uri);
+                failureName = names[target];
                 try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
                     if (pfd == null) throw new FileNotFoundException("No file descriptor");
                     handles[target] = NativeBridge.open(pfd.getFd(), names[target]);
@@ -1211,6 +1386,7 @@ public final class MainActivity extends Activity {
                 }
             }
             if (failure == null) {
+                failureName = "MOD composite · " + totalParts + " parts";
                 composite = NativeBridge.composeMods(handles, names);
                 if (composite == 0) {
                     failure = "Selected files could not be composed with the live MOD session";
@@ -1227,12 +1403,15 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
+            appendDiagnostics(route, failureName, 0,
+                    failure == null ? "native composition rejected" : failure);
             Toast.makeText(this,
                     failure == null ? "MOD composition failed" : failure,
                     Toast.LENGTH_LONG).show();
             return;
         }
 
+        appendDiagnostics(route, "MOD composite · " + totalParts + " parts", composite, null);
         ArrayList<Uri> combinedUris = new ArrayList<>(modelPartUris);
         for (Uri uri : additions) if (!combinedUris.contains(uri)) combinedUris.add(uri);
 
@@ -1252,9 +1431,9 @@ public final class MainActivity extends Activity {
                 Toast.LENGTH_LONG).show();
     }
 
-    private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets) {
+    private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets, String route) {
         if (uris.size() < 2) {
-            if (!uris.isEmpty() && !preserveAssets) openUri(uris.get(0));
+            if (!uris.isEmpty() && !preserveAssets) openUri(uris.get(0), route);
             return;
         }
 
@@ -1265,11 +1444,13 @@ public final class MainActivity extends Activity {
         String[] names = new String[uris.size()];
         long composite = 0;
         String failure = null;
+        String failureName = "MOD composite · " + uris.size() + " parts";
 
         try {
             for (int index = 0; index < uris.size(); ++index) {
                 Uri uri = uris.get(index);
                 names[index] = displayName(uri);
+                failureName = names[index];
                 try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
                     if (pfd == null) throw new FileNotFoundException("No file descriptor");
                     handles[index] = NativeBridge.open(pfd.getFd(), names[index]);
@@ -1280,6 +1461,7 @@ public final class MainActivity extends Activity {
                 }
             }
             if (failure == null) {
+                failureName = "MOD composite · " + uris.size() + " parts";
                 composite = NativeBridge.composeMods(handles, names);
                 if (composite == 0) {
                     failure = "Multi-select can combine canonical MOD files only";
@@ -1294,12 +1476,15 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
+            appendDiagnostics(route, failureName, 0,
+                    failure == null ? "native composition rejected" : failure);
             Toast.makeText(this,
                     failure == null ? "MOD composition failed" : failure,
                     Toast.LENGTH_LONG).show();
             return;
         }
 
+        appendDiagnostics(route, "MOD composite · " + uris.size() + " parts", composite, null);
         closeAllSessions();
         if (!preserveAssets) resetCompositionState();
         modelPartUris.clear();
