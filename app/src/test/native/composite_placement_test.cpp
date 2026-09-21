@@ -120,6 +120,37 @@ int main() {
     assert(composite->render_mesh.vertices[3].x == 2.0F);
     assert(composite->render_mesh.vertices[3].y == 0.0F);
 
+    const auto graph_asset_count = composite->workspace_graph.assets().size();
+    const auto graph_instance_count = composite->workspace_graph.instances().size();
+    const auto graph_binding_count = composite->workspace_graph.bindings().size();
+    const auto source_vertex_x = composite->render_mesh.vertices[3].x;
+
+    const auto source_state = session_composite_part_state(composite.get(), 1);
+    assert(source_state.has_value());
+    assert(source_state->name == "hair.mod");
+    assert(source_state->asset_id == composite->composite_parts[1].asset_id);
+    assert(source_state->instance_id == composite->composite_parts[1].instance_id);
+    assert(!source_state->texture_companion_attached);
+    assert(source_state->placement_mode == CompositePlacementMode::SourceCoordinates);
+    assert(!source_state->placement_resolved);
+    assert(source_state->host_instance_id == kInvalidInstanceId);
+    assert(source_state->host_part_index == kNoCompositePart);
+    assert(source_state->attachment_selector == kNoAttachmentSelector);
+    assert(source_state->host_name.empty());
+    assert(source_state->attachment_name.empty());
+    assert(!session_composite_part_state(composite.get(), -1).has_value());
+    assert(!session_composite_part_state(composite.get(), 99).has_value());
+    assert(describe_composite_part_state(composite.get(), 99).empty());
+    const auto source_description = describe_composite_part_state(composite.get(), 1);
+    assert(source_description.find("instance=") != std::string::npos);
+    assert(source_description.find("placement=source-coordinates") != std::string::npos);
+
+    // Read-only state projection must not mutate graph, placement or render data.
+    assert(composite->workspace_graph.assets().size() == graph_asset_count);
+    assert(composite->workspace_graph.instances().size() == graph_instance_count);
+    assert(composite->workspace_graph.bindings().size() == graph_binding_count);
+    assert(composite->render_mesh.vertices[3].x == source_vertex_x);
+
     assert(session_composite_part_node_count(composite.get(), 0) == 2U);
     assert(session_composite_part_node_count(composite.get(), 1) == 1U);
     assert(session_composite_part_node_count(composite.get(), -1) == 0U);
@@ -144,6 +175,23 @@ int main() {
     assert(composite->composite_parts[1].placement.host_instance_id ==
            composite->composite_parts[0].instance_id);
     assert(composite->composite_parts[1].placement.attachment_selector == 1U);
+
+    // The inspector derives current host vector position from stable InstanceId,
+    // not from the placement cache. Deliberately stale the cache before querying.
+    composite->composite_parts[1].placement.host_part_index = 1U;
+    const auto placed_state = session_composite_part_state(composite.get(), 1);
+    assert(placed_state.has_value());
+    assert(placed_state->placement_mode == CompositePlacementMode::HostJoint);
+    assert(placed_state->placement_resolved);
+    assert(placed_state->host_instance_id == composite->composite_parts[0].instance_id);
+    assert(placed_state->host_part_index == 0U);
+    assert(placed_state->host_name == "body.mod");
+    assert(placed_state->attachment_selector == 1U);
+    assert(placed_state->attachment_name == "body joint");
+    const auto placed_description = describe_composite_part_state(composite.get(), 1);
+    assert(placed_description.find("placement=host-joint") != std::string::npos);
+    assert(placed_description.find("hostPart=0") != std::string::npos);
+    assert(placed_description.find("joint=1") != std::string::npos);
 
     // This checks matrix order, not only translation. Source (2,0,0) under the
     // host joint (+90 degrees around Z, then +10,+5) becomes (10,7,0).
@@ -171,6 +219,14 @@ int main() {
     assert(composite->render_mesh.vertices[3].y == 0.0F);
     assert(composite->scene.nodes[2].world.values[12] == 0.0F);
     assert(composite->scene.nodes[2].world.values[13] == 0.0F);
+
+    const auto reset_state = session_composite_part_state(composite.get(), 1);
+    assert(reset_state.has_value());
+    assert(reset_state->placement_mode == CompositePlacementMode::SourceCoordinates);
+    assert(!reset_state->placement_resolved);
+    assert(reset_state->host_instance_id == kInvalidInstanceId);
+    assert(reset_state->host_part_index == kNoCompositePart);
+    assert(reset_state->attachment_selector == kNoAttachmentSelector);
 
     const auto invalid_joint = actions::attach_mod_part_to_host_joint(
         composite.get(), 0U, 1U, 99U);
