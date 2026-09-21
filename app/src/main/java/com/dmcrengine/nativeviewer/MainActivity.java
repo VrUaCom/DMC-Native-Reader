@@ -1404,7 +1404,11 @@ public final class MainActivity extends Activity {
 
         if (composite == 0) {
             appendDiagnostics(route, failureName, 0,
-                    failure == null ? "native composition rejected" : failure);
+                    failure == null
+                            ? "native composition rejected"
+                            : (failure.startsWith("Could not read selected MOD files:")
+                                    ? "platform transport failure"
+                                    : failure));
             Toast.makeText(this,
                     failure == null ? "MOD composition failed" : failure,
                     Toast.LENGTH_LONG).show();
@@ -1477,7 +1481,11 @@ public final class MainActivity extends Activity {
 
         if (composite == 0) {
             appendDiagnostics(route, failureName, 0,
-                    failure == null ? "native composition rejected" : failure);
+                    failure == null
+                            ? "native composition rejected"
+                            : (failure.startsWith("Could not read selected MOD files:")
+                                    ? "platform transport failure"
+                                    : failure));
             Toast.makeText(this,
                     failure == null ? "MOD composition failed" : failure,
                     Toast.LENGTH_LONG).show();
