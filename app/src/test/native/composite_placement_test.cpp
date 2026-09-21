@@ -124,6 +124,15 @@ int main() {
     const auto graph_instance_count = composite->workspace_graph.instances().size();
     const auto graph_binding_count = composite->workspace_graph.bindings().size();
     const auto source_vertex_x = composite->render_mesh.vertices[3].x;
+    const auto texture_count = composite->attached_textures.size();
+    const auto session_texture_state = composite->texture_companion_attached;
+    const auto part_texture_state = composite->composite_parts[1].texture_companion_attached;
+    const auto placement_mode_before = composite->composite_parts[1].placement.mode;
+    const auto placement_resolved_before = composite->composite_parts[1].placement.resolved;
+    const auto placement_host_before =
+        composite->composite_parts[1].placement.host_instance_id;
+    const auto placement_selector_before =
+        composite->composite_parts[1].placement.attachment_selector;
 
     const auto source_state = session_composite_part_state(composite.get(), 1);
     assert(source_state.has_value());
@@ -150,6 +159,15 @@ int main() {
     assert(composite->workspace_graph.instances().size() == graph_instance_count);
     assert(composite->workspace_graph.bindings().size() == graph_binding_count);
     assert(composite->render_mesh.vertices[3].x == source_vertex_x);
+    assert(composite->attached_textures.size() == texture_count);
+    assert(composite->texture_companion_attached == session_texture_state);
+    assert(composite->composite_parts[1].texture_companion_attached == part_texture_state);
+    assert(composite->composite_parts[1].placement.mode == placement_mode_before);
+    assert(composite->composite_parts[1].placement.resolved == placement_resolved_before);
+    assert(composite->composite_parts[1].placement.host_instance_id ==
+           placement_host_before);
+    assert(composite->composite_parts[1].placement.attachment_selector ==
+           placement_selector_before);
 
     assert(session_composite_part_node_count(composite.get(), 0) == 2U);
     assert(session_composite_part_node_count(composite.get(), 1) == 1U);
