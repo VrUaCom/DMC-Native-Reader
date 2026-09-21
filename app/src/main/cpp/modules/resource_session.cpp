@@ -609,6 +609,72 @@ std::optional<std::uint32_t> session_composite_part_default_attachment_selector(
     return part.scene.default_attachment_selector;
 }
 
+std::string describe_session_diagnostics(const Session* session) {
+    if (session == nullptr) return {};
+
+    using spider::black_widow::StateFlag;
+    using spider::black_widow::has_state;
+    struct NamedFlag final {
+        StateFlag flag;
+        const char* name;
+    };
+    static constexpr NamedFlag kFlags[] = {
+        {StateFlag::CanRender, "CanRender"},
+        {StateFlag::CanWireframe, "CanWireframe"},
+        {StateFlag::CanInspect, "CanInspect"},
+        {StateFlag::CanShowHierarchy, "CanShowHierarchy"},
+        {StateFlag::HasSkinning, "HasSkinning"},
+        {StateFlag::HasSkinWeights, "HasSkinWeights"},
+        {StateFlag::HasTextureBindings, "HasTextureBindings"},
+        {StateFlag::CanPreviewImage, "CanPreviewImage"},
+        {StateFlag::HasChildResources, "HasChildResources"},
+        {StateFlag::IsText, "IsText"},
+        {StateFlag::IsContainer, "IsContainer"},
+        {StateFlag::HasCollision, "HasCollision"},
+        {StateFlag::HasAdjacency, "HasAdjacency"},
+        {StateFlag::HasTransformSelectors, "HasTransformSelectors"},
+        {StateFlag::CanShowUv, "CanShowUv"},
+        {StateFlag::ChildBrowserMode, "ChildBrowserMode"},
+        {StateFlag::TextureCompanionAttachable, "TextureCompanionAttachable"},
+        {StateFlag::TextureCompanionAttached, "TextureCompanionAttached"},
+        {StateFlag::UvMapView, "UvMapView"},
+        {StateFlag::CanInspectUv, "CanInspectUv"},
+        {StateFlag::CanInspectMeshes, "CanInspectMeshes"},
+        {StateFlag::CanInspectHierarchy, "CanInspectHierarchy"},
+        {StateFlag::CanExportPng, "CanExportPng"},
+        {StateFlag::CanAddModelPart, "CanAddModelPart"},
+        {StateFlag::CanStageCompanion, "CanStageCompanion"},
+    };
+
+    std::ostringstream out;
+    out << "family=" << session->probe.family
+        << " domain=" << session->probe.domain
+        << " support=" << session->probe.support
+        << " evidence=" << session->probe.evidence
+        << " content_confirmed="
+        << (session->probe.content_confirmed ? "true" : "false");
+
+    if (!session->detail.empty()) {
+        std::string detail = session->detail;
+        for (char& ch : detail) {
+            if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+        }
+        out << "\n  detail=" << detail;
+    }
+
+    const auto bits = black_widow_state(session);
+    out << "\n  black_widow=0x" << std::hex << bits << std::dec << " [";
+    bool first = true;
+    for (const auto& item : kFlags) {
+        if (!has_state(bits, item.flag)) continue;
+        if (!first) out << ",";
+        first = false;
+        out << item.name;
+    }
+    out << "]";
+    return out.str();
+}
+
 std::string describe_session(const Session* session) {
     if (session == nullptr) return "no session";
     std::ostringstream out;
