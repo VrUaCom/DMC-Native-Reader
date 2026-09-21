@@ -86,6 +86,7 @@ Session make_part(const char* name, float base_x, bool with_host_joint) {
         joint.local = rotated_z_90_translated(10.0F, 5.0F, 0.0F);
         joint.world = rotated_z_90_translated(10.0F, 5.0F, 0.0F);
         session.scene.nodes.push_back(joint);
+        session.scene.default_attachment_selector = 1U;
     }
 
     session.inspection.format = "MOD";
@@ -118,6 +119,19 @@ int main() {
     assert(composite->composite_parts[1].placement.host_instance_id == kInvalidInstanceId);
     assert(composite->render_mesh.vertices[3].x == 2.0F);
     assert(composite->render_mesh.vertices[3].y == 0.0F);
+
+    assert(session_composite_part_node_count(composite.get(), 0) == 2U);
+    assert(session_composite_part_node_count(composite.get(), 1) == 1U);
+    assert(session_composite_part_node_count(composite.get(), -1) == 0U);
+    assert(session_composite_part_node_name(composite.get(), 0, 0) == "body root");
+    assert(session_composite_part_node_name(composite.get(), 0, 1) == "body joint");
+    assert(session_composite_part_node_name(composite.get(), 0, 99).empty());
+    const auto selector =
+        session_composite_part_default_attachment_selector(composite.get(), 0);
+    assert(selector.has_value());
+    assert(*selector == 1U);
+    assert(!session_composite_part_default_attachment_selector(
+        composite.get(), 1).has_value());
 
     const auto applied = actions::attach_mod_part_to_host_joint(
         composite.get(), 0U, 1U, 1U);
