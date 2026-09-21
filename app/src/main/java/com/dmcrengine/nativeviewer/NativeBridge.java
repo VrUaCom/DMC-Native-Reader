@@ -13,6 +13,8 @@ public final class NativeBridge {
     public static native long composeMods(long[] handles, String[] names);
     public static native void close(long handle);
     public static native String info(long handle);
+    public static native String buildIdentity();
+    public static native String diagnostics(long handle);
 
     // Spider Black Widow is the single Android application/UI-state contract.
     // Java must not reconstruct policy from raw capabilities or diagnostics.
