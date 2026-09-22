@@ -367,7 +367,7 @@ Canonical migration mode:
 
 Known hosted failure signature is `runner_id=0`, `steps=[]`: this is infrastructure evidence only, never compile/test PASS or FAIL.
 
-If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the live PR #33 HEAD is resolved externally immediately before execution and passed to both stages via `--expected-head`. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
+If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the active Phase/Review card nominates one exact reviewed candidate HEAD externally immediately before execution and that same 40-hex SHA is passed to both stages via `--expected-head`. The candidate may be current reviewed `main` or an explicitly nominated live PR head; closed historical PR identity is not execution authority. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
 
 ## 9. Testing is architecture
 
