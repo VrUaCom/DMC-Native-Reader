@@ -27,7 +27,7 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - package pre-gate: **debug APK <=4 MiB; unsigned release APK <=4 MiB**
 - final installed hard gate: **path-correct Android `StorageStats.getAppBytes()` <=4 MiB** on the exact production-signed artifact
 
-Execution identity is no longer tied to closed PR #33. Before every canonical run, #36/#41 must nominate one exact reviewed 40-hex candidate HEAD. The same SHA is passed to bootstrap and the exact-head runner. If no newer reviewed PR is explicitly nominated, the default candidate is the current reviewed `main` HEAD.
+Execution identity is no longer tied to closed PR #33. The current Phase-2 execution candidate is draft PR #95, branch `phase2/evidence-unblock-integration`. Its SHA is deliberately not hard-coded here: immediately before every canonical run, resolve PR #95 live `head_sha` and use that same externally nominated 40-hex SHA for bootstrap, preflight and the full exact-head runner. If #95 is superseded, the active Phase/Review card must explicitly nominate the replacement before execution.
 
 ## Current program state
 
@@ -47,7 +47,8 @@ Current status:
 - #48 — waiting for real artifact/device evidence;
 - #41 — blocked until #36 has one complete real evidence set;
 - PR #33 — merged; merge status does **not** substitute for #36/#41 execution evidence;
-- post-merge Android candidate stack #60 -> #62 -> #64 — draft/unmerged and under review #65;
+- PR #95 — **CURRENT PHASE-2 EXECUTION CANDIDATE**, draft integration PR to `main`; resolve its live head immediately before execution;
+- post-merge Android feature stack #60 -> #62 -> #64 — draft/unmerged and intentionally excluded from PR #95 pending its separate disposition;
 - #54/#55 — future Android-shell/Java-retirement phase and review, blocked until #44 GO.
 
 No Phase 3 implementation may start before #41 explicitly issues GO.
