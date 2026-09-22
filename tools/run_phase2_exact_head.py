@@ -135,6 +135,65 @@ def parse_version_tuple(text: str, pattern: str, label: str) -> tuple[int, ...]:
     return tuple(int(piece) for piece in match.group(1).split("."))
 
 
+def read_source_properties(path: Path, label: str) -> dict[str, str]:
+    if not path.is_file():
+        fail(f"{label} source.properties missing: {path}")
+    properties: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8", errors="strict").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        properties[key.strip()] = value.strip()
+    if not properties:
+        fail(f"{label} source.properties is empty or unreadable: {path}")
+    return properties
+
+
+def validate_android_sdk_metadata(sdk: Path) -> dict[str, str]:
+    expected_platform_api = EXPECTED_ANDROID_PLATFORM.removeprefix("android-")
+    contracts = (
+        (
+            "Android platform",
+            sdk / "platforms" / EXPECTED_ANDROID_PLATFORM / "source.properties",
+            "AndroidVersion.ApiLevel",
+            expected_platform_api,
+            "platform_api_level",
+        ),
+        (
+            "SDK Build Tools",
+            sdk / "build-tools" / EXPECTED_BUILD_TOOLS / "source.properties",
+            "Pkg.Revision",
+            EXPECTED_BUILD_TOOLS,
+            "build_tools_revision",
+        ),
+        (
+            "Android NDK",
+            sdk / "ndk" / EXPECTED_NDK / "source.properties",
+            "Pkg.Revision",
+            EXPECTED_NDK,
+            "ndk_revision",
+        ),
+        (
+            "Android CMake",
+            sdk / "cmake" / EXPECTED_ANDROID_CMAKE / "source.properties",
+            "Pkg.Revision",
+            EXPECTED_ANDROID_CMAKE,
+            "android_cmake_revision",
+        ),
+    )
+    verified: dict[str, str] = {}
+    for label, path, key, expected, output_key in contracts:
+        properties = read_source_properties(path, label)
+        actual = properties.get(key)
+        if actual is None:
+            fail(f"{label} metadata key {key} missing: {path}")
+        if actual != expected:
+            fail(f"{label} metadata {key}={actual!r} != canonical {expected!r}")
+        verified[output_key] = actual
+    return verified
+
+
 def find_ndk_clang(ndk_path: Path) -> Path:
     prebuilt_root = ndk_path / "toolchains" / "llvm" / "prebuilt"
     if not prebuilt_root.is_dir():
@@ -506,6 +565,8 @@ def main() -> int:
         if not path.exists():
             fail(f"{label} missing: {path}")
 
+    android_component_metadata = validate_android_sdk_metadata(sdk)
+
     ndk_clang = find_ndk_clang(ndk_path)
     ndk_clang_version_text = capture([str(ndk_clang), "--version"])
     if "clang" not in ndk_clang_version_text.lower():
@@ -693,6 +754,7 @@ def main() -> int:
             "build_tools": EXPECTED_BUILD_TOOLS,
             "android_cmake": EXPECTED_ANDROID_CMAKE,
             "android_ndk": EXPECTED_NDK,
+            "android_component_metadata": android_component_metadata,
             "android_ndk_clang_path": str(ndk_clang),
             "android_ndk_clang_version_output": ndk_clang_version_text.strip(),
         },
