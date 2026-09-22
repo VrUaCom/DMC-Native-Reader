@@ -69,6 +69,15 @@ EXPECTED_HEAD="<reviewed candidate HEAD>"
 test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 bash tools/bootstrap_phase2_self_hosted_ubuntu.sh --expected-head "$EXPECTED_HEAD"
 source build/phase2-self-hosted-env.sh
+
+# Fast diagnostic gate before the expensive build:
+python3 tools/run_phase2_preflight.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --java "$JAVA_HOME/bin/java" \
+  --expected-head "$EXPECTED_HEAD"
+
+# Only after preflight PASS:
 python3 tools/run_phase2_exact_head.py \
   --sdk "$ANDROID_SDK_ROOT" \
   --gradle "$GRADLE_HOME/bin/gradle" \
@@ -92,6 +101,15 @@ bash tools/bootstrap_phase2_self_hosted_ubuntu.sh \
   --preprovisioned
 
 source build/phase2-self-hosted-env.sh
+
+# Fast diagnostic gate before the expensive build:
+python3 tools/run_phase2_preflight.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --java "$JAVA_HOME/bin/java" \
+  --expected-head "$EXPECTED_HEAD"
+
+# Only after preflight PASS:
 python3 tools/run_phase2_exact_head.py \
   --sdk "$ANDROID_SDK_ROOT" \
   --gradle "$GRADLE_HOME/bin/gradle" \
@@ -107,6 +125,8 @@ The supplied SDK must already contain:
 - `cmake/3.22.1`.
 
 The pinned Rengine checkout must already exist at the repository gitlink and remain clean/read-only. `--preprovisioned` only validates and prepares the environment handoff; it does not itself produce Phase-2 PASS evidence. The canonical exact-head runner remains the evidence authority.
+
+`tools/run_phase2_preflight.py` is also diagnostic-only. A preflight PASS proves that the reviewed source identity and already-installed host/Android toolchain satisfy the canonical contract before the costly build begins. It does **not** close #58, #36 or #41. The exact same `EXPECTED_HEAD` must be passed from the active Phase/Review card to bootstrap, preflight and the full exact-head runner.
 
 ## Phase-2 exact-head evidence contract
 
