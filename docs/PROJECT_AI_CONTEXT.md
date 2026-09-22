@@ -339,7 +339,8 @@ Work only in the explicitly authorized repository/branch set.
 
 For the current migration program:
 - repository: `VrUaCom/DMC-Native-Reader` only;
-- current candidate branch: `feature/png-export-multi-mod-v27`;
+- current Phase-2 execution candidate: draft PR #95, branch `phase2/evidence-unblock-integration`; resolve its live `head_sha` immediately before execution instead of copying a historical SHA;
+- historical branch `feature/png-export-multi-mod-v27` / PR #33 is merged and is no longer live execution authority;
 - `VrUaCom/dmc-rengine-cpp` remains absolute READ-ONLY, including during the PTX copy exception;
 - do not create a new repository or branch without a separate technical reason;
 - do not duplicate modules, parsers, executors, workflows or compatibility files;
