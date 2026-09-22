@@ -452,7 +452,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--java", default="java", help="Java executable (must be JDK 17)")
     parser.add_argument(
         "--expected-head",
-        help="Optional SHA guard. The run aborts if HEAD differs before any build work.",
+        required=True,
+        help=(
+            "Required externally reviewed 40-hex candidate HEAD. "
+            "The run aborts before build work if local HEAD differs."
+        ),
     )
     return parser.parse_args()
 
@@ -460,10 +464,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    head = capture(["git", "rev-parse", "HEAD"]).strip()
+    expected_head = args.expected_head.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
+        fail("--expected-head must be one externally reviewed full 40-hex commit SHA")
+
+    head = capture(["git", "rev-parse", "HEAD"]).strip().lower()
     branch = capture(["git", "branch", "--show-current"]).strip()
-    if args.expected_head and head != args.expected_head:
-        fail(f"HEAD {head} does not match --expected-head {args.expected_head}")
+    if head != expected_head:
+        fail(f"HEAD {head} does not match --expected-head {expected_head}")
 
     dirty = capture(["git", "status", "--porcelain", "--untracked-files=all"])
     if dirty.strip():
@@ -652,7 +660,10 @@ def main() -> int:
         "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "repository": "VrUaCom/DMC-Native-Reader",
         "branch": branch,
+        "expected_head": expected_head,
         "head": head,
+        "candidate_identity_source": "external --expected-head",
+        "candidate_identity_match": True,
         "source_identity_stable": True,
         "rengine_gitlink": gitlink,
         "rengine_checkout": rengine_checkout,
