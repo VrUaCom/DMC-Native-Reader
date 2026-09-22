@@ -1,10 +1,10 @@
 # DMC Native Reader — Status
 
-Last updated: 2026-09-17.
+Last updated: 2026-09-22.
 
 ## Accepted baseline (`main`)
 
-- current `main`: `561385e24e7246da11631e594ad5a86ca619fa74`
+- current `main`: `aaf02dcf7992cb58b491c5172884d8c04018d1cc`
 - device-confirmed product baseline: v26 line accepted through PR #32
 - package: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
@@ -12,10 +12,11 @@ Last updated: 2026-09-17.
 
 The v26 line was physically tested on Samsung on 2026-09-10 and explicitly approved for promotion to `main`.
 
-## Active candidate — v33
+## v33 source state — integrated in `main`, execution evidence pending
 
-- branch: `feature/png-export-multi-mod-v27`
-- PR: #33, draft
+- PR #33 source head: `6711f6af9edc30b00cca828a9d85e8dc9dce5047`
+- PR #33 merge commit: `3e9197086e3037aa9a1d1c2e8e2d3fa7b320582f`
+- current `main`: `aaf02dcf7992cb58b491c5172884d8c04018d1cc`
 - versionName / versionCode: `1.0.6 / 33`
 - Native Reader production language: **strict target-scoped ISO C++23**
 - Spider product profile: **`spider.cpp23`** over Crusader
@@ -26,7 +27,7 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - package pre-gate: **debug APK <=4 MiB; unsigned release APK <=4 MiB**
 - final installed hard gate: **path-correct Android `StorageStats.getAppBytes()` <=4 MiB** on the exact production-signed artifact
 
-The candidate SHA is deliberately **not hard-coded in this status file**. Every execution/review must fetch PR #33 live `head_sha` immediately before use.
+Execution identity is no longer tied to closed PR #33. The current Phase-2 execution candidate is draft PR #95, branch `phase2/evidence-unblock-integration`. Its SHA is deliberately not hard-coded here: immediately before every canonical run, resolve PR #95 live `head_sha` and use that same externally nominated 40-hex SHA for bootstrap, preflight and the full exact-head runner. If #95 is superseded, the active Phase/Review card must explicitly nominate the replacement before execution.
 
 ## Current program state
 
@@ -45,6 +46,9 @@ Current status:
 - #53 — owner action: provide one guarded Linux x64 execution route;
 - #48 — waiting for real artifact/device evidence;
 - #41 — blocked until #36 has one complete real evidence set;
+- PR #33 — merged; merge status does **not** substitute for #36/#41 execution evidence;
+- PR #95 — **CURRENT PHASE-2 EXECUTION CANDIDATE**, draft integration PR to `main`; resolve its live head immediately before execution;
+- post-merge Android feature stack #60 -> #62 -> #64 — draft/unmerged and intentionally excluded from PR #95 pending its separate disposition;
 - #54/#55 — future Android-shell/Java-retirement phase and review, blocked until #44 GO.
 
 No Phase 3 implementation may start before #41 explicitly issues GO.
@@ -62,10 +66,19 @@ Therefore:
 Canonical direct path:
 
 ```bash
-EXPECTED_HEAD="<live PR #33 head_sha>"
+EXPECTED_HEAD="<reviewed candidate HEAD>"
 test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 bash tools/bootstrap_phase2_self_hosted_ubuntu.sh --expected-head "$EXPECTED_HEAD"
 source build/phase2-self-hosted-env.sh
+
+# Fast diagnostic gate before the expensive build:
+python3 tools/run_phase2_preflight.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --java "$JAVA_HOME/bin/java" \
+  --expected-head "$EXPECTED_HEAD"
+
+# Only after preflight PASS:
 python3 tools/run_phase2_exact_head.py \
   --sdk "$ANDROID_SDK_ROOT" \
   --gradle "$GRADLE_HOME/bin/gradle" \
@@ -73,7 +86,48 @@ python3 tools/run_phase2_exact_head.py \
   --expected-head "$EXPECTED_HEAD"
 ```
 
-The run must use live PR #33 HEAD, not a SHA copied from historical comments.
+The run must use the exact reviewed candidate HEAD nominated by the active Phase/Review card, not a SHA copied from historical comments.
+
+### Pre-provisioned / offline validation path
+
+When the exact toolchain is already present on a Linux x64 host, bootstrap may run in validation-only mode with no apt/download/sdkmanager/submodule-fetch work:
+
+```bash
+export PHASE2_JAVA_HOME="/path/to/jdk-17"
+export PHASE2_GRADLE_HOME="/path/to/gradle-9.5.0"
+export PHASE2_ANDROID_SDK_ROOT="/path/to/android-sdk"
+
+bash tools/bootstrap_phase2_self_hosted_ubuntu.sh \
+  --expected-head "$EXPECTED_HEAD" \
+  --preprovisioned
+
+source build/phase2-self-hosted-env.sh
+
+# Fast diagnostic gate before the expensive build:
+python3 tools/run_phase2_preflight.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --java "$JAVA_HOME/bin/java" \
+  --expected-head "$EXPECTED_HEAD"
+
+# Only after preflight PASS:
+python3 tools/run_phase2_exact_head.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --java "$JAVA_HOME/bin/java" \
+  --expected-head "$EXPECTED_HEAD"
+```
+
+The supplied SDK must already contain:
+- `platform-tools`;
+- `platforms/android-36`;
+- `build-tools/36.0.0`;
+- `ndk/30.0.16248370`;
+- `cmake/3.22.1`.
+
+The pinned Rengine checkout must already exist at the repository gitlink and remain clean/read-only. `--preprovisioned` only validates and prepares the environment handoff; it does not itself produce Phase-2 PASS evidence. The canonical exact-head runner remains the evidence authority.
+
+`tools/run_phase2_preflight.py` is also diagnostic-only. A preflight PASS proves that the reviewed source identity and already-installed host/Android toolchain satisfy the canonical contract before the costly build begins. It does **not** close #58, #36 or #41. The exact same `EXPECTED_HEAD` must be passed from the active Phase/Review card to bootstrap, preflight and the full exact-head runner.
 
 ## Phase-2 exact-head evidence contract
 

@@ -135,6 +135,65 @@ def parse_version_tuple(text: str, pattern: str, label: str) -> tuple[int, ...]:
     return tuple(int(piece) for piece in match.group(1).split("."))
 
 
+def read_source_properties(path: Path, label: str) -> dict[str, str]:
+    if not path.is_file():
+        fail(f"{label} source.properties missing: {path}")
+    properties: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8", errors="strict").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        properties[key.strip()] = value.strip()
+    if not properties:
+        fail(f"{label} source.properties is empty or unreadable: {path}")
+    return properties
+
+
+def validate_android_sdk_metadata(sdk: Path) -> dict[str, str]:
+    expected_platform_api = EXPECTED_ANDROID_PLATFORM.removeprefix("android-")
+    contracts = (
+        (
+            "Android platform",
+            sdk / "platforms" / EXPECTED_ANDROID_PLATFORM / "source.properties",
+            "AndroidVersion.ApiLevel",
+            expected_platform_api,
+            "platform_api_level",
+        ),
+        (
+            "SDK Build Tools",
+            sdk / "build-tools" / EXPECTED_BUILD_TOOLS / "source.properties",
+            "Pkg.Revision",
+            EXPECTED_BUILD_TOOLS,
+            "build_tools_revision",
+        ),
+        (
+            "Android NDK",
+            sdk / "ndk" / EXPECTED_NDK / "source.properties",
+            "Pkg.Revision",
+            EXPECTED_NDK,
+            "ndk_revision",
+        ),
+        (
+            "Android CMake",
+            sdk / "cmake" / EXPECTED_ANDROID_CMAKE / "source.properties",
+            "Pkg.Revision",
+            EXPECTED_ANDROID_CMAKE,
+            "android_cmake_revision",
+        ),
+    )
+    verified: dict[str, str] = {}
+    for label, path, key, expected, output_key in contracts:
+        properties = read_source_properties(path, label)
+        actual = properties.get(key)
+        if actual is None:
+            fail(f"{label} metadata key {key} missing: {path}")
+        if actual != expected:
+            fail(f"{label} metadata {key}={actual!r} != canonical {expected!r}")
+        verified[output_key] = actual
+    return verified
+
+
 def find_ndk_clang(ndk_path: Path) -> Path:
     prebuilt_root = ndk_path / "toolchains" / "llvm" / "prebuilt"
     if not prebuilt_root.is_dir():
@@ -452,7 +511,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--java", default="java", help="Java executable (must be JDK 17)")
     parser.add_argument(
         "--expected-head",
-        help="Optional SHA guard. The run aborts if HEAD differs before any build work.",
+        required=True,
+        help=(
+            "Required externally reviewed 40-hex candidate HEAD. "
+            "The run aborts before build work if local HEAD differs."
+        ),
     )
     return parser.parse_args()
 
@@ -460,10 +523,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    head = capture(["git", "rev-parse", "HEAD"]).strip()
+    expected_head = args.expected_head.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
+        fail("--expected-head must be one externally reviewed full 40-hex commit SHA")
+
+    head = capture(["git", "rev-parse", "HEAD"]).strip().lower()
     branch = capture(["git", "branch", "--show-current"]).strip()
-    if args.expected_head and head != args.expected_head:
-        fail(f"HEAD {head} does not match --expected-head {args.expected_head}")
+    if head != expected_head:
+        fail(f"HEAD {head} does not match --expected-head {expected_head}")
 
     dirty = capture(["git", "status", "--porcelain", "--untracked-files=all"])
     if dirty.strip():
@@ -497,6 +564,8 @@ def main() -> int:
     for label, path in required_sdk_paths.items():
         if not path.exists():
             fail(f"{label} missing: {path}")
+
+    android_component_metadata = validate_android_sdk_metadata(sdk)
 
     ndk_clang = find_ndk_clang(ndk_path)
     ndk_clang_version_text = capture([str(ndk_clang), "--version"])
@@ -534,6 +603,30 @@ def main() -> int:
     shutil.rmtree(HOST_BUILD_DIR, ignore_errors=True)
     shutil.rmtree(EVIDENCE_DIR, ignore_errors=True)
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    run_logged(
+        "00-candidate-identity-policy",
+        [sys.executable, "tools/test_phase2_candidate_identity.py"],
+        env=env,
+    )
+
+    run_logged(
+        "00-preprovisioned-bootstrap-policy",
+        [sys.executable, "tools/test_phase2_preprovisioned_bootstrap.py"],
+        env=env,
+    )
+
+    run_logged(
+        "00-sdk-metadata-policy",
+        [sys.executable, "tools/test_phase2_sdk_metadata.py"],
+        env=env,
+    )
+
+    run_logged(
+        "00-preflight-contract-policy",
+        [sys.executable, "tools/test_phase2_preflight_contract.py"],
+        env=env,
+    )
 
     run_logged(
         "00-package-policy-unit",
@@ -652,7 +745,10 @@ def main() -> int:
         "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "repository": "VrUaCom/DMC-Native-Reader",
         "branch": branch,
+        "expected_head": expected_head,
         "head": head,
+        "candidate_identity_source": "external --expected-head",
+        "candidate_identity_match": True,
         "source_identity_stable": True,
         "rengine_gitlink": gitlink,
         "rengine_checkout": rengine_checkout,
@@ -670,6 +766,7 @@ def main() -> int:
             "build_tools": EXPECTED_BUILD_TOOLS,
             "android_cmake": EXPECTED_ANDROID_CMAKE,
             "android_ndk": EXPECTED_NDK,
+            "android_component_metadata": android_component_metadata,
             "android_ndk_clang_path": str(ndk_clang),
             "android_ndk_clang_version_output": ndk_clang_version_text.strip(),
         },

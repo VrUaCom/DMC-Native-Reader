@@ -339,7 +339,8 @@ Work only in the explicitly authorized repository/branch set.
 
 For the current migration program:
 - repository: `VrUaCom/DMC-Native-Reader` only;
-- current candidate branch: `feature/png-export-multi-mod-v27`;
+- current Phase-2 execution candidate: draft PR #95, branch `phase2/evidence-unblock-integration`; resolve its live `head_sha` immediately before execution instead of copying a historical SHA;
+- historical branch `feature/png-export-multi-mod-v27` / PR #33 is merged and is no longer live execution authority;
 - `VrUaCom/dmc-rengine-cpp` remains absolute READ-ONLY, including during the PTX copy exception;
 - do not create a new repository or branch without a separate technical reason;
 - do not duplicate modules, parsers, executors, workflows or compatibility files;
@@ -367,7 +368,11 @@ Canonical migration mode:
 
 Known hosted failure signature is `runner_id=0`, `steps=[]`: this is infrastructure evidence only, never compile/test PASS or FAIL.
 
-If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the live PR #33 HEAD is resolved externally immediately before execution and passed to both stages via `--expected-head`. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
+If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the active Phase/Review card nominates one exact reviewed candidate HEAD externally immediately before execution and that same 40-hex SHA is passed to both stages via `--expected-head`. The candidate may be current reviewed `main` or an explicitly nominated live PR head; closed historical PR identity is not execution authority. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
+
+If the exact canonical toolchain is already provisioned, `bootstrap_phase2_self_hosted_ubuntu.sh --preprovisioned` is an accepted preparation path. It performs validation-only preparation: no apt install, no network download, no sdkmanager mutation and no submodule fetch/update. The host must supply JDK 17, Gradle 9.5.0 and an Android SDK containing platform 36, Build Tools 36.0.0, NDK 30.0.16248370 and Android CMake 3.22.1; the pinned Rengine checkout must already match the gitlink and be clean. This path does not weaken or replace `run_phase2_exact_head.py`; only the canonical runner output is Phase-2 execution evidence.
+
+Before a full self-hosted evidence run, use `tools/run_phase2_preflight.py` with the same externally nominated `--expected-head`. Preflight is a fast diagnostic gate over source/Rengine identity and the already-installed exact toolchain; it writes `build/phase2-preflight.json` and performs no install/download. Preflight PASS is not acceptance evidence and cannot unlock Gate A. Only `run_phase2_exact_head.py` may produce the Phase-2 evidence manifest used by #36/#41.
 
 ## 9. Testing is architecture
 
