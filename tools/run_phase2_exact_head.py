@@ -617,6 +617,12 @@ def main() -> int:
     )
 
     run_logged(
+        "00-sdk-metadata-policy",
+        [sys.executable, "tools/test_phase2_sdk_metadata.py"],
+        env=env,
+    )
+
+    run_logged(
         "00-package-policy-unit",
         [sys.executable, "tools/test_verify_device_apk.py"],
         env=env,
