@@ -544,6 +544,12 @@ def main() -> int:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     run_logged(
+        "00-candidate-identity-policy",
+        [sys.executable, "tools/test_phase2_candidate_identity.py"],
+        env=env,
+    )
+
+    run_logged(
         "00-package-policy-unit",
         [sys.executable, "tools/test_verify_device_apk.py"],
         env=env,
