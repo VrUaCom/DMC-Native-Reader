@@ -20,26 +20,26 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --expected-head)
       if [[ "$#" -lt 2 ]]; then
-        echo "ERROR: --expected-head requires the live PR #33 SHA." >&2
+        echo "ERROR: --expected-head requires the reviewed candidate SHA." >&2
         exit 2
       fi
       EXPECTED_HEAD="${2,,}"
       shift 2
       ;;
     -h|--help)
-      echo "Usage: $0 --expected-head <live-pr-33-head-sha>"
+      echo "Usage: $0 --expected-head <reviewed-candidate-head-sha>"
       exit 0
       ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
-      echo "Usage: $0 --expected-head <live-pr-33-head-sha>" >&2
+      echo "Usage: $0 --expected-head <reviewed-candidate-head-sha>" >&2
       exit 2
       ;;
   esac
 done
 
 if [[ ! "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "ERROR: --expected-head must be the full 40-hex live PR #33 head SHA." >&2
+  echo "ERROR: --expected-head must be the full 40-hex reviewed candidate HEAD SHA." >&2
   exit 2
 fi
 
@@ -81,8 +81,8 @@ fi
 
 initial_head="$(git rev-parse HEAD)"
 if [[ "$initial_head" != "$EXPECTED_HEAD" ]]; then
-  echo "ERROR: local checkout HEAD $initial_head != supplied live PR head $EXPECTED_HEAD" >&2
-  echo "Fetch/checkout the live PR #33 candidate before bootstrapping." >&2
+  echo "ERROR: local checkout HEAD $initial_head != supplied reviewed candidate HEAD $EXPECTED_HEAD" >&2
+  echo "Fetch/checkout the reviewed candidate HEAD before bootstrapping." >&2
   exit 1
 fi
 
@@ -337,7 +337,7 @@ mkdir -p "$(dirname "$ENV_FILE")"
 
 head_sha="$(git rev-parse HEAD)"
 if [[ "$head_sha" != "$EXPECTED_HEAD" ]]; then
-  echo "ERROR: repository HEAD no longer matches supplied live PR head." >&2
+  echo "ERROR: repository HEAD no longer matches supplied reviewed candidate HEAD." >&2
   exit 1
 fi
 cmake_version="$(cmake --version | head -n 1)"

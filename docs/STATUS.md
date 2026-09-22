@@ -1,10 +1,10 @@
 # DMC Native Reader — Status
 
-Last updated: 2026-09-17.
+Last updated: 2026-09-22.
 
 ## Accepted baseline (`main`)
 
-- current `main`: `561385e24e7246da11631e594ad5a86ca619fa74`
+- current `main`: `aaf02dcf7992cb58b491c5172884d8c04018d1cc`
 - device-confirmed product baseline: v26 line accepted through PR #32
 - package: `com.dmcrengine.nativereader`
 - ABI: `arm64-v8a`
@@ -12,10 +12,11 @@ Last updated: 2026-09-17.
 
 The v26 line was physically tested on Samsung on 2026-09-10 and explicitly approved for promotion to `main`.
 
-## Active candidate — v33
+## v33 source state — integrated in `main`, execution evidence pending
 
-- branch: `feature/png-export-multi-mod-v27`
-- PR: #33, draft
+- PR #33 source head: `6711f6af9edc30b00cca828a9d85e8dc9dce5047`
+- PR #33 merge commit: `3e9197086e3037aa9a1d1c2e8e2d3fa7b320582f`
+- current `main`: `aaf02dcf7992cb58b491c5172884d8c04018d1cc`
 - versionName / versionCode: `1.0.6 / 33`
 - Native Reader production language: **strict target-scoped ISO C++23**
 - Spider product profile: **`spider.cpp23`** over Crusader
@@ -26,7 +27,7 @@ The v26 line was physically tested on Samsung on 2026-09-10 and explicitly appro
 - package pre-gate: **debug APK <=4 MiB; unsigned release APK <=4 MiB**
 - final installed hard gate: **path-correct Android `StorageStats.getAppBytes()` <=4 MiB** on the exact production-signed artifact
 
-The candidate SHA is deliberately **not hard-coded in this status file**. Every execution/review must fetch PR #33 live `head_sha` immediately before use.
+Execution identity is no longer tied to closed PR #33. Before every canonical run, #36/#41 must nominate one exact reviewed 40-hex candidate HEAD. The same SHA is passed to bootstrap and the exact-head runner. If no newer reviewed PR is explicitly nominated, the default candidate is the current reviewed `main` HEAD.
 
 ## Current program state
 
@@ -45,6 +46,8 @@ Current status:
 - #53 — owner action: provide one guarded Linux x64 execution route;
 - #48 — waiting for real artifact/device evidence;
 - #41 — blocked until #36 has one complete real evidence set;
+- PR #33 — merged; merge status does **not** substitute for #36/#41 execution evidence;
+- post-merge Android candidate stack #60 -> #62 -> #64 — draft/unmerged and under review #65;
 - #54/#55 — future Android-shell/Java-retirement phase and review, blocked until #44 GO.
 
 No Phase 3 implementation may start before #41 explicitly issues GO.
@@ -62,7 +65,7 @@ Therefore:
 Canonical direct path:
 
 ```bash
-EXPECTED_HEAD="<live PR #33 head_sha>"
+EXPECTED_HEAD="<reviewed candidate HEAD>"
 test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 bash tools/bootstrap_phase2_self_hosted_ubuntu.sh --expected-head "$EXPECTED_HEAD"
 source build/phase2-self-hosted-env.sh
@@ -73,7 +76,7 @@ python3 tools/run_phase2_exact_head.py \
   --expected-head "$EXPECTED_HEAD"
 ```
 
-The run must use live PR #33 HEAD, not a SHA copied from historical comments.
+The run must use the exact reviewed candidate HEAD nominated by the active Phase/Review card, not a SHA copied from historical comments.
 
 ## Phase-2 exact-head evidence contract
 
