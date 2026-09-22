@@ -371,6 +371,8 @@ If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution 
 
 If the exact canonical toolchain is already provisioned, `bootstrap_phase2_self_hosted_ubuntu.sh --preprovisioned` is an accepted preparation path. It performs validation-only preparation: no apt install, no network download, no sdkmanager mutation and no submodule fetch/update. The host must supply JDK 17, Gradle 9.5.0 and an Android SDK containing platform 36, Build Tools 36.0.0, NDK 30.0.16248370 and Android CMake 3.22.1; the pinned Rengine checkout must already match the gitlink and be clean. This path does not weaken or replace `run_phase2_exact_head.py`; only the canonical runner output is Phase-2 execution evidence.
 
+Before a full self-hosted evidence run, use `tools/run_phase2_preflight.py` with the same externally nominated `--expected-head`. Preflight is a fast diagnostic gate over source/Rengine identity and the already-installed exact toolchain; it writes `build/phase2-preflight.json` and performs no install/download. Preflight PASS is not acceptance evidence and cannot unlock Gate A. Only `run_phase2_exact_head.py` may produce the Phase-2 evidence manifest used by #36/#41.
+
 ## 9. Testing is architecture
 
 A promoted semantic rule/module/API must have regression coverage. Compilation alone is not acceptance.
