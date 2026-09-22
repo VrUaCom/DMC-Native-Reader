@@ -267,7 +267,9 @@ if [[ "$java_major" != "$EXPECTED_JAVA_MAJOR" ]]; then
 fi
 
 TOOL_ROOT="${PHASE2_TOOL_ROOT:-$HOME/.local/share/dmc-native-reader/phase2}"
-mkdir -p "$TOOL_ROOT"
+if [[ "$PREPROVISIONED" -eq 0 ]]; then
+  mkdir -p "$TOOL_ROOT"
+fi
 
 if [[ "$PREPROVISIONED" -eq 1 ]]; then
   GRADLE_HOME="${PHASE2_GRADLE_HOME:-${GRADLE_HOME:-}}"
