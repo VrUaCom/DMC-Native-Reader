@@ -361,6 +361,23 @@ for required_path in \
   fi
 done
 
+python3 - "$ANDROID_SDK_ROOT" <<'PY'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+runner_path = Path("tools/run_phase2_exact_head.py").resolve()
+spec = importlib.util.spec_from_file_location("dmc_phase2_exact_head", runner_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("ERROR: could not load canonical Phase-2 runner")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+verified = module.validate_android_sdk_metadata(Path(sys.argv[1]).resolve())
+print("Android SDK metadata: " + json.dumps(verified, sort_keys=True))
+PY
+
 if [[ "$PREPROVISIONED" -eq 0 ]]; then
   git submodule update --init --recursive
 fi
