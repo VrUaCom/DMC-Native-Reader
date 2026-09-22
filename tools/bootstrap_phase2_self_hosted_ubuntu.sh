@@ -448,8 +448,12 @@ printf '%s\n' "Android SDK: $ANDROID_SDK_ROOT"
 printf '%s\n' "NDK: $EXPECTED_NDK"
 printf '%s\n' "C++23 capability probe: PASS"
 echo
-printf '%s\n' "Direct exact-head evidence command:"
+printf '%s\n' "Recommended Phase-2 preflight command (diagnostic only):"
 printf '  source %q\n' "$ENV_FILE"
+printf '  python3 tools/run_phase2_preflight.py --sdk %q --gradle %q --java %q --expected-head %q\n' \
+  "$ANDROID_SDK_ROOT" "$GRADLE_HOME/bin/gradle" "$JAVA_HOME/bin/java" "$EXPECTED_HEAD"
+echo
+printf '%s\n' "Canonical exact-head evidence command (run only after preflight PASS):"
 printf '  python3 tools/run_phase2_exact_head.py --sdk %q --gradle %q --java %q --expected-head %q\n' \
   "$ANDROID_SDK_ROOT" "$GRADLE_HOME/bin/gradle" "$JAVA_HOME/bin/java" "$EXPECTED_HEAD"
 echo
