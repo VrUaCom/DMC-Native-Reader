@@ -78,6 +78,36 @@ python3 tools/run_phase2_exact_head.py \
 
 The run must use the exact reviewed candidate HEAD nominated by the active Phase/Review card, not a SHA copied from historical comments.
 
+### Pre-provisioned / offline validation path
+
+When the exact toolchain is already present on a Linux x64 host, bootstrap may run in validation-only mode with no apt/download/sdkmanager/submodule-fetch work:
+
+```bash
+export PHASE2_JAVA_HOME="/path/to/jdk-17"
+export PHASE2_GRADLE_HOME="/path/to/gradle-9.5.0"
+export PHASE2_ANDROID_SDK_ROOT="/path/to/android-sdk"
+
+bash tools/bootstrap_phase2_self_hosted_ubuntu.sh \
+  --expected-head "$EXPECTED_HEAD" \
+  --preprovisioned
+
+source build/phase2-self-hosted-env.sh
+python3 tools/run_phase2_exact_head.py \
+  --sdk "$ANDROID_SDK_ROOT" \
+  --gradle "$GRADLE_HOME/bin/gradle" \
+  --java "$JAVA_HOME/bin/java" \
+  --expected-head "$EXPECTED_HEAD"
+```
+
+The supplied SDK must already contain:
+- `platform-tools`;
+- `platforms/android-36`;
+- `build-tools/36.0.0`;
+- `ndk/30.0.16248370`;
+- `cmake/3.22.1`.
+
+The pinned Rengine checkout must already exist at the repository gitlink and remain clean/read-only. `--preprovisioned` only validates and prepares the environment handoff; it does not itself produce Phase-2 PASS evidence. The canonical exact-head runner remains the evidence authority.
+
 ## Phase-2 exact-head evidence contract
 
 `tools/run_phase2_exact_head.py` must actually execute and prove:
