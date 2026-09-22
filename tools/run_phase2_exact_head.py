@@ -550,6 +550,12 @@ def main() -> int:
     )
 
     run_logged(
+        "00-preprovisioned-bootstrap-policy",
+        [sys.executable, "tools/test_phase2_preprovisioned_bootstrap.py"],
+        env=env,
+    )
+
+    run_logged(
         "00-package-policy-unit",
         [sys.executable, "tools/test_verify_device_apk.py"],
         env=env,
