@@ -369,6 +369,8 @@ Known hosted failure signature is `runner_id=0`, `steps=[]`: this is infrastruct
 
 If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the active Phase/Review card nominates one exact reviewed candidate HEAD externally immediately before execution and that same 40-hex SHA is passed to both stages via `--expected-head`. The candidate may be current reviewed `main` or an explicitly nominated live PR head; closed historical PR identity is not execution authority. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
 
+If the exact canonical toolchain is already provisioned, `bootstrap_phase2_self_hosted_ubuntu.sh --preprovisioned` is an accepted preparation path. It performs validation-only preparation: no apt install, no network download, no sdkmanager mutation and no submodule fetch/update. The host must supply JDK 17, Gradle 9.5.0 and an Android SDK containing platform 36, Build Tools 36.0.0, NDK 30.0.16248370 and Android CMake 3.22.1; the pinned Rengine checkout must already match the gitlink and be clean. This path does not weaken or replace `run_phase2_exact_head.py`; only the canonical runner output is Phase-2 execution evidence.
+
 ## 9. Testing is architecture
 
 A promoted semantic rule/module/API must have regression coverage. Compilation alone is not acceptance.
