@@ -54,4 +54,19 @@ public final class NativeBridge {
     public static native boolean render(long handle, int width, int height,
                                         float yaw, float pitch, float zoom,
                                         int renderFlags, Bitmap target);
+
+    // Read-only PAC assembly: MODs in model space, slot-adjacent PTX, MOT library.
+    public static native long assemblePac(long handle);
+    public static native int motionLibraryCount(long handle);
+    public static native String motionLibraryName(long handle, int index);
+
+    // MOT playback. Frames are MOT timeline units (60 per second in DMC3).
+    // load* return a human-readable report; hasMotion tells whether it bound.
+    public static native String loadLibraryMotion(long handle, int index);
+    public static native String loadMotion(long handle, int fd, String filename);
+    public static native boolean hasMotion(long handle);
+    public static native float motionEndFrame(long handle);
+    public static native float motionLoopStartFrame(long handle);
+    public static native boolean setMotionFrame(long handle, float frame);
+    public static native void clearMotion(long handle);
 }

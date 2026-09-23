@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -10,6 +11,10 @@
 #include "dmcresource/mesh.h"
 
 namespace dmcresource {
+
+namespace motion {
+struct SkeletonRig;
+}
 
 inline constexpr std::uint32_t kNoTextureSlot =
     std::numeric_limits<std::uint32_t>::max();
@@ -89,6 +94,10 @@ struct RenderScene final {
     // The selector alone does not identify a host and therefore authorizes no
     // placement until a separate resolver produces one unambiguous host.
     std::optional<std::uint32_t> default_attachment_selector;
+
+    // Canonical skeleton retained for MOT playback. Present only for MOD
+    // scenes whose hierarchy passed the spatial gate.
+    std::shared_ptr<const motion::SkeletonRig> rig;
 
     [[nodiscard]] bool has_geometry() const noexcept {
         for (const auto& primitive : meshes) {

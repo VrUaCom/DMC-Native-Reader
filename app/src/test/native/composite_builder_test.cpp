@@ -91,7 +91,22 @@ int main() {
     std::vector<const dmcresource::Session*> parts{&body, &hair};
     std::vector<std::string> names{"body.mod", "hair.mod"};
 
-    auto built = builder::build_mod_composite(parts, names);
+    // Product default: companions stay in character model space. MOD header
+    // +0x13 is reported, never applied as a geometry root.
+    auto product_default = builder::build_mod_composite(parts, names);
+    assert(product_default);
+    assert(product_default.stats.attachment_attempts == 0U);
+    assert(!product_default.session->composite_parts[1].placement.resolved);
+    assert(product_default.session->render_mesh.vertices[3].x == 2.0F);
+    assert(product_default.session->render_mesh.vertices[3].y == 0.0F);
+    assert(product_default.session->detail.find("defaultJointSelectors=[-,1]") !=
+           std::string::npos);
+
+    const builder::BuildOptions opt_in{
+        .primary_host_index = 0U,
+        .resolve_default_joint_attachments = true,
+    };
+    auto built = builder::build_mod_composite(parts, names, opt_in);
     assert(built);
     assert(built.session->workspace_graph.valid());
     assert(built.session->workspace_graph.assets().size() == 2U);
@@ -120,7 +135,7 @@ int main() {
 
     auto invalid_hair = make_part("hair-invalid", 2.0F, false, 99U);
     parts[1] = &invalid_hair;
-    auto unresolved = builder::build_mod_composite(parts, names);
+    auto unresolved = builder::build_mod_composite(parts, names, opt_in);
     assert(unresolved);
     assert(unresolved.session->workspace_graph.valid());
     assert(unresolved.stats.attachment_attempts == 1U);

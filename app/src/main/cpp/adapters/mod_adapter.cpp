@@ -17,6 +17,7 @@
 #include "dmc_rengine/formats/mod_skin.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/module_support.h"
+#include "dmcresource/motion/skeleton_rig.h"
 #include "dmcresource/uv_projection.h"
 
 namespace dmcresource::adapters {
@@ -566,6 +567,10 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
             project_hierarchy(parsed.document, &out.scene, &out.inspection.root);
         if (spatial_hierarchy) {
             out.modules.push_back({"canonical.mod.spatial-hierarchy", true});
+            out.scene.rig = motion::make_skeleton_rig(parsed.document.transform_domain);
+            if (out.scene.rig != nullptr) {
+                out.modules.push_back({"native.motion.skeleton-rig", true});
+            }
         }
 
         if (!parsed.diagnostics.empty()) {

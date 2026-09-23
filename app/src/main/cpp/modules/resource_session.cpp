@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/motion/motion_player.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
@@ -367,6 +368,20 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
             return materialized;
         }
     }
+    // Container payloads (PAC slots) retain their bytes. Any recognized payload
+    // is opened through the full registry so each file gets its own viewer.
+    if (!child.source_bytes.empty() && child.probe.recognized) {
+        const std::string filename = child.suggested_filename.empty()
+            ? child.title
+            : child.suggested_filename;
+        auto materialized = open_session(
+            filename, child.source_bytes.data(), child.source_bytes.size());
+        if (materialized) {
+            if (!materialized->detail.empty()) materialized->detail += "\n";
+            materialized->detail += "Opened from container slot " + child.id;
+            return materialized;
+        }
+    }
     return make_session(child, child.trace);
 }
 
@@ -574,6 +589,7 @@ RgbaImage render_session(const Session* session, int requested_width,
         flags, dmcresource::RenderFlag::Wireframe);
     view.uv_layout = dmcresource::has_render_flag(
         flags, dmcresource::RenderFlag::UvLayout);
+    view.framing_vertices = dmcresource::motion::motion_rest_vertices(session);
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);

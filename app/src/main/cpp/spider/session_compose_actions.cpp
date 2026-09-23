@@ -39,7 +39,7 @@ bool compose_operation(void* raw, std::uint32_t) noexcept {
                 .primary_host_index = has_explicit_host
                     ? static_cast<std::size_t>(state->primary_host_index)
                     : 0U,
-                .resolve_default_joint_attachments = has_explicit_host,
+                .resolve_default_joint_attachments = false,
             });
         if (!built) return false;
         state->result = std::move(built.session);

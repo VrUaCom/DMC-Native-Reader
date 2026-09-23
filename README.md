@@ -15,6 +15,15 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
 
+## v34 candidate additions (branch `claude/devil-microy3-decompile-port-2v8pne`)
+
+Read-only, see [`docs/MOTION_PAC_COMPANION_V34.md`](docs/MOTION_PAC_COMPANION_V34.md):
+
+- **MOT playback**: tap a MOT card to play it on the open MOD / composite (tap again to pause); animated local matrix reconstructed from EXE `0x140310310`, compression 2 and 3 tracks, inverse-rest skinning;
+- **companion MODs** (hair, coat, accessories) stay in character model space; MOD header `+0x13` is reported only (EXE uses it as a translation probe, never as a geometry root);
+- **PAC**: opens as an assembled character/scene (MODs, slot-adjacent PTX, MOT library); every slot is browsable and opens in its own viewer;
+- registry gains `PAC` and `MOT` (byte-identified only).
+
 ## v33 capabilities
 
 ### MOD

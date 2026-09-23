@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 5U);
+    assert(modules.size() == 7U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -24,10 +24,22 @@ int main() {
     assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
            !event_tbl->renderable);
 
+    // v34: PAC (read-only archive browser/assembler) and MOT (motion reader)
+    // are promoted; both are byte-identified, never by extension alone.
+    const auto* pac = NativeModuleRegistry::find("PAC");
+    const auto* mot = NativeModuleRegistry::find("MOT");
+    assert(pac != nullptr && pac->format == Format::Pac && !pac->renderable);
+    assert(mot != nullptr && mot->format == Format::Mot && !mot->renderable);
+    const std::array<std::uint8_t, 8> pac_magic{'P', 'A', 'C', 0U, 0U, 0U, 0U, 0U};
+    const std::array<std::uint8_t, 8> mot_magic{0x30U, 0U, 0U, 0U, 'M', 'O', 'T', 0U};
+    assert(probe("renamed.bin", pac_magic.data(), pac_magic.size()).format == Format::Pac);
+    assert(probe("renamed.bin", mot_magic.data(), mot_magic.size()).format == Format::Mot);
+    assert(!probe("motion.mot", nullptr, 0U).recognized);
+
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
              "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
-             "PAC", "PNST", "NBZ", "EFM", "MRP", "SHW"}) {
+             "PNST", "NBZ", "EFM", "MRP", "SHW"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 

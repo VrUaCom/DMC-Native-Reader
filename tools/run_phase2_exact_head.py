@@ -65,6 +65,8 @@ EXPECTED_CTESTS = (
     "session_inspection",
     "tm2_legacy",
     "workspace_graph",
+    "motion_playback",
+    "pac_assembly",
 )
 
 

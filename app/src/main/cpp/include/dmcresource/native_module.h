@@ -60,5 +60,7 @@ public:
 [[nodiscard]] NativeModule mod_module() noexcept;
 [[nodiscard]] NativeModule texture_module(Format format) noexcept;
 [[nodiscard]] NativeModule evt_module() noexcept;
+[[nodiscard]] NativeModule pac_module() noexcept;
+[[nodiscard]] NativeModule mot_module() noexcept;
 
 }  // namespace dmcresource

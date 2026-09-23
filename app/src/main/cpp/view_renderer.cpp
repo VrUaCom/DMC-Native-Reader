@@ -40,21 +40,21 @@ struct CameraFrame {
 
 constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
 
-CameraFrame compute_camera_frame(const Mesh& mesh, int width, int height) {
+CameraFrame compute_camera_frame(std::span<const Vec3> vertices, int width, int height) {
     CameraFrame frame;
-    if (mesh.vertices.empty()) return frame;
+    if (vertices.empty()) return frame;
 
-    for (const auto& v : mesh.vertices) {
+    for (const auto& v : vertices) {
         frame.center.x += v.x;
         frame.center.y += v.y;
         frame.center.z += v.z;
     }
-    const float inv_n = 1.0F / static_cast<float>(mesh.vertices.size());
+    const float inv_n = 1.0F / static_cast<float>(vertices.size());
     frame.center.x *= inv_n;
     frame.center.y *= inv_n;
     frame.center.z *= inv_n;
 
-    for (const auto& v : mesh.vertices) {
+    for (const auto& v : vertices) {
         const float dx = v.x - frame.center.x;
         const float dy = v.y - frame.center.y;
         const float dz = v.z - frame.center.z;
@@ -285,7 +285,10 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     // compute_camera_frame's camera_distance pushes a real camera back from
     // the model center; project_in_frame's divide by z_cam is the actual
     // perspective divide that was missing.
-    const auto frame = compute_camera_frame(mesh, image.width, image.height);
+    const auto frame = compute_camera_frame(
+        view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices}
+                                      : view.framing_vertices,
+        image.width, image.height);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
     const float radius = frame.radius;
 
@@ -401,7 +404,10 @@ std::vector<HierarchyScreenPoint> project_hierarchy_points(const Mesh& mesh,
 
     const int clamped_width = std::clamp(width, 1, 2048);
     const int clamped_height = std::clamp(height, 1, 2048);
-    const auto frame = compute_camera_frame(mesh, clamped_width, clamped_height);
+    const auto frame = compute_camera_frame(
+        view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices}
+                                      : view.framing_vertices,
+        clamped_width, clamped_height);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
 
     out.reserve(hierarchy.points.size());

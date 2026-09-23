@@ -36,6 +36,10 @@ struct ViewState {
     float zoom{1.0f};
     bool wireframe{false};
     bool uv_layout{false};
+    // Optional stable camera framing source. While a motion plays, the camera
+    // is framed from the rest pose so the view does not re-center or re-zoom
+    // every frame. Empty: frame from the drawn mesh (previous behaviour).
+    std::span<const Vec3> framing_vertices{};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,

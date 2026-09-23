@@ -59,6 +59,7 @@ public final class MainActivity extends Activity {
     private static final int MENU_ADD_PHYSICS = 6;
     private static final int MENU_ADD_CLOTH = 7;
     private static final int MENU_ADD_OTHER = 8;
+    private static final int MENU_BROWSE_PAC = 9;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -109,6 +110,9 @@ public final class MainActivity extends Activity {
     private long pendingExportSession;
     private int pendingPtxPart = -1;
     private int selectedMotionIndex = -1;
+    // Archive the root scene was assembled from (re-opened on demand so the
+    // per-file browser owns an independent read-only handle).
+    private Uri assembledPacUri;
 
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
     private final ArrayList<Uri> modelPartUris = new ArrayList<>();
@@ -188,7 +192,9 @@ public final class MainActivity extends Activity {
     }
 
     private boolean hasModCompositionContext() {
-        return isRootScene() && blackWidowState.canAddModelPart;
+        // An assembled PAC already owns its part list; re-composing it from
+        // user-picked URIs would drop the archive's own MODs.
+        return isRootScene() && blackWidowState.canAddModelPart && assembledPacUri == null;
     }
 
     private void applyPrimaryPresentation() {
@@ -393,6 +399,9 @@ public final class MainActivity extends Activity {
     private void showCompanionMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
         menu.getMenu().add(0, MENU_OPEN, 0, "Open / replace resource");
+        if (isRootScene() && assembledPacUri != null) {
+            menu.getMenu().add(0, MENU_BROWSE_PAC, 1, "Browse .PAC files…");
+        }
         if (hasModCompositionContext()) {
             menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
         }
@@ -410,6 +419,9 @@ public final class MainActivity extends Activity {
             switch (item.getItemId()) {
                 case MENU_OPEN:
                     chooseFile();
+                    return true;
+                case MENU_BROWSE_PAC:
+                    browseAssembledPac();
                     return true;
                 case MENU_ADD_MOD:
                     chooseAdditionalMods();
@@ -439,25 +451,51 @@ public final class MainActivity extends Activity {
         menu.show();
     }
 
+    /** One motion card: a MOT found in the assembled PAC or a staged file. */
+    private static final class MotionEntry {
+        final String name;
+        final int libraryIndex;   // >= 0: native Session::motion_library
+        final Uri uri;            // staged file otherwise
+
+        MotionEntry(String name, int libraryIndex, Uri uri) {
+            this.name = name;
+            this.libraryIndex = libraryIndex;
+            this.uri = uri;
+        }
+    }
+
+    private ArrayList<MotionEntry> motionEntries() {
+        ArrayList<MotionEntry> result = new ArrayList<>();
+        if (session != 0 && isRootScene()) {
+            final int count = NativeBridge.motionLibraryCount(session);
+            for (int index = 0; index < count; ++index) {
+                result.add(new MotionEntry(
+                        NativeBridge.motionLibraryName(session, index), index, null));
+            }
+        }
+        for (StagedAsset asset : motionAssets()) {
+            result.add(new MotionEntry(asset.name, -1, asset.uri));
+        }
+        return result;
+    }
+
     private void refreshMotionStrip() {
         if (motionBar == null || motionScroll == null) return;
         motionBar.removeAllViews();
-        ArrayList<StagedAsset> motions = motionAssets();
+        ArrayList<MotionEntry> motions = motionEntries();
         if (motions.isEmpty() || !isRootScene()) {
             motionScroll.setVisibility(View.GONE);
             if (motions.isEmpty()) selectedMotionIndex = -1;
             return;
         }
-        if (selectedMotionIndex < 0 || selectedMotionIndex >= motions.size()) {
-            selectedMotionIndex = 0;
-        }
         for (int index = 0; index < motions.size(); ++index) {
             final int motionIndex = index;
-            StagedAsset asset = motions.get(index);
-            Button button = makeSquareButton("", "Select animation " + asset.name, 11f);
-            button.setText(motionCardLabel(asset.name));
-            button.setActivated(index == selectedMotionIndex);
-            button.setAlpha(index == selectedMotionIndex ? 1.0f : 0.72f);
+            MotionEntry entry = motions.get(index);
+            final boolean active = index == selectedMotionIndex;
+            Button button = makeSquareButton("", "Play animation " + entry.name, 11f);
+            button.setText(motionCardLabel(entry.name));
+            button.setActivated(active);
+            button.setAlpha(active ? 1.0f : 0.72f);
             button.setOnClickListener(v -> selectMotion(motionIndex));
             addToolButton(motionBar, button);
         }
@@ -490,14 +528,62 @@ public final class MainActivity extends Activity {
         return result;
     }
 
+    // Tap a card: bind + play. Tap the playing card again: pause/resume.
     private void selectMotion(int index) {
-        ArrayList<StagedAsset> motions = motionAssets();
-        if (index < 0 || index >= motions.size()) return;
-        selectedMotionIndex = index;
+        ArrayList<MotionEntry> motions = motionEntries();
+        if (session == 0 || index < 0 || index >= motions.size()) return;
+        if (index == selectedMotionIndex && NativeBridge.hasMotion(session)) {
+            if (renderView.isMotionPlaying()) {
+                renderView.pauseMotion();
+            } else {
+                renderView.startMotion();
+            }
+            return;
+        }
+
+        renderView.pauseMotion();
+        final MotionEntry entry = motions.get(index);
+        String report;
+        if (entry.libraryIndex >= 0) {
+            report = NativeBridge.loadLibraryMotion(session, entry.libraryIndex);
+        } else {
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(entry.uri)) {
+                if (pfd == null) throw new FileNotFoundException("No file descriptor");
+                report = NativeBridge.loadMotion(session, pfd.getFd(), entry.name);
+            } catch (Exception error) {
+                report = "Motion: could not read " + entry.name + ": " + error;
+            }
+        }
+
+        final boolean bound = NativeBridge.hasMotion(session);
+        selectedMotionIndex = bound ? index : -1;
         refreshMotionStrip();
+        if (bound) renderView.startMotion();
+        else renderView.renderNow();
         Toast.makeText(this,
-                motions.get(index).name + " selected · playback runtime is not promoted yet",
+                bound ? entry.name + " ▶" : (report == null ? "Motion rejected" : report),
                 Toast.LENGTH_LONG).show();
+        rebuildInfo(titleView.getText().toString());
+        if (report != null && !report.isEmpty()) {
+            setInfo(infoText + "\nMOTION\n" + report + "\n");
+        }
+    }
+
+    private void browseAssembledPac() {
+        if (assembledPacUri == null) return;
+        final String name = displayName(assembledPacUri);
+        long archive = 0;
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(assembledPacUri)) {
+            if (pfd != null) archive = NativeBridge.open(pfd.getFd(), name);
+        } catch (Exception ignored) {
+            archive = 0;
+        }
+        if (archive == 0) {
+            Toast.makeText(this, "Could not re-open " + name, Toast.LENGTH_LONG).show();
+            return;
+        }
+        renderView.pauseMotion();
+        navigateToSession(archive, name + " · files");
     }
 
     private void setInfo(String text) {
@@ -759,9 +845,7 @@ public final class MainActivity extends Activity {
             stagedAssets.add(new StagedAsset(uri, displayName(uri), role));
             ++added;
         }
-        if (ROLE_MOTION.equals(role) && selectedMotionIndex < 0 && !motionAssets().isEmpty()) {
-            selectedMotionIndex = 0;
-        }
+        if (ROLE_MOTION.equals(role)) refreshMotionStrip();
         rebuildInfo(titleView.getText().toString());
         applyResourceUiState();
         Toast.makeText(this,
@@ -838,6 +922,7 @@ public final class MainActivity extends Activity {
         sharedModelPtxUri = null;
         stagedAssets.clear();
         selectedMotionIndex = -1;
+        assembledPacUri = null;
     }
 
     private void showIdleStatus() {
@@ -847,7 +932,7 @@ public final class MainActivity extends Activity {
         pendingExportSession = 0;
         resetCompositionState();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
-                + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
+                + "Architecture v2 core: MOD / SCM / DDS / PTX / PAC / MOT (read-only).\n"
                 + "Unpromoted DMC families are intentionally excluded from main.\n\n"
                 + "Open a supported resource from My Files or use ↑.\n"
                 + "Select multiple canonical MOD files to compose them in one scene.\n"
@@ -879,6 +964,7 @@ public final class MainActivity extends Activity {
 
     private void activateSession(long handle, String name) {
         session = handle;
+        selectedMotionIndex = -1;
         titleView.setText(name);
         renderView.setSession(session);
         refreshBlackWidowState();
@@ -907,7 +993,7 @@ public final class MainActivity extends Activity {
                 details.append("- ").append(asset.role).append(": ")
                         .append(asset.name).append("\n");
             }
-            details.append("Playback / physics application remains disabled until the corresponding native runtime is promoted.\n");
+            details.append("MOT cards play on tap (tap again to pause). Physics/cloth companions stay staged: their native runtime is not promoted yet.\n");
         }
         setInfo(details.toString());
     }
@@ -930,14 +1016,24 @@ public final class MainActivity extends Activity {
         }
 
         if (opened == 0) {
-            setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX.");
+            setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX / PAC / MOT.");
             applyResourceUiState();
             Toast.makeText(this, "Unsupported or malformed DMC resource", Toast.LENGTH_LONG).show();
             return;
         }
 
+        // A PAC opens as an assembled character/scene when it holds MODs; the
+        // raw archive stays browsable from ⋮ (read-only, nothing is written).
+        final long assembled = NativeBridge.assemblePac(opened);
+        if (assembled != 0) {
+            NativeBridge.close(opened);
+            opened = assembled;
+            assembledPacUri = uri;
+            name = name + " · assembled";
+        }
+
         activateSession(opened, name);
-        if (blackWidowState.canAddModelPart) {
+        if (assembledPacUri == null && blackWidowState.canAddModelPart) {
             modelPartUris.add(uri);
             modelPartPtxUris.add(null);
         }

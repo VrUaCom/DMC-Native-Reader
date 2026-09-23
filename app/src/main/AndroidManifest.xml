@@ -35,6 +35,8 @@
                 <data android:mimeType="application/vnd.dmc.ptx" />
                 <data android:mimeType="image/vnd-ms.dds" />
                 <data android:mimeType="application/vnd.dmc.eventtbl" />
+                <data android:mimeType="application/vnd.dmc.pac" />
+                <data android:mimeType="application/vnd.dmc.mot" />
             </intent-filter>
 
             <!-- Samsung/OEM extension routing for the five promoted families.
@@ -51,12 +53,16 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mod" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.dds" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.ptx" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pac" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.mot" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*EventTbl.*\\.bin" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*eventtbl.*\\.bin" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.SCM" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.DDS" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.PTX" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.PAC" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.MOT" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*EVENTTBL.*\\.BIN" />
             </intent-filter>
 
@@ -70,12 +76,16 @@
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mod" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.dds" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.ptx" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pac" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.mot" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*EventTbl.*\\.bin" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*eventtbl.*\\.bin" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.SCM" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.MOD" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.DDS" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*\\.PTX" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.PAC" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.MOT" />
                 <data android:scheme="file" android:host="*" android:pathPattern=".*EVENTTBL.*\\.BIN" />
             </intent-filter>
 

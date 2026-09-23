@@ -173,6 +173,9 @@ jobs:
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
           grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.pac.archive-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.mot.motion-reader' /tmp/native-markers.txt
+          grep -Fq 'native.motion.skeleton-rig' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
           grep -Fq 'spider.cpp23' /tmp/native-markers.txt
           grep -Fq 'canonical.mod.topology-break' /tmp/native-markers.txt

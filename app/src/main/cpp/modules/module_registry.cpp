@@ -13,6 +13,8 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         texture_module(Format::Dds),
         texture_module(Format::Ptx),
         evt_module(),
+        pac_module(),
+        mot_module(),
     };
     return registry;
 }

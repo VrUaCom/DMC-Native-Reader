@@ -16,6 +16,8 @@ enum class Format : std::uint8_t {
     Dds,
     Ptx,
     Evt,
+    Pac,
+    Mot,
 };
 
 struct ProbeResult {

@@ -8,6 +8,28 @@ set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 # Reader consumes it without modifying the submodule during the C++23 migration.
 include(${DMC_RENGINE_VENDOR}/cmake/reader_core.cmake)
 
+# Read-only MOT/PAC slice of the same pinned Rengine checkout. ReaderCore does
+# not yet list these canonical sources, so Native Reader compiles them into a
+# separate static target instead of editing the submodule. Every file here is a
+# parser/evaluator; nothing in this slice writes or repacks resources.
+set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
+    ${DMC_RENGINE_VENDOR}/src/formats/mot/parser.cpp
+    ${DMC_RENGINE_VENDOR}/src/analysis/mod/motion_group.cpp
+    ${DMC_RENGINE_VENDOR}/src/analysis/mod/animation_binding.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/container.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/relative_slot_container.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
+)
+add_library(dmc_native_reader_rengine_viewer STATIC
+    ${DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES})
+target_link_libraries(dmc_native_reader_rengine_viewer PUBLIC DMCRengine::ReaderCore)
+set_target_properties(dmc_native_reader_rengine_viewer PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+if(ANDROID)
+    target_compile_options(dmc_native_reader_rengine_viewer PRIVATE
+        -ffunction-sections -fdata-sections)
+endif()
+
 # Native Reader language authority is centralized here and remains target-scoped.
 # Do not use repository-global CMAKE_CXX_STANDARD or Gradle -std= flags because
 # those would also alter vendored dependency targets. Public is used only where
@@ -48,6 +70,12 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/texture_companion.cpp
     modules/texture_set.cpp
     modules/workspace_graph.cpp
+    modules/motion/skeleton_rig.cpp
+    modules/motion/animated_local.cpp
+    modules/motion/motion_clip.cpp
+    modules/motion/motion_player.cpp
+    modules/module_archive.cpp
+    modules/pac_assembly.cpp
     spider/crusader.cpp
     spider/black_widow.cpp
     spider/model_placement_actions.cpp
@@ -85,6 +113,7 @@ target_include_directories(dmc_native_reader_core
 target_link_libraries(dmc_native_reader_core
     PUBLIC
         DMCRengine::ReaderCore
+        dmc_native_reader_rengine_viewer
 )
 
 target_compile_definitions(dmc_native_reader_core PUBLIC
@@ -202,6 +231,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
+        motion_playback pac_assembly
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

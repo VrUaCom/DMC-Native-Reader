@@ -18,6 +18,10 @@
 
 namespace dmcresource {
 
+namespace motion {
+struct MotionState;
+}
+
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
     dmcresource::ProbeResult probe;
@@ -53,6 +57,17 @@ struct Session {
     std::string detail;
     std::string trace;
     bool renderable{};
+
+    // Motions discovered while assembling a PAC (read-only copies of the
+    // retained payloads). Played through motion::load_motion.
+    struct MotionPayload final {
+        std::string name;
+        std::vector<std::uint8_t> bytes;
+    };
+    std::vector<MotionPayload> motion_library;
+
+    // Bound MOT playback state (read-only preview; see motion/motion_player.h).
+    std::shared_ptr<motion::MotionState> motion;
 
     std::shared_ptr<const UvGallery> uv_gallery;
     std::optional<std::size_t> uv_map_index;

@@ -29,6 +29,28 @@ public final class DmcRenderView extends View {
     private float lastY;
     private long lastRenderMs;
 
+    // MOT playback: frames are MOT timeline units, 60 per second in DMC3.
+    private static final float MOTION_FRAMES_PER_SECOND = 60.0f;
+    private static final long MOTION_MIN_FRAME_MS = 33;
+    private boolean motionPlaying;
+    private long motionStartMs;
+    private float motionEndFrame;
+    private float motionLoopStartFrame;
+    private final Runnable motionTick = new Runnable() {
+        @Override public void run() {
+            if (!motionPlaying || session == 0) return;
+            final long now = SystemClock.uptimeMillis();
+            if (now - lastRenderMs >= MOTION_MIN_FRAME_MS) {
+                if (!NativeBridge.setMotionFrame(session, currentMotionFrame(now))) {
+                    motionPlaying = false;
+                    return;
+                }
+                renderNow();
+            }
+            postOnAnimation(this);
+        }
+    };
+
     public DmcRenderView(Context context) {
         super(context);
         setBackgroundColor(0xff121216);
@@ -80,7 +102,39 @@ public final class DmcRenderView extends View {
         invalidate();
     }
 
+    private float currentMotionFrame(long nowMs) {
+        final float elapsed = (nowMs - motionStartMs) * (MOTION_FRAMES_PER_SECOND / 1000.0f);
+        if (motionEndFrame <= 0.0f || elapsed <= motionEndFrame) return elapsed;
+        final float loopSpan = motionEndFrame - motionLoopStartFrame;
+        if (loopSpan <= 0.0f) return motionEndFrame;
+        return motionLoopStartFrame + ((elapsed - motionEndFrame) % loopSpan);
+    }
+
+    /** Start looping the MOT currently bound to the native session. */
+    public boolean startMotion() {
+        if (session == 0 || staticImagePreview || !NativeBridge.hasMotion(session)) return false;
+        motionEndFrame = NativeBridge.motionEndFrame(session);
+        motionLoopStartFrame = NativeBridge.motionLoopStartFrame(session);
+        motionStartMs = SystemClock.uptimeMillis();
+        if (!motionPlaying) {
+            motionPlaying = true;
+            postOnAnimation(motionTick);
+        }
+        return true;
+    }
+
+    /** Freeze on the current pose (the motion stays bound). */
+    public void pauseMotion() {
+        motionPlaying = false;
+        removeCallbacks(motionTick);
+    }
+
+    public boolean isMotionPlaying() {
+        return motionPlaying;
+    }
+
     public void setSession(long newSession) {
+        pauseMotion();
         session = newSession;
         renderFlags = 0;
         hierarchyAvailable = false;
@@ -213,6 +267,11 @@ public final class DmcRenderView extends View {
         if (staticImagePreview) return;
         long now = SystemClock.uptimeMillis();
         if (force || now - lastRenderMs >= 45) renderNow();
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        pauseMotion();
+        super.onDetachedFromWindow();
     }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {

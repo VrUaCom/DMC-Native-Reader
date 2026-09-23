@@ -16,6 +16,8 @@
 
 #include "dmcresource/resource_session.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/motion/motion_player.h"
+#include "dmcresource/pac_assembly.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/spider/session_actions.h"
@@ -441,4 +443,107 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
             static_cast<dmcresource::InspectionTopic>(topic));
         return env->NewStringUTF(dmcresource::format_inspection_tree(document).c_str());
     } catch (...) { return env->NewStringUTF("Information unavailable"); }
+}
+
+// --- Read-only PAC assembly and MOT playback (v34) -------------------------
+// Java supplies handles/file descriptors only; binding, evaluation, skinning
+// and archive classification live in DMCNativeReader::Core. All calls happen
+// on the UI thread that also renders, so a Session is never posed and drawn
+// concurrently.
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePac(
+        JNIEnv*, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return 0;
+    try {
+        return to_handle(dmcresource::pac_assembly::assemble_pac(*session).release());
+    } catch (...) { return 0; }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryCount(
+        JNIEnv*, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return 0;
+    const auto count = session->motion_library.size();
+    return count > static_cast<std::size_t>(std::numeric_limits<jint>::max())
+        ? std::numeric_limits<jint>::max() : static_cast<jint>(count);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryName(
+        JNIEnv* env, jclass, jlong handle, jint index) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr || index < 0 ||
+        static_cast<std::size_t>(index) >= session->motion_library.size()) {
+        return env->NewStringUTF("");
+    }
+    try {
+        return env->NewStringUTF(
+            session->motion_library[static_cast<std::size_t>(index)].name.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotion(
+        JNIEnv* env, jclass, jlong handle, jint index) {
+    Session* session = from_handle(handle);
+    if (session == nullptr || index < 0 ||
+        static_cast<std::size_t>(index) >= session->motion_library.size()) {
+        return env->NewStringUTF("Motion: invalid library index");
+    }
+    try {
+        // Copy: load_motion() may clear/replace state that references the library.
+        const auto payload = session->motion_library[static_cast<std::size_t>(index)];
+        const auto report = dmcresource::motion::load_motion(
+            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        return env->NewStringUTF(report.detail.c_str());
+    } catch (...) { return env->NewStringUTF("Motion: load failed"); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadMotion(
+        JNIEnv* env, jclass, jlong handle, jint fd, jstring filename) {
+    Session* session = from_handle(handle);
+    if (session == nullptr || fd < 0) return env->NewStringUTF("Motion: no model session");
+    try {
+        ReadOnlyMap mapped(fd);
+        if (!mapped.valid()) return env->NewStringUTF("Motion: could not map selected file");
+        const auto name = to_utf8(env, filename);
+        const auto report = dmcresource::motion::load_motion(
+            session, name, mapped.data(), mapped.size());
+        return env->NewStringUTF(report.detail.c_str());
+    } catch (...) { return env->NewStringUTF("Motion: load failed"); }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hasMotion(
+        JNIEnv*, jclass, jlong handle) {
+    return dmcresource::motion::has_motion(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionEndFrame(
+        JNIEnv*, jclass, jlong handle) {
+    return dmcresource::motion::motion_end_frame(from_handle(handle));
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionLoopStartFrame(
+        JNIEnv*, jclass, jlong handle) {
+    return dmcresource::motion::motion_loop_start_frame(from_handle(handle));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setMotionFrame(
+        JNIEnv*, jclass, jlong handle, jfloat frame) {
+    return dmcresource::motion::apply_motion_frame(from_handle(handle), frame)
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearMotion(
+        JNIEnv*, jclass, jlong handle) {
+    dmcresource::motion::clear_motion(from_handle(handle));
 }
