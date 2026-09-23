@@ -1,0 +1,109 @@
+name: DMC Native Reader iOS
+
+# macOS minutes are expensive: run only when the iOS shell or the shared Core
+# changes, never on unrelated commits (PROJECT_AI_CONTEXT.md, CI budget).
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "ios/**"
+      - "app/src/main/cpp/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The shell's C++ boundary against the real Core, under Apple clang.
+      - name: iOS bridge regression (host)
+        run: |
+          set -euxo pipefail
+          cmake -S ios/tests -B build-bridge-test -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-bridge-test -j "$(sysctl -n hw.ncpu)"
+          ctest --test-dir build-bridge-test --output-on-failure
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          set -euxo pipefail
+          cd ios
+          xcodegen generate
+          test -d DMCReader.xcodeproj
+
+      # A simulator build needs no signing identity.
+      - name: Build for iOS Simulator
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project ios/DMCReader.xcodeproj -scheme DMCReader \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify bundle identity and declared document types
+        run: |
+          set -euxo pipefail
+          PLIST="build-sim/Build/Products/Debug-iphonesimulator/DMCReader.app/Info.plist"
+          test -f "$PLIST"
+          pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST"; }
+          pb CFBundleIdentifier | grep -qx 'com.dmcrengine.nativereader'
+          pb CFBundleExecutable | grep -qx 'DMCReader'
+          pb CFBundleShortVersionString | grep -qx '1.0.6'
+          pb CFBundleVersion | grep -qx '33'
+          for uti in scm mod ptx evt tm2; do
+            pb UTExportedTypeDeclarations | grep -q "com.dmcrengine.$uti"
+          done
+          pb UTImportedTypeDeclarations | grep -q 'com.microsoft.dds'
+          pb LSSupportsOpeningDocumentsInPlace | grep -qi true
+
+      # Unsigned device build: installable only through a tool that re-signs
+      # with the user's own Apple ID. Published as a workflow artifact, not a
+      # release: Android has exactly one reviewed publication path and this
+      # workflow must not become a competing one.
+      - name: Build unsigned device app
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project ios/DMCReader.xcodeproj -scheme DMCReader \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euxo pipefail
+          APP="build-device/Build/Products/Release-iphoneos/DMCReader.app"
+          test -d "$APP"
+          file "$APP/DMCReader" | grep -q arm64
+          if codesign -dv "$APP" 2>&1 | grep -q 'Authority='; then
+            echo 'unexpected signing authority on the unsigned build' >&2
+            exit 1
+          fi
+          rm -rf payload && mkdir -p payload/Payload
+          cp -R "$APP" payload/Payload/
+          (cd payload && zip -qry ../DMCReader-unsigned.ipa Payload)
+          unzip -l DMCReader-unsigned.ipa | grep -q 'Payload/DMCReader.app/DMCReader'
+          shasum -a 256 DMCReader-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmc-reader-ios-unsigned-ipa
+          path: DMCReader-unsigned.ipa
+          if-no-files-found: error
