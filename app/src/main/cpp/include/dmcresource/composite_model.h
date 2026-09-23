@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,10 @@
 #include "dmcresource/workspace_graph.h"
 
 namespace dmcresource {
+
+namespace motion {
+struct ClothState;
+}  // namespace motion
 
 inline constexpr std::size_t kNoCompositePart =
     std::numeric_limits<std::size_t>::max();
@@ -53,6 +58,9 @@ struct CompositePlacement final {
     // HostJointSkeleton with constraints: listed nodes copy their host
     // joint's world, every other node composes local x parent as usual.
     std::vector<CompositeNodeConstraint> node_constraints;
+    // Chain/cloth simulation of listed nodes (.clt, solver 0x1402C9450);
+    // shared so copies of the placement keep one running state.
+    std::shared_ptr<motion::ClothState> cloth;
 };
 
 // One canonical source MOD inside a composite scene. asset_id / instance_id are

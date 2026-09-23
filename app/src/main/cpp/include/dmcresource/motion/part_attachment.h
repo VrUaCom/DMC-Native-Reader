@@ -29,6 +29,32 @@ inline constexpr std::uint32_t kPlayerCoatHostJoint = 3U;
 inline constexpr std::uint32_t kPlayerBodySlot = 1U;
 inline constexpr std::uint32_t kPlayerCoatSlot = 12U;
 inline constexpr std::uint32_t kPlayerTextureSlot = 0U;
+// IPlayer coat chain parameters (";pl000_02.clt" in the sample pl000.pac).
+inline constexpr std::uint32_t kPlayerCoatClothSlot = 13U;
+
+// Chain (.clt) slot driving a model slot of an enemy archive: CEm028 init
+// 0x140130480 caches slots 7/8 for hair/dress; CEm000..CEm003 inits pair each
+// cloth model with the slot before it (0x140097B40 .. 0x1400A6BD0).
+struct EnemyClothSource final {
+    std::string_view pac_stem;
+    std::uint32_t model_slot;
+    std::uint32_t clt_slot;
+};
+
+inline constexpr std::array<EnemyClothSource, 8> kEnemyClothSources{{
+    {"em028", 4U, 7U},
+    {"em028", 5U, 8U},
+    {"em000", 3U, 2U},
+    {"em000", 7U, 6U},
+    {"em000", 10U, 9U},
+    {"em000", 12U, 11U},
+    {"em000", 15U, 14U},
+    {"em000", 17U, 16U},
+}};
+
+// Match "<stem>.pac" (any directory, any case) and a model slot to its .clt slot.
+[[nodiscard]] std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
+                                                            std::uint32_t model_slot) noexcept;
 
 struct WeaponAttachRecord final {
     std::string_view class_name;
@@ -238,6 +264,19 @@ inline constexpr std::array<WeaponMotionBank, 15> kDanteWeaponMotionBanks{{
 // Re-pose every HostJointSkeleton part from its host joint's current world.
 // Called after the host moved (MOT frame) and after attachment.
 [[nodiscard]] bool apply_part_attachments(Session* session) noexcept;
+// Same, advancing every attached cloth by `cloth_steps` solver frames (dt 1).
+[[nodiscard]] bool apply_part_attachments(Session* session, std::uint32_t cloth_steps) noexcept;
+
+// Forget the simulated chain state (next pose restarts from the rest pose).
+void reset_part_cloth(Session* session) noexcept;
+
+// Simulate the nodes listed by `clt_text` (first cloth block) on an attached
+// part and settle it for `settle_steps` frames from its current pose.
+// Returns the number of simulated nodes (0 = not a cloth file / no match).
+[[nodiscard]] std::size_t attach_part_cloth(Session* session,
+                                            std::size_t part,
+                                            std::string_view clt_text,
+                                            std::uint32_t settle_steps = 60U) noexcept;
 
 [[nodiscard]] bool is_attached_part(const Session* session, std::size_t part) noexcept;
 

@@ -17,6 +17,7 @@ struct AssemblyReport final {
     std::size_t motions{};
     std::size_t shadows{};
     std::size_t shadows_bound{};
+    std::size_t cloth_parts{};  // parts with a running .clt chain
     std::size_t nested_archives{};
     std::size_t attached_parts{};
     std::size_t effect_models_skipped{};

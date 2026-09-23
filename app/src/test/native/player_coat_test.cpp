@@ -1,4 +1,5 @@
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
@@ -675,6 +676,49 @@ int main() {
         assert(motion::enemy_constraints_for("em028.pac", 5U).has_value());
         assert(!motion::enemy_constraints_for("em028.pac", 7U).has_value());
         assert(!motion::enemy_constraints_for("em029.pac", 4U).has_value());
+    }
+
+    // CLT text (";pl000_02.clt" layout) and one chain solver node (0x1402C9450).
+    {
+        constexpr std::string_view clt =
+            ";test.clt\n\nClothNum\t1\n\nClothNo     0\nClothId     0\n"
+            "Gravity     0.500000  0.000000  0.000000\nSpringForce 0.020000\n"
+            "MaxSpeed    50.000000\nStiffness   0.000000\n"
+            "Wind        0.000000  0.000000  0.000000\nWindLocal   1\nWindParent  0\n"
+            "WindType    1\nBone      1    Y\nBone      2    NZ\nEnd\n$\n";
+        const auto blocks = motion::parse_clt(clt);
+        assert(blocks.size() == 1U);
+        const auto& params = blocks.front();
+        assert(near(params.gravity[0], 0.5F) && near(params.stiffness, 0.0F));
+        assert(near(params.spring_force, 0.02F) && params.wind_local && params.limit_length);
+        assert(near(params.damping, 0.99F) && near(params.floor_level, -1000000.0F));
+        assert(params.bones.size() == 2U && params.bones[0].node == 1U &&
+               params.bones[0].axis == 1U && params.bones[1].axis == 5U);
+        assert(motion::parse_clt("ClothNo 0\n").empty());
+
+        motion::ClothState state;
+        state.params = params;
+        state.sim.assign(2U, {});
+        state.velocity.assign(2U, {});
+        state.axis_by_node = {-1, 1};
+        std::array<float, 16> parent{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        auto target = parent;
+        target[13] = -10.0F;  // rest: 10 below the parent, +Y points at it
+        state.sim[1] = target;
+        std::array<float, 16> world{};
+        for (int frame = 0; frame < 300; ++frame) {
+            world = motion::step_cloth_node(state, 1U, target, parent, parent, 10.0F, 1.0F);
+        }
+        const float length = std::sqrt(world[12] * world[12] + world[13] * world[13] +
+                                       world[14] * world[14]);
+        assert(near(length, 10.0F));        // LimitLength keeps the bone length
+        assert(world[12] > 5.0F);           // sideways gravity swung it out
+        const float up = (0.0F - world[12]) * world[4] + (0.0F - world[13]) * world[5] -
+                         world[14] * world[6];
+        assert(near(up, 10.0F));            // Y axis still points at the parent
+        state.axis_by_node[1] = -1;
+        const auto kept = motion::step_cloth_node(state, 1U, target, parent, parent, 10.0F, 1.0F);
+        assert(near(kept[13], -10.0F));     // not simulated: rest target unchanged
     }
 
     // The same layout under a non-player name is not guessed at.

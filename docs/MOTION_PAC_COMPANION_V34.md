@@ -147,7 +147,7 @@ from body joints 14 / 8 / 12 as `[this+0x3254]`/`[this+0x3258]` say, the
 weapon from body joint 9 with the recorded offset (T(-15, -61.4, -18.9),
 R(0.207, 0, 0); CEm004 its own), built in 0x1403304A0's Rz·Ry·Rx order.
 Models no class loads at spawn (slots 4, 19, 21, 33: likely death / sand) are
-not shown. Cloth stays in rest shape (CLT not simulated).
+not shown. Cloth is simulated since v44 (below).
 
 **Position buttons (v43).** Archives with several in-game looks show one
 button per position under the title; tapping one re-assembles that look
@@ -160,6 +160,20 @@ button per position under the title; tapping one re-assembles that look
   "draw" (loops `0x140303460`/`0x140303DE0`); Nevan sets it on the dress strip
   (slot 5 objects 2-3) only while bats are out, so "Bats in" hides those
   triangles.
+
+**Chain/cloth simulation (v44).** `.clt` text slots are parsed
+(`motion/cloth_chain.cpp`; parser `0x1402CA345`/`0x1402CA42A`, defaults
+`0x1402CA000`) and every listed bone runs the per-node step `0x1402C9450`:
+the axis turns toward the parent, the result is blended with the rest pose by
+Stiffness, wind and Gravity change the velocity, LimitLength keeps the bone
+length with a SpringForce pull-back, speed is clamped to MaxSpeed and damped by
+0.99, and the floor clamp is applied. Bindings: player coat slot 12 <- slot 13,
+em028 hair 4 <- 7 and dress 5 <- 8, em000 cloth slot N <- N-1. The solver runs
+once per elapsed motion frame (dt 1, at most 6 per update); a new motion
+restarts the chains from its first frame and settles them for 30 frames, and a
+fresh assembly settles them for 60. Capsule collisions (`c+0x48`/`c+0x58`) are
+not ported, so a coat can pass through legs. Evidence: rengine
+`docs/research/dmc3-cloth-chain-solver-2026-09-23.md`.
 
 ### 3.2 MOT playback
 
@@ -253,6 +267,5 @@ NBZ, EFM, MRP adapters). PNST is read by `formats.pnst.archive-reader`
 2. Parent-scale compensation from `0x14030E9B0`.
 3. Model Set pairing (`0x1402D83E0`) instead of slot adjacency.
 4. Stage light for SHW (`[shw+0x60]`) and the culling tests `0x140320950`/`0x1403206F0`.
-5. Cloth (CLT/C1D) and enemy chains (`0x1402C9DC0`) — needs a parser and the
-   chain parameters before any physics can be shown.
+5. Chain capsule collisions (`c+0x48`/`c+0x58`), WindType, and C1D files.
 6. Node constraints of other enemy classes (only CEm028 is tabled).

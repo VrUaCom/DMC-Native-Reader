@@ -6,7 +6,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 **Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
 **Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
-**Active candidate:** **v43 / versionName 1.0.16 / versionCode 43** (MOT playback, PAC/PNST, player coat, weapon PACs incl. Agni & Rudra, enemy node constraints (Nevan), SHW shadow hulls and floor shadows, community-made PTX with orange non-canonical marker, weapon motion banks labelled, position buttons for enemy classes / weapons / Nevan's dress; previous v42 / 1.0.15)  
+**Active candidate:** **v44 / versionName 1.0.17 / versionCode 44** (MOT playback, PAC/PNST, player coat, weapon PACs incl. Agni & Rudra, enemy node constraints (Nevan), SHW shadow hulls and floor shadows, community-made PTX with orange non-canonical marker, weapon motion banks labelled, position buttons for enemy classes / weapons / Nevan's dress, .clt chain/cloth simulation of Dante's coat, Nevan's hair and dress and the em000 cloaks; previous v43 / 1.0.16)  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  

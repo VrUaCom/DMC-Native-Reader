@@ -22,8 +22,8 @@ import subprocess
 from typing import NoReturn, Sequence
 
 DEFAULT_PACKAGE = "com.dmcrengine.nativereader"
-EXPECTED_VERSION_CODE = "43"
-EXPECTED_VERSION_NAME = "1.0.16"
+EXPECTED_VERSION_CODE = "44"
+EXPECTED_VERSION_NAME = "1.0.17"
 MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 ART_COMPILE_NONE = "none"
 ART_COMPILE_SPEED = "speed"

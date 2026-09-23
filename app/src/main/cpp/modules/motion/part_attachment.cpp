@@ -1,5 +1,6 @@
 #include "dmcresource/motion/part_attachment.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -9,6 +10,7 @@
 
 #include "dmc_rengine/analysis/mod/animation_binding.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/skeleton_rig.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/scene_projection.h"
@@ -67,7 +69,7 @@ struct Range final {
     return true;
 }
 
-[[nodiscard]] bool pose_part(Session* session, std::size_t part_index) {
+[[nodiscard]] bool pose_part(Session* session, std::size_t part_index, std::uint32_t cloth_steps = 0U) {
     auto& part = session->composite_parts[part_index];
     const auto& placement = part.placement;
     if (placement.mode != CompositePlacementMode::HostJointSkeleton ||
@@ -122,42 +124,83 @@ struct Range final {
         if (root < count) locals[root] = world::identity_matrix();
     }
 
+    ClothState* cloth = placement.cloth.get();
+    if (cloth != nullptr &&
+        (cloth->sim.size() != count || cloth->velocity.size() != count ||
+         cloth->axis_by_node.size() != count)) {
+        cloth = nullptr;
+    }
     std::optional<std::vector<world::Matrix4f>> current;
-    if (placement.node_constraints.empty()) {
+    if (placement.node_constraints.empty() && cloth == nullptr) {
         current = animation::build_animated_world_matrices(domain, locals, root_base);
     } else {
         // 0x14030E680: a joint with an enabled constraint takes its world from
-        // the constraint (mode 1: offset x host world, 0x1402CBBE0); the other
-        // joints compose local x parent (0x14030E9B0).
+        // the constraint (mode 1: offset x host world, 0x1402CBBE0; chain
+        // nodes: 0x1402C9450); the other joints compose local x parent
+        // (0x14030E9B0).
         const auto binding = animation::project_animation_binding(domain);
         if (!binding || binding->by_node_index.size() != count) return false;
-        current.emplace(count);
-        for (std::size_t position = 0U; position < count; ++position) {
-            const auto node = static_cast<std::size_t>(binding->node_at_order_position[position]);
-            if (node >= count) return false;
-            const CompositeNodeConstraint* constraint = nullptr;
-            for (const auto& candidate : placement.node_constraints) {
-                if (candidate.child_node == node) constraint = &candidate;
+        current.emplace(count, root_base);
+        const bool step = cloth != nullptr && (cloth_steps > 0U || !cloth->initialized);
+        const std::uint32_t passes = step ? std::max<std::uint32_t>(cloth_steps, 1U) : 1U;
+        for (std::uint32_t pass = 0U; pass < passes; ++pass) {
+            for (std::size_t position = 0U; position < count; ++position) {
+                const auto node =
+                    static_cast<std::size_t>(binding->node_at_order_position[position]);
+                if (node >= count) return false;
+                const CompositeNodeConstraint* constraint = nullptr;
+                for (const auto& candidate : placement.node_constraints) {
+                    if (candidate.child_node == node) constraint = &candidate;
+                }
+                if (constraint != nullptr) {
+                    if (constraint->host_node >= host_nodes->count) return false;
+                    world::Matrix4f joint{};
+                    joint.values =
+                        session->scene.nodes[host_nodes->begin + constraint->host_node].world.values;
+                    world::Matrix4f local_offset{};
+                    local_offset.values = constraint->offset.values;
+                    (*current)[node] = world::multiply_dmc3_matrices(local_offset, joint);
+                    continue;
+                }
+                const auto parent = binding->by_node_index[node].parent_node_index;
+                const world::Matrix4f* parent_world = nullptr;
+                if (parent < 0) {
+                    parent_world = &root_base;
+                } else if (static_cast<std::size_t>(parent) < count) {
+                    parent_world = &(*current)[static_cast<std::size_t>(parent)];
+                } else {
+                    return false;
+                }
+                const auto target = world::multiply_dmc3_matrices(locals[node], *parent_world);
+                if (cloth == nullptr || cloth->axis_by_node[node] < 0) {
+                    (*current)[node] = target;
+                    continue;
+                }
+                if (!cloth->initialized) {
+                    cloth->sim[node] = target.values;
+                    cloth->velocity[node] = {};
+                }
+                if (!step) {
+                    (*current)[node].values = cloth->sim[node];
+                    continue;
+                }
+                const auto wind_parent = static_cast<std::size_t>(
+                    std::max(cloth->params.wind_parent, 0));
+                const auto& wind_world =
+                    wind_parent < count ? (*current)[wind_parent] : root_base;
+                const auto& t = locals[node].values;
+                const float rest = std::sqrt(t[12] * t[12] + t[13] * t[13] + t[14] * t[14]);
+                (*current)[node].values = step_cloth_node(
+                    *cloth, static_cast<std::uint32_t>(node), target.values,
+                    parent_world->values, wind_world.values, rest, 1.0F);
+                if (!finite((*current)[node].values)) {
+                    // Diverged: restart this node from its rest target.
+                    cloth->sim[node] = target.values;
+                    cloth->velocity[node] = {};
+                    (*current)[node] = target;
+                }
             }
-            if (constraint != nullptr) {
-                if (constraint->host_node >= host_nodes->count) return false;
-                world::Matrix4f joint{};
-                joint.values =
-                    session->scene.nodes[host_nodes->begin + constraint->host_node].world.values;
-                world::Matrix4f local_offset{};
-                local_offset.values = constraint->offset.values;
-                (*current)[node] = world::multiply_dmc3_matrices(local_offset, joint);
-                continue;
-            }
-            const auto parent = binding->by_node_index[node].parent_node_index;
-            if (parent < 0) {
-                (*current)[node] = world::multiply_dmc3_matrices(locals[node], root_base);
-            } else if (static_cast<std::size_t>(parent) < count) {
-                (*current)[node] = world::multiply_dmc3_matrices(
-                    locals[node], (*current)[static_cast<std::size_t>(parent)]);
-            } else {
-                return false;
-            }
+            if (cloth != nullptr) cloth->initialized = true;
         }
     }
     const auto inverse_rest = world::build_model_space_inverse_rest_matrices(domain);
@@ -315,19 +358,91 @@ std::optional<EnemyPartConstraints> enemy_constraints_for(std::string_view archi
     return std::nullopt;
 }
 
+std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
+                                              std::uint32_t model_slot) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    for (const auto& record : kEnemyClothSources) {
+        if (record.model_slot != model_slot) continue;
+        const auto& stem = record.pac_stem;
+        if (archive_name.size() != stem.size() + 4U) continue;
+        bool match = true;
+        for (std::size_t i = 0U; i < archive_name.size() && match; ++i) {
+            const char expected = i < stem.size() ? stem[i] : ".pac"[i - stem.size()];
+            match = std::tolower(static_cast<unsigned char>(archive_name[i])) == expected;
+        }
+        if (match) return record.clt_slot;
+    }
+    return std::nullopt;
+}
+
 bool apply_part_attachments(Session* session) noexcept {
+    return apply_part_attachments(session, 0U);
+}
+
+bool apply_part_attachments(Session* session, std::uint32_t cloth_steps) noexcept {
     if (session == nullptr) return false;
     try {
         bool ok = true;
         for (std::size_t part = 0U; part < session->composite_parts.size(); ++part) {
             if (session->composite_parts[part].placement.mode ==
                 CompositePlacementMode::HostJointSkeleton) {
-                ok = pose_part(session, part) && ok;
+                ok = pose_part(session, part, cloth_steps) && ok;
             }
         }
         return ok;
     } catch (...) {
         return false;
+    }
+}
+
+void reset_part_cloth(Session* session) noexcept {
+    if (session == nullptr) return;
+    for (auto& part : session->composite_parts) {
+        if (part.placement.cloth != nullptr) part.placement.cloth->initialized = false;
+    }
+}
+
+std::size_t attach_part_cloth(Session* session,
+                              std::size_t part_index,
+                              std::string_view clt_text,
+                              std::uint32_t settle_steps) noexcept {
+    if (session == nullptr || part_index >= session->composite_parts.size()) return 0U;
+    try {
+        auto& part = session->composite_parts[part_index];
+        if (part.placement.mode != CompositePlacementMode::HostJointSkeleton ||
+            part.scene.rig == nullptr || part.scene.rig->node_count() != part.scene.nodes.size()) {
+            return 0U;
+        }
+        auto blocks = parse_clt(clt_text);
+        if (blocks.empty()) return 0U;
+        const auto count = part.scene.rig->node_count();
+        auto state = std::make_shared<ClothState>();
+        state->params = std::move(blocks.front());
+        state->sim.assign(count, {});
+        state->velocity.assign(count, {});
+        state->axis_by_node.assign(count, -1);
+        std::size_t simulated = 0U;
+        for (const auto& bone : state->params.bones) {
+            if (bone.node >= count || bone.node == 0U) continue;
+            if (state->axis_by_node[bone.node] < 0) ++simulated;
+            state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
+        }
+        if (simulated == 0U) return 0U;
+        const auto previous = part.placement.cloth;
+        part.placement.cloth = state;
+        if (!pose_part(session, part_index, std::max<std::uint32_t>(settle_steps, 1U))) {
+            part.placement.cloth = previous;
+            (void)pose_part(session, part_index);
+            return 0U;
+        }
+        HierarchyOverlay overlay;
+        if (materialize_hierarchy_overlay(session->scene, &overlay)) {
+            session->hierarchy_overlay = std::move(overlay);
+        }
+        return simulated;
+    } catch (...) {
+        return 0U;
     }
 }
 

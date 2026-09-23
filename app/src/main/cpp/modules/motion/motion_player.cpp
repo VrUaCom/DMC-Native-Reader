@@ -1,5 +1,6 @@
 #include "dmcresource/motion/motion_player.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -104,6 +105,8 @@ struct MotionState final {
     HierarchyOverlay source_overlay;
     float end_frame{};
     float loop_start_frame{};
+    // Last evaluated frame; cloth advances one solver step per game frame.
+    float last_frame{-1.0F};
 };
 
 namespace {
@@ -332,8 +335,21 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 session->scene.nodes[part.node_begin + node].world = placed_world;
             }
         }
-        // Parts hanging from a host joint follow the freshly posed host.
-        (void)apply_part_attachments(session);
+        // Parts hanging from a host joint follow the freshly posed host; chain
+        // nodes advance by the frames elapsed (dt 1 per 60 fps frame, at most
+        // 6 so a seek does not explode the solver; a loop restart is 1).
+        std::uint32_t cloth_steps = 30U;
+        if (state.last_frame < 0.0F) {
+            // New motion: restart the chains from the first frame's rest pose.
+            reset_part_cloth(session);
+        } else {
+            const float delta = frame - state.last_frame;
+            cloth_steps = delta < 0.0F
+                ? 1U
+                : static_cast<std::uint32_t>(std::min(std::lround(delta), 6L));
+        }
+        state.last_frame = frame;
+        (void)apply_part_attachments(session, cloth_steps);
         HierarchyOverlay overlay;
         if (materialize_hierarchy_overlay(session->scene, &overlay)) {
             session->hierarchy_overlay = std::move(overlay);

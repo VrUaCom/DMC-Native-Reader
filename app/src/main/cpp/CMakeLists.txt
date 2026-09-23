@@ -96,6 +96,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/motion_clip.cpp
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
+    modules/motion/cloth_chain.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
     modules/shadow_hull.cpp

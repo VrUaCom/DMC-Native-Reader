@@ -381,6 +381,39 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                 }
             }
+            // Chains (.clt text slots): player coat slot 12 <- slot 13, enemy
+            // model slots per kEnemyClothSources; solver 0x1402C9450.
+            {
+                const auto clt_text = [&](std::uint32_t slot) -> std::string_view {
+                    for (const auto& e : entries) {
+                        if (e.archive != 0U || !e.container.empty() || e.slot != slot) continue;
+                        const auto& bytes = *e.bytes;
+                        if (bytes.empty() || bytes.front() != ';') return {};
+                        return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+                    }
+                    return {};
+                };
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    const auto& entry = entries[model_entry[part]];
+                    if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                    std::optional<std::uint32_t> clt_slot;
+                    if (player) {
+                        if (coat && part == *coat) clt_slot = motion::kPlayerCoatClothSlot;
+                    } else {
+                        clt_slot = motion::enemy_cloth_slot(archive_name, *entry.slot);
+                    }
+                    if (!clt_slot) continue;
+                    const auto text = clt_text(*clt_slot);
+                    if (text.empty()) continue;
+                    const auto nodes = motion::attach_part_cloth(assembled.get(), part, text);
+                    if (nodes > 0U) {
+                        ++report.cloth_parts;
+                        report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
+                            "<-clt" + std::to_string(*clt_slot) + "(" + std::to_string(nodes) +
+                            " nodes)";
+                    }
+                }
+            }
             // Model objects the selected position does not draw (MOD object bit 0).
             if (position != nullptr && position->hide_count > 0U) {
                 for (std::size_t part = 0U; part < model_entry.size(); ++part) {
@@ -496,6 +529,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " motions=" + std::to_string(report.motions) +
             " shadowRecords=" + std::to_string(report.shadows) +
             " shadowsBound=" + std::to_string(report.shadows_bound) +
+            " cloth=" + std::to_string(report.cloth_parts) +
             " nestedArchives=" + std::to_string(report.nested_archives) +
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +
