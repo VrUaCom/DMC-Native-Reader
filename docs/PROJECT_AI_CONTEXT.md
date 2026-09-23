@@ -1,6 +1,6 @@
 # DMC Native Reader — Project AI Context, Standards & Rules
 
-Date: 2026-09-18
+Date: 2026-09-18 (amended 2026-09-23: v32 recovery-facade incident, section 7)
 Scope: `VrUaCom/DMC-Native-Reader` only.
 Audience: project owner + AI/engineering agents working inside this private repository/project.
 
@@ -242,6 +242,55 @@ Canonical current Android architecture:
 - 16 KiB ZIP/ELF page-alignment requirements;
 - package/native/Dex size budgets remain release gates.
 
+### Forbidden anti-pattern: out-of-repo "recovery facade" APK (v32 incident, 2026-09-23)
+
+This section records a real failure so that no agent repeats it.
+
+**What happened.** The owner installed `DMC-Native-Reader-v32-SCM-authority-recovery.apk` (versionCode `32`, versionName `1.0.5`, SHA-256 `a6b950e0651c3efcba35987d0120cd72b2f09d120d2f641c22b599d96a569e6f`) on the acceptance Samsung. The app launched, then **crashed every time a file was opened**.
+
+**What the artifact actually was.** Binary inspection showed it violates every point of the one-DSO contract above:
+
+```text
+lib/arm64-v8a/libdmcviewer.so    12 KiB  -> dlopen libdmcshim31.so
+lib/arm64-v8a/libdmcshim31.so    22 KiB  -> dlopen libdmcshim30.so
+lib/arm64-v8a/libdmcshim30.so   5.9 MiB  -> dlopen libdmccore00.so
+lib/arm64-v8a/libdmccore00.so   1.7 MiB  (real implementation)
+```
+
+- four packaged DSOs instead of one; every level exports the same 19 JNI entry points and forwards them downward through `dlsym`;
+- the top DSO has **no `DT_NEEDED` entries at all** and imports only `dlopen`, `dlsym`, `pread`, `snprintf`;
+- its own strings state the intent: *"Recovery facade: rendering/geometry delegated to verified v31 native stack."* — i.e. a fix was attempted by wrapping an older build's binaries instead of fixing source;
+- DSOs stored **compressed** with `extractNativeLibs=true` instead of uncompressed/mmap-ready;
+- **its source exists on none of the 53 `origin` branches.** The strings `Recovery facade`, `lower_symbol` and `dmc_native_reader_scm_authority_marker` appear nowhere in repository history. The build was assembled outside the repository and is not reproducible or fixable at source.
+
+**Why every existing safeguard missed it.** The one-DSO rule, the 16 KiB checks, the JNI parity check and the size gates all live in this repository's CMake/Gradle/CI and in `tools/verify_device_apk.py`. An APK that was never built from this repository never passes through any of them. `tools/verify_device_apk.py` did not help after the fact either: it pins one release identity and stopped at `Wrong release identity` before running any architecture check, so it produced **no signal** on the artifact that mattered.
+
+**Root cause status.** The exact crashing instruction was not captured (no logcat was available). JNI parity (19/19), `dlsym` null handling and the facade's SCM format strings were checked and ruled out. The defect lives somewhere in the undocumented shim chain; since that code is not in the repository it cannot be patched, only replaced.
+
+**Resolution.** A clean debug APK built by the canonical Gradle build from `main` `aaf02dc` (single 1.3 MiB `libdmcviewer.so`, no `dlopen`, ZIP + all ELF `PT_LOAD` aligned at 16384, `tools/verify_device_apk.py` exit 0) was installed as an update over v32. The owner confirmed on 2026-09-23 that it opens files and works on the acceptance Samsung.
+
+#### Rules that follow from this incident
+
+1. **Never hand the owner, or promote, a binary that was not produced by the canonical build from a committed SHA in this repository.** "Committed" means pushed to `origin`, so another agent can rebuild the same bytes.
+2. **Never fix a regression by wrapping, patching or delegating to binaries from an earlier build.** No recovery facades, no shim chains, no `.so` files lifted out of old APKs, no "delegate to the verified vN stack". Find the owning layer (section 13) and fix the source there. If the source fix is not ready, say so and ship nothing, or ship the last known-good build from its own committed SHA.
+3. **A crash report on a device build starts with provenance, not with the decoder.** Before debugging code, establish which commit produced the APK. If that cannot be established, the artifact is untrusted and the first step is to rebuild from a known SHA.
+4. **Triage an unknown APK in one minute** before reading any source:
+   ```bash
+   unzip -l app.apk | grep '\.so$'                          # must be exactly one: libdmcviewer.so
+   llvm-readelf -d libdmcviewer.so | grep NEEDED            # must list libc etc.; empty is a red flag
+   llvm-readelf --dyn-syms libdmcviewer.so | grep -E ' UND (dlopen|dlsym)$'   # must be empty
+   aapt2 dump xmltree app.apk --file AndroidManifest.xml | grep extractNativeLibs  # must not be =true
+   ```
+   Any failing line means the artifact is off-contract; do not debug its behaviour, replace it.
+
+#### Proposed hardening (not yet implemented — needs owner approval and a review gate)
+
+The rules above depend on agents reading this document. These changes would make the mistake detectable by tooling instead:
+
+1. **Build identity inside the APK.** `buildFeatures.buildConfig` is already enabled. Add a `GIT_SHA` / `GIT_DIRTY` `BuildConfig` field from Gradle and show it in the app's info panel, mirroring the Windows shell's build-SHA identity (`b0dd4e1`). Every device report then names its commit, and an APK showing no SHA, a dirty tree or a SHA absent from `origin` is recognisably not a product build.
+2. **An architecture-only mode for `tools/verify_device_apk.py`.** Add a flag that skips release-identity pinning and runs only the structural contract: one DSO, no `libdmcshim*` / `libdmccore*`, no `dlopen`/`dlsym` imports in `libdmcviewer.so`, `extractNativeLibs` not `true`, 16 KiB ZIP + ELF alignment, JNI parity. This is an extension of the existing verifier, not a second one, and must be covered by `tools/test_verify_device_apk.py`. It would have classified the v32 artifact as off-contract in seconds, where the current verifier stopped at `Wrong release identity`.
+3. **Device-test hand-off check.** Before any APK is given to the owner, run mode 2 on the exact file being handed over and include its output (and the APK SHA-256) in the message. An APK without that evidence should not be installed.
+
 ### Weight and duplicate discipline
 Application size is an architecture constraint, not a final cleanup task.
 
@@ -480,10 +529,11 @@ Master tracker: `#34`. Entry card: `#46`.
 ## 13. AI decision rule
 
 Before implementing any fix:
+0. confirm the failing artifact was built from a committed SHA in this repository; if not, replace it with a canonical build before debugging (see the v32 incident in section 7);
 1. identify the correct authority layer;
 2. review current architecture and evidence;
 3. check whether an existing module already owns the responsibility;
-4. reject shortcuts that duplicate authority, hide ambiguity or push game semantics into UI/JNI;
+4. reject shortcuts that duplicate authority, hide ambiguity or push game semantics into UI/JNI — including wrapping or delegating to binaries from an earlier build instead of fixing source;
 5. make the smallest bounded change that preserves source authority;
 6. add regression/evidence;
 7. update the Project task and next review gate.
