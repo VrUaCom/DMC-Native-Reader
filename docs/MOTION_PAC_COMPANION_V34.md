@@ -127,6 +127,16 @@ the lowest rest vertex and the hulls' footprint on it along the light
 direction; the game takes the light from the stage (`[shw+0x60]`), so the
 viewer uses a fixed direction (`shadow::kViewerLightDirection`).
 
+**Weapon motion banks (v41).** Dante's weapon motions live in
+`motion\pl000\pl000_00_N.pac`; the loader `0x1401DF6BE` picks N from
+`0x14058ABC8[weaponId * 4]` and the factory `0x1401DED20` ties ids to classes
+(Rebellion 3, Cerberus 4, Agni & Rudra 5, Nevan 6, Beowulf 7, Ebony & Ivory 8,
+Shotgun 9, Artemis 10, Spiral 11, Kalina Ann 12, ...). Adding such a file with
+`⋮ → Add weapon / .PAC…` puts its motions in the strip as
+"<weapon> · slot_NNNN.mot". `pl000_00_0/1.pac` are the same banks as slots 2/3
+inside `pl000.pac`. The weapon itself stays in its sheathed record during these
+motions; hand-held records are not reversed yet.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
