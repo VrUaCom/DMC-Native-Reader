@@ -4,7 +4,7 @@ Date: 2026-09-23
 Scope: read-only viewer. Nothing here modifies, repacks or writes a DMC file.
 Archive editing (NBZ, repacking) stays in GDSpaces.
 
-Canonical executable used for every address below: `dmc3.exe`,
+Canonical executable referenced by the Rengine evidence: `dmc3.exe`,
 SHA-256 `e454272ed0fb0247fcbcf300e5d55d7a3e96d50b89b9ffaff81bb978dcbdd082`.
 
 ## 1. What changed for the user
@@ -15,70 +15,43 @@ SHA-256 `e454272ed0fb0247fcbcf300e5d55d7a3e96d50b89b9ffaff81bb978dcbdd082`.
 | Hair / coat / other extra `.mod` land in the wrong place | Companion MODs stay in the character's model space. MOD header `+0x13` is reported, no longer used as a geometry root. |
 | `.pac` is not readable | A `.pac` opens as an assembled character/scene (all MODs, paired PTX, MOT library). `⋮ → Browse .PAC files…` lists every slot, and each recognized slot opens in its own viewer (MOD, SCM, PTX, DDS, MOT, nested PAC). |
 
-## 2. Companion MOD placement (hair, coat, accessories)
+## 2. Where the reverse lives
 
-v33 took the child's MOD header byte `+0x13` ("default joint index"), indexed
-the **host's** joint array with it and multiplied the entire child mesh by that
-joint's full world matrix. The executable does not do that:
+The reverse of the original game (EXE addresses, byte receipts, canonical
+implementation) is kept in **dmc-rengine-cpp**, branch
+`claude/devil-microy3-decompile-port-2v8pne`:
 
-- `0x1402FD040` reads `manager+0xFA` (the byte from `+0x13`) and takes only the
-  **translation row** (`+0x30`) of `currentWorld[index]`;
-- `0x14031FA80` does the same: when a linked manager exists (`manager+0x198`,
-  getter `0x1403025E0`, setter `0x140302610`) it indexes the linked manager's
-  `currentWorld` with the model's own `+0xFA`, reads row `+0x30`, and stores a
-  position into `+0x50`. It is a position probe, not a root transform;
-- actor-to-actor geometric attachment (`0x1402DCBAC → 0x140302610`) takes its
-  joint number from actor state (`actor+0x1648`), not from the MOD header.
+- `docs/research/dmc3-mot-animated-local-and-default-joint-scope-2026-09-23.md`
+- `include/dmc_rengine/analysis/mot/animated_local.hpp` (`0x140310310`)
+- `include/dmc_rengine/analysis/mot/key_decode.hpp` → `select_cached_segment2`
+- `include/dmc_rengine/analysis/mot/track_evaluation.hpp` → `evaluate_compression2_track`
+- `tests/mot_animated_local_tests.cpp`
 
-So nothing in the EXE uses `+0x13` to place geometry. Companion MODs are
-authored in the character's model space, and the product default is now
-`CompositeBuilder: placement=source-coordinates`. The selector is still
-reported (`defaultJointSelectors=[...] selectorRole=translation-probe-only`).
-The old behaviour stays available only as an explicit opt-in
+Native Reader holds only the C++23 port and the product code. The vendored
+Rengine pin predates those headers, so `motion/animated_local.*` and
+`evaluate_compression2_track` in `motion_clip.*` are C++23 ports kept in
+lock-step with the Rengine versions until the pin moves.
+
+## 3. Behaviour
+
+### 3.1 Companion MOD placement (hair, coat, accessories)
+
+The executable reads MOD header `+0x13` only as a translation probe, never as
+the root matrix of a model's geometry (see the Rengine note). Companion MODs
+are therefore shown in the character's model space:
+`CompositeBuilder: placement=source-coordinates`, with the selector reported as
+`defaultJointSelectors=[...] selectorRole=translation-probe-only`. The v33
+placement stays available only as an explicit opt-in
 (`BuildOptions::resolve_default_joint_attachments = true`).
 
-## 3. MOT playback
+### 3.2 MOT playback
 
-### 3.1 Animated local matrix (the last open link, now closed)
-
-`0x140310310` runs per motion group. For every joint whose `CMotionJoint+0xF8`
-matches the group:
-
-1. each of the nine channels at `joint+0x120 .. +0x220` (stride `0x20`) is
-   evaluated by `0x1402E9170` when it has a track (`+0x08`), otherwise
-   `current = default` (`+0x04`);
-2. `joint+0x108` (animated local) is reset to identity (`.rdata 0x14035D580..`);
-3. each rotation channel is quantized through a 16-bit angle:
-   `cvttss2si(r * 10430.377)` (`0x4622F982`), low word taken as `int16`, then
-   `* 9.58738e-5` (`0x38C90FDC`) — i.e. wrapped modulo 2π;
-4. the XYZ Euler basis is built by `0x140330450` — the same helper the MOD
-   rest pose uses, so the reader reuses Rengine's `build_local_matrix`;
-5. translation channels are written to row 3 (`+0x30/+0x34/+0x38`), `W = 1`.
-
-Scale is a separate pass (`0x14030E9B0`) that only runs when a factor leaves
-`(0.99999, 1.00001)`. The reader applies non-unit scale to the basis rows
-(`0x14032ED30` convention); the parent-scale compensation inside
-`0x14030E9B0` is **not** reproduced yet. Rest defaults come from
-`0x14030F800`: T and R from the MOD record, scale `1.0`.
-
-World and skin are the already-canonical chain:
-`world[root] = local * rootBase`, `world[child] = local * world[parent]`,
-`skin = inverseRest * world` (Rengine `animation_binding`, `world_transform`).
-
-### 3.2 Track evaluation
-
-`0x1402E9170` switches on the track compression (jump table at `0x1402E962C`):
-
-| compression | handler | reader |
-| --- | --- | --- |
-| 3 | `0x1402E8C80` search + Hermite/linear segment | Rengine `evaluate_compression3_track` |
-| 2 | `0x1402E8FB0` search + linear | `evaluate_compression2_track` (new) |
-| 0, 1, 6, 7 | other forms | channel held at its rest value, counted as `heldAtRest` |
-| 4, 5 | writes 0 | not bound |
-
-`0x1402E8FB0` is instruction-for-instruction the compression-3 search with a
-4-byte key stride instead of 8; value = `u16 * q1 / 65535 + q0`, strictly
-linear between keys.
+Per frame: evaluate the nine channels of every joint (compression 3 through
+Rengine, compression 2 through the port; other compressions keep the rest
+value and are counted as `heldAtRest`), build the animated local matrix,
+compose `world = local × parent`, skin with `inverseRest × world`. Non-unit
+scale is applied to the basis rows only; the parent-scale compensation of the
+game is not reproduced yet.
 
 ### 3.3 Timeline
 
@@ -123,9 +96,11 @@ include/dmcresource/pac_assembly.h            read-only assembly
 modules/module_archive.cpp                    PAC + MOT registry modules
 ```
 
-The MOT parser, motion groups, animation binding and PAC parser are compiled
-from the pinned Rengine checkout into `dmc_native_reader_rengine_viewer`
-(ReaderCore does not list them yet); the submodule itself is untouched.
+The MOT parser, motion groups, animation binding and PAC parser come from the
+pinned Rengine checkout and are rebuilt by Native Reader under its own C++23
+contract in `dmc_native_reader_rengine_viewer` (ReaderCore does not list them
+yet); the submodule itself is untouched. ReaderCore keeps Rengine's own
+language contract.
 
 JNI (thin): `assemblePac`, `motionLibraryCount/Name`, `loadLibraryMotion`,
 `loadMotion`, `hasMotion`, `motionEndFrame`, `motionLoopStartFrame`,

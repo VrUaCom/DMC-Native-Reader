@@ -5,6 +5,11 @@
 
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 
+// C++23 Native Reader port. Reverse authority (EXE addresses, receipts and
+// the canonical C++20 implementation) lives in dmc-rengine-cpp:
+// include/dmc_rengine/analysis/mot/animated_local.hpp and
+// docs/research/dmc3-mot-animated-local-and-default-joint-scope-2026-09-23.md.
+// Keep both in lock-step; the vendored pin predates that header.
 namespace dmcresource::motion {
 
 using Matrix4f = dmc::rengine::formats::mod::world_transform::Matrix4f;

@@ -83,6 +83,7 @@ private:
     bool saw_non_unit_scale_{false};
 };
 
+// C++23 port of dmc-rengine-cpp evaluate_compression2_track (reverse authority).
 // Compression-2 evaluator (0x1402E9170 case 2): same cached key search as
 // compression 3 (0x1402E8FB0 differs from 0x1402E8C80 only in key stride),
 // value = u16 * q1 / 65535 + q0, strictly linear between keys.

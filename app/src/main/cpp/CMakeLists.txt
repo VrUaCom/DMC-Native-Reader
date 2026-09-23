@@ -8,10 +8,11 @@ set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 # Reader consumes it without modifying the submodule during the C++23 migration.
 include(${DMC_RENGINE_VENDOR}/cmake/reader_core.cmake)
 
-# Read-only MOT/PAC slice of the same pinned Rengine checkout. ReaderCore does
-# not yet list these canonical sources, so Native Reader compiles them into a
-# separate static target instead of editing the submodule. Every file here is a
-# parser/evaluator; nothing in this slice writes or repacks resources.
+# Read-only MOT/PAC slice of the pinned Rengine checkout, rebuilt by Native
+# Reader under its own C++23 contract (the target is defined after
+# dmc_native_reader_require_cpp23 below). ReaderCore does not list these
+# canonical sources yet; the submodule itself is never edited. Every file here
+# is a parser/evaluator; nothing in this slice writes or repacks resources.
 set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
     ${DMC_RENGINE_VENDOR}/src/formats/mot/parser.cpp
     ${DMC_RENGINE_VENDOR}/src/analysis/mod/motion_group.cpp
@@ -20,15 +21,6 @@ set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
     ${DMC_RENGINE_VENDOR}/src/formats/relative_slot_container.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
 )
-add_library(dmc_native_reader_rengine_viewer STATIC
-    ${DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES})
-target_link_libraries(dmc_native_reader_rengine_viewer PUBLIC DMCRengine::ReaderCore)
-set_target_properties(dmc_native_reader_rengine_viewer PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
-if(ANDROID)
-    target_compile_options(dmc_native_reader_rengine_viewer PRIVATE
-        -ffunction-sections -fdata-sections)
-endif()
 
 # Native Reader language authority is centralized here and remains target-scoped.
 # Do not use repository-global CMAKE_CXX_STANDARD or Gradle -std= flags because
@@ -42,6 +34,17 @@ function(dmc_native_reader_require_cpp23 target visibility)
         CXX_EXTENSIONS OFF
     )
 endfunction()
+
+add_library(dmc_native_reader_rengine_viewer STATIC
+    ${DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES})
+target_link_libraries(dmc_native_reader_rengine_viewer PUBLIC DMCRengine::ReaderCore)
+dmc_native_reader_require_cpp23(dmc_native_reader_rengine_viewer PRIVATE)
+set_target_properties(dmc_native_reader_rengine_viewer PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+if(ANDROID)
+    target_compile_options(dmc_native_reader_rengine_viewer PRIVATE
+        -ffunction-sections -fdata-sections)
+endif()
 
 # Native Reader product core: platform-neutral C++23 modules only. Android JNI,
 # Swift/ObjC++, Win32 and Web/WASM shells must link this target rather than
