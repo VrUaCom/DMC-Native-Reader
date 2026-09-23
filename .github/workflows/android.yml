@@ -207,7 +207,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='37' versionName='1.0.10'" /tmp/core-badging.txt
+          grep -Fq "versionCode='38' versionName='1.0.11'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
@@ -220,13 +220,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v37-modular-debug
+          name: dmc-native-reader-v38-modular-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v37-modular-release-unsigned
+          name: dmc-native-reader-v38-modular-release-unsigned
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 7
 
@@ -234,7 +234,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v37-phase2-failure-evidence
+          name: dmc-native-reader-v38-phase2-failure-evidence
           path: |
             build/phase2-evidence/
             app/build/outputs/apk/debug/app-debug.apk
@@ -244,7 +244,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v37-phase2-evidence
+          name: dmc-native-reader-v38-phase2-evidence
           path: build/phase2-evidence/
           if-no-files-found: error
           retention-days: 7

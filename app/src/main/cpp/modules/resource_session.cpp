@@ -413,8 +413,21 @@ std::unique_ptr<Session> open_session(std::string_view name,
     auto pipeline = dmcresource::run_decode_pipeline(name, bytes, size);
     if (!pipeline.accepted) return nullptr;
 
+    bool community_ptx = false;
+    for (const auto& module : pipeline.modules) {
+        if (module.name != nullptr &&
+            std::string_view{module.name} == "native.ptx-community-descriptors") {
+            community_ptx = true;
+        }
+    }
     auto trace = pipeline_trace(pipeline);
     auto session = make_session(std::move(pipeline), std::move(trace));
+    if (session && community_ptx) {
+        session->non_canonical_notes.push_back(
+            std::string{name} +
+            ": texture descriptors were written by a community tool; the canonical "
+            "validator rejects them, the viewer reads header, sector spans and DDS only");
+    }
     retain_lazy_child_sources(session.get(), bytes, size);
     return session;
 }

@@ -78,7 +78,13 @@ strict Rengine texture-slot validator reports `descriptor_mismatch`. The
 viewer then reads the bundle leniently — header count, per-slot sector spans,
 the 0x70 descriptor size and the DDS itself — while still rejecting
 structural faults (non-zero sector padding, trailing bytes, bad DDS). The
-session reports `descriptors=community-tool(lenient)`. Default camera now
+session reports `descriptors=community-tool(lenient)`.
+
+**Non-canonical marker (v38).** Anything shown through such a path is recorded
+in `Session::non_canonical_notes` (texture attach, shared bank, per-part
+attach, directly opened PTX). The app shows an orange ▲ in the title bar while
+notes exist; tapping it lists them, and the info sheet repeats them under
+"▲ NOT CANONICAL (shown anyway)". JNI: `nonCanonicalNotes`. Default camera now
 starts in front of the model (DMC3 models face +Z).
 
 ### 3.2 MOT playback

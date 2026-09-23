@@ -347,6 +347,17 @@ int main() {
         assert(session.accepted);
         assert(session.detail.find("community tool") != std::string::npos);
 
+        // The viewer shows it, but the session carries the orange
+        // non-canonical note; the canonical bundle carries none.
+        auto shown = dmcresource::open_session("community.ptx", community.data(),
+                                               community.size());
+        assert(shown && shown->non_canonical_notes.size() == 1U);
+        assert(shown->non_canonical_notes.front().find("community tool") != std::string::npos);
+        const auto canonical = make_ptx_sector_bounded();
+        auto clean = dmcresource::open_session("canonical.ptx", canonical.data(),
+                                               canonical.size());
+        assert(clean && clean->non_canonical_notes.empty());
+
         // Structural faults stay rejected even with community descriptors.
         auto broken = community;
         broken.back() = 1U;

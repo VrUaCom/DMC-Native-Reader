@@ -100,6 +100,9 @@ public final class MainActivity extends Activity {
     private TextView titleView;
     private Button parentButton;
     private Button moreButton;
+    // Orange warning: something on screen was read through a non-canonical path.
+    private Button nonCanonicalBadge;
+    private static final int NON_CANONICAL_ORANGE = 0xffff9800;
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
@@ -304,6 +307,13 @@ public final class MainActivity extends Activity {
         titleView.setText("DMC Native Reader");
         header.addView(titleView, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        nonCanonicalBadge = makeSquareButton("▲", "Shown, but not read canonically", 22f);
+        nonCanonicalBadge.setTextColor(NON_CANONICAL_ORANGE);
+        nonCanonicalBadge.setVisibility(View.GONE);
+        nonCanonicalBadge.setOnClickListener(v -> showNonCanonicalNotes());
+        header.addView(nonCanonicalBadge, new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
         moreButton = makeSquareButton("⋮", "Add or attach DMC resource", 28f);
         moreButton.setOnClickListener(this::showCompanionMenu);
@@ -1052,6 +1062,28 @@ public final class MainActivity extends Activity {
         applyResourceUiState();
     }
 
+    private String nonCanonicalNotes() {
+        if (session == 0) return "";
+        final String notes = NativeBridge.nonCanonicalNotes(session);
+        return notes == null ? "" : notes;
+    }
+
+    private void refreshNonCanonicalBadge() {
+        if (nonCanonicalBadge == null) return;
+        nonCanonicalBadge.setVisibility(nonCanonicalNotes().isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void showNonCanonicalNotes() {
+        final String notes = nonCanonicalNotes();
+        if (notes.isEmpty()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("▲ Shown, not canonical")
+                .setMessage("This view is displayed, but part of it was not read the canonical "
+                        + "way the game data is specified:\n\n" + notes)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
     private void rebuildInfo(String name) {
         final String inspection = session == 0 ? "" : NativeBridge.inspection(session);
         final String nativeInfo = session == 0 ? "" : NativeBridge.info(session);
@@ -1061,6 +1093,10 @@ public final class MainActivity extends Activity {
         details.append(inspection == null || inspection.isEmpty()
                 ? "No typed inspection document.\n"
                 : inspection);
+        final String nonCanonical = nonCanonicalNotes();
+        if (!nonCanonical.isEmpty()) {
+            details.append("\n▲ NOT CANONICAL (shown anyway)\n").append(nonCanonical).append("\n");
+        }
         details.append("\nSESSION / EVIDENCE\n").append(nativeInfo).append("\n");
         if (!navigation.isEmpty()) {
             details.append("\nNAVIGATION\n")
@@ -1076,6 +1112,7 @@ public final class MainActivity extends Activity {
             details.append("MOT cards play on tap (tap again to pause). Physics/cloth companions stay staged: their native runtime is not promoted yet.\n");
         }
         setInfo(details.toString());
+        refreshNonCanonicalBadge();
     }
 
     private void openUri(Uri uri) {

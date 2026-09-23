@@ -38,6 +38,9 @@ public final class NativeBridge {
     public static native boolean attachPtxToPart(long handle, int partIndex,
                                                   int fd, String filename);
     public static native String textureAttachmentInfo(long handle);
+    // Newline-separated reasons the current view is shown but not read
+    // canonically (orange warning). Empty when everything is canonical.
+    public static native String nonCanonicalNotes(long handle);
 
     // Generic nested-resource browser contract. Parent modules publish typed
     // children; Android does not know whether the parent is PTX/PAC/PNST/etc.

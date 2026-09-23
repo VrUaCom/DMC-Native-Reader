@@ -577,3 +577,18 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePacs(
             archives, views, nullptr).release());
     } catch (...) { return 0; }
 }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_nonCanonicalNotes(
+        JNIEnv* env, jclass, jlong handle) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return env->NewStringUTF("");
+    try {
+        std::string joined;
+        for (const auto& note : session->non_canonical_notes) {
+            if (!joined.empty()) joined += "\n";
+            joined += "- " + note;
+        }
+        return env->NewStringUTF(joined.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}

@@ -29,6 +29,10 @@ struct AttachmentResult final {
     std::vector<ImagePreview> textures;
 
     std::string detail;
+    // Non-empty when the pixels were reached through a non-canonical path
+    // (e.g. community-tool PTX descriptors). The viewer still shows them but
+    // must mark the result as non-canonical.
+    std::string non_canonical_reason;
     std::size_t required_slot_count{};
     std::size_t source_texture_count{};
 };
