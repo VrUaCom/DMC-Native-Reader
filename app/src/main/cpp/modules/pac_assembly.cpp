@@ -167,7 +167,13 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 model_entry.push_back(index);
                 texture_for_model.push_back(texture_for(entries, index));
             } else if (entry.kind.format == Format::Mot) {
-                motions.push_back({entry.name, *entry.bytes});
+                // Weapon banks (pl000_00_N.pac) are labelled with their weapon.
+                const auto bank = entry.archive < archive_names.size()
+                    ? motion::weapon_motion_bank(archive_names[entry.archive])
+                    : std::nullopt;
+                motions.push_back({bank ? std::string{bank->weapon_name} + " · " + entry.name
+                                        : entry.name,
+                                   *entry.bytes});
             }
         }
         if (models.empty()) {

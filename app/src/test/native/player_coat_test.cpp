@@ -535,6 +535,29 @@ int main() {
         assert(!motion::weapon_second_part("CPlWpSword").has_value());
     }
 
+    // Weapon motion banks: pl000_00_5.pac holds Agni & Rudra's motions
+    // (0x14058ABC8[2 * 4] = 5); added banks are labelled in the library.
+    {
+        const auto bank = motion::weapon_motion_bank("motion\\pl000\\PL000_00_5.PAC");
+        assert(bank && bank->weapon_id == 2U && bank->class_name == "CPlWp2Sword");
+        assert(motion::weapon_motion_bank("pl000_00_3.pac")->weapon_name == "Rebellion");
+        assert(!motion::weapon_motion_bank("pl000_00_0.pac").has_value());
+        assert(!motion::weapon_motion_bank("pl001_00_5.pac").has_value());
+        std::vector<std::vector<std::uint8_t>> bank_slots{mot};
+        const auto bank_pac = make_pac(bank_slots);
+        auto bank_archive = dmcresource::open_session("pl000_00_5.pac", bank_pac.data(),
+                                                      bank_pac.size());
+        assert(bank_archive != nullptr);
+        const dmcresource::Session* bank_archives[] = {archive.get(), bank_archive.get()};
+        const std::string_view bank_names[] = {"pl001.pac", "pl000_00_5.pac"};
+        dmcresource::pac_assembly::AssemblyReport bank_report;
+        auto with_bank = dmcresource::pac_assembly::assemble_archives(bank_archives, bank_names,
+                                                                      &bank_report);
+        assert(with_bank != nullptr && with_bank->motion_library.size() == 2U);
+        assert(with_bank->motion_library[1].name.starts_with("Agni & Rudra · "));
+        assert(!with_bank->motion_library[0].name.starts_with("Agni"));
+    }
+
     // Euler order of 0x140330450: Rx x Ry x Rz for row vectors (X first). The
     // Rebellion record combines X and Z, so the older Rz x Ry x Rx expansion
     // pointed the blade up instead of down along the back.

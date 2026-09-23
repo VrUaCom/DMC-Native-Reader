@@ -368,6 +368,36 @@ Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
     return attach_local_matrix(record.translation, record.rotation_xyz_radians);
 }
 
+std::optional<WeaponMotionBank> weapon_motion_bank(std::string_view archive_name) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    constexpr std::string_view prefix = "pl000_00_";
+    constexpr std::string_view suffix = ".pac";
+    if (archive_name.size() <= prefix.size() + suffix.size()) return std::nullopt;
+    const auto lower = [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    };
+    for (std::size_t i = 0U; i < prefix.size(); ++i) {
+        if (lower(archive_name[i]) != prefix[i]) return std::nullopt;
+    }
+    const auto tail = archive_name.substr(archive_name.size() - suffix.size());
+    for (std::size_t i = 0U; i < suffix.size(); ++i) {
+        if (lower(tail[i]) != suffix[i]) return std::nullopt;
+    }
+    const auto digits = archive_name.substr(prefix.size(),
+                                            archive_name.size() - prefix.size() - suffix.size());
+    if (digits.empty() || digits.size() > 2U) return std::nullopt;
+    unsigned value = 0U;
+    for (const char c : digits) {
+        if (c < '0' || c > '9') return std::nullopt;
+        value = value * 10U + static_cast<unsigned>(c - '0');
+    }
+    for (const auto& bank : kDanteWeaponMotionBanks) {
+        if (bank.file_index == value) return bank;
+    }
+    return std::nullopt;
+}
+
 std::optional<WeaponSecondPart> weapon_second_part(std::string_view class_name) noexcept {
     for (const auto& part : kWeaponSecondParts) {
         if (part.class_name == class_name) return part;

@@ -115,6 +115,39 @@ inline constexpr std::array<WeaponSecondPart, 1> kWeaponSecondParts{{
 [[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
                                           const std::array<float, 3>& rotation_xyz_radians) noexcept;
 
+// Weapon motion banks. The weapon factory 0x1401DED20 creates the melee
+// classes from ids 0-4, 11, 12, 14 and the gun classes from ids 5-10, 13;
+// Dante's loader 0x1401DF6BE loads motion\\pl000\\pl000_00_N.pac with
+// N = byte 0x14058ABC8[id * 4] through 0x1401B90B0 (path table 0x1405B0F30).
+struct WeaponMotionBank final {
+    std::uint8_t weapon_id;
+    std::string_view class_name;
+    std::string_view weapon_name;  // common name for the class
+    std::uint8_t file_index;       // pl000_00_<file_index>.pac
+};
+
+inline constexpr std::array<WeaponMotionBank, 15> kDanteWeaponMotionBanks{{
+    {0U, "CPlWpSword", "Rebellion", 3U},
+    {1U, "CPlWpNunchaku", "Cerberus", 4U},
+    {2U, "CPlWp2Sword", "Agni & Rudra", 5U},
+    {3U, "CPlWpGuitar", "Nevan", 6U},
+    {4U, "CPlWpFight", "Beowulf", 7U},
+    {5U, "CPlWpGun", "Ebony & Ivory", 8U},
+    {6U, "CPlWpShotGun", "Shotgun", 9U},
+    {7U, "CPlWpLaser", "Artemis", 10U},
+    {8U, "CPlWpRifle", "Spiral", 11U},
+    {9U, "CPlWpLadyGun", "Kalina Ann", 12U},
+    {10U, "CPlWpLadyGun", "Kalina Ann (id 10)", 27U},
+    {11U, "CPlWpNewVergilSword", "Yamato (CPlWpNewVergilSword)", 28U},
+    {12U, "CPlWpFight", "Beowulf (id 12)", 29U},
+    {13U, "CPlWpFoeceEdge", "Force Edge", 30U},
+    {14U, "CPlWpVergilSword", "Yamato (CPlWpVergilSword)", 31U},
+}};
+
+// Match "pl000_00_<N>.pac" (any directory, any case) to its weapon bank.
+[[nodiscard]] std::optional<WeaponMotionBank> weapon_motion_bank(
+    std::string_view archive_name) noexcept;
+
 // Match a PAC file name (any directory, any case, ".pac") to a weapon record.
 [[nodiscard]] std::optional<WeaponAttachRecord> weapon_record_for_archive(
     std::string_view archive_name) noexcept;
