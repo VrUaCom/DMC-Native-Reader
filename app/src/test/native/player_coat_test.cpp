@@ -407,6 +407,49 @@ int main() {
         assert(!motion::weapon_record_for_archive("plwp_gun.pac").has_value());
     }
 
+    // Agni & Rudra: one 3-node MOD, node 2 follows part 0 and node 1 follows
+    // part 1 of the state-0 record (0x1401FDA80, pose 0x140227CF0).
+    {
+        std::vector<std::vector<std::uint8_t>> pair_slots{ptx, coat};  // coat = 3 nodes
+        const auto pair_pac = make_pac(pair_slots);
+        auto pair = dmcresource::open_session("plwp_2sword.pac", pair_pac.data(),
+                                              pair_pac.size());
+        assert(pair != nullptr);
+        const dmcresource::Session* pair_archives[] = {archive.get(), pair.get()};
+        const std::string_view pair_names[] = {"pl001.pac", "plwp_2sword.pac"};
+        dmcresource::pac_assembly::AssemblyReport pair_report;
+        auto dual = dmcresource::pac_assembly::assemble_archives(pair_archives, pair_names,
+                                                                 &pair_report);
+        assert(dual != nullptr && pair_report.attached_parts == 2U);
+        const auto record = motion::weapon_record_for_archive("plwp_2sword.pac");
+        const auto second = motion::weapon_second_part("CPlWp2Sword");
+        assert(record && second && second->first_node == 2U && second->second_node == 1U);
+        const auto first_offset = motion::weapon_offset_matrix(*record);
+        const auto second_offset =
+            motion::attach_local_matrix(second->translation, second->rotation_xyz_radians);
+        const std::size_t base = dual->composite_parts[0].scene.nodes.size() +
+                                 dual->composite_parts[1].scene.nodes.size();
+        const auto& joint3 = dual->scene.nodes[3].world.values;
+        const auto expect = [&](const dmcresource::Matrix4& offset, std::size_t node) {
+            const auto& w = dual->scene.nodes[base + node].world.values;
+            for (std::size_t r = 0U; r < 4U; ++r) {
+                for (std::size_t c = 0U; c < 4U; ++c) {
+                    float v = 0.0F;
+                    for (std::size_t k = 0U; k < 4U; ++k) {
+                        v += offset.values[r * 4U + k] * joint3[k * 4U + c];
+                    }
+                    assert(near(w[r * 4U + c], v));
+                }
+            }
+        };
+        expect(first_offset, 2U);
+        expect(second_offset, 1U);
+        // The blades differ, so they no longer overlap.
+        assert(!near(dual->scene.nodes[base + 1U].world.values[12],
+                     dual->scene.nodes[base + 2U].world.values[12]));
+        assert(!motion::weapon_second_part("CPlWpSword").has_value());
+    }
+
     // Euler order of 0x140330450: Rx x Ry x Rz for row vectors (X first). The
     // Rebellion record combines X and Z, so the older Rz x Ry x Rx expansion
     // pointed the blade up instead of down along the back.

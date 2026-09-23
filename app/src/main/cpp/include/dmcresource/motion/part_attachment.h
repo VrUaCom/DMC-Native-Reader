@@ -89,6 +89,32 @@ inline constexpr std::array<EnemyPartConstraints, 3> kEnemyPartConstraints{{
                                      std::size_t child_part,
                                      std::span<const CompositeNodeConstraint> constraints) noexcept;
 
+// Two-part weapons. CPlWp2Sword (Agni & Rudra) is one MOD whose node 2
+// carries Agni and node 1 Rudra; 0x1401FDA80 builds part 0 from record
+// +0x03/+0x10/+0x20 and part 1 from +0x31/+0x40/+0x50, and pose 0x140227CF0
+// sets node2 = local(part0) x joint(+0x114), node1 = local(part1) x
+// joint(+0x115), node0 = player world. State-0 record 0x14058C1A0.
+struct WeaponSecondPart final {
+    std::string_view class_name;
+    std::uint32_t first_node;   // node driven by the record's first part
+    std::uint32_t second_node;  // node driven by the second part
+    std::uint32_t joint;
+    std::array<float, 3> translation;
+    std::array<float, 3> rotation_xyz_radians;
+};
+
+inline constexpr std::array<WeaponSecondPart, 1> kWeaponSecondParts{{
+    {"CPlWp2Sword", 2U, 1U, 3U, {-13.0F, 32.0F, -14.0F},
+     {-1.6580626964569092F, 0.0F, 3.4033920764923096F}},
+}};
+
+[[nodiscard]] std::optional<WeaponSecondPart> weapon_second_part(
+    std::string_view class_name) noexcept;
+
+// local(T, R) built like the MOD rest local (0x140330450 + 0x140031200).
+[[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
+                                          const std::array<float, 3>& rotation_xyz_radians) noexcept;
+
 // Match a PAC file name (any directory, any case, ".pac") to a weapon record.
 [[nodiscard]] std::optional<WeaponAttachRecord> weapon_record_for_archive(
     std::string_view archive_name) noexcept;

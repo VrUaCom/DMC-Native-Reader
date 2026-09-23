@@ -144,7 +144,9 @@ struct Range final {
                 world::Matrix4f joint{};
                 joint.values =
                     session->scene.nodes[host_nodes->begin + constraint->host_node].world.values;
-                (*current)[node] = world::multiply_dmc3_matrices(offset, joint);
+                world::Matrix4f local_offset{};
+                local_offset.values = constraint->offset.values;
+                (*current)[node] = world::multiply_dmc3_matrices(local_offset, joint);
                 continue;
             }
             const auto parent = binding->by_node_index[node].parent_node_index;
@@ -346,20 +348,31 @@ std::optional<WeaponAttachRecord> weapon_record_for_archive(
     return std::nullopt;
 }
 
-Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
+Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
+                            const std::array<float, 3>& rotation_xyz_radians) noexcept {
     dmc::rengine::formats::mod::transform_domain::LocalTransformRecord local{};
-    local.translation = {record.translation[0], record.translation[1], record.translation[2]};
-    local.rotation_xyz_radians = {record.rotation_xyz_radians[0],
-                                  record.rotation_xyz_radians[1],
-                                  record.rotation_xyz_radians[2]};
+    local.translation = {translation[0], translation[1], translation[2]};
+    local.rotation_xyz_radians = {rotation_xyz_radians[0], rotation_xyz_radians[1],
+                                  rotation_xyz_radians[2]};
     const auto built = world::build_local_matrix(local);
     Matrix4 out;
     out.values = built.values;
-    out.values[12] = record.translation[0];
-    out.values[13] = record.translation[1];
-    out.values[14] = record.translation[2];
+    out.values[12] = translation[0];
+    out.values[13] = translation[1];
+    out.values[14] = translation[2];
     out.values[15] = 1.0F;
     return out;
+}
+
+Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
+    return attach_local_matrix(record.translation, record.rotation_xyz_radians);
+}
+
+std::optional<WeaponSecondPart> weapon_second_part(std::string_view class_name) noexcept {
+    for (const auto& part : kWeaponSecondParts) {
+        if (part.class_name == class_name) return part;
+    }
+    return std::nullopt;
 }
 
 bool is_attached_part(const Session* session, std::size_t part) noexcept {

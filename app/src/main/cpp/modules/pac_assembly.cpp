@@ -1,5 +1,6 @@
 #include "dmcresource/pac_assembly.h"
 
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <new>
@@ -268,8 +269,26 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 const auto record = motion::weapon_record_for_archive(archive_names[a]);
                 if (!record) continue;
                 const auto offset = motion::weapon_offset_matrix(*record);
+                const auto second = motion::weapon_second_part(record->class_name);
                 for (std::size_t part = 0U; part < model_entry.size(); ++part) {
                     if (entries[model_entry[part]].archive != a) continue;
+                    if (second) {
+                        // One MOD, two blades on their own nodes (0x140227CF0).
+                        const std::array<CompositeNodeConstraint, 2> nodes{{
+                            {second->first_node, record->joint, offset},
+                            {second->second_node, second->joint,
+                             motion::attach_local_matrix(second->translation,
+                                                         second->rotation_xyz_radians)},
+                        }};
+                        if (motion::attach_part_nodes(assembled.get(), *body, part, nodes)) {
+                            ++report.attached_parts;
+                            report.detail_attachments += " " + std::string{record->class_name} +
+                                "->bodyJoint" + std::to_string(record->joint) + "(node" +
+                                std::to_string(second->first_node) + "+node" +
+                                std::to_string(second->second_node) + ")";
+                            continue;
+                        }
+                    }
                     if (motion::attach_part_skeleton(assembled.get(), *body, part,
                                                      record->joint, false, offset)) {
                         ++report.attached_parts;

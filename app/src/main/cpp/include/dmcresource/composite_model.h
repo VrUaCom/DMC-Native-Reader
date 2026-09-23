@@ -36,6 +36,7 @@ enum class CompositePlacementMode : std::uint8_t {
 struct CompositeNodeConstraint final {
     std::uint32_t child_node{};
     std::uint32_t host_node{};
+    Matrix4 offset{};  // world = offset x host joint world
 };
 
 struct CompositePlacement final {
