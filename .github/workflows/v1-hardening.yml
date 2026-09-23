@@ -58,6 +58,8 @@ jobs:
           grep -Fq 'CXX_STANDARD 23' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_STANDARD_REQUIRED ON' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_EXTENSIONS OFF' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'dmc_native_reader_require_cpp23(dmc_rengine_reader_core' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'dmc_native_reader_require_cpp23(dmc_native_reader_rengine_viewer' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt

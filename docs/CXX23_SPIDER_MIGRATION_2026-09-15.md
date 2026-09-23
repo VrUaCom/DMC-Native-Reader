@@ -158,3 +158,18 @@ Phase 2 does not close until real CMake/CTest execution plus clean Android debug
 ## Legacy workflow note
 
 Historical release workflows that still target obsolete v1.0.1 branches/artifacts are not migration authority. Their broader release-semantic cleanup is deferred to Review Gate #44 / Phase #40 rather than mixed into the C++23 compatibility baseline.
+
+## Update 2026-09-23 — everything in Native Reader is C++23
+
+Policy change requested by the maintainer: all code compiled by Native Reader
+is C++23. `app/src/main/cpp/CMakeLists.txt` now applies
+`dmc_native_reader_require_cpp23` to `dmc_rengine_reader_core` and to the
+Native Reader-owned MOT/PAC slice `dmc_native_reader_rengine_viewer` as well.
+The pinned `reader_core.cmake` still declares `cxx_std_20` as a minimum
+feature and is not edited; the target-scoped `CXX_STANDARD 23` sets the real
+mode (host build: 82/82 translation units `-std=c++23`, no warnings, 25/25
+CTest). The Phase-2 runner and CI now fail if either target loses the C++23
+requirement. The statements above that ReaderCore "remains target-scoped
+C++20" describe the 2026-09-15 state and are superseded. The reverse of the
+original game stays in dmc-rengine-cpp.
+

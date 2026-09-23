@@ -64,7 +64,7 @@ Unknown and unpromoted resource families fail closed.
 
 ## C++23 / Spider C++
 
-C++23 is owned by the Native Reader **CMake targets**, not by a repository-global flag. `DMCNativeReader::Core`, Android JNI and Native Reader regression targets require `cxx_std_23`, `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`. Gradle pins Android to NDK r30 LTS `30.0.16248370` but does not pass `-std=c++*`, so vendored dependencies keep their own language contract.
+C++23 is owned by the Native Reader **CMake targets**, not by a repository-global flag. `DMCNativeReader::Core`, Android JNI and Native Reader regression targets require `cxx_std_23`, `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`. Gradle pins Android to NDK r30 LTS `30.0.16248370` but does not pass `-std=c++*`. Everything Native Reader compiles is C++23, including the vendored Rengine ReaderCore and the MOT/PAC slice: their targets get the same target-scoped `CXX_STANDARD 23` in Native Reader's CMake, without editing the submodule. The reverse of the original game itself lives in dmc-rengine-cpp.
 
 `cpp23_profile.h` does not depend on one compiler-specific `__cplusplus == 202302L` value. CMake selects strict ISO C++23; the profile rejects C++20-or-older and proves the required product facilities through SD-6 feature checks for `std::expected`, `std::byteswap`, and `std::to_underlying`. CI/verifier gates reject fallback to the former C++20 contract or reintroduction of Gradle-owned language mode.
 

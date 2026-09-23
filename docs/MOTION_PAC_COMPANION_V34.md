@@ -97,10 +97,11 @@ modules/module_archive.cpp                    PAC + MOT registry modules
 ```
 
 The MOT parser, motion groups, animation binding and PAC parser come from the
-pinned Rengine checkout and are rebuilt by Native Reader under its own C++23
-contract in `dmc_native_reader_rengine_viewer` (ReaderCore does not list them
-yet); the submodule itself is untouched. ReaderCore keeps Rengine's own
-language contract.
+pinned Rengine checkout and are rebuilt in `dmc_native_reader_rengine_viewer`
+(ReaderCore does not list them yet). Everything Native Reader compiles is
+C++23: that slice, ReaderCore, the core, JNI and tests all get
+`CXX_STANDARD 23` / `CXX_EXTENSIONS OFF` from Native Reader's CMake. The
+submodule itself is untouched.
 
 JNI (thin): `assemblePac`, `motionLibraryCount/Name`, `loadLibraryMotion`,
 `loadMotion`, `hasMotion`, `motionEndFrame`, `motionLoopStartFrame`,

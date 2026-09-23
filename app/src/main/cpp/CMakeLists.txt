@@ -9,7 +9,7 @@ set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 include(${DMC_RENGINE_VENDOR}/cmake/reader_core.cmake)
 
 # Read-only MOT/PAC slice of the pinned Rengine checkout, rebuilt by Native
-# Reader under its own C++23 contract (the target is defined after
+# Reader as C++23 (the target is defined after
 # dmc_native_reader_require_cpp23 below). ReaderCore does not list these
 # canonical sources yet; the submodule itself is never edited. Every file here
 # is a parser/evaluator; nothing in this slice writes or repacks resources.
@@ -34,6 +34,12 @@ function(dmc_native_reader_require_cpp23 target visibility)
         CXX_EXTENSIONS OFF
     )
 endfunction()
+
+# Everything compiled into Native Reader is C++23, including the vendored
+# Rengine ReaderCore. Its reader_core.cmake keeps declaring cxx_std_20 as a
+# minimum feature; the target-scoped CXX_STANDARD 23 set here decides the
+# actual language mode. The submodule itself is not edited.
+dmc_native_reader_require_cpp23(dmc_rengine_reader_core PRIVATE)
 
 add_library(dmc_native_reader_rengine_viewer STATIC
     ${DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES})
