@@ -62,7 +62,6 @@ public final class MainActivity extends Activity {
     private static final int MENU_ADD_OTHER = 8;
     private static final int MENU_BROWSE_PAC = 9;
     private static final int MENU_ADD_PAC = 10;
-    private static final int MENU_ENEMY_CLASS = 11;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -122,6 +121,9 @@ public final class MainActivity extends Activity {
     private Uri assembledPacUri;
     // Selected class inside a shared enemy archive (em000.pac); 0 = first.
     private int enemyVariant;
+    // Position buttons under the title (one per enemy class / weapon / dress state).
+    private HorizontalScrollView variantScroll;
+    private LinearLayout variantBar;
     // Extra archives (weapons, props) assembled onto the character, in order.
     private final ArrayList<Uri> addedPacUris = new ArrayList<>();
 
@@ -264,6 +266,7 @@ public final class MainActivity extends Activity {
         setToolAvailable(infoButton,
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
         refreshMotionStrip();
+        refreshVariantBar();
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -329,6 +332,20 @@ public final class MainActivity extends Activity {
                 dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
         root.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        variantScroll = new HorizontalScrollView(this);
+        variantScroll.setHorizontalScrollBarEnabled(false);
+        variantScroll.setVisibility(View.GONE);
+        variantBar = new LinearLayout(this);
+        variantBar.setOrientation(LinearLayout.HORIZONTAL);
+        variantBar.setGravity(Gravity.CENTER_VERTICAL);
+        variantBar.setPadding(dp(8), dp(2), dp(8), dp(2));
+        variantScroll.addView(variantBar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        root.addView(variantScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -432,10 +449,6 @@ public final class MainActivity extends Activity {
         if (isRootScene() && assembledPacUri != null) {
             menu.getMenu().add(0, MENU_ADD_PAC, 1, "Add weapon / .PAC…");
             menu.getMenu().add(0, MENU_BROWSE_PAC, 1, "Browse .PAC files…");
-            final String[] classes = NativeBridge.enemyVariantNames(displayName(assembledPacUri));
-            if (classes != null && classes.length > 0) {
-                menu.getMenu().add(0, MENU_ENEMY_CLASS, 1, "Enemy class…");
-            }
         }
         if (hasModCompositionContext()) {
             menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
@@ -460,9 +473,6 @@ public final class MainActivity extends Activity {
                     return true;
                 case MENU_ADD_PAC:
                     chooseAdditionalPac();
-                    return true;
-                case MENU_ENEMY_CLASS:
-                    chooseEnemyClass();
                     return true;
                 case MENU_ADD_MOD:
                     chooseAdditionalMods();
@@ -610,23 +620,38 @@ public final class MainActivity extends Activity {
         }
     }
 
-    // Shared enemy archives hold several classes; show one at a time with its
-    // own body, cloth and weapon (see pac_assembly.h).
-    private void chooseEnemyClass() {
-        if (assembledPacUri == null) return;
-        final String[] classes = NativeBridge.enemyVariantNames(displayName(assembledPacUri));
-        if (classes == null || classes.length == 0) return;
-        new AlertDialog.Builder(this)
-                .setTitle("Enemy class")
-                .setSingleChoiceItems(classes, Math.min(enemyVariant, classes.length - 1),
-                        (dialog, which) -> {
-                            dialog.dismiss();
-                            if (which == enemyVariant) return;
-                            enemyVariant = which;
-                            assembleWithAddedPacs(null);
-                        })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+    // Archives with several in-game looks (em000.pac: enemy classes and their
+    // weapons; em028.pac: Nevan's dress with the bats in or out) get one button
+    // per position under the title; tapping one re-assembles that look.
+    private void refreshVariantBar() {
+        if (variantBar == null || variantScroll == null) return;
+        variantBar.removeAllViews();
+        final String[] positions = (isRootScene() && assembledPacUri != null)
+                ? NativeBridge.archiveVariantNames(displayName(assembledPacUri))
+                : null;
+        if (positions == null || positions.length < 2) {
+            variantScroll.setVisibility(View.GONE);
+            return;
+        }
+        for (int index = 0; index < positions.length; ++index) {
+            final int position = index;
+            final boolean active = index == enemyVariant;
+            Button button = makeSquareButton(positions[index], "Show " + positions[index], 13f);
+            button.setPadding(dp(10), 0, dp(10), 0);
+            button.setActivated(active);
+            button.setAlpha(active ? 1.0f : 0.72f);
+            button.setOnClickListener(v -> {
+                if (position == enemyVariant) return;
+                enemyVariant = position;
+                assembleWithAddedPacs(null);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+            params.setMarginStart(dp(TOOL_GAP_DP));
+            params.setMarginEnd(dp(TOOL_GAP_DP));
+            variantBar.addView(button, params);
+        }
+        variantScroll.setVisibility(View.VISIBLE);
     }
 
     private void chooseAdditionalPac() {
@@ -687,7 +712,7 @@ public final class MainActivity extends Activity {
         assembledPacUri = character;
         addedPacUris.addAll(extras);
         StringBuilder title = new StringBuilder(displayName(character));
-        final String[] classes = NativeBridge.enemyVariantNames(displayName(character));
+        final String[] classes = NativeBridge.archiveVariantNames(displayName(character));
         if (classes != null && enemyVariant < classes.length) {
             title.append(" · ").append(classes[enemyVariant]);
         }

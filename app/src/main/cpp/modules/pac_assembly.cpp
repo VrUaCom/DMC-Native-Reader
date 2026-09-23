@@ -7,6 +7,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -113,6 +114,53 @@ void collect(const Session& container,
            std::tolower(static_cast<unsigned char>(name[1])) == 'l';
 }
 
+// Drop the triangles of `objects` (MeshPrimitive::object_index) of one
+// composite part; vertices stay so skinning and attachments keep their ranges.
+std::size_t hide_part_objects(Session* session, std::size_t part_index,
+                              std::span<const std::uint32_t> objects) {
+    if (session == nullptr || part_index >= session->composite_parts.size()) return 0U;
+    std::size_t begin = 0U;
+    for (std::size_t part = 0U; part < part_index; ++part) {
+        for (const auto& primitive : session->composite_parts[part].scene.meshes) {
+            begin += primitive.mesh.vertices.size();
+        }
+    }
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    std::size_t cursor = begin;
+    for (const auto& primitive : session->composite_parts[part_index].scene.meshes) {
+        const auto count = primitive.mesh.vertices.size();
+        for (const auto object : objects) {
+            if (primitive.object_index == object) ranges.push_back({cursor, cursor + count});
+        }
+        cursor += count;
+    }
+    if (ranges.empty()) return 0U;
+    const auto hidden = [&ranges](std::uint32_t vertex) {
+        for (const auto& [lo, hi] : ranges) {
+            if (vertex >= lo && vertex < hi) return true;
+        }
+        return false;
+    };
+    auto& indices = session->render_mesh.indices;
+    auto& slots = session->render_triangle_texture_slots;
+    const bool slotted = slots.size() * 3U == indices.size();
+    std::vector<std::uint32_t> kept_indices;
+    std::vector<std::uint32_t> kept_slots;
+    std::size_t removed = 0U;
+    for (std::size_t t = 0U; t + 2U < indices.size(); t += 3U) {
+        if (hidden(indices[t]) || hidden(indices[t + 1U]) || hidden(indices[t + 2U])) {
+            ++removed;
+            continue;
+        }
+        kept_indices.insert(kept_indices.end(), indices.begin() + static_cast<std::ptrdiff_t>(t),
+                            indices.begin() + static_cast<std::ptrdiff_t>(t + 3U));
+        if (slotted) kept_slots.push_back(slots[t / 3U]);
+    }
+    indices = std::move(kept_indices);
+    if (slotted) slots = std::move(kept_slots);
+    return removed;
+}
+
 }  // namespace
 
 std::unique_ptr<Session> assemble_pac(const Session& pac,
@@ -148,10 +196,18 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             collect(*archives[a], a, prefix, 0U, false, &nested, &entries, &report);
         }
 
-        const auto variants = motion::enemy_variants_for(archive_name);
-        const motion::EnemyVariant* variant =
-            variants.empty() ? nullptr : &variants[std::min(enemy_variant, variants.size() - 1U)];
-        if (variant != nullptr) report.enemy_class = std::string{variant->class_name};
+        const auto positions = motion::archive_variants(archive_name);
+        const motion::ArchiveVariant* position =
+            positions.empty() ? nullptr
+                              : &positions[std::min(enemy_variant, positions.size() - 1U)];
+        const motion::EnemyVariant* variant = position != nullptr ? position->enemy : nullptr;
+        const std::uint32_t weapon_slot = variant == nullptr ? 0U
+            : (position->alternate_weapon ? variant->weapon_slot_alt : variant->weapon_slot);
+        const std::uint32_t cloth_count =
+            variant == nullptr || (variant->cloth_only_first_variant && position->alternate_weapon)
+                ? 0U
+                : variant->cloth_count;
+        if (position != nullptr) report.enemy_class = position->label;
         std::vector<std::unique_ptr<Session>> models;
         std::vector<std::string> model_names;
         std::vector<std::size_t> model_entry;
@@ -169,8 +225,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             if (entry.kind.format == Format::Mod && variant != nullptr && entry.archive == 0U &&
                 entry.container.empty()) {
                 // Shared enemy archive: keep only this class's body, cloth and weapon.
-                bool used = entry.slot == variant->body_slot || entry.slot == variant->weapon_slot;
-                for (std::uint32_t c = 0U; c < variant->cloth_count; ++c) {
+                bool used = entry.slot == variant->body_slot || entry.slot == weapon_slot;
+                for (std::uint32_t c = 0U; c < cloth_count; ++c) {
                     used = used || entry.slot == variant->cloth[c].slot;
                 }
                 if (!used) {
@@ -305,7 +361,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 for (std::size_t part = 0U; host && part < model_entry.size(); ++part) {
                     const auto& entry = entries[model_entry[part]];
                     if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
-                    for (std::uint32_t c = 0U; c < variant->cloth_count; ++c) {
+                    for (std::uint32_t c = 0U; c < cloth_count; ++c) {
                         if (*entry.slot != variant->cloth[c].slot) continue;
                         if (motion::attach_part_skeleton(assembled.get(), *host, part,
                                                          variant->cloth[c].host_joint, false)) {
@@ -314,7 +370,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                                 "->bodyJoint" + std::to_string(variant->cloth[c].host_joint);
                         }
                     }
-                    if (*entry.slot == variant->weapon_slot &&
+                    if (*entry.slot == weapon_slot &&
                         motion::attach_part_skeleton(
                             assembled.get(), *host, part, variant->weapon_joint, false,
                             motion::attach_local_matrix_zyx(variant->weapon_translation,
@@ -323,6 +379,22 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
                             "->bodyJoint" + std::to_string(variant->weapon_joint);
                     }
+                }
+            }
+            // Model objects the selected position does not draw (MOD object bit 0).
+            if (position != nullptr && position->hide_count > 0U) {
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    const auto& entry = entries[model_entry[part]];
+                    if (entry.archive != 0U || !entry.container.empty() ||
+                        entry.slot != position->hide_slot) {
+                        continue;
+                    }
+                    const auto hidden = hide_part_objects(
+                        assembled.get(), part,
+                        std::span<const std::uint32_t>{position->hide_objects.data(),
+                                                       position->hide_count});
+                    report.detail_attachments += " hidden slot" + std::to_string(*entry.slot) +
+                        " objects(" + std::to_string(hidden) + " triangles)";
                 }
             }
             // Added weapon archives: every MOD hangs from its record's joint.

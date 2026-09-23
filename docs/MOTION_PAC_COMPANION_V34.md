@@ -141,13 +141,25 @@ motions; hand-held records are not reversed yet.
 `docs/research/dmc3-em000-family-assembly-2026-09-23.md`: `em000.pac` feeds
 five classes (CEm000-CEm004). Each class's init reads its own body slot (1, 5,
 8, 13, 18), cloth models with their `.clt` text (3; 7; 10 and 12; 15 and 17)
-and weapon (26, 28, 26, 27, 34). The archive now opens as one class at a time
-(`⋮ → Enemy class…`), with every other class's models skipped: cloth roots hang
+and weapon (26, 28, 26, 27, 34). The archive now opens as one class at a time,
+with every other class's models skipped: cloth roots hang
 from body joints 14 / 8 / 12 as `[this+0x3254]`/`[this+0x3258]` say, the
 weapon from body joint 9 with the recorded offset (T(-15, -61.4, -18.9),
 R(0.207, 0, 0); CEm004 its own), built in 0x1403304A0's Rz·Ry·Rx order.
 Models no class loads at spawn (slots 4, 19, 21, 33: likely death / sand) are
 not shown. Cloth stays in rest shape (CLT not simulated).
+
+**Position buttons (v43).** Archives with several in-game looks show one
+button per position under the title; tapping one re-assembles that look
+(JNI `archiveVariantNames`, `assemblePacs(..., variant)`):
+
+- `em000.pac`: CEm000 A/B, CEm001 A/B, CEm002 A/B, CEm003 A/B, CEm004 — the
+  class plus its weapon for `[this+0x670]` 0-1 (A) or 2-3 (B); CEm000 B has no
+  cloth (CEm000 draws it for 0-1 only).
+- `em028.pac`: "Bats in" (default) and "Bats out". MOD object bit 0 means
+  "draw" (loops `0x140303460`/`0x140303DE0`); Nevan sets it on the dress strip
+  (slot 5 objects 2-3) only while bats are out, so "Bats in" hides those
+  triangles.
 
 ### 3.2 MOT playback
 

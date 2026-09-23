@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "dmcresource/composite_model.h"
 #include "dmcresource/render_scene.h"
@@ -134,7 +136,9 @@ struct EnemyVariant final {
     std::uint32_t body_slot;
     std::array<EnemyClothPart, 2> cloth;
     std::uint32_t cloth_count;
-    std::uint32_t weapon_slot;
+    std::uint32_t weapon_slot;      // [this+0x670] in 0..1
+    std::uint32_t weapon_slot_alt;  // [this+0x670] in 2..3 (same slot: no choice)
+    bool cloth_only_first_variant;  // CEm000: cloth drawn for 0..1 only (0x140097980)
     std::uint32_t weapon_joint;
     std::array<float, 3> weapon_translation;
     std::array<float, 3> weapon_rotation_zyx;
@@ -145,17 +149,37 @@ inline constexpr std::array<float, 3> kEm000WeaponT{-15.0F, -61.39939880371094F,
 inline constexpr std::array<float, 3> kEm000WeaponR{0.20725786685943604F, 0.0F, 0.0F};
 
 inline constexpr std::array<EnemyVariant, 5> kEm000Variants{{
-    {"em000", "CEm000", 1U, {{{3U, 14U}, {0U, 0U}}}, 1U, 26U, 9U, kEm000WeaponT, kEm000WeaponR},
-    {"em000", "CEm001", 5U, {{{7U, 14U}, {0U, 0U}}}, 1U, 28U, 9U, kEm000WeaponT, kEm000WeaponR},
-    {"em000", "CEm002", 8U, {{{10U, 8U}, {12U, 12U}}}, 2U, 26U, 9U, kEm000WeaponT, kEm000WeaponR},
-    {"em000", "CEm003", 13U, {{{15U, 14U}, {17U, 14U}}}, 2U, 27U, 9U, kEm000WeaponT, kEm000WeaponR},
-    {"em000", "CEm004", 18U, {{{0U, 0U}, {0U, 0U}}}, 0U, 34U, 9U, {2.0F, 20.0F, -72.0F},
+    {"em000", "CEm000", 1U, {{{3U, 14U}, {0U, 0U}}}, 1U, 26U, 29U, true, 9U, kEm000WeaponT,
+     kEm000WeaponR},
+    {"em000", "CEm001", 5U, {{{7U, 14U}, {0U, 0U}}}, 1U, 28U, 31U, false, 9U, kEm000WeaponT,
+     kEm000WeaponR},
+    {"em000", "CEm002", 8U, {{{10U, 8U}, {12U, 12U}}}, 2U, 26U, 29U, false, 9U, kEm000WeaponT,
+     kEm000WeaponR},
+    {"em000", "CEm003", 13U, {{{15U, 14U}, {17U, 14U}}}, 2U, 27U, 30U, false, 9U, kEm000WeaponT,
+     kEm000WeaponR},
+    {"em000", "CEm004", 18U, {{{0U, 0U}, {0U, 0U}}}, 0U, 34U, 34U, false, 9U, {2.0F, 20.0F, -72.0F},
      {-0.03490658476948738F, 0.10471975803375244F, 1.6580626964569092F}},
 }};
 
 // Variants for an archive name ("em000.pac", any directory, any case).
 [[nodiscard]] std::span<const EnemyVariant> enemy_variants_for(
     std::string_view archive_name) noexcept;
+
+// One selectable position of an archive with several in-game looks: an
+// enemy class and its weapon variant (em000.pac), or a model-object state
+// (em028.pac: the dress strip, objects 2-3 of slot 5, is drawn only while
+// bats are out -- 0x14012F790 sets or clears object bit 0, which the MOD draw
+// loops 0x140303460 / 0x140303DE0 require).
+struct ArchiveVariant final {
+    std::string label;
+    const EnemyVariant* enemy{};  // em000 family
+    bool alternate_weapon{};      // [this+0x670] in 2..3
+    std::uint32_t hide_slot{};    // model slot whose objects are hidden
+    std::array<std::uint32_t, 2> hide_objects{};
+    std::uint32_t hide_count{};
+};
+
+[[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
 
 // Translation plus Rz x Ry x Rx (0x1403304A0 order).
 [[nodiscard]] Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,

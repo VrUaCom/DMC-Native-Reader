@@ -594,7 +594,7 @@ int main() {
         dmcresource::pac_assembly::AssemblyReport em_report;
         auto pride = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 0U);
         assert(pride != nullptr && em_report.models == 3U && em_report.attached_parts == 2U);
-        assert(em_report.enemy_class == "CEm000" && em_report.variant_models_skipped == 1U);
+        assert(em_report.enemy_class == "CEm000 A" && em_report.variant_models_skipped == 1U);
         const auto weapon_offset = motion::attach_local_matrix_zyx(variants[0].weapon_translation,
                                                                    variants[0].weapon_rotation_zyx);
         const std::size_t weapon_node = pride->composite_parts[0].scene.nodes.size() +
@@ -610,8 +610,19 @@ int main() {
             expected_x += row * joint9[k * 4U + 0U];
         }
         assert(near(weapon_root[12], expected_x));
-        auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 1U);
-        assert(lust != nullptr && em_report.enemy_class == "CEm001");
+        // Position 1: CEm000 with its variant 2-3 weapon (slot 29, absent here)
+        // and no cloth (0x140097980 draws it for variants 0-1 only).
+        auto pride_b = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 1U);
+        assert(pride_b != nullptr && em_report.enemy_class == "CEm000 B");
+        assert(em_report.models == 1U && em_report.attached_parts == 0U);
+        auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 2U);
+        assert(lust != nullptr && em_report.enemy_class == "CEm001 A");
+        const auto positions = motion::archive_variants("em000.pac");
+        assert(positions.size() == 9U && positions.back().label == "CEm004");
+        const auto nevan_positions = motion::archive_variants("EM028.pac");
+        assert(nevan_positions.size() == 2U && nevan_positions[0].hide_slot == 5U);
+        assert(nevan_positions[0].hide_count == 2U && nevan_positions[1].hide_count == 0U);
+        assert(motion::archive_variants("pl000.pac").empty());
     }
 
     // Euler order of 0x140330450: Rx x Ry x Rz for row vectors (X first). The

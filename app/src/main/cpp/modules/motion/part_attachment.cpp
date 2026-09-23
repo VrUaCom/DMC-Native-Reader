@@ -379,6 +379,45 @@ std::span<const EnemyVariant> enemy_variants_for(std::string_view archive_name) 
     return kEm000Variants;
 }
 
+std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
+    std::vector<ArchiveVariant> out;
+    for (const auto& enemy : enemy_variants_for(archive_name)) {
+        ArchiveVariant first;
+        first.enemy = &enemy;
+        first.label = std::string{enemy.class_name};
+        if (enemy.weapon_slot_alt == enemy.weapon_slot) {
+            out.push_back(std::move(first));
+            continue;
+        }
+        first.label += " A";
+        out.push_back(first);
+        ArchiveVariant second = first;
+        second.alternate_weapon = true;
+        second.label = std::string{enemy.class_name} + " B";
+        out.push_back(std::move(second));
+    }
+    if (!out.empty()) return out;
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    constexpr std::string_view nevan = "em028.pac";
+    bool is_nevan = archive_name.size() == nevan.size();
+    for (std::size_t i = 0U; is_nevan && i < nevan.size(); ++i) {
+        is_nevan = std::tolower(static_cast<unsigned char>(archive_name[i])) == nevan[i];
+    }
+    if (is_nevan) {
+        ArchiveVariant calm;
+        calm.label = "Bats in";
+        calm.hide_slot = 5U;
+        calm.hide_objects = {2U, 3U};
+        calm.hide_count = 2U;
+        out.push_back(calm);
+        ArchiveVariant swarm;
+        swarm.label = "Bats out";
+        out.push_back(swarm);
+    }
+    return out;
+}
+
 Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,
                                 const std::array<float, 3>& rotation_xyz_radians) noexcept {
     // Row-vector rotations as 0x140030F10 / 0x140030FC0 / 0x140031080 build them.

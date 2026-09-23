@@ -587,22 +587,21 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePacs(
     } catch (...) { return 0; }
 }
 
-// Enemy classes sharing an archive (em000.pac: CEm000-CEm004); empty when none.
+// Selectable positions of an archive (em000.pac enemy classes and weapons,
+// em028.pac dress states); empty when the archive has only one look.
 extern "C" JNIEXPORT jobjectArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_enemyVariantNames(
+Java_com_dmcrengine_nativeviewer_NativeBridge_archiveVariantNames(
         JNIEnv* env, jclass, jstring archive_name) {
     try {
         const auto name = to_utf8(env, archive_name);
-        const auto variants = dmcresource::motion::enemy_variants_for(name);
+        const auto variants = dmcresource::motion::archive_variants(name);
         jclass string_class = env->FindClass("java/lang/String");
         if (string_class == nullptr) return nullptr;
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(variants.size()),
                                                string_class, nullptr);
         if (out == nullptr) return nullptr;
         for (std::size_t index = 0U; index < variants.size(); ++index) {
-            const std::string label = std::string{variants[index].class_name} + " (body slot " +
-                std::to_string(variants[index].body_slot) + ")";
-            jstring value = env->NewStringUTF(label.c_str());
+            jstring value = env->NewStringUTF(variants[index].label.c_str());
             if (value == nullptr) return nullptr;
             env->SetObjectArrayElement(out, static_cast<jsize>(index), value);
             env->DeleteLocalRef(value);
