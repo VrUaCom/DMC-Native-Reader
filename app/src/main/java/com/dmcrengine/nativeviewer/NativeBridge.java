@@ -75,4 +75,7 @@ public final class NativeBridge {
     public static native float motionLoopStartFrame(long handle);
     public static native boolean setMotionFrame(long handle, float frame);
     public static native void clearMotion(long handle);
+
+    // SHW shadow hulls bound to the assembled models (drawn with RENDER_SHADOWS).
+    public static native boolean hasShadows(long handle);
 }

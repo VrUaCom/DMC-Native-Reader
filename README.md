@@ -6,7 +6,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 **Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
 **Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
-**Active candidate:** **v39 / versionName 1.0.12 / versionCode 39** (MOT playback, PAC/PNST, player coat, weapon PACs, enemy node constraints (Nevan), community-made PTX with orange non-canonical marker; previous v38 / 1.0.11)  
+**Active candidate:** **v40 / versionName 1.0.13 / versionCode 40** (MOT playback, PAC/PNST, player coat, weapon PACs incl. Agni & Rudra, enemy node constraints (Nevan), SHW shadow hulls and floor shadows, community-made PTX with orange non-canonical marker; previous v39 / 1.0.12)  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  

@@ -63,5 +63,6 @@ public:
 [[nodiscard]] NativeModule pac_module() noexcept;
 [[nodiscard]] NativeModule mot_module() noexcept;
 [[nodiscard]] NativeModule pnst_module() noexcept;
+[[nodiscard]] NativeModule shw_module() noexcept;
 
 }  // namespace dmcresource

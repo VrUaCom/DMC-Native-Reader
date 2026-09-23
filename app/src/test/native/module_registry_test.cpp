@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 8U);
+    assert(modules.size() == 9U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -44,10 +44,16 @@ int main() {
     assert(probe("plwp_sword.pac", pnst_magic.data(), pnst_magic.size()).format ==
            Format::Pnst);
 
+    // SHW shadow hulls: content-confirmed by magic, rendered as hull geometry.
+    const auto* shw = NativeModuleRegistry::find("SHW");
+    assert(shw != nullptr && shw->format == Format::Shw && shw->renderable);
+    const std::array<std::uint8_t, 4> shw_magic{'S', 'H', 'W', ' '};
+    assert(probe("renamed.bin", shw_magic.data(), shw_magic.size()).format == Format::Shw);
+
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
              "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
-             "NBZ", "EFM", "MRP", "SHW"}) {
+             "NBZ", "EFM", "MRP"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 

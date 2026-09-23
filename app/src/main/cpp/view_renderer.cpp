@@ -311,6 +311,50 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         static_cast<std::size_t>(image.width * image.height),
         std::numeric_limits<float>::infinity());
 
+    // Fills one projected triangle; `pixel` gets (x, y, depth index, z).
+    const auto fill = [&image](const P2& a, const P2& b, const P2& c, auto&& pixel) {
+        const float area = edge(a, b, c.x, c.y);
+        if (std::fabs(area) < 1.0e-6F) return;
+        const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+        const int y0 = std::max(0, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+        const int x1 = std::min(image.width - 1,
+                                static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+        const int y1 = std::min(image.height - 1,
+                                static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                const float px = static_cast<float>(x) + 0.5F;
+                const float py = static_cast<float>(y) + 0.5F;
+                const float w0 = edge(b, c, px, py) / area;
+                const float w1 = edge(c, a, px, py) / area;
+                const float w2 = edge(a, b, px, py) / area;
+                if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
+                pixel(x, y, static_cast<std::size_t>(y * image.width + x),
+                      w0 * a.z + w1 * b.z + w2 * c.z);
+            }
+        }
+    };
+
+    const bool floor = view.floor && !view.wireframe;
+    if (floor) {
+        const float half = radius * 1.4F;
+        const Vec3 corners[4] = {
+            {frame.center.x - half, view.floor_y, frame.center.z - half},
+            {frame.center.x + half, view.floor_y, frame.center.z - half},
+            {frame.center.x + half, view.floor_y, frame.center.z + half},
+            {frame.center.x - half, view.floor_y, frame.center.z + half},
+        };
+        const P2 q[4] = {project(corners[0]), project(corners[1]), project(corners[2]),
+                         project(corners[3])};
+        const auto floor_pixel = [&](int x, int y, std::size_t pi, float z) {
+            if (z >= depth[pi]) return;
+            depth[pi] = z;
+            put_rgba(image, x, y, 64U, 67U, 76U, 255U);
+        };
+        fill(q[0], q[1], q[2], floor_pixel);
+        fill(q[0], q[2], q[3], floor_pixel);
+    }
+
     for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
         const auto ia = mesh.indices[t + 0U];
         const auto ib = mesh.indices[t + 1U];
@@ -378,6 +422,27 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 const auto shade = static_cast<std::uint8_t>(145.0F + 80.0F * zn);
                 put_pixel(image, x, y, shade);
             }
+        }
+    }
+
+    if (floor && view.floor_shadow.size() >= 3U) {
+        // Darken each floor pixel once where the footprint lands and the floor
+        // is what the camera sees there (the model in front keeps its colour).
+        std::vector<std::uint8_t> shadowed(depth.size(), 0U);
+        const float tolerance = radius * 0.01F;
+        const auto shadow_pixel = [&](int x, int y, std::size_t pi, float z) {
+            if (shadowed[pi] != 0U || z > depth[pi] + tolerance) return;
+            shadowed[pi] = 1U;
+            const auto o = pi * 4U;
+            for (std::size_t k = 0U; k < 3U; ++k) {
+                image.pixels[o + k] = static_cast<std::uint8_t>(image.pixels[o + k] * 45U / 100U);
+            }
+            (void)x;
+            (void)y;
+        };
+        for (std::size_t t = 0U; t + 2U < view.floor_shadow.size(); t += 3U) {
+            fill(project(view.floor_shadow[t]), project(view.floor_shadow[t + 1U]),
+                 project(view.floor_shadow[t + 2U]), shadow_pixel);
         }
     }
 

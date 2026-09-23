@@ -526,6 +526,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasMotion(
     return dmcresource::motion::has_motion(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
+        JNIEnv*, jclass, jlong handle) {
+    const auto* session = from_handle(handle);
+    return session != nullptr && !session->shadow_bindings.empty() ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_motionEndFrame(
         JNIEnv*, jclass, jlong handle) {

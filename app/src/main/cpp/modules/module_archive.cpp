@@ -42,7 +42,7 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "EVT\0")) return {Format::Evt, "EventTbl", "bin"};
     if (magic_at(bytes, size, 4U, "MOT\0")) return {Format::Mot, "MOT", "mot"};
     if (magic_at(bytes, size, 0U, "SHW ")) {
-        return {Format::Unknown, "SHW", "shw", true};
+        return {Format::Shw, "SHW", "shw", true};
     }
     if (bytes != nullptr && size > 0U) {
         try {

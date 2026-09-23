@@ -12,6 +12,7 @@
 #include "dmcresource/composite_model.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/shadow_hull.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/workspace_graph.h"
@@ -68,6 +69,9 @@ struct Session {
 
     // Non-canonical reads the viewer still shows (orange warning in the UI).
     std::vector<std::string> non_canonical_notes;
+
+    // SHW shadow hulls placed on this session's models (PAC assembly).
+    std::vector<shadow::ShadowBinding> shadow_bindings;
 
     // Bound MOT playback state (read-only preview; see motion/motion_player.h).
     std::shared_ptr<motion::MotionState> motion;

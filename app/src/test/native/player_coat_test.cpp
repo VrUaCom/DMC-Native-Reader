@@ -2,6 +2,7 @@
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/shadow_hull.h"
 
 #include <bit>
 #include <cassert>
@@ -303,6 +304,48 @@ std::vector<std::uint8_t> make_chain_body(std::size_t count) {
     return bytes;
 }
 
+// One closed SHW hull (tetrahedron, T = 2V - 4) whose four vertices all
+// follow `joint`; header +0x11 names the model node count.
+std::vector<std::uint8_t> make_tetra_shw(std::uint8_t node_count, std::uint8_t joint) {
+    std::vector<std::uint8_t> bytes(0x200U, 0U);
+    bytes[0] = 'S';
+    bytes[1] = 'H';
+    bytes[2] = 'W';
+    bytes[3] = ' ';
+    put_f32(bytes, 0x04U, 0.5F);
+    put_u8(bytes, 0x10U, 1U);
+    put_u8(bytes, 0x11U, node_count);
+    const std::size_t record = 0x20U;
+    put_u16(bytes, record + 0x00U, 4U);
+    put_u16(bytes, record + 0x02U, 4U);
+    put_u64(bytes, record + 0x10U, 0x60U);   // triangles
+    put_u64(bytes, record + 0x18U, 0xA0U);   // adjacency
+    put_u64(bytes, record + 0x20U, 0xC0U);   // vertices
+    put_u64(bytes, record + 0x28U, 0x100U);  // selectors
+    const std::uint32_t triangles[4][3] = {{0, 1, 2}, {0, 3, 1}, {0, 2, 3}, {1, 3, 2}};
+    for (std::size_t t = 0U; t < 4U; ++t) {
+        for (std::size_t k = 0U; k < 3U; ++k) {
+            put_u32(bytes, 0x60U + t * 0x10U + k * 4U, triangles[t][k]);
+        }
+        std::size_t lane = 0U;
+        for (std::size_t other = 0U; other < 4U; ++other) {
+            if (other == t) continue;
+            put_u16(bytes, 0xA0U + t * 8U + lane * 2U, static_cast<std::uint16_t>(other));
+            ++lane;
+        }
+    }
+    const float vertices[4][3] = {{0.0F, 3.0F, 0.0F}, {1.0F, 3.0F, 0.0F},
+                                  {0.0F, 4.0F, 0.0F}, {0.0F, 3.0F, 1.0F}};
+    for (std::size_t v = 0U; v < 4U; ++v) {
+        put_f32(bytes, 0xC0U + v * 0x10U + 0x0U, vertices[v][0]);
+        put_f32(bytes, 0xC0U + v * 0x10U + 0x4U, vertices[v][1]);
+        put_f32(bytes, 0xC0U + v * 0x10U + 0x8U, vertices[v][2]);
+        put_f32(bytes, 0xC0U + v * 0x10U + 0xCU, 1.0F);
+        put_u8(bytes, 0x100U + v, joint);
+    }
+    return bytes;
+}
+
 // Four-node MOT: node 0 translation-x from 0 (frame 0) to 10 (frame 10).
 std::vector<std::uint8_t> make_body_mot() {
     auto bytes = make_translation_mot();
@@ -369,6 +412,48 @@ int main() {
         const auto& v = scene->render_mesh.vertices[coat_begin + i];
         assert(near(v.x, coat_rest[i].x - 10.0F + 5.0F));
         assert(near(v.y, coat_rest[i].y + 3.0F));
+    }
+
+    // SHW: slot 8 pairs with the 4-node body through header +0x11 and its
+    // hull follows joint 3 (skin matrix), also while the MOT plays.
+    {
+        std::vector<std::vector<std::uint8_t>> shadow_slots = slots;
+        shadow_slots[8] = make_tetra_shw(4U, 3U);
+        const auto shadow_pac = make_pac(shadow_slots);
+        auto shadow_archive = dmcresource::open_session("pl001.pac", shadow_pac.data(),
+                                                        shadow_pac.size());
+        assert(shadow_archive != nullptr);
+        auto hull_view = dmcresource::open_session(
+            "slot_0008.shw", shadow_slots[8].data(), shadow_slots[8].size());
+        assert(hull_view != nullptr && hull_view->renderable);
+        assert(hull_view->render_mesh.vertices.size() == 4U);
+        dmcresource::pac_assembly::AssemblyReport shadow_report;
+        auto shaded = dmcresource::pac_assembly::assemble_pac(*shadow_archive, &shadow_report,
+                                                              "pl001.pac");
+        assert(shaded != nullptr && shadow_report.shadows_bound == 1U);
+        assert(shaded->shadow_bindings.size() == 1U);
+        assert(shaded->shadow_bindings[0].node_count == 4U);
+        const auto rest = dmcresource::shadow::posed_hull_triangles(*shaded);
+        assert(rest.size() == 12U);
+        assert(near(rest[0].x, 0.0F) && near(rest[0].y, 3.0F));
+        const auto floor = dmcresource::shadow::floor_shadow_triangles(
+            *shaded, {0.0F, -1.0F, 0.0F}, 0.0F);
+        assert(floor.size() == 12U && near(floor[0].y, 0.0F) && near(floor[0].x, 0.0F));
+
+        const auto& clip = shaded->motion_library.front();
+        const auto bound = motion::load_motion(shaded.get(), clip.name, clip.bytes.data(),
+                                               clip.bytes.size());
+        assert(bound.ok);
+        assert(motion::apply_motion_frame(shaded.get(), 5.0F));
+        const auto moved = dmcresource::shadow::posed_hull_triangles(*shaded);
+        assert(near(moved[0].x, 5.0F) && near(moved[0].y, 3.0F));
+        // A mismatched node count is never bound.
+        shadow_slots[8] = make_tetra_shw(7U, 3U);
+        const auto odd_pac = make_pac(shadow_slots);
+        auto odd = dmcresource::open_session("pl001.pac", odd_pac.data(), odd_pac.size());
+        dmcresource::pac_assembly::AssemblyReport odd_report;
+        auto unbound = dmcresource::pac_assembly::assemble_pac(*odd, &odd_report, "pl001.pac");
+        assert(unbound != nullptr && odd_report.shadows_bound == 0U);
     }
 
     // Rebellion: plwp_sword.pac added to the character hangs from body joint 3

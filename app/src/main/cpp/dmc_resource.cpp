@@ -73,6 +73,11 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Pnst, true, "PNST", "archive", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.pac");
     }
+    // SHW shadow hulls (runtime builder 0x14031FD30, per-frame 0x1403200D0).
+    if (magic4(bytes, size, 'S', 'H', 'W', ' ')) {
+        return result(Format::Shw, true, "SHW", "shadow", "render-scene",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.shw");
+    }
     // MOT keeps its identity at +0x04 after the u32 header size.
     if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'M', 'O', 'T', '\0')) {
         return result(Format::Mot, true, "MOT", "animation", "inspection",
@@ -130,6 +135,7 @@ const char* format_name(Format format) noexcept {
     case Format::Pac: return "PAC";
     case Format::Mot: return "MOT";
     case Format::Pnst: return "PNST";
+    case Format::Shw: return "SHW";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

@@ -21,6 +21,7 @@ set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
     ${DMC_RENGINE_VENDOR}/src/formats/relative_slot_container.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/pnst.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/shw.cpp
 )
 
 # Native Reader language authority is centralized here and remains target-scoped.
@@ -96,6 +97,8 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
     modules/module_archive.cpp
+    modules/module_shadow.cpp
+    modules/shadow_hull.cpp
     modules/pac_assembly.cpp
     spider/crusader.cpp
     spider/black_widow.cpp

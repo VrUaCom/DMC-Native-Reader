@@ -5,6 +5,8 @@
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/texture_companion.h"
 
+#include <span>
+#include <cmath>
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -618,6 +620,23 @@ RgbaImage render_session(const Session* session, int requested_width,
     const auto* textures = session->attached_textures.empty()
         ? nullptr
         : &session->attached_textures;
+    // SHW footprint on a floor under the feet (lowest rest vertex).
+    std::vector<dmcresource::Vec3> floor_shadow;
+    if (!view.uv_layout && !session->shadow_bindings.empty() &&
+        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Shadows)) {
+        const auto& rest = view.framing_vertices.empty()
+            ? std::span<const dmcresource::Vec3>{session->render_mesh.vertices}
+            : view.framing_vertices;
+        float floor_y = std::numeric_limits<float>::infinity();
+        for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
+        if (std::isfinite(floor_y)) {
+            floor_shadow = dmcresource::shadow::floor_shadow_triangles(
+                *session, dmcresource::shadow::kViewerLightDirection, floor_y);
+            view.floor = true;
+            view.floor_y = floor_y;
+            view.floor_shadow = floor_shadow;
+        }
+    }
     return dmcresource::render_view(
         session->render_mesh, width, height, view,
         hierarchy, texture_slots, textures);

@@ -110,6 +110,23 @@ and the dress are chains simulated in game (`0x1402C9DC0`); here they keep
 their rest shape. Contract: Rengine
 `profiles/dmc3/enemy_node_constraint_contract.hpp`.
 
+**Agni & Rudra (v40).** `plwp_2sword.pac` is one MOD: Agni on node 2, Rudra
+on node 1, both at the same rest place, so attaching the root hid Rudra inside
+Agni. Attach records are two-part (`0x1401FDA80`); CPlWp2Sword's pose
+`0x140227CF0` drives node 2 with part 0 and node 1 with part 1 of the state-0
+record, which the viewer now reproduces (node constraints with an offset).
+
+**SHW shadows (v40).** Rengine `docs/research/dmc3-shw-shadow-projection-2026-09-23.md`.
+A `.shw` opens on its own (`formats.shw.hull-reader`): every closed hull is
+drawn as a mesh and the info lists hulls, vertices, triangles, closure and the
+joints they follow. In an assembled PAC each SHW binds to the MOD whose node
+count equals header `+0x11` (pl000: slot 8 -> body, slot 14 -> coat); its
+vertices follow the selected joint's skin matrix, so the shadow moves with MOT
+playback and attached parts. The ◐ button (on by default) draws a floor under
+the lowest rest vertex and the hulls' footprint on it along the light
+direction; the game takes the light from the stage (`[shw+0x60]`), so the
+viewer uses a fixed direction (`shadow::kViewerLightDirection`).
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
@@ -170,7 +187,7 @@ C++23: that slice, ReaderCore, the core, JNI and tests all get
 `CXX_STANDARD 23` / `CXX_EXTENSIONS OFF` from Native Reader's CMake. The
 submodule itself is untouched.
 
-JNI (thin): `assemblePac`, `assemblePacs`, `motionLibraryCount/Name`, `loadLibraryMotion`,
+JNI (thin): `assemblePac`, `assemblePacs`, `hasShadows`, `motionLibraryCount/Name`, `loadLibraryMotion`,
 `loadMotion`, `hasMotion`, `motionEndFrame`, `motionLoopStartFrame`,
 `setMotionFrame`, `clearMotion`. Pose and draw both run on the UI thread.
 
@@ -192,8 +209,8 @@ JNI (thin): `assemblePac`, `assemblePacs`, `motionLibraryCount/Name`, `loadLibra
 
 MOT and PAC are no longer listed as banned legacy modules in CI; the remaining
 list covers only families that are still unpromoted (HITS, TXT, DCA, LIG2,
-NBZ, EFM, MRP, SHW adapters). PNST is read by `formats.pnst.archive-reader`
-(v39).
+NBZ, EFM, MRP adapters). PNST is read by `formats.pnst.archive-reader`
+(v39), SHW by `formats.shw.hull-reader` (v40).
 
 ## 7. Next
 
@@ -201,7 +218,7 @@ NBZ, EFM, MRP, SHW adapters). PNST is read by `formats.pnst.archive-reader`
    pose correctness, frame rate of the software renderer.
 2. Parent-scale compensation from `0x14030E9B0`.
 3. Model Set pairing (`0x1402D83E0`) instead of slot adjacency.
-4. SHW shadow hulls drawn from the file (the engine SHW reader is structural).
+4. Stage light for SHW (`[shw+0x60]`) and the culling tests `0x140320950`/`0x1403206F0`.
 5. Cloth (CLT/C1D) and enemy chains (`0x1402C9DC0`) — needs a parser and the
    chain parameters before any physics can be shown.
 6. Node constraints of other enemy classes (only CEm028 is tabled).

@@ -107,6 +107,7 @@ public final class MainActivity extends Activity {
     private Button wireButton;
     private Button hierarchyButton;
     private Button uvButton;
+    private Button shadowButton;
     private Button infoButton;
     private HorizontalScrollView motionScroll;
     private LinearLayout motionBar;
@@ -249,6 +250,10 @@ public final class MainActivity extends Activity {
                 hierarchyAvailable || blackWidowState.canInspectHierarchy,
                 renderView.isHierarchyVisible());
 
+        syncToggleButton(shadowButton,
+                hasSession && NativeBridge.hasShadows(session) && !renderView.isUvLayoutVisible(),
+                renderView.isShadowVisible());
+
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
                 renderView.isUvLayoutVisible());
@@ -383,6 +388,14 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, hierarchyButton);
+
+        shadowButton = makeSquareButton("\u25D0", "Shadows (SHW)", 20f);
+        shadowButton.setOnClickListener(v -> {
+            if (session == 0 || !NativeBridge.hasShadows(session)) return;
+            renderView.toggleShadows();
+            applyResourceUiState();
+        });
+        addToolButton(bar, shadowButton);
 
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {

@@ -14,6 +14,7 @@ public final class DmcRenderView extends View {
     private static final int RENDER_WIREFRAME = 1 << 0;
     private static final int RENDER_HIERARCHY = 1 << 1;
     private static final int RENDER_UV_LAYOUT = 1 << 5;
+    private static final int RENDER_SHADOWS = 1 << 6;
 
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final ScaleGestureDetector scaleDetector;
@@ -139,7 +140,8 @@ public final class DmcRenderView extends View {
     public void setSession(long newSession) {
         pauseMotion();
         session = newSession;
-        renderFlags = 0;
+        // Shadows start on; native ignores the flag when no SHW is bound.
+        renderFlags = RENDER_SHADOWS;
         hierarchyAvailable = false;
         staticImagePreview = false;
         releaseBitmap();
@@ -222,6 +224,17 @@ public final class DmcRenderView extends View {
     public boolean isHierarchyVisible() {
         return !staticImagePreview && !isUvLayoutVisible() && hierarchyAvailable &&
                 (renderFlags & RENDER_HIERARCHY) != 0;
+    }
+
+    public void toggleShadows() {
+        if (staticImagePreview || isUvLayoutVisible()) return;
+        renderFlags ^= RENDER_SHADOWS;
+        renderNow();
+    }
+
+    public boolean isShadowVisible() {
+        return !staticImagePreview && !isUvLayoutVisible() &&
+                (renderFlags & RENDER_SHADOWS) != 0;
     }
 
     public boolean isUvLayoutVisible() {

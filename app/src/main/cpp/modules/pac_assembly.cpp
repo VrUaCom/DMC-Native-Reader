@@ -3,6 +3,7 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <memory>
 #include <new>
 #include <optional>
 #include <string_view>
@@ -10,7 +11,9 @@
 #include <vector>
 
 #include "dmcresource/archive_entry.h"
+#include "dmcresource/shadow_hull.h"
 #include "dmcresource/motion/part_attachment.h"
+#include "dmcresource/motion/skeleton_rig.h"
 #include "dmcresource/spider/session_actions.h"
 
 namespace dmcresource::pac_assembly {
@@ -299,6 +302,55 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             }
         }
 
+        // SHW: pair each shadow file with the MOD of the same archive and
+        // container whose node count matches header +0x11 (nearest MOD before
+        // it wins); its hulls then follow that model's joints.
+        {
+            std::vector<std::size_t> node_begin(models.size(), 0U);
+            std::vector<std::size_t> node_count(models.size(), 0U);
+            std::vector<std::shared_ptr<const motion::SkeletonRig>> rigs(models.size());
+            if (models.size() == 1U) {
+                node_count[0] = assembled->scene.nodes.size();
+                rigs[0] = assembled->scene.rig;
+            } else if (assembled->composite_parts.size() == models.size()) {
+                std::size_t cursor = 0U;
+                for (std::size_t part = 0U; part < models.size(); ++part) {
+                    const auto& scene = assembled->composite_parts[part].scene;
+                    node_begin[part] = cursor;
+                    node_count[part] = scene.nodes.size();
+                    rigs[part] = scene.rig;
+                    cursor += scene.nodes.size();
+                }
+            }
+            for (std::size_t index = 0U; index < entries.size(); ++index) {
+                const auto& entry = entries[index];
+                if (entry.kind.format != Format::Shw || entry.effect_bank) continue;
+                auto hulls = shadow::parse_hulls(entry.bytes->data(), entry.bytes->size());
+                if (!hulls || hulls->hulls.empty()) continue;
+                std::optional<std::size_t> owner;
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    const auto& model = entries[model_entry[part]];
+                    if (model.archive != entry.archive || model.container != entry.container ||
+                        rigs[part] == nullptr || node_count[part] != hulls->node_count ||
+                        rigs[part]->node_count() != node_count[part] ||
+                        hulls->max_selector() >= node_count[part]) {
+                        continue;
+                    }
+                    if (!owner || model_entry[part] < index) owner = part;
+                }
+                if (!owner) continue;
+                shadow::ShadowBinding binding;
+                binding.name = entry.name;
+                binding.node_begin = node_begin[*owner];
+                binding.node_count = node_count[*owner];
+                binding.rig = rigs[*owner];
+                binding.hulls = std::move(*hulls);
+                assembled->shadow_bindings.push_back(std::move(binding));
+                ++report.shadows_bound;
+                report.detail_attachments += " " + entry.name + "->" + model_names[*owner];
+            }
+        }
+
         report.models = models.size();
         report.motions = motions.size();
         assembled->motion_library = std::move(motions);
@@ -313,6 +365,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " texturesUnpaired=" + std::to_string(report.textures_unpaired) +
             " motions=" + std::to_string(report.motions) +
             " shadowRecords=" + std::to_string(report.shadows) +
+            " shadowsBound=" + std::to_string(report.shadows_bound) +
             " nestedArchives=" + std::to_string(report.nested_archives) +
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +

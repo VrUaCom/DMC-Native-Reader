@@ -17,6 +17,7 @@ enum class RenderFlag : std::uint32_t {
     SkinDebug = 1U << 3U,
     Normals = 1U << 4U,
     UvLayout = 1U << 5U,
+    Shadows = 1U << 6U,
 };
 
 using RenderFlags = std::uint32_t;
@@ -40,6 +41,11 @@ struct ViewState {
     // is framed from the rest pose so the view does not re-center or re-zoom
     // every frame. Empty: frame from the drawn mesh (previous behaviour).
     std::span<const Vec3> framing_vertices{};
+    // Optional floor (plane y = floor_y under the model) and the shadow
+    // footprint drawn on it, 3 vertices per triangle (see shadow_hull.h).
+    bool floor{false};
+    float floor_y{0.0F};
+    std::span<const Vec3> floor_shadow{};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
