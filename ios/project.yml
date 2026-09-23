@@ -1,0 +1,57 @@
+name: DMCReader
+
+options:
+  bundleIdPrefix: com.dmcrengine
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  DMCReader:
+    type: application
+    platform: iOS
+
+    # Swift UI + the Objective-C++/C++ bridge only. The Core is not compiled
+    # here: build_core.sh builds the canonical DMCNativeReader::Core CMake
+    # target for the active platform and this target links the result.
+    sources:
+      - path: DMCReader
+
+    preBuildScripts:
+      - name: Build DMCNativeReader::Core
+        script: "\"${SRCROOT}/build_core.sh\""
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/build/core/$(PLATFORM_NAME)/libdmc_native_reader_core.a
+          - $(SRCROOT)/build/core/$(PLATFORM_NAME)/libdmc_rengine_reader_core.a
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dmcrengine.nativereader
+        PRODUCT_NAME: DMCReader
+        INFOPLIST_FILE: DMCReader/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        DEVELOPMENT_LANGUAGE: en
+        SWIFT_OBJC_BRIDGING_HEADER: DMCReader/Bridge/DMCReader-Bridging-Header.h
+        SWIFT_VERSION: "5.0"
+        # Core headers expose C++23 types (std::expected); the bridge must see
+        # them in the same language mode the Core target was built with.
+        CLANG_CXX_LANGUAGE_STANDARD: c++2b
+        CLANG_CXX_LIBRARY: libc++
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - DMC_NATIVE_READER_CPP23=1
+          - DMC_NATIVE_READER_SPIDER_CPP=1
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/DMCReader/Bridge
+          - $(SRCROOT)/../app/src/main/cpp/include
+          - $(SRCROOT)/../app/src/main/cpp/vendor/dmc-rengine-cpp/include
+        LIBRARY_SEARCH_PATHS:
+          - $(SRCROOT)/build/core/$(PLATFORM_NAME)
+        OTHER_LDFLAGS:
+          - -ldmc_native_reader_core
+          - -ldmc_rengine_reader_core
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0.6"
+        CURRENT_PROJECT_VERSION: "33"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
