@@ -1,0 +1,84 @@
+name: Android release
+
+# Publishes an installable Android APK as a GitHub release when an
+# android-v* tag is pushed. The APK is the debug build signed with the
+# repository's stable test signer (keys/dmc-native-reader-test.jks), so it
+# installs over earlier test builds. Production signing stays external.
+on:
+  push:
+    tags: ["android-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Run package policy regressions
+        run: python3 tools/test_verify_device_apk.py
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.5.0"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;30.0.16248370" \
+            "cmake;3.22.1"
+
+      - name: Build APK
+        run: gradle --no-daemon clean :app:assembleDebug
+
+      - name: Verify APK
+        run: |
+          set -euxo pipefail
+          python3 tools/verify_device_apk.py \
+            --sdk "$ANDROID_SDK_ROOT" \
+            --signing-policy stable-debug \
+            app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euxo pipefail
+          NAME="${TAG#android-}"
+          SHORT="$(git rev-parse --short HEAD)"
+          APK="DMC-Native-Reader-${NAME}-${SHORT}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
+          sha256sum "$APK" | tee "$APK.sha256"
+          NOTES="docs/releases/${TAG}.md"
+          test -f "$NOTES"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" "$APK.sha256" --clobber
+          else
+            gh release create "$TAG" "$APK" "$APK.sha256" \
+              --title "DMC Native Reader for Android — ${NAME}" \
+              --notes-file "$NOTES" \
+              --verify-tag
+          fi
