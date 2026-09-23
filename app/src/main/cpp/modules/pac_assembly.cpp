@@ -18,6 +18,7 @@ namespace {
 constexpr std::size_t kMaxNestingDepth = 3U;
 
 struct Entry final {
+    std::size_t archive{};
     std::string name;
     std::string container;   // "" for the top-level archive
     std::optional<std::uint32_t> slot;
@@ -38,6 +39,7 @@ struct Entry final {
 }
 
 void collect(const Session& container,
+             std::size_t archive,
              const std::string& prefix,
              std::size_t depth,
              std::vector<std::unique_ptr<Session>>* nested_owner,
@@ -54,11 +56,12 @@ void collect(const Session& container,
             if (!nested) continue;
             ++report->nested_archives;
             nested_owner->push_back(std::move(nested));
-            collect(*nested_owner->back(), name + "/", depth + 1U, nested_owner, out, report);
+            collect(*nested_owner->back(), archive, name + "/", depth + 1U,
+                    nested_owner, out, report);
             continue;
         }
         if (kind.shadow) ++report->shadows;
-        out->push_back({name, prefix, slot_of(child), kind, &child.source_bytes});
+        out->push_back({archive, name, prefix, slot_of(child), kind, &child.source_bytes});
     }
 }
 
@@ -66,11 +69,26 @@ void collect(const Session& container,
 [[nodiscard]] std::optional<std::size_t> texture_for(const std::vector<Entry>& entries,
                                                      std::size_t index) {
     const auto& container = entries[index].container;
+    const auto archive = entries[index].archive;
+    const auto same = [&](const Entry& e) {
+        return e.archive == archive && e.container == container && e.kind.format == Format::Ptx;
+    };
     for (std::size_t i = index; i-- > 0U;) {
-        if (entries[i].container == container && entries[i].kind.format == Format::Ptx) return i;
+        if (same(entries[i])) return i;
     }
     for (std::size_t i = index + 1U; i < entries.size(); ++i) {
-        if (entries[i].container == container && entries[i].kind.format == Format::Ptx) return i;
+        if (same(entries[i])) return i;
+    }
+    // Modded archives sometimes keep the PTX in another container of the
+    // same archive: fall back to the nearest PTX anywhere in that archive.
+    const auto any = [&](const Entry& e) {
+        return e.archive == archive && e.kind.format == Format::Ptx;
+    };
+    for (std::size_t i = index; i-- > 0U;) {
+        if (any(entries[i])) return i;
+    }
+    for (std::size_t i = index + 1U; i < entries.size(); ++i) {
+        if (any(entries[i])) return i;
     }
     return std::nullopt;
 }
@@ -88,12 +106,30 @@ void collect(const Session& container,
 std::unique_ptr<Session> assemble_pac(const Session& pac,
                                       AssemblyReport* report_out,
                                       std::string_view archive_name) noexcept {
+    const Session* archives[] = {&pac};
+    const std::string_view names[] = {archive_name};
+    return assemble_archives(archives, names, report_out);
+}
+
+std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archives,
+                                           std::span<const std::string_view> archive_names,
+                                           AssemblyReport* report_out) noexcept {
     AssemblyReport report;
     try {
-        if (pac.probe.format != Format::Pac) return nullptr;
+        if (archives.empty() || archives.size() != archive_names.size()) return nullptr;
+        for (const auto* archive : archives) {
+            if (archive == nullptr || archive->probe.format != Format::Pac) return nullptr;
+        }
+        const Session& pac = *archives.front();
+        const std::string_view archive_name = archive_names.front();
         std::vector<std::unique_ptr<Session>> nested;
         std::vector<Entry> entries;
-        collect(pac, {}, 0U, &nested, &entries, &report);
+        for (std::size_t a = 0U; a < archives.size(); ++a) {
+            const std::string prefix = a == 0U ? std::string{} : std::string{archive_names[a]} + "/";
+            // Added archives keep their own container key so pairing never
+            // crosses archives; archive 0 keeps "" for the player slot rule.
+            collect(*archives[a], a, prefix, 0U, &nested, &entries, &report);
+        }
 
         std::vector<std::unique_ptr<Session>> models;
         std::vector<std::string> model_names;
@@ -170,20 +206,38 @@ std::unique_ptr<Session> assemble_pac(const Session& pac,
                 }
             }
 
-            // IPlayer coat: top-level slot 12 hangs from body (slot 1) joint 3.
-            if (player_archive(archive_name)) {
-                std::optional<std::size_t> body;
-                std::optional<std::size_t> coat;
+            // Body: archive 0 top-level slot 1 for player PACs, else its first MOD.
+            std::optional<std::size_t> body;
+            std::optional<std::size_t> coat;
+            const bool player = player_archive(archive_name);
+            for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                const auto& entry = entries[model_entry[part]];
+                if (entry.archive != 0U) continue;
+                if (!body && !player) body = part;
+                if (!player || !entry.container.empty() || !entry.slot.has_value()) continue;
+                if (*entry.slot == motion::kPlayerBodySlot) body = part;
+                if (*entry.slot == motion::kPlayerCoatSlot) coat = part;
+            }
+            // IPlayer coat: top-level slot 12 hangs from body joint 3.
+            if (body && coat &&
+                motion::attach_part_skeleton(assembled.get(), *body, *coat,
+                                             motion::kPlayerCoatHostJoint, true)) {
+                ++report.attached_parts;
+                report.detail_attachments += " coat=slot12->bodyJoint3";
+            }
+            // Added weapon archives: every MOD hangs from its record's joint.
+            for (std::size_t a = 1U; body && a < archive_names.size(); ++a) {
+                const auto record = motion::weapon_record_for_archive(archive_names[a]);
+                if (!record) continue;
+                const auto offset = motion::weapon_offset_matrix(*record);
                 for (std::size_t part = 0U; part < model_entry.size(); ++part) {
-                    const auto& entry = entries[model_entry[part]];
-                    if (!entry.container.empty() || !entry.slot.has_value()) continue;
-                    if (*entry.slot == motion::kPlayerBodySlot) body = part;
-                    if (*entry.slot == motion::kPlayerCoatSlot) coat = part;
-                }
-                if (body && coat &&
-                    motion::attach_part_skeleton(assembled.get(), *body, *coat,
-                                                 motion::kPlayerCoatHostJoint, true)) {
-                    ++report.attached_parts;
+                    if (entries[model_entry[part]].archive != a) continue;
+                    if (motion::attach_part_skeleton(assembled.get(), *body, part,
+                                                     record->joint, false, offset)) {
+                        ++report.attached_parts;
+                        report.detail_attachments += " " + std::string{record->class_name} +
+                            "->bodyJoint" + std::to_string(record->joint);
+                    }
                 }
             }
         }
@@ -192,6 +246,7 @@ std::unique_ptr<Session> assemble_pac(const Session& pac,
         report.motions = motions.size();
         assembled->motion_library = std::move(motions);
         assembled->children = pac.children;
+        (void)archive_name;
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
         }
@@ -203,8 +258,7 @@ std::unique_ptr<Session> assemble_pac(const Session& pac,
             " shadowRecords=" + std::to_string(report.shadows) +
             " nestedArchives=" + std::to_string(report.nested_archives) +
             " attachedParts=" + std::to_string(report.attached_parts) +
-            " ptxPairing=nearest-preceding-in-container" +
-            (report.attached_parts != 0U ? " coat=slot12->bodyJoint3" : "");
+            " ptxPairing=nearest-preceding-in-container" + report.detail_attachments;
         if (!assembled->detail.empty()) assembled->detail += "\n";
         assembled->detail += report.detail;
         if (!assembled->trace.empty()) assembled->trace += "\n";

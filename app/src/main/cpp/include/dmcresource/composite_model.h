@@ -38,6 +38,9 @@ struct CompositePlacement final {
     Matrix4 root_matrix{};
     bool resolved{false};
     bool root_local_identity{false};
+    // HostJointSkeleton: root base = attachment_offset x host joint world
+    // (identity for the coat; the weapon record local for weapons).
+    Matrix4 attachment_offset{};
 };
 
 // One canonical source MOD inside a composite scene. asset_id / instance_id are

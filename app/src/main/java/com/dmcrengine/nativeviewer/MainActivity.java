@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_EXPORT_SINGLE_PNG = 1003;
     private static final int REQUEST_EXPORT_GALLERY_TREE = 1004;
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
+    private static final int REQUEST_ADD_PAC = 1011;
     private static final int REQUEST_STAGE_MOTION = 1006;
     private static final int REQUEST_STAGE_TEXTURE = 1007;
     private static final int REQUEST_STAGE_PHYSICS = 1008;
@@ -60,6 +61,7 @@ public final class MainActivity extends Activity {
     private static final int MENU_ADD_CLOTH = 7;
     private static final int MENU_ADD_OTHER = 8;
     private static final int MENU_BROWSE_PAC = 9;
+    private static final int MENU_ADD_PAC = 10;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -113,6 +115,8 @@ public final class MainActivity extends Activity {
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
+    // Extra archives (weapons, props) assembled onto the character, in order.
+    private final ArrayList<Uri> addedPacUris = new ArrayList<>();
 
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
     private final ArrayList<Uri> modelPartUris = new ArrayList<>();
@@ -400,6 +404,7 @@ public final class MainActivity extends Activity {
         PopupMenu menu = new PopupMenu(this, anchor);
         menu.getMenu().add(0, MENU_OPEN, 0, "Open / replace resource");
         if (isRootScene() && assembledPacUri != null) {
+            menu.getMenu().add(0, MENU_ADD_PAC, 1, "Add weapon / .PAC…");
             menu.getMenu().add(0, MENU_BROWSE_PAC, 1, "Browse .PAC files…");
         }
         if (hasModCompositionContext()) {
@@ -422,6 +427,9 @@ public final class MainActivity extends Activity {
                     return true;
                 case MENU_BROWSE_PAC:
                     browseAssembledPac();
+                    return true;
+                case MENU_ADD_PAC:
+                    chooseAdditionalPac();
                     return true;
                 case MENU_ADD_MOD:
                     chooseAdditionalMods();
@@ -567,6 +575,69 @@ public final class MainActivity extends Activity {
         if (report != null && !report.isEmpty()) {
             setInfo(infoText + "\nMOTION\n" + report + "\n");
         }
+    }
+
+    private void chooseAdditionalPac() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "application/vnd.dmc.pac",
+                "application/octet-stream",
+                "*/*"
+        });
+        startActivityForResult(intent, REQUEST_ADD_PAC);
+    }
+
+    // Re-assemble the character PAC together with every added archive. Weapon
+    // PACs (plwp_*.pac) hang from the body joint recorded by the game.
+    private void assembleWithAddedPacs(Uri added) {
+        if (assembledPacUri == null) return;
+        ArrayList<Uri> uris = new ArrayList<>();
+        uris.add(assembledPacUri);
+        uris.addAll(addedPacUris);
+        if (added != null && !uris.contains(added)) uris.add(added);
+
+        long[] handles = new long[uris.size()];
+        String[] names = new String[uris.size()];
+        long scene = 0;
+        String failure = null;
+        try {
+            for (int index = 0; index < uris.size(); ++index) {
+                names[index] = displayName(uris.get(index));
+                try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uris.get(index))) {
+                    if (pfd == null) throw new FileNotFoundException("No file descriptor");
+                    handles[index] = NativeBridge.open(pfd.getFd(), names[index]);
+                }
+                if (handles[index] == 0) {
+                    failure = names[index] + " is not a readable DMC archive";
+                    break;
+                }
+            }
+            if (failure == null) {
+                scene = NativeBridge.assemblePacs(handles, names);
+                if (scene == 0) failure = "Archives could not be assembled";
+            }
+        } catch (Exception error) {
+            failure = "Could not read archives: " + error;
+        } finally {
+            for (long handle : handles) if (handle != 0) NativeBridge.close(handle);
+        }
+        if (scene == 0) {
+            Toast.makeText(this, failure, Toast.LENGTH_LONG).show();
+            return;
+        }
+        final Uri character = assembledPacUri;
+        final ArrayList<Uri> extras = new ArrayList<>(uris.subList(1, uris.size()));
+        renderView.pauseMotion();
+        closeAllSessions();
+        resetCompositionState();
+        assembledPacUri = character;
+        addedPacUris.addAll(extras);
+        StringBuilder title = new StringBuilder(displayName(character));
+        for (Uri uri : extras) title.append(" + ").append(displayName(uri));
+        activateSession(scene, title.toString());
+        Toast.makeText(this, title + " assembled", Toast.LENGTH_LONG).show();
     }
 
     private void browseAssembledPac() {
@@ -774,6 +845,14 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        if (requestCode == REQUEST_ADD_PAC) {
+            Uri uri = data.getData();
+            if (uri == null) return;
+            persistUriPermission(uri, data.getFlags(), false);
+            assembleWithAddedPacs(uri);
+            return;
+        }
+
         if (requestCode == REQUEST_ADD_MOD_PARTS) {
             ArrayList<Uri> added = selectedUris(data);
             if (added.isEmpty()) return;
@@ -923,6 +1002,7 @@ public final class MainActivity extends Activity {
         stagedAssets.clear();
         selectedMotionIndex = -1;
         assembledPacUri = null;
+        addedPacUris.clear();
     }
 
     private void showIdleStatus() {

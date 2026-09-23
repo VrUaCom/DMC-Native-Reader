@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -548,4 +549,31 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_clearMotion(
         JNIEnv*, jclass, jlong handle) {
     dmcresource::motion::clear_motion(from_handle(handle));
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePacs(
+        JNIEnv* env, jclass, jlongArray handles, jobjectArray names) {
+    if (handles == nullptr || names == nullptr) return 0;
+    const jsize count = env->GetArrayLength(handles);
+    if (count < 1 || env->GetArrayLength(names) != count) return 0;
+    try {
+        std::vector<jlong> raw(static_cast<std::size_t>(count));
+        env->GetLongArrayRegion(handles, 0, count, raw.data());
+        if (env->ExceptionCheck()) return 0;
+        std::vector<const Session*> archives;
+        std::vector<std::string> owned_names;
+        for (jsize index = 0; index < count; ++index) {
+            const Session* archive = from_handle(raw[static_cast<std::size_t>(index)]);
+            if (archive == nullptr) return 0;
+            archives.push_back(archive);
+            jstring value = static_cast<jstring>(env->GetObjectArrayElement(names, index));
+            if (env->ExceptionCheck()) return 0;
+            owned_names.push_back(to_utf8(env, value));
+            if (value != nullptr) env->DeleteLocalRef(value);
+        }
+        std::vector<std::string_view> views(owned_names.begin(), owned_names.end());
+        return to_handle(dmcresource::pac_assembly::assemble_archives(
+            archives, views, nullptr).release());
+    } catch (...) { return 0; }
 }

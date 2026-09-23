@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -17,6 +18,7 @@ struct AssemblyReport final {
     std::size_t shadows{};
     std::size_t nested_archives{};
     std::size_t attached_parts{};
+    std::string detail_attachments;
     std::string detail;
 };
 
@@ -35,5 +37,15 @@ struct AssemblyReport final {
 [[nodiscard]] std::unique_ptr<Session> assemble_pac(const Session& pac,
                                                     AssemblyReport* report = nullptr,
                                                     std::string_view archive_name = {}) noexcept;
+
+// Several archives in one scene: archives[0] is the character, the rest are
+// added to it. An added archive named like a catalogued weapon PAC
+// (plwp_sword.pac = Rebellion, ...) hangs every MOD it holds from the body at
+// the weapon's state-0 joint with its recorded offset (0x1401FD8F0); other
+// archives keep their source coordinates. MOTs of every archive are listed.
+[[nodiscard]] std::unique_ptr<Session> assemble_archives(
+    std::span<const Session* const> archives,
+    std::span<const std::string_view> archive_names,
+    AssemblyReport* report = nullptr) noexcept;
 
 }  // namespace dmcresource::pac_assembly

@@ -57,6 +57,9 @@ public final class NativeBridge {
 
     // Read-only PAC assembly: MODs in model space, slot-adjacent PTX, MOT library.
     public static native long assemblePac(long handle, String archiveName);
+    // handles[0] = character PAC, the rest are added (plwp_*.pac weapons hang
+    // from the body joint the game records for them).
+    public static native long assemblePacs(long[] handles, String[] names);
     public static native int motionLibraryCount(long handle);
     public static native String motionLibraryName(long handle, int index);
 

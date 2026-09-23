@@ -54,6 +54,22 @@ root. `pac_assembly` does the same for archives named `pl*`:
 - the only assumption left is that the player's joint table index 3 is MOD
   node 3; cloth simulation is not reproduced, so the coat keeps its rest shape.
 
+**Weapons (v36).** Rengine `docs/research/dmc3-player-weapon-attachment-2026-09-23.md`
+and `profiles/dmc3/player_attachment_contract.hpp`: a weapon root is
+`local(T, R) × player.joint(j)` with the state-0 record of its class
+(Rebellion `plwp_sword.pac`: joint 3, T(-14.5, 32, -14), R(-1.658, 0, 3.403);
+Yamato `plwp_vergilsword.pac`: joint 13; Agni & Rudra, Nevan, Force Edge,
+Nero's sword, Beowulf-less laser…). In the app: open a character PAC, then
+`⋮ → Add weapon / .PAC…`. `assemble_archives` re-assembles the character with
+every added archive; catalogued weapon PACs hang from the body joint with the
+recorded offset and follow MOT playback; other archives keep their source
+coordinates. Weapon MODs without a skeleton are moved rigidly onto the root.
+
+**Controls (v36).** Drag now turns the model the way the finger moves
+(yaw and pitch signs were inverted), which also removes the "inside-out" depth
+impression; the projection itself was already consistent (nearer = larger,
+depth test agrees).
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

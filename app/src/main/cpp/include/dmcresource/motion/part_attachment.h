@@ -1,7 +1,12 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <string_view>
+
+#include "dmcresource/render_scene.h"
 
 namespace dmcresource {
 struct Session;
@@ -9,17 +14,50 @@ struct Session;
 
 namespace dmcresource::motion {
 
-// IPlayer coat reconstruction (reverse authority: dmc-rengine-cpp
-// docs/research/dmc3-player-coat-attachment-2026-09-23.md):
-//   CPlVergil 0x140225A16 / CPlDante 0x1402120A7 / CPlNewVergil 0x1402204E9
-//   call coatModel->vtbl[+0x190](bodyJoint[3]->world) every frame, after the
-//   coat root joint's local (+0x108) was set to identity at load
-//   (0x140226118..0x140226158). The coat model is PAC slot 12 and uses the
-//   body texture of PAC slot 0 (0x1402260A4..0x1402260F7).
+// C++23 port of the IPlayer attachment contract. Reverse authority:
+// dmc-rengine-cpp include/dmc_rengine/profiles/dmc3/player_attachment_contract.hpp
+// with docs/research/dmc3-player-coat-attachment-2026-09-23.md and
+// dmc3-player-weapon-attachment-2026-09-23.md.
+//  * coat: PAC slot 12, texture slot 0, root = identity x bodyJoint[3]
+//    (CPlVergil 0x140225A16, CPlDante 0x1402120A7, CPlNewVergil 0x1402204E9);
+//  * weapons: root = local(T, R) x player.joint(j) (0x1401FD8F0, 0x140231505).
 inline constexpr std::uint32_t kPlayerCoatHostJoint = 3U;
 inline constexpr std::uint32_t kPlayerBodySlot = 1U;
 inline constexpr std::uint32_t kPlayerCoatSlot = 12U;
 inline constexpr std::uint32_t kPlayerTextureSlot = 0U;
+
+struct WeaponAttachRecord final {
+    std::string_view class_name;
+    std::string_view pac_stem;
+    std::uint32_t joint;
+    std::array<float, 3> translation;
+    std::array<float, 3> rotation_xyz_radians;
+};
+
+inline constexpr std::array<WeaponAttachRecord, 8> kWeaponState0Records{{
+    {"CPlWpSword", "plwp_sword", 3U, {-14.5F, 32.0F, -14.0F},
+     {-1.6580626964569092F, 0.0F, 3.4033920764923096F}},
+    {"CPlWp2Sword", "plwp_2sword", 3U, {16.0F, -43.0F, -15.0F},
+     {-1.6057028770446777F, 0.0F, 0.2617993950843811F}},
+    {"CPlWpGuitar", "plwp_guitar", 3U, {-30.0F, -80.0F, -23.0F},
+     {-1.5009831190109253F, -0.11344639956951141F, -0.5235987901687622F}},
+    {"CPlWpLaser", "plwp_laser", 8U, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}},
+    {"CPlWpFoeceEdge", "plwp_forceedge", 3U, {-14.5F, 32.0F, -14.0F},
+     {-1.6580626964569092F, 0.0F, 3.4033920764923096F}},
+    {"CPlWpNeroSword", "plwp_nerosword", 3U, {-14.5F, 32.0F, -14.0F},
+     {-1.6580626964569092F, 0.0F, 3.4033920764923096F}},
+    {"CPlWpVergilSword", "plwp_vergilsword", 13U, {19.0F, -0.5F, 11.0F},
+     {0.0F, 3.839724063873291F, 0.0F}},
+    {"CPlWpNewVergilSword", "plwp_newvergilsword", 13U, {19.0F, -0.5F, 11.0F},
+     {0.0F, 3.839724063873291F, 0.0F}},
+}};
+
+// Match a PAC file name (any directory, any case, ".pac") to a weapon record.
+[[nodiscard]] std::optional<WeaponAttachRecord> weapon_record_for_archive(
+    std::string_view archive_name) noexcept;
+
+// local(T, R) built exactly like the MOD rest local (0x140330450 + 0x140031200).
+[[nodiscard]] Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept;
 
 // Hang `child_part`'s skeleton from `host_joint` of `host_part` and pose it
 // immediately from the host joint's current world. Read-only: only the
@@ -28,7 +66,8 @@ inline constexpr std::uint32_t kPlayerTextureSlot = 0U;
                                         std::size_t host_part,
                                         std::size_t child_part,
                                         std::uint32_t host_joint,
-                                        bool root_local_identity) noexcept;
+                                        bool root_local_identity,
+                                        const Matrix4& offset = Matrix4{}) noexcept;
 
 // Re-pose every HostJointSkeleton part from its host joint's current world.
 // Called after the host moved (MOT frame) and after attachment.

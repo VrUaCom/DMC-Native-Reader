@@ -1,6 +1,7 @@
 #include "dmcresource/motion/part_attachment.h"
 
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <new>
 #include <optional>
@@ -70,11 +71,11 @@ struct Range final {
     auto& part = session->composite_parts[part_index];
     const auto& placement = part.placement;
     if (placement.mode != CompositePlacementMode::HostJointSkeleton ||
-        placement.host_part_index >= session->composite_parts.size() ||
-        part.scene.rig == nullptr ||
-        part.scene.rig->node_count() != part.scene.nodes.size()) {
+        placement.host_part_index >= session->composite_parts.size()) {
         return false;
     }
+    const bool rigged = part.scene.rig != nullptr &&
+        part.scene.rig->node_count() == part.scene.nodes.size();
     const auto host_nodes = node_range(*session, placement.host_part_index);
     const auto child_nodes = node_range(*session, part_index);
     const auto child_vertices = vertex_range(*session, part_index);
@@ -83,10 +84,31 @@ struct Range final {
         return false;
     }
 
-    world::Matrix4f root_base{};
-    root_base.values =
+    world::Matrix4f host_world{};
+    host_world.values =
         session->scene.nodes[host_nodes->begin + placement.attachment_selector].world.values;
+    world::Matrix4f offset{};
+    offset.values = placement.attachment_offset.values;
+    // 0x140030E40(dest, jointWorld, offset): dest = offset x jointWorld.
+    const auto root_base = world::multiply_dmc3_matrices(offset, host_world);
     if (!finite(root_base.values)) return false;
+
+    if (!rigged) {
+        // No spatial skeleton: move the whole part rigidly onto the root base.
+        Mesh rest;
+        if (!materialize_render_scene(part.scene, &rest) ||
+            rest.vertices.size() != child_vertices->count) {
+            return false;
+        }
+        for (std::size_t i = 0U; i < rest.vertices.size(); ++i) {
+            const auto moved = transform_row(rest.vertices[i], root_base.values);
+            if (!std::isfinite(moved.x) || !std::isfinite(moved.y) || !std::isfinite(moved.z)) {
+                return false;
+            }
+            session->render_mesh.vertices[child_vertices->begin + i] = moved;
+        }
+        return true;
+    }
 
     const auto& domain = part.scene.rig->domain;
     const auto count = part.scene.rig->node_count();
@@ -170,7 +192,8 @@ bool attach_part_skeleton(Session* session,
                           std::size_t host_part,
                           std::size_t child_part,
                           std::uint32_t host_joint,
-                          bool root_local_identity) noexcept {
+                          bool root_local_identity,
+                          const Matrix4& offset) noexcept {
     if (session == nullptr || host_part == child_part ||
         host_part >= session->composite_parts.size() ||
         child_part >= session->composite_parts.size()) {
@@ -184,6 +207,7 @@ bool attach_part_skeleton(Session* session,
         part.placement.host_instance_id = session->composite_parts[host_part].instance_id;
         part.placement.attachment_selector = host_joint;
         part.placement.root_local_identity = root_local_identity;
+        part.placement.attachment_offset = offset;
         part.placement.resolved = true;
         if (!pose_part(session, child_part)) {
             part.placement = previous;
@@ -213,6 +237,39 @@ bool apply_part_attachments(Session* session) noexcept {
     } catch (...) {
         return false;
     }
+}
+
+std::optional<WeaponAttachRecord> weapon_record_for_archive(
+    std::string_view archive_name) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    for (const auto& record : kWeaponState0Records) {
+        const auto& stem = record.pac_stem;
+        if (archive_name.size() != stem.size() + 4U) continue;
+        bool match = true;
+        for (std::size_t i = 0U; i < archive_name.size() && match; ++i) {
+            const char expected = i < stem.size() ? stem[i] : ".pac"[i - stem.size()];
+            match = std::tolower(static_cast<unsigned char>(archive_name[i])) == expected;
+        }
+        if (match) return record;
+    }
+    return std::nullopt;
+}
+
+Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
+    dmc::rengine::formats::mod::transform_domain::LocalTransformRecord local{};
+    local.translation = {record.translation[0], record.translation[1], record.translation[2]};
+    local.rotation_xyz_radians = {record.rotation_xyz_radians[0],
+                                  record.rotation_xyz_radians[1],
+                                  record.rotation_xyz_radians[2]};
+    const auto built = world::build_local_matrix(local);
+    Matrix4 out;
+    out.values = built.values;
+    out.values[12] = record.translation[0];
+    out.values[13] = record.translation[1];
+    out.values[14] = record.translation[2];
+    out.values[15] = 1.0F;
+    return out;
 }
 
 bool is_attached_part(const Session* session, std::size_t part) noexcept {

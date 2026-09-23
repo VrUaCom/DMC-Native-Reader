@@ -348,6 +348,42 @@ int main() {
         assert(near(v.y, coat_rest[i].y + 3.0F));
     }
 
+    // Rebellion: plwp_sword.pac added to the character hangs from body joint 3
+    // at local(T(-14.5,32,-14), R(-1.658,0,3.403)) x joint3World.
+    {
+        std::vector<std::vector<std::uint8_t>> weapon_slots{ptx, coat};
+        const auto weapon_pac = make_pac(weapon_slots);
+        auto weapon = dmcresource::open_session("plwp_sword.pac", weapon_pac.data(),
+                                                weapon_pac.size());
+        assert(weapon != nullptr);
+        const dmcresource::Session* archives[] = {archive.get(), weapon.get()};
+        const std::string_view names[] = {"pl000.pac", "plwp_sword.pac"};
+        auto armed = dmcresource::pac_assembly::assemble_archives(archives, names, &report);
+        assert(armed != nullptr);
+        assert(report.models == 3U);
+        assert(report.attached_parts == 2U);                 // coat + Rebellion
+        assert(motion::is_attached_part(armed.get(), 2U));
+        const auto& placement = armed->composite_parts[2].placement;
+        assert(placement.attachment_selector == 3U);
+        const auto record = motion::weapon_record_for_archive("obj\\PLWP_SWORD.PAC");
+        assert(record.has_value() && record->class_name == "CPlWpSword");
+        const auto offset = motion::weapon_offset_matrix(*record);
+        assert(placement.attachment_offset.values == offset.values);
+        assert(offset.values[12] == -14.5F && offset.values[13] == 32.0F &&
+               offset.values[14] == -14.0F);
+        // Weapon root node world = restLocal(root) x offset x joint3.
+        const auto body_nodes = armed->composite_parts[0].scene.nodes.size();
+        const auto coat_nodes = armed->composite_parts[1].scene.nodes.size();
+        const auto& joint3 = armed->scene.nodes[3].world.values;
+        const auto& weapon_root = armed->scene.nodes[body_nodes + coat_nodes].world.values;
+        // Root local is a pure translation (10,0,0) in the fixture.
+        const float ox = 10.0F * offset.values[0] + offset.values[12];
+        const float oy = 10.0F * offset.values[1] + offset.values[13];
+        assert(near(weapon_root[12], ox * joint3[0] + oy * joint3[4] + joint3[12]));
+        assert(near(weapon_root[13], ox * joint3[1] + oy * joint3[5] + joint3[13]));
+        assert(!motion::weapon_record_for_archive("plwp_gun.pac").has_value());
+    }
+
     // The same layout under a non-player name is not guessed at.
     auto enemy = dmcresource::pac_assembly::assemble_pac(*archive, &report, "em001.pac");
     assert(enemy != nullptr && report.attached_parts == 0U);

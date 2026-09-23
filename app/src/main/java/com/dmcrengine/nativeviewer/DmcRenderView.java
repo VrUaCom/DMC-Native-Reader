@@ -318,8 +318,9 @@ public final class DmcRenderView extends View {
                 if (!scaleDetector.isInProgress()) {
                     float dx = event.getX() - lastX;
                     float dy = event.getY() - lastY;
-                    yaw += dx * 0.008f;
-                    pitch += dy * 0.008f;
+                    // Grab-and-turn: the surface under the finger follows it.
+                    yaw -= dx * 0.008f;
+                    pitch -= dy * 0.008f;
                     pitch = Math.max(-1.55f, Math.min(1.55f, pitch));
                     lastX = event.getX();
                     lastY = event.getY();
