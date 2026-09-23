@@ -33,9 +33,16 @@ Choose your team under Signing & Capabilities and Run. The first build also
 builds the Core for the selected platform (`build_core.sh`, a pre-build
 phase). A free Apple ID works; the installed app then expires after 7 days.
 
-CI (`.github/workflows/ios.yml`) additionally produces an **unsigned** IPA as
-a workflow artifact. It installs only through a tool that re-signs it with
-your own Apple ID (AltStore, SideStore, Sideloadly).
+CI (`.github/workflows/ios.yml`) runs in two tiers, because in a private
+repository one macOS minute is billed as ten Linux minutes:
+
+- every PR touching `ios/` or the Core runs the bridge regression on Linux;
+- the Xcode simulator + device build runs only on demand: add the `ios-build`
+  label to the PR, or dispatch the workflow manually.
+
+The on-demand build produces an **unsigned** IPA as a workflow artifact. It
+installs only through a tool that re-signs it with your own Apple ID
+(AltStore, SideStore, Sideloadly).
 
 ## Verification
 
@@ -50,6 +57,7 @@ your own Apple ID (AltStore, SideStore, Sideloadly).
   ```
   It is kept out of the canonical native test inventory in
   `app/src/main/cpp/CMakeLists.txt`, whose exact count is Phase-2 evidence.
-- `ios/tests` also runs first in the iOS workflow, under Apple clang.
+- `ios/tests` also runs in CI: on Linux for every relevant PR, and under
+  Apple clang/libc++ before each on-demand Xcode build.
 - The Swift and Objective-C++ layers compile only on macOS; they are covered
   by the workflow's simulator and device builds.

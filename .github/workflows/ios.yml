@@ -1,10 +1,14 @@
 name: DMC Native Reader iOS
 
-# macOS minutes are expensive: run only when the iOS shell or the shared Core
-# changes, never on unrelated commits (PROJECT_AI_CONTEXT.md, CI budget).
+# Cost model: in a private repository one macOS minute is billed as ten Linux
+# minutes. The portable part of the iOS shell (the C++ bridge against the real
+# Core) therefore runs on Linux on every relevant PR, while the macOS Xcode
+# build runs only on demand: add the `ios-build` label to a PR, or dispatch the
+# workflow manually. (PROJECT_AI_CONTEXT.md, CI budget discipline.)
 on:
   pull_request:
     branches: ["main"]
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "ios/**"
       - "app/src/main/cpp/**"
@@ -14,8 +18,34 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same PR supersedes the run in progress.
+concurrency:
+  group: ios-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Cheap, every relevant PR: the bridge translation unit the app compiles,
+  # driven against the real Core.
+  bridge-host:
+    if: github.event.action != 'labeled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: iOS bridge regression (Linux host)
+        run: |
+          set -euxo pipefail
+          cmake -S ios/tests -B build-bridge-test -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-bridge-test -j "$(nproc)"
+          ctest --test-dir build-bridge-test --output-on-failure
+
+  # Expensive, on demand only: `ios-build` label or manual dispatch.
   build-ios:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'ios-build')
     runs-on: macos-latest
     timeout-minutes: 45
 
@@ -24,8 +54,8 @@ jobs:
         with:
           submodules: recursive
 
-      # The shell's C++ boundary against the real Core, under Apple clang.
-      - name: iOS bridge regression (host)
+      # Same regression under Apple clang/libc++ before the Xcode build.
+      - name: iOS bridge regression (Apple clang)
         run: |
           set -euxo pipefail
           cmake -S ios/tests -B build-bridge-test -DCMAKE_BUILD_TYPE=Debug
