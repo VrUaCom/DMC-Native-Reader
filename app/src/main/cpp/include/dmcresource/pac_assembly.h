@@ -20,6 +20,8 @@ struct AssemblyReport final {
     std::size_t nested_archives{};
     std::size_t attached_parts{};
     std::size_t effect_models_skipped{};
+    std::size_t variant_models_skipped{};
+    std::string enemy_class;
     std::string detail_attachments;
     std::string detail;
 };
@@ -38,7 +40,8 @@ struct AssemblyReport final {
 // Returns nullptr when the archive holds no MOD. Never writes to the archive.
 [[nodiscard]] std::unique_ptr<Session> assemble_pac(const Session& pac,
                                                     AssemblyReport* report = nullptr,
-                                                    std::string_view archive_name = {}) noexcept;
+                                                    std::string_view archive_name = {},
+                                                    std::size_t enemy_variant = 0U) noexcept;
 
 // Several archives in one scene: archives[0] is the character, the rest are
 // added to it. An added archive named like a catalogued weapon PAC
@@ -48,6 +51,12 @@ struct AssemblyReport final {
 [[nodiscard]] std::unique_ptr<Session> assemble_archives(
     std::span<const Session* const> archives,
     std::span<const std::string_view> archive_names,
-    AssemblyReport* report = nullptr) noexcept;
+    AssemblyReport* report = nullptr,
+    std::size_t enemy_variant = 0U) noexcept;
+
+// Archives shared by several enemy classes (em000.pac: CEm000-CEm004) are
+// assembled one class at a time: `enemy_variant` picks the class; only its
+// body, cloth and weapon slots are used, the cloth hangs from its body joint
+// and the weapon from body joint 9 with the recorded offset.
 
 }  // namespace dmcresource::pac_assembly

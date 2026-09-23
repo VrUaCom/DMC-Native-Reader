@@ -368,6 +368,46 @@ Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
     return attach_local_matrix(record.translation, record.rotation_xyz_radians);
 }
 
+std::span<const EnemyVariant> enemy_variants_for(std::string_view archive_name) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    constexpr std::string_view name = "em000.pac";
+    if (archive_name.size() != name.size()) return {};
+    for (std::size_t i = 0U; i < name.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return {};
+    }
+    return kEm000Variants;
+}
+
+Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,
+                                const std::array<float, 3>& rotation_xyz_radians) noexcept {
+    // Row-vector rotations as 0x140030F10 / 0x140030FC0 / 0x140031080 build them.
+    const float cx = std::cos(rotation_xyz_radians[0]), sx = std::sin(rotation_xyz_radians[0]);
+    const float cy = std::cos(rotation_xyz_radians[1]), sy = std::sin(rotation_xyz_radians[1]);
+    const float cz = std::cos(rotation_xyz_radians[2]), sz = std::sin(rotation_xyz_radians[2]);
+    const std::array<float, 9> rx{1.0F, 0.0F, 0.0F, 0.0F, cx, sx, 0.0F, -sx, cx};
+    const std::array<float, 9> ry{cy, 0.0F, -sy, 0.0F, 1.0F, 0.0F, sy, 0.0F, cy};
+    const std::array<float, 9> rz{cz, sz, 0.0F, -sz, cz, 0.0F, 0.0F, 0.0F, 1.0F};
+    const auto mul = [](const std::array<float, 9>& a, const std::array<float, 9>& b) {
+        std::array<float, 9> out{};
+        for (std::size_t r = 0U; r < 3U; ++r) {
+            for (std::size_t c = 0U; c < 3U; ++c) {
+                for (std::size_t k = 0U; k < 3U; ++k) out[r * 3U + c] += a[r * 3U + k] * b[k * 3U + c];
+            }
+        }
+        return out;
+    };
+    const auto m = mul(mul(rz, ry), rx);
+    Matrix4 out;
+    for (std::size_t r = 0U; r < 3U; ++r) {
+        for (std::size_t c = 0U; c < 3U; ++c) out.values[r * 4U + c] = m[r * 3U + c];
+    }
+    out.values[12] = translation[0];
+    out.values[13] = translation[1];
+    out.values[14] = translation[2];
+    return out;
+}
+
 std::optional<WeaponMotionBank> weapon_motion_bank(std::string_view archive_name) noexcept {
     const auto slash = archive_name.find_last_of("/\\");
     if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);

@@ -137,6 +137,18 @@ Shotgun 9, Artemis 10, Spiral 11, Kalina Ann 12, ...). Adding such a file with
 inside `pl000.pac`. The weapon itself stays in its sheathed record during these
 motions; hand-held records are not reversed yet.
 
+**Shared enemy archives (v42).** Rengine
+`docs/research/dmc3-em000-family-assembly-2026-09-23.md`: `em000.pac` feeds
+five classes (CEm000-CEm004). Each class's init reads its own body slot (1, 5,
+8, 13, 18), cloth models with their `.clt` text (3; 7; 10 and 12; 15 and 17)
+and weapon (26, 28, 26, 27, 34). The archive now opens as one class at a time
+(`⋮ → Enemy class…`), with every other class's models skipped: cloth roots hang
+from body joints 14 / 8 / 12 as `[this+0x3254]`/`[this+0x3258]` say, the
+weapon from body joint 9 with the recorded offset (T(-15, -61.4, -18.9),
+R(0.207, 0, 0); CEm004 its own), built in 0x1403304A0's Rz·Ry·Rx order.
+Models no class loads at spawn (slots 4, 19, 21, 33: likely death / sand) are
+not shown. Cloth stays in rest shape (CLT not simulated).
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

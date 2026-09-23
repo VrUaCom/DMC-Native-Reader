@@ -1,5 +1,6 @@
 #include "dmcresource/pac_assembly.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdint>
@@ -116,15 +117,17 @@ void collect(const Session& container,
 
 std::unique_ptr<Session> assemble_pac(const Session& pac,
                                       AssemblyReport* report_out,
-                                      std::string_view archive_name) noexcept {
+                                      std::string_view archive_name,
+                                      std::size_t enemy_variant) noexcept {
     const Session* archives[] = {&pac};
     const std::string_view names[] = {archive_name};
-    return assemble_archives(archives, names, report_out);
+    return assemble_archives(archives, names, report_out, enemy_variant);
 }
 
 std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archives,
                                            std::span<const std::string_view> archive_names,
-                                           AssemblyReport* report_out) noexcept {
+                                           AssemblyReport* report_out,
+                                           std::size_t enemy_variant) noexcept {
     AssemblyReport report;
     try {
         if (archives.empty() || archives.size() != archive_names.size()) return nullptr;
@@ -145,6 +148,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             collect(*archives[a], a, prefix, 0U, false, &nested, &entries, &report);
         }
 
+        const auto variants = motion::enemy_variants_for(archive_name);
+        const motion::EnemyVariant* variant =
+            variants.empty() ? nullptr : &variants[std::min(enemy_variant, variants.size() - 1U)];
+        if (variant != nullptr) report.enemy_class = std::string{variant->class_name};
         std::vector<std::unique_ptr<Session>> models;
         std::vector<std::string> model_names;
         std::vector<std::size_t> model_entry;
@@ -158,6 +165,18 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 // spawned by the effect system, not loaded as actor models.
                 ++report.effect_models_skipped;
                 continue;
+            }
+            if (entry.kind.format == Format::Mod && variant != nullptr && entry.archive == 0U &&
+                entry.container.empty()) {
+                // Shared enemy archive: keep only this class's body, cloth and weapon.
+                bool used = entry.slot == variant->body_slot || entry.slot == variant->weapon_slot;
+                for (std::uint32_t c = 0U; c < variant->cloth_count; ++c) {
+                    used = used || entry.slot == variant->cloth[c].slot;
+                }
+                if (!used) {
+                    ++report.variant_models_skipped;
+                    continue;
+                }
             }
             if (entry.kind.format == Format::Mod) {
                 auto model = open_session(entry.name, entry.bytes->data(), entry.bytes->size());
@@ -273,6 +292,39 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     break;
                 }
             }
+            // Enemy class: cloth models on their body joints, weapon on joint 9.
+            if (variant != nullptr) {
+                std::optional<std::size_t> host;
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    const auto& entry = entries[model_entry[part]];
+                    if (entry.archive == 0U && entry.container.empty() &&
+                        entry.slot == variant->body_slot) {
+                        host = part;
+                    }
+                }
+                for (std::size_t part = 0U; host && part < model_entry.size(); ++part) {
+                    const auto& entry = entries[model_entry[part]];
+                    if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                    for (std::uint32_t c = 0U; c < variant->cloth_count; ++c) {
+                        if (*entry.slot != variant->cloth[c].slot) continue;
+                        if (motion::attach_part_skeleton(assembled.get(), *host, part,
+                                                         variant->cloth[c].host_joint, false)) {
+                            ++report.attached_parts;
+                            report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
+                                "->bodyJoint" + std::to_string(variant->cloth[c].host_joint);
+                        }
+                    }
+                    if (*entry.slot == variant->weapon_slot &&
+                        motion::attach_part_skeleton(
+                            assembled.get(), *host, part, variant->weapon_joint, false,
+                            motion::attach_local_matrix_zyx(variant->weapon_translation,
+                                                            variant->weapon_rotation_zyx))) {
+                        ++report.attached_parts;
+                        report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
+                            "->bodyJoint" + std::to_string(variant->weapon_joint);
+                    }
+                }
+            }
             // Added weapon archives: every MOD hangs from its record's joint.
             for (std::size_t a = 1U; body && a < archive_names.size(); ++a) {
                 const auto record = motion::weapon_record_for_archive(archive_names[a]);
@@ -375,6 +427,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " nestedArchives=" + std::to_string(report.nested_archives) +
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +
+            (report.enemy_class.empty() ? std::string{}
+                                        : " enemyClass=" + report.enemy_class +
+                                              " otherClassModelsSkipped=" +
+                                              std::to_string(report.variant_models_skipped)) +
             " ptxPairing=nearest-preceding-in-container" + report.detail_attachments;
         if (!assembled->detail.empty()) assembled->detail += "\n";
         assembled->detail += report.detail;

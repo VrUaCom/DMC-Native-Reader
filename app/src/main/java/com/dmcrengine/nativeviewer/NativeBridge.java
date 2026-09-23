@@ -62,7 +62,9 @@ public final class NativeBridge {
     public static native long assemblePac(long handle, String archiveName);
     // handles[0] = character PAC, the rest are added (plwp_*.pac weapons hang
     // from the body joint the game records for them).
-    public static native long assemblePacs(long[] handles, String[] names);
+    public static native long assemblePacs(long[] handles, String[] names, int enemyVariant);
+    // Enemy classes sharing the archive (em000.pac -> CEm000..CEm004); empty if none.
+    public static native String[] enemyVariantNames(String archiveName);
     public static native int motionLibraryCount(long handle);
     public static native String motionLibraryName(long handle, int index);
 

@@ -62,6 +62,7 @@ public final class MainActivity extends Activity {
     private static final int MENU_ADD_OTHER = 8;
     private static final int MENU_BROWSE_PAC = 9;
     private static final int MENU_ADD_PAC = 10;
+    private static final int MENU_ENEMY_CLASS = 11;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -119,6 +120,8 @@ public final class MainActivity extends Activity {
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
+    // Selected class inside a shared enemy archive (em000.pac); 0 = first.
+    private int enemyVariant;
     // Extra archives (weapons, props) assembled onto the character, in order.
     private final ArrayList<Uri> addedPacUris = new ArrayList<>();
 
@@ -429,6 +432,10 @@ public final class MainActivity extends Activity {
         if (isRootScene() && assembledPacUri != null) {
             menu.getMenu().add(0, MENU_ADD_PAC, 1, "Add weapon / .PAC…");
             menu.getMenu().add(0, MENU_BROWSE_PAC, 1, "Browse .PAC files…");
+            final String[] classes = NativeBridge.enemyVariantNames(displayName(assembledPacUri));
+            if (classes != null && classes.length > 0) {
+                menu.getMenu().add(0, MENU_ENEMY_CLASS, 1, "Enemy class…");
+            }
         }
         if (hasModCompositionContext()) {
             menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
@@ -453,6 +460,9 @@ public final class MainActivity extends Activity {
                     return true;
                 case MENU_ADD_PAC:
                     chooseAdditionalPac();
+                    return true;
+                case MENU_ENEMY_CLASS:
+                    chooseEnemyClass();
                     return true;
                 case MENU_ADD_MOD:
                     chooseAdditionalMods();
@@ -600,6 +610,25 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // Shared enemy archives hold several classes; show one at a time with its
+    // own body, cloth and weapon (see pac_assembly.h).
+    private void chooseEnemyClass() {
+        if (assembledPacUri == null) return;
+        final String[] classes = NativeBridge.enemyVariantNames(displayName(assembledPacUri));
+        if (classes == null || classes.length == 0) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Enemy class")
+                .setSingleChoiceItems(classes, Math.min(enemyVariant, classes.length - 1),
+                        (dialog, which) -> {
+                            dialog.dismiss();
+                            if (which == enemyVariant) return;
+                            enemyVariant = which;
+                            assembleWithAddedPacs(null);
+                        })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
     private void chooseAdditionalPac() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -638,7 +667,7 @@ public final class MainActivity extends Activity {
                 }
             }
             if (failure == null) {
-                scene = NativeBridge.assemblePacs(handles, names);
+                scene = NativeBridge.assemblePacs(handles, names, enemyVariant);
                 if (scene == 0) failure = "Archives could not be assembled";
             }
         } catch (Exception error) {
@@ -658,6 +687,10 @@ public final class MainActivity extends Activity {
         assembledPacUri = character;
         addedPacUris.addAll(extras);
         StringBuilder title = new StringBuilder(displayName(character));
+        final String[] classes = NativeBridge.enemyVariantNames(displayName(character));
+        if (classes != null && enemyVariant < classes.length) {
+            title.append(" · ").append(classes[enemyVariant]);
+        }
         for (Uri uri : extras) title.append(" + ").append(displayName(uri));
         activateSession(scene, title.toString());
         Toast.makeText(this, title + " assembled", Toast.LENGTH_LONG).show();
@@ -1154,6 +1187,7 @@ public final class MainActivity extends Activity {
 
         // A PAC opens as an assembled character/scene when it holds MODs; the
         // raw archive stays browsable from ⋮ (read-only, nothing is written).
+        enemyVariant = 0;
         final long assembled = NativeBridge.assemblePac(opened, name);
         if (assembled != 0) {
             NativeBridge.close(opened);

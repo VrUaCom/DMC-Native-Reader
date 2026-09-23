@@ -115,6 +115,52 @@ inline constexpr std::array<WeaponSecondPart, 1> kWeaponSecondParts{{
 [[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
                                           const std::array<float, 3>& rotation_xyz_radians) noexcept;
 
+// Enemy families sharing one archive. em000.pac feeds five classes
+// (CEm000-CEm004); each init (0x140097B40, 0x14009CF70, 0x1400A1D80,
+// 0x1400A6BD0, 0x1400A85E0) reads its own body slot, cloth slots (with their
+// .clt text slot) and weapon slot; the shared update (0x1401C6FB0 family)
+// roots cloth models at body joints [this+0x3254]/[this+0x3258] and the
+// weapon at offset(this+0x28E0) x body joint 9. The weapon slot shown is the
+// one loaded for variant 0-1 ([this+0x670]); 2-3 load the other weapon slot.
+// Offsets are built by 0x1403304A0: Rz x Ry x Rx, then translation.
+struct EnemyClothPart final {
+    std::uint32_t slot;
+    std::uint32_t host_joint;
+};
+
+struct EnemyVariant final {
+    std::string_view pac_stem;
+    std::string_view class_name;
+    std::uint32_t body_slot;
+    std::array<EnemyClothPart, 2> cloth;
+    std::uint32_t cloth_count;
+    std::uint32_t weapon_slot;
+    std::uint32_t weapon_joint;
+    std::array<float, 3> weapon_translation;
+    std::array<float, 3> weapon_rotation_zyx;
+};
+
+inline constexpr std::array<float, 3> kEm000WeaponT{-15.0F, -61.39939880371094F,
+                                                   -18.93269920349121F};
+inline constexpr std::array<float, 3> kEm000WeaponR{0.20725786685943604F, 0.0F, 0.0F};
+
+inline constexpr std::array<EnemyVariant, 5> kEm000Variants{{
+    {"em000", "CEm000", 1U, {{{3U, 14U}, {0U, 0U}}}, 1U, 26U, 9U, kEm000WeaponT, kEm000WeaponR},
+    {"em000", "CEm001", 5U, {{{7U, 14U}, {0U, 0U}}}, 1U, 28U, 9U, kEm000WeaponT, kEm000WeaponR},
+    {"em000", "CEm002", 8U, {{{10U, 8U}, {12U, 12U}}}, 2U, 26U, 9U, kEm000WeaponT, kEm000WeaponR},
+    {"em000", "CEm003", 13U, {{{15U, 14U}, {17U, 14U}}}, 2U, 27U, 9U, kEm000WeaponT, kEm000WeaponR},
+    {"em000", "CEm004", 18U, {{{0U, 0U}, {0U, 0U}}}, 0U, 34U, 9U, {2.0F, 20.0F, -72.0F},
+     {-0.03490658476948738F, 0.10471975803375244F, 1.6580626964569092F}},
+}};
+
+// Variants for an archive name ("em000.pac", any directory, any case).
+[[nodiscard]] std::span<const EnemyVariant> enemy_variants_for(
+    std::string_view archive_name) noexcept;
+
+// Translation plus Rz x Ry x Rx (0x1403304A0 order).
+[[nodiscard]] Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,
+                                              const std::array<float, 3>& rotation_xyz_radians) noexcept;
+
 // Weapon motion banks. The weapon factory 0x1401DED20 creates the melee
 // classes from ids 0-4, 11, 12, 14 and the gun classes from ids 5-10, 13;
 // Dante's loader 0x1401DF6BE loads motion\\pl000\\pl000_00_N.pac with

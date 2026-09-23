@@ -558,6 +558,62 @@ int main() {
         assert(!with_bank->motion_library[0].name.starts_with("Agni"));
     }
 
+    // em000.pac feeds CEm000-CEm004: each class keeps only its body, cloth and
+    // weapon slots; the weapon hangs from body joint 9 at the ZYX offset.
+    {
+        const auto variants = motion::enemy_variants_for("st\\EM000.PAC");
+        assert(variants.size() == 5U);
+        assert(variants[2].class_name == "CEm002" && variants[2].cloth_count == 2U);
+        assert(variants[4].weapon_slot == 34U && variants[4].cloth_count == 0U);
+        assert(motion::enemy_variants_for("em001.pac").empty());
+        // Single-axis offsets agree with the XYZ builder; mixed axes differ.
+        const auto zyx = motion::attach_local_matrix_zyx({1.0F, 2.0F, 3.0F}, {0.3F, 0.0F, 0.0F});
+        const auto xyz = motion::attach_local_matrix({1.0F, 2.0F, 3.0F}, {0.3F, 0.0F, 0.0F});
+        for (std::size_t e = 0U; e < 16U; ++e) assert(near(zyx.values[e], xyz.values[e]));
+        const auto mixed_zyx = motion::attach_local_matrix_zyx({0.0F, 0.0F, 0.0F}, {0.4F, 0.0F, 0.7F});
+        const auto mixed_xyz = motion::attach_local_matrix({0.0F, 0.0F, 0.0F}, {0.4F, 0.0F, 0.7F});
+        assert(!near(mixed_zyx.values[1], mixed_xyz.values[1]) ||
+               !near(mixed_zyx.values[2], mixed_xyz.values[2]));
+        // Rz x Rx for row vectors: row 0 = (cz, sz*cx, sz*sx).
+        assert(near(mixed_zyx.values[0], std::cos(0.7F)));
+        assert(near(mixed_zyx.values[1], std::sin(0.7F) * std::cos(0.4F)));
+        assert(near(mixed_zyx.values[2], std::sin(0.7F) * std::sin(0.4F)));
+
+        // Synthetic em000: slot 1 body (16 nodes), slot 3 cloth, slot 26 weapon,
+        // slot 5 another class's body (skipped for CEm000).
+        std::vector<std::vector<std::uint8_t>> em_slots(27U, filler);
+        em_slots[0] = ptx;
+        em_slots[1] = make_chain_body(16U);
+        em_slots[3] = coat;
+        em_slots[5] = make_chain_body(16U);
+        em_slots[25] = ptx;
+        em_slots[26] = coat;
+        const auto em_pac = make_pac(em_slots);
+        auto em_archive = dmcresource::open_session("em000.pac", em_pac.data(), em_pac.size());
+        assert(em_archive != nullptr);
+        dmcresource::pac_assembly::AssemblyReport em_report;
+        auto pride = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 0U);
+        assert(pride != nullptr && em_report.models == 3U && em_report.attached_parts == 2U);
+        assert(em_report.enemy_class == "CEm000" && em_report.variant_models_skipped == 1U);
+        const auto weapon_offset = motion::attach_local_matrix_zyx(variants[0].weapon_translation,
+                                                                   variants[0].weapon_rotation_zyx);
+        const std::size_t weapon_node = pride->composite_parts[0].scene.nodes.size() +
+                                        pride->composite_parts[1].scene.nodes.size();
+        const auto& joint9 = pride->scene.nodes[9].world.values;
+        const auto& weapon_root = pride->scene.nodes[weapon_node].world.values;
+        // Weapon root = local(rest) x offset x joint9; the synthetic root rest is x=10.
+        float expected_x = 0.0F;
+        const float root_rest[4] = {10.0F, 0.0F, 0.0F, 1.0F};
+        for (std::size_t k = 0U; k < 4U; ++k) {
+            float row = 0.0F;
+            for (std::size_t j = 0U; j < 4U; ++j) row += root_rest[j] * weapon_offset.values[j * 4U + k];
+            expected_x += row * joint9[k * 4U + 0U];
+        }
+        assert(near(weapon_root[12], expected_x));
+        auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 1U);
+        assert(lust != nullptr && em_report.enemy_class == "CEm001");
+    }
+
     // Euler order of 0x140330450: Rx x Ry x Rz for row vectors (X first). The
     // Rebellion record combines X and Z, so the older Rz x Ry x Rx expansion
     // pointed the blade up instead of down along the back.

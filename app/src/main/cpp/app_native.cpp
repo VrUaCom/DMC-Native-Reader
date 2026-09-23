@@ -19,6 +19,7 @@
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/pac_assembly.h"
+#include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/spider/session_actions.h"
@@ -560,7 +561,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_clearMotion(
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePacs(
-        JNIEnv* env, jclass, jlongArray handles, jobjectArray names) {
+        JNIEnv* env, jclass, jlongArray handles, jobjectArray names, jint enemy_variant) {
     if (handles == nullptr || names == nullptr) return 0;
     const jsize count = env->GetArrayLength(handles);
     if (count < 1 || env->GetArrayLength(names) != count) return 0;
@@ -581,8 +582,33 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePacs(
         }
         std::vector<std::string_view> views(owned_names.begin(), owned_names.end());
         return to_handle(dmcresource::pac_assembly::assemble_archives(
-            archives, views, nullptr).release());
+            archives, views, nullptr,
+            static_cast<std::size_t>(enemy_variant < 0 ? 0 : enemy_variant)).release());
     } catch (...) { return 0; }
+}
+
+// Enemy classes sharing an archive (em000.pac: CEm000-CEm004); empty when none.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_enemyVariantNames(
+        JNIEnv* env, jclass, jstring archive_name) {
+    try {
+        const auto name = to_utf8(env, archive_name);
+        const auto variants = dmcresource::motion::enemy_variants_for(name);
+        jclass string_class = env->FindClass("java/lang/String");
+        if (string_class == nullptr) return nullptr;
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(variants.size()),
+                                               string_class, nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t index = 0U; index < variants.size(); ++index) {
+            const std::string label = std::string{variants[index].class_name} + " (body slot " +
+                std::to_string(variants[index].body_slot) + ")";
+            jstring value = env->NewStringUTF(label.c_str());
+            if (value == nullptr) return nullptr;
+            env->SetObjectArrayElement(out, static_cast<jsize>(index), value);
+            env->DeleteLocalRef(value);
+        }
+        return out;
+    } catch (...) { return nullptr; }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
