@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
 
+#include "dmcresource/composite_model.h"
 #include "dmcresource/render_scene.h"
 
 namespace dmcresource {
@@ -51,6 +53,41 @@ inline constexpr std::array<WeaponAttachRecord, 8> kWeaponState0Records{{
     {"CPlWpNewVergilSword", "plwp_newvergilsword", 13U, {19.0F, -0.5F, 11.0F},
      {0.0F, 3.839724063873291F, 0.0F}},
 }};
+
+// Enemy node constraints. Reverse authority: dmc-rengine-cpp
+// docs/research/dmc3-em028-nevan-assembly-2026-09-23.md and
+// profiles/dmc3/enemy_node_constraint_contract.hpp. CEm028 (Nevan) loads
+// body slot 1 and parts 4, 5, 6 with texture slot 0 (0x140130480); its init
+// links the listed part nodes to body joints (mode 1, identity offset), the
+// remaining part nodes are cloth/bat chains (0x1402C9DC0) not simulated here.
+struct EnemyPartConstraints final {
+    std::string_view pac_stem;
+    std::uint32_t body_slot;
+    std::uint32_t part_slot;
+    std::span<const CompositeNodeConstraint> constraints;
+};
+
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm028Slot4{{{0U, 3U}, {1U, 4U}, {2U, 5U}}};
+inline constexpr std::array<CompositeNodeConstraint, 4> kEm028Slot5{
+    {{0U, 1U}, {1U, 14U}, {2U, 2U}, {3U, 3U}}};
+inline constexpr std::array<CompositeNodeConstraint, 5> kEm028Slot6{
+    {{0U, 14U}, {1U, 7U}, {6U, 11U}, {2U, 8U}, {7U, 12U}}};
+
+inline constexpr std::array<EnemyPartConstraints, 3> kEnemyPartConstraints{{
+    {"em028", 1U, 4U, kEm028Slot4},
+    {"em028", 1U, 5U, kEm028Slot5},
+    {"em028", 1U, 6U, kEm028Slot6},
+}};
+
+// Match "em028.pac" (any directory, any case) and a top-level part slot.
+[[nodiscard]] std::optional<EnemyPartConstraints> enemy_constraints_for(
+    std::string_view archive_name, std::uint32_t part_slot) noexcept;
+
+// Hang `child_part` from `host_part` through per-node constraints.
+[[nodiscard]] bool attach_part_nodes(Session* session,
+                                     std::size_t host_part,
+                                     std::size_t child_part,
+                                     std::span<const CompositeNodeConstraint> constraints) noexcept;
 
 // Match a PAC file name (any directory, any case, ".pac") to a weapon record.
 [[nodiscard]] std::optional<WeaponAttachRecord> weapon_record_for_archive(

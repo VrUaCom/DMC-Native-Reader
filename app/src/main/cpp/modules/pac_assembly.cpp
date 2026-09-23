@@ -19,6 +19,8 @@ constexpr std::size_t kMaxNestingDepth = 3U;
 
 struct Entry final {
     std::size_t archive{};
+    std::size_t depth{};      // 0 = directly in the archive, >0 = nested
+    bool effect_bank{};       // inside a PNST nested in the archive
     std::string name;
     std::string container;   // "" for the top-level archive
     std::optional<std::uint32_t> slot;
@@ -42,6 +44,7 @@ void collect(const Session& container,
              std::size_t archive,
              const std::string& prefix,
              std::size_t depth,
+             bool effect_bank,
              std::vector<std::unique_ptr<Session>>* nested_owner,
              std::vector<Entry>* out,
              AssemblyReport* report) {
@@ -50,18 +53,22 @@ void collect(const Session& container,
         const auto kind = archive::classify_payload(child.source_bytes.data(),
                                                     child.source_bytes.size());
         const std::string name = prefix + child.suggested_filename;
-        if (kind.format == Format::Pac) {
+        if (kind.format == Format::Pac || kind.format == Format::Pnst) {
             if (depth >= kMaxNestingDepth) continue;
             auto nested = open_session(name, child.source_bytes.data(), child.source_bytes.size());
             if (!nested) continue;
             ++report->nested_archives;
             nested_owner->push_back(std::move(nested));
+            // A PNST nested in an archive is an effect bank: CEm028 hands its
+            // slot 9 to 0x1402C04C0 (slot 0 table + slot 1 resource PNST),
+            // never to a model loader; weapon PNSTs keep trails in slot 2.
             collect(*nested_owner->back(), archive, name + "/", depth + 1U,
-                    nested_owner, out, report);
+                    effect_bank || kind.format == Format::Pnst, nested_owner, out, report);
             continue;
         }
         if (kind.shadow) ++report->shadows;
-        out->push_back({archive, name, prefix, slot_of(child), kind, &child.source_bytes});
+        out->push_back({archive, depth, effect_bank, name, prefix, slot_of(child), kind,
+                        &child.source_bytes});
     }
 }
 
@@ -118,7 +125,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
     try {
         if (archives.empty() || archives.size() != archive_names.size()) return nullptr;
         for (const auto* archive : archives) {
-            if (archive == nullptr || archive->probe.format != Format::Pac) return nullptr;
+            if (archive == nullptr ||
+                (archive->probe.format != Format::Pac && archive->probe.format != Format::Pnst)) {
+                return nullptr;
+            }
         }
         const Session& pac = *archives.front();
         const std::string_view archive_name = archive_names.front();
@@ -128,7 +138,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             const std::string prefix = a == 0U ? std::string{} : std::string{archive_names[a]} + "/";
             // Added archives keep their own container key so pairing never
             // crosses archives; archive 0 keeps "" for the player slot rule.
-            collect(*archives[a], a, prefix, 0U, &nested, &entries, &report);
+            collect(*archives[a], a, prefix, 0U, false, &nested, &entries, &report);
         }
 
         std::vector<std::unique_ptr<Session>> models;
@@ -139,6 +149,12 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
 
         for (std::size_t index = 0U; index < entries.size(); ++index) {
             const auto& entry = entries[index];
+            if (entry.kind.format == Format::Mod && entry.effect_bank) {
+                // Effect models (slash trails, sparks, bat particles) are
+                // spawned by the effect system, not loaded as actor models.
+                ++report.effect_models_skipped;
+                continue;
+            }
             if (entry.kind.format == Format::Mod) {
                 auto model = open_session(entry.name, entry.bytes->data(), entry.bytes->size());
                 if (!model || !model->renderable) continue;
@@ -225,6 +241,28 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 ++report.attached_parts;
                 report.detail_attachments += " coat=slot12->bodyJoint3";
             }
+            // Enemy node constraints (CEm028 init 0x140130480): top-level part
+            // slots follow body joints node by node.
+            for (std::size_t part = 0U; !player && part < model_entry.size(); ++part) {
+                const auto& entry = entries[model_entry[part]];
+                if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                const auto record = motion::enemy_constraints_for(archive_name, *entry.slot);
+                if (!record) continue;
+                for (std::size_t host = 0U; host < model_entry.size(); ++host) {
+                    const auto& host_entry = entries[model_entry[host]];
+                    if (host_entry.archive != 0U || !host_entry.container.empty() ||
+                        host_entry.slot != record->body_slot) {
+                        continue;
+                    }
+                    if (motion::attach_part_nodes(assembled.get(), host, part,
+                                                  record->constraints)) {
+                        ++report.attached_parts;
+                        report.detail_attachments += " slot" + std::to_string(*entry.slot) +
+                            "->bodyJoints(" + std::to_string(record->constraints.size()) + ")";
+                    }
+                    break;
+                }
+            }
             // Added weapon archives: every MOD hangs from its record's joint.
             for (std::size_t a = 1U; body && a < archive_names.size(); ++a) {
                 const auto record = motion::weapon_record_for_archive(archive_names[a]);
@@ -258,6 +296,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " shadowRecords=" + std::to_string(report.shadows) +
             " nestedArchives=" + std::to_string(report.nested_archives) +
             " attachedParts=" + std::to_string(report.attached_parts) +
+            " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +
             " ptxPairing=nearest-preceding-in-container" + report.detail_attachments;
         if (!assembled->detail.empty()) assembled->detail += "\n";
         assembled->detail += report.detail;

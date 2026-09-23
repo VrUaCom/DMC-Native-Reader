@@ -87,6 +87,29 @@ notes exist; tapping it lists them, and the info sheet repeats them under
 "▲ NOT CANONICAL (shown anyway)". JNI: `nonCanonicalNotes`. Default camera now
 starts in front of the model (DMC3 models face +Z).
 
+**Weapon PNST, effect banks and Euler order (v39).** Weapon archives
+(`plwp_*.pac`) are `PNST` containers with the PAC slot layout (slot 0 PTX,
+slot 1 weapon MOD, slot 2 nested PNST of effect models, slot 3 SHW); they now
+open on their own and as added archives. A PNST nested inside any archive is an
+effect bank (Rengine `docs/research/dmc3-em028-nevan-assembly-2026-09-23.md`:
+CEm028 hands slot 9 to the effect loader `0x1402C04C0`), so its MODs are
+counted as `effectModelsSkipped` and never assembled. The MOD rest local is
+`Rx x Ry x Rz` as `0x140330450` builds it (Rengine
+`dmc3-euler-order-correction-2026-09-23.md`); the vendored
+`world_transform.cpp` still expands `Rz x Ry x Rx`, so Native Reader compiles
+`modules/rengine_port/world_transform.cpp` in its place until the pin moves
+past Rengine `b403108`. Rebellion now hangs blade-down across Dante's back.
+
+**Enemy node constraints (v39).** `em028.pac` (Nevan): body slot 1, hair
+slot 4, bat dress slot 5, bat sleeves slot 6, all with PTX slot 0. CEm028's
+init links part nodes to body joints (mode 1, identity offset): hair 0/1/2 to
+joints 3/4/5, dress 0/1/2/3 to 1/14/2/3, sleeves 0/1/6/2/7 to 14/7/11/8/12.
+`motion::attach_part_nodes` places those nodes at the body joint world and
+composes the rest local x parent, also after each MOT frame. The hair strands
+and the dress are chains simulated in game (`0x1402C9DC0`); here they keep
+their rest shape. Contract: Rengine
+`profiles/dmc3/enemy_node_constraint_contract.hpp`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
@@ -147,7 +170,7 @@ C++23: that slice, ReaderCore, the core, JNI and tests all get
 `CXX_STANDARD 23` / `CXX_EXTENSIONS OFF` from Native Reader's CMake. The
 submodule itself is untouched.
 
-JNI (thin): `assemblePac`, `motionLibraryCount/Name`, `loadLibraryMotion`,
+JNI (thin): `assemblePac`, `assemblePacs`, `motionLibraryCount/Name`, `loadLibraryMotion`,
 `loadMotion`, `hasMotion`, `motionEndFrame`, `motionLoopStartFrame`,
 `setMotionFrame`, `clearMotion`. Pose and draw both run on the UI thread.
 
@@ -169,7 +192,8 @@ JNI (thin): `assemblePac`, `motionLibraryCount/Name`, `loadLibraryMotion`,
 
 MOT and PAC are no longer listed as banned legacy modules in CI; the remaining
 list covers only families that are still unpromoted (HITS, TXT, DCA, LIG2,
-PNST, NBZ, EFM, MRP, SHW adapters).
+NBZ, EFM, MRP, SHW adapters). PNST is read by `formats.pnst.archive-reader`
+(v39).
 
 ## 7. Next
 
@@ -178,4 +202,6 @@ PNST, NBZ, EFM, MRP, SHW adapters).
 2. Parent-scale compensation from `0x14030E9B0`.
 3. Model Set pairing (`0x1402D83E0`) instead of slot adjacency.
 4. SHW shadow hulls drawn from the file (the engine SHW reader is structural).
-5. Cloth (CLT/C1D) — needs a parser before any physics can be shown.
+5. Cloth (CLT/C1D) and enemy chains (`0x1402C9DC0`) — needs a parser and the
+   chain parameters before any physics can be shown.
+6. Node constraints of other enemy classes (only CEm028 is tabled).

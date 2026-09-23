@@ -18,6 +18,7 @@ struct AssemblyReport final {
     std::size_t shadows{};
     std::size_t nested_archives{};
     std::size_t attached_parts{};
+    std::size_t effect_models_skipped{};
     std::string detail_attachments;
     std::string detail;
 };

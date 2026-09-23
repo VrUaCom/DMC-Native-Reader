@@ -30,6 +30,14 @@ enum class CompositePlacementMode : std::uint8_t {
 // The source-local RenderScene remains authoritative and is never rewritten.
 // Stable host_instance_id is semantic workspace identity; host_part_index is a
 // derived cache used only to address the current flattened presentation order.
+// One node of an attached part driven by a host joint (enemy node
+// constraints, mode 1 of 0x1402CBBE0: node world = offset x host joint world,
+// offset identity for every record reversed so far).
+struct CompositeNodeConstraint final {
+    std::uint32_t child_node{};
+    std::uint32_t host_node{};
+};
+
 struct CompositePlacement final {
     CompositePlacementMode mode{CompositePlacementMode::SourceCoordinates};
     InstanceId host_instance_id{kInvalidInstanceId};
@@ -41,6 +49,9 @@ struct CompositePlacement final {
     // HostJointSkeleton: root base = attachment_offset x host joint world
     // (identity for the coat; the weapon record local for weapons).
     Matrix4 attachment_offset{};
+    // HostJointSkeleton with constraints: listed nodes copy their host
+    // joint's world, every other node composes local x parent as usual.
+    std::vector<CompositeNodeConstraint> node_constraints;
 };
 
 // One canonical source MOD inside a composite scene. asset_id / instance_id are

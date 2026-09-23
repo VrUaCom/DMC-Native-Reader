@@ -205,8 +205,12 @@ MotionLoadReport load_motion(Session* session,
                     // Driven by its host joint (IPlayer coat), not by the MOT.
                     ++state->static_parts;
                     if (!reasons.empty()) reasons += "; ";
-                    reasons += part.name + ": follows host joint " +
-                               std::to_string(part.placement.attachment_selector);
+                    reasons += part.placement.node_constraints.empty()
+                        ? part.name + ": follows host joint " +
+                              std::to_string(part.placement.attachment_selector)
+                        : part.name + ": follows " +
+                              std::to_string(part.placement.node_constraints.size()) +
+                              " host joints (node constraints)";
                     vertex_cursor += scene_vertex_count(part.scene);
                     node_cursor += part.scene.nodes.size();
                     continue;

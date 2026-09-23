@@ -67,6 +67,12 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Pac, true, "PAC", "archive", "child-resources",
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.pac");
     }
+    // PNST: same relative-slot layout as PAC (weapon archives obj\\plwp_*.pac
+    // use it despite the .pac name).
+    if (magic4(bytes, size, 'P', 'N', 'S', 'T')) {
+        return result(Format::Pnst, true, "PNST", "archive", "child-resources",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.pac");
+    }
     // MOT keeps its identity at +0x04 after the u32 header size.
     if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'M', 'O', 'T', '\0')) {
         return result(Format::Mot, true, "MOT", "animation", "inspection",
@@ -123,6 +129,7 @@ const char* format_name(Format format) noexcept {
     case Format::Evt: return "EventTbl";
     case Format::Pac: return "PAC";
     case Format::Mot: return "MOT";
+    case Format::Pnst: return "PNST";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

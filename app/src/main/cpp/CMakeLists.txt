@@ -20,6 +20,7 @@ set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
     ${DMC_RENGINE_VENDOR}/src/formats/container.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/relative_slot_container.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/pnst.cpp
 )
 
 # Native Reader language authority is centralized here and remains target-scoped.
@@ -40,6 +41,16 @@ endfunction()
 # minimum feature; the target-scoped CXX_STANDARD 23 set here decides the
 # actual language mode. The submodule itself is not edited.
 dmc_native_reader_require_cpp23(dmc_rengine_reader_core PRIVATE)
+
+# The pinned ReaderCore still expands the MOD local rotation as Rz*Ry*Rx; the
+# executable builds Rx*Ry*Rz (dmc-rengine-cpp b403108). Swap in the Native
+# Reader port of that one translation unit until the pin moves.
+get_target_property(_dmc_reader_core_sources dmc_rengine_reader_core SOURCES)
+list(FILTER _dmc_reader_core_sources EXCLUDE REGEX "/src/formats/mod/world_transform\\.cpp$")
+list(APPEND _dmc_reader_core_sources
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/rengine_port/world_transform.cpp)
+set_property(TARGET dmc_rengine_reader_core PROPERTY SOURCES ${_dmc_reader_core_sources})
+unset(_dmc_reader_core_sources)
 
 add_library(dmc_native_reader_rengine_viewer STATIC
     ${DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES})

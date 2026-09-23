@@ -280,6 +280,29 @@ std::vector<std::uint8_t> make_body_mod() {
     return bytes;
 }
 
+// `count`-node chain body: node n hangs from n-1, one unit up (y = n).
+std::vector<std::uint8_t> make_chain_body(std::size_t count) {
+    auto bytes = make_spatial_mod();
+    const std::size_t parents = 0x220U;
+    const std::size_t order = parents + count;
+    const std::size_t adapter = order + count;
+    const std::size_t transforms = (adapter + count + 0x0FU) & ~std::size_t{0x0FU};
+    bytes.resize(transforms + count * 0x20U, 0U);
+    for (std::size_t i = 0x200U; i < bytes.size(); ++i) bytes[i] = 0U;
+    put_u8(bytes, 0x11U, static_cast<std::uint8_t>(count));
+    put_u32(bytes, 0x200U, static_cast<std::uint32_t>(parents - 0x200U));
+    put_u32(bytes, 0x204U, static_cast<std::uint32_t>(order - 0x200U));
+    put_u32(bytes, 0x208U, static_cast<std::uint32_t>(adapter - 0x200U));
+    put_u32(bytes, 0x20CU, static_cast<std::uint32_t>(transforms - 0x200U));
+    for (std::size_t n = 0U; n < count; ++n) {
+        put_u8(bytes, parents + n, n == 0U ? 0xFFU : static_cast<std::uint8_t>(n - 1U));
+        put_u8(bytes, order + n, static_cast<std::uint8_t>(n));
+        const float y = n == 0U ? 0.0F : 1.0F;
+        put_transform(bytes, transforms + n * 0x20U, 0.0F, y, 0.0F, y);
+    }
+    return bytes;
+}
+
 // Four-node MOT: node 0 translation-x from 0 (frame 0) to 10 (frame 10).
 std::vector<std::uint8_t> make_body_mot() {
     auto bytes = make_translation_mot();
@@ -382,6 +405,58 @@ int main() {
         assert(near(weapon_root[12], ox * joint3[0] + oy * joint3[4] + joint3[12]));
         assert(near(weapon_root[13], ox * joint3[1] + oy * joint3[5] + joint3[13]));
         assert(!motion::weapon_record_for_archive("plwp_gun.pac").has_value());
+    }
+
+    // Euler order of 0x140330450: Rx x Ry x Rz for row vectors (X first). The
+    // Rebellion record combines X and Z, so the older Rz x Ry x Rx expansion
+    // pointed the blade up instead of down along the back.
+    {
+        const auto record = motion::weapon_record_for_archive("plwp_sword.pac");
+        assert(record.has_value());
+        const auto m = motion::weapon_offset_matrix(*record);
+        const float ax = record->rotation_xyz_radians[0];
+        const float az = record->rotation_xyz_radians[2];
+        const float rx[9] = {1, 0, 0, 0, std::cos(ax), std::sin(ax), 0, -std::sin(ax), std::cos(ax)};
+        const float rz[9] = {std::cos(az), std::sin(az), 0, -std::sin(az), std::cos(az), 0, 0, 0, 1};
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                float expected = 0.0F;  // Ry is identity (y = 0)
+                for (int k = 0; k < 3; ++k) {
+                    expected += rx[r * 3 + k] * rz[k * 3 + c];
+                }
+                assert(near(m.values[static_cast<std::size_t>(r * 4 + c)], expected));
+            }
+        }
+    }
+
+    // Nevan (em028): slot 4 nodes 0, 1, 2 follow body joints 3, 4, 5
+    // (CEm028 init 0x140130480, constraint mode 1 with identity offset).
+    {
+        std::vector<std::vector<std::uint8_t>> enemy_slots(10U, filler);
+        enemy_slots[0] = ptx;
+        enemy_slots[1] = make_chain_body(16U);
+        enemy_slots[4] = coat;  // 3-node part, root rest at x=10
+        const auto enemy_pac = make_pac(enemy_slots);
+        auto enemy_archive = dmcresource::open_session("em028.pac", enemy_pac.data(),
+                                                       enemy_pac.size());
+        assert(enemy_archive != nullptr);
+        dmcresource::pac_assembly::AssemblyReport enemy_report;
+        auto nevan = dmcresource::pac_assembly::assemble_pac(*enemy_archive, &enemy_report,
+                                                             "st\\EM028.PAC");
+        assert(nevan != nullptr);
+        assert(enemy_report.models == 2U && enemy_report.attached_parts == 1U);
+        assert(motion::is_attached_part(nevan.get(), 1U));
+        const auto body_nodes = nevan->composite_parts[0].scene.nodes.size();
+        assert(body_nodes == 16U);
+        for (std::uint32_t k = 0U; k < 3U; ++k) {
+            const auto& part_world = nevan->scene.nodes[body_nodes + k].world.values;
+            const auto& joint_world = nevan->scene.nodes[3U + k].world.values;
+            for (std::size_t e = 0U; e < 16U; ++e) assert(near(part_world[e], joint_world[e]));
+        }
+        assert(near(nevan->scene.nodes[body_nodes + 2U].world.values[13], 5.0F));
+        assert(motion::enemy_constraints_for("em028.pac", 5U).has_value());
+        assert(!motion::enemy_constraints_for("em028.pac", 7U).has_value());
+        assert(!motion::enemy_constraints_for("em029.pac", 4U).has_value());
     }
 
     // The same layout under a non-player name is not guessed at.

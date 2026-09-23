@@ -11,6 +11,7 @@
 
 #include "dmc_rengine/formats/mot/parser.hpp"
 #include "dmc_rengine/formats/pac.hpp"
+#include "dmc_rengine/formats/pnst.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -37,6 +38,7 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "SCM ")) return {Format::Scm, "SCM", "scm"};
     if (magic_at(bytes, size, 0U, "DDS ")) return {Format::Dds, "DDS", "dds"};
     if (magic_at(bytes, size, 0U, "PAC\0")) return {Format::Pac, "PAC", "pac"};
+    if (magic_at(bytes, size, 0U, "PNST")) return {Format::Pnst, "PNST", "pnst"};
     if (magic_at(bytes, size, 0U, "EVT\0")) return {Format::Evt, "EventTbl", "bin"};
     if (magic_at(bytes, size, 4U, "MOT\0")) return {Format::Mot, "MOT", "mot"};
     if (magic_at(bytes, size, 0U, "SHW ")) {
@@ -84,10 +86,14 @@ PipelineResult run_pac_module(const NativeModule& module,
     try {
         const auto span = std::span<const std::byte>{
             reinterpret_cast<const std::byte*>(bytes), size};
-        const auto parsed = dmc::rengine::formats::PacParser::parse(span);
+        const bool pnst = module.format == Format::Pnst;
+        const auto parsed = pnst ? dmc::rengine::formats::PnstParser::parse(span)
+                                 : dmc::rengine::formats::PacParser::parse(span);
+        const char* family = pnst ? "PNST" : "PAC";
         if (!parsed.ok()) {
-            return module_support::reject(probe, module.id,
-                                          "PAC rejected by canonical parser: " + parsed.message);
+            return module_support::reject(
+                probe, module.id,
+                std::string{family} + " rejected by canonical parser: " + parsed.message);
         }
         const auto& document = *parsed.document;
 
@@ -97,12 +103,13 @@ PipelineResult run_pac_module(const NativeModule& module,
         out.probe = probe;
         out.modules.push_back({"identity-probe", true});
         out.modules.push_back({"bounded-read-guard", true});
-        out.modules.push_back({"canonical.pac.relative-slot-container", true});
+        out.modules.push_back({pnst ? "canonical.pnst.relative-slot-container"
+                                    : "canonical.pac.relative-slot-container", true});
         out.modules.push_back({module.id, true});
 
-        out.inspection.format = "PAC";
-        out.inspection.root.id = "pac";
-        out.inspection.root.title = "PAC archive";
+        out.inspection.format = family;
+        out.inspection.root.id = pnst ? "pnst" : "pac";
+        out.inspection.root.title = std::string{family} + " archive";
         out.inspection.root.kind = InspectionKind::Document;
         out.inspection.root.source_span = SourceSpan{0U, size};
         out.inspection.root.properties.push_back({
@@ -115,7 +122,7 @@ PipelineResult run_pac_module(const NativeModule& module,
         entries.kind = InspectionKind::Collection;
 
         std::size_t populated = 0U;
-        std::size_t by_format[8]{};
+        std::size_t by_format[16]{};
         std::size_t shadows = 0U;
         for (const auto& entry : document.entries) {
             if (!entry.populated || entry.size == 0U || !entry.valid(document.container_size)) {
@@ -125,7 +132,7 @@ PipelineResult run_pac_module(const NativeModule& module,
             const auto* payload = bytes + static_cast<std::size_t>(entry.offset);
             const auto payload_size = static_cast<std::size_t>(entry.size);
             const auto kind = archive::classify_payload(payload, payload_size);
-            ++by_format[static_cast<std::size_t>(kind.format) & 7U];
+            ++by_format[static_cast<std::size_t>(kind.format) & 15U];
             if (kind.shadow) ++shadows;
 
             ChildResource child;
@@ -137,9 +144,10 @@ PipelineResult run_pac_module(const NativeModule& module,
             child.probe = dmcresource::probe(child.suggested_filename, payload, payload_size);
             child.capabilities = capability(ResourceCapability::Inspection);
             child.source_bytes.assign(payload, payload + payload_size);
-            child.detail = std::string{kind.family} + " payload in PAC slot " +
+            child.detail = std::string{kind.family} + " payload in " + family + " slot " +
                            std::to_string(entry.slot_index) + " (" + size_text(entry.size) + ")";
-            child.trace = "[OK] canonical.pac.relative-slot-container\n[OK] native.archive.classify";
+            child.trace = std::string{"[OK] canonical."} + (pnst ? "pnst" : "pac") +
+                          ".relative-slot-container\n[OK] native.archive.classify";
             child.inspection.format = kind.family;
             child.inspection.root.id = child.id;
             child.inspection.root.title = child.title;
@@ -160,12 +168,13 @@ PipelineResult run_pac_module(const NativeModule& module,
         out.inspection.root.children.push_back(std::move(entries));
 
         std::ostringstream detail;
-        detail << "PAC read-only archive | slots=" << document.declared_slot_count
+        detail << family << " read-only archive | slots=" << document.declared_slot_count
                << " populated=" << populated
                << " MOD=" << by_format[static_cast<std::size_t>(Format::Mod)]
                << " PTX=" << by_format[static_cast<std::size_t>(Format::Ptx)]
                << " MOT=" << by_format[static_cast<std::size_t>(Format::Mot)]
-               << " PAC=" << by_format[static_cast<std::size_t>(Format::Pac)]
+               << " PAC=" << (by_format[static_cast<std::size_t>(Format::Pac)] +
+                              by_format[static_cast<std::size_t>(Format::Pnst)])
                << " SHW=" << shadows;
         out.detail = detail.str();
         return out;
@@ -246,6 +255,19 @@ NativeModule pac_module() noexcept {
         "formats.pac.archive-reader",
         "PAC",
         Format::Pac,
+        ModuleKind::Structural,
+        false,
+        run_pac_module,
+        capability(ResourceCapability::Inspection) | ResourceCapability::ChildResources |
+            ResourceCapability::Container,
+    };
+}
+
+NativeModule pnst_module() noexcept {
+    return {
+        "formats.pnst.archive-reader",
+        "PNST",
+        Format::Pnst,
         ModuleKind::Structural,
         false,
         run_pac_module,

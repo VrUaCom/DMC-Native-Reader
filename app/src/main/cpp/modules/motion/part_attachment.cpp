@@ -122,7 +122,42 @@ struct Range final {
         if (root < count) locals[root] = world::identity_matrix();
     }
 
-    const auto current = animation::build_animated_world_matrices(domain, locals, root_base);
+    std::optional<std::vector<world::Matrix4f>> current;
+    if (placement.node_constraints.empty()) {
+        current = animation::build_animated_world_matrices(domain, locals, root_base);
+    } else {
+        // 0x14030E680: a joint with an enabled constraint takes its world from
+        // the constraint (mode 1: offset x host world, 0x1402CBBE0); the other
+        // joints compose local x parent (0x14030E9B0).
+        const auto binding = animation::project_animation_binding(domain);
+        if (!binding || binding->by_node_index.size() != count) return false;
+        current.emplace(count);
+        for (std::size_t position = 0U; position < count; ++position) {
+            const auto node = static_cast<std::size_t>(binding->node_at_order_position[position]);
+            if (node >= count) return false;
+            const CompositeNodeConstraint* constraint = nullptr;
+            for (const auto& candidate : placement.node_constraints) {
+                if (candidate.child_node == node) constraint = &candidate;
+            }
+            if (constraint != nullptr) {
+                if (constraint->host_node >= host_nodes->count) return false;
+                world::Matrix4f joint{};
+                joint.values =
+                    session->scene.nodes[host_nodes->begin + constraint->host_node].world.values;
+                (*current)[node] = world::multiply_dmc3_matrices(offset, joint);
+                continue;
+            }
+            const auto parent = binding->by_node_index[node].parent_node_index;
+            if (parent < 0) {
+                (*current)[node] = world::multiply_dmc3_matrices(locals[node], root_base);
+            } else if (static_cast<std::size_t>(parent) < count) {
+                (*current)[node] = world::multiply_dmc3_matrices(
+                    locals[node], (*current)[static_cast<std::size_t>(parent)]);
+            } else {
+                return false;
+            }
+        }
+    }
     const auto inverse_rest = world::build_model_space_inverse_rest_matrices(domain);
     if (!current || !inverse_rest || current->size() != count || inverse_rest->size() != count) {
         return false;
@@ -221,6 +256,61 @@ bool attach_part_skeleton(Session* session,
     } catch (...) {
         return false;
     }
+}
+
+bool attach_part_nodes(Session* session,
+                       std::size_t host_part,
+                       std::size_t child_part,
+                       std::span<const CompositeNodeConstraint> constraints) noexcept {
+    if (session == nullptr || constraints.empty() || host_part == child_part ||
+        host_part >= session->composite_parts.size() ||
+        child_part >= session->composite_parts.size()) {
+        return false;
+    }
+    try {
+        auto& part = session->composite_parts[child_part];
+        if (part.scene.rig == nullptr || part.scene.rig->node_count() != part.scene.nodes.size()) {
+            return false;
+        }
+        const auto previous = part.placement;
+        part.placement.mode = CompositePlacementMode::HostJointSkeleton;
+        part.placement.host_part_index = host_part;
+        part.placement.host_instance_id = session->composite_parts[host_part].instance_id;
+        part.placement.attachment_selector = 0U;  // model root follows the body root
+        part.placement.root_local_identity = false;
+        part.placement.attachment_offset = Matrix4{};
+        part.placement.node_constraints.assign(constraints.begin(), constraints.end());
+        part.placement.resolved = true;
+        if (!pose_part(session, child_part)) {
+            part.placement = previous;
+            return false;
+        }
+        HierarchyOverlay overlay;
+        if (materialize_hierarchy_overlay(session->scene, &overlay)) {
+            session->hierarchy_overlay = std::move(overlay);
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::optional<EnemyPartConstraints> enemy_constraints_for(std::string_view archive_name,
+                                                          std::uint32_t part_slot) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    for (const auto& record : kEnemyPartConstraints) {
+        if (record.part_slot != part_slot) continue;
+        const auto& stem = record.pac_stem;
+        if (archive_name.size() != stem.size() + 4U) continue;
+        bool match = true;
+        for (std::size_t i = 0U; i < archive_name.size() && match; ++i) {
+            const char expected = i < stem.size() ? stem[i] : ".pac"[i - stem.size()];
+            match = std::tolower(static_cast<unsigned char>(archive_name[i])) == expected;
+        }
+        if (match) return record;
+    }
+    return std::nullopt;
 }
 
 bool apply_part_attachments(Session* session) noexcept {

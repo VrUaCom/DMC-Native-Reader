@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 7U);
+    assert(modules.size() == 8U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -36,10 +36,18 @@ int main() {
     assert(probe("renamed.bin", mot_magic.data(), mot_magic.size()).format == Format::Mot);
     assert(!probe("motion.mot", nullptr, 0U).recognized);
 
+    // PNST (weapon archives obj\\plwp_*.pac) shares the relative-slot layout.
+    const auto* pnst = NativeModuleRegistry::find("PNST");
+    assert(pnst != nullptr && pnst->format == Format::Pnst && !pnst->renderable);
+    assert(pnst->run == pac->run);
+    const std::array<std::uint8_t, 8> pnst_magic{'P', 'N', 'S', 'T', 0U, 0U, 0U, 0U};
+    assert(probe("plwp_sword.pac", pnst_magic.data(), pnst_magic.size()).format ==
+           Format::Pnst);
+
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
              "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
-             "PNST", "NBZ", "EFM", "MRP", "SHW"}) {
+             "NBZ", "EFM", "MRP", "SHW"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 
@@ -57,7 +65,6 @@ int main() {
     assert(!probe("stage.hits", nullptr, 0U).recognized);
     assert(!probe("stage.dca", nullptr, 0U).recognized);
     assert(!probe("stage.pac", nullptr, 0U).recognized);
-    assert(!probe("stage.pnst", nullptr, 0U).recognized);
     assert(!probe("stage.txt", nullptr, 0U).recognized);
     assert(!probe("model.shw", nullptr, 0U).recognized);
 
