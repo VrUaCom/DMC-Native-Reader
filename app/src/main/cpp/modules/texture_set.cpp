@@ -120,7 +120,8 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
     }
 
     bool compat_used = false;
-    const auto framing = ptx_compat::parse_texture_bundle(source, &compat_used);
+    bool community = false;
+    const auto framing = ptx_compat::parse_texture_bundle(source, &compat_used, &community);
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
         out.detail = "PTX rejected by canonical texture-slot reader";
@@ -134,6 +135,7 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
     try {
         out.kind = Kind::ptx_bundle;
         out.ptx_aux_compat_used = compat_used;
+        out.ptx_community_descriptors = community;
         out.slots.reserve(framing.document.textures.size());
         for (const auto& entry : framing.document.textures) {
             if (!append_framed_slot(&out, source, entry)) {

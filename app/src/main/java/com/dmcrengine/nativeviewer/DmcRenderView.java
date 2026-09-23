@@ -19,7 +19,10 @@ public final class DmcRenderView extends View {
     private final ScaleGestureDetector scaleDetector;
     private Bitmap bitmap;
     private long session;
-    private float yaw = 0.65f;
+    // DMC3 models face +Z while the camera looks along +Z, so yaw 0 shows the
+    // back. Start from a front three-quarter view.
+    private static final float DEFAULT_YAW = (float) Math.PI - 0.65f;
+    private float yaw = DEFAULT_YAW;
     private float pitch = -0.45f;
     private float zoom = 1.0f;
     private int renderFlags;
@@ -180,7 +183,7 @@ public final class DmcRenderView extends View {
     }
 
     public void resetView() {
-        yaw = 0.65f;
+        yaw = DEFAULT_YAW;
         pitch = -0.45f;
         zoom = 1.0f;
         if (staticImagePreview) {

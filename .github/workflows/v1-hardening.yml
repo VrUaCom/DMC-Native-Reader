@@ -102,7 +102,7 @@ jobs:
             --gradle gradle \
             --expected-head "$EXPECTED_SOURCE_SHA"
 
-      - name: Verify v36 / 1.0.9 artifacts
+      - name: Verify v37 / 1.0.10 artifacts
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -124,8 +124,8 @@ jobs:
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='36'" "$BADGING"
-            grep -q "versionName='1.0.9'" "$BADGING"
+            grep -q "versionCode='37'" "$BADGING"
+            grep -q "versionName='1.0.10'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
 
@@ -168,21 +168,21 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v36-debug
+          name: dmc-native-reader-v37-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v36-unsigned-release
+          name: dmc-native-reader-v37-unsigned-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v36-hardening-evidence
+          name: dmc-native-reader-v37-hardening-evidence
           path: |
             build/phase2-evidence/
             /tmp/debug-badging.txt

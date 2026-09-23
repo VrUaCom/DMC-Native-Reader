@@ -127,6 +127,9 @@ namespace {
         if (set.ptx_aux_compat_used) {
             detail << " | auxCompat=retail-DXT1";
         }
+        if (set.ptx_community_descriptors) {
+            detail << " | descriptors=community-tool(lenient)";
+        }
 
         out.detail = detail.str();
         out.attached = true;

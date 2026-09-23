@@ -259,6 +259,11 @@ PipelineResult run_ptx_set(
     out.modules.push_back({"native.texture-set", true});
     out.modules.push_back({"profiles.dmc3.texture-slot-framing", true});
     out.modules.push_back({"formats.dds.child-validation", true});
+    if (set.ptx_community_descriptors) {
+        out.modules.push_back({"native.ptx-community-descriptors", true});
+        out.detail +=
+            "\nPTX descriptors written by a community tool: read leniently (header, sector spans, DDS)";
+    }
     if (set.ptx_aux_compat_used) {
         out.modules.push_back({"native.ptx-aux-compat", true});
         out.detail +=

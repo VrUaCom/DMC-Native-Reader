@@ -70,6 +70,17 @@ coordinates. Weapon MODs without a skeleton are moved rigidly onto the root.
 impression; the projection itself was already consistent (nearer = larger,
 depth test agrees).
 
+**Community-made archives (v37).** Tested on a modded `pl011.pac` (layout
+identical to retail: slot 0 PTX, slot 1 body, slot 12 companion, slot 13
+cloth text). Its PTX descriptors are written by a community tool: format
+word, secondary dimensions and reciprocal floats are zeroed or copied, so the
+strict Rengine texture-slot validator reports `descriptor_mismatch`. The
+viewer then reads the bundle leniently — header count, per-slot sector spans,
+the 0x70 descriptor size and the DDS itself — while still rejecting
+structural faults (non-zero sector padding, trailing bytes, bad DDS). The
+session reports `descriptors=community-tool(lenient)`. Default camera now
+starts in front of the model (DMC3 models face +Z).
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
