@@ -15,6 +15,7 @@
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/motion/motion_clip.h"
 #include "dmcresource/motion/part_attachment.h"
+#include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/scene_projection.h"
 
@@ -107,6 +108,8 @@ struct MotionState final {
     float loop_start_frame{};
     // Last evaluated frame; cloth advances one solver step per game frame.
     float last_frame{-1.0F};
+    // Game-frame clock for TSC scrolls (keeps running across loops).
+    float scroll_clock{};
 };
 
 namespace {
@@ -348,8 +351,13 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 ? 1U
                 : static_cast<std::uint32_t>(std::min(std::lround(delta), 6L));
         }
+        if (state.last_frame >= 0.0F) {
+            const float delta = frame - state.last_frame;
+            state.scroll_clock += delta < 0.0F ? 1.0F : delta;
+        }
         state.last_frame = frame;
         (void)apply_part_attachments(session, cloth_steps);
+        (void)apply_uv_scrolls(session, state.scroll_clock);
         HierarchyOverlay overlay;
         if (materialize_hierarchy_overlay(session->scene, &overlay)) {
             session->hierarchy_overlay = std::move(overlay);
@@ -373,6 +381,7 @@ void clear_motion(Session* session) noexcept {
         }
     }
     session->hierarchy_overlay = std::move(state->source_overlay);
+    (void)apply_uv_scrolls(session, 0.0F);
 }
 
 bool has_motion(const Session* session) noexcept {

@@ -17,6 +17,8 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         mot_module(),
         pnst_module(),
         shw_module(),
+        tsc_module(),
+        clt_module(),
     };
     return registry;
 }

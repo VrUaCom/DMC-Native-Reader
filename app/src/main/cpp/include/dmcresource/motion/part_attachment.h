@@ -52,6 +52,25 @@ inline constexpr std::array<EnemyClothSource, 8> kEnemyClothSources{{
     {"em000", 17U, 16U},
 }};
 
+// Texture scroll (.tsc) slot and the model slots its CDrawUV objects drive:
+// CEm028 init caches slot 13 (0x14013065F) and hands it to the CDrawUV at
+// this+0x2D00 for the dress (slot 5, 0x1401307FD) and at this+0x2D38 for the
+// sleeves (slot 6, 0x14013089E).
+struct TscSource final {
+    std::string_view pac_stem;
+    std::uint32_t tsc_slot;
+    std::array<std::uint32_t, 2> model_slots;
+    std::uint32_t model_count;
+};
+
+inline constexpr std::array<TscSource, 1> kTscSources{{
+    {"em028", 13U, {5U, 6U}, 2U},
+}};
+
+// The .tsc slot driving `model_slot` of archive `archive_name`, if any.
+[[nodiscard]] std::optional<std::uint32_t> tsc_slot_for(std::string_view archive_name,
+                                                        std::uint32_t model_slot) noexcept;
+
 // Match "<stem>.pac" (any directory, any case) and a model slot to its .clt slot.
 [[nodiscard]] std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
                                                             std::uint32_t model_slot) noexcept;

@@ -14,6 +14,8 @@
 #include "dmc_rengine/formats/pnst.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/ptx_framing_compat.h"
 #include "dmcresource/resource_limits.h"
 
@@ -43,6 +45,11 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 4U, "MOT\0")) return {Format::Mot, "MOT", "mot"};
     if (magic_at(bytes, size, 0U, "SHW ")) {
         return {Format::Shw, "SHW", "shw", true};
+    }
+    if (bytes != nullptr && size > 0U) {
+        const std::string_view text{reinterpret_cast<const char*>(bytes), size};
+        if (motion::looks_like_tsc(text)) return {Format::Tsc, "TSC", "tsc"};
+        if (motion::looks_like_clt(text)) return {Format::Clt, "CLT", "clt"};
     }
     if (bytes != nullptr && size > 0U) {
         try {

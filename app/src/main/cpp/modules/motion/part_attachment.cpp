@@ -358,6 +358,28 @@ std::optional<EnemyPartConstraints> enemy_constraints_for(std::string_view archi
     return std::nullopt;
 }
 
+std::optional<std::uint32_t> tsc_slot_for(std::string_view archive_name,
+                                          std::uint32_t model_slot) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    for (const auto& record : kTscSources) {
+        bool used = false;
+        for (std::uint32_t k = 0U; k < record.model_count; ++k) {
+            used = used || record.model_slots[k] == model_slot;
+        }
+        if (!used) continue;
+        const auto& stem = record.pac_stem;
+        if (archive_name.size() != stem.size() + 4U) continue;
+        bool match = true;
+        for (std::size_t i = 0U; i < archive_name.size() && match; ++i) {
+            const char expected = i < stem.size() ? stem[i] : ".pac"[i - stem.size()];
+            match = std::tolower(static_cast<unsigned char>(archive_name[i])) == expected;
+        }
+        if (match) return record.tsc_slot;
+    }
+    return std::nullopt;
+}
+
 std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
                                               std::uint32_t model_slot) noexcept {
     const auto slash = archive_name.find_last_of("/\\");

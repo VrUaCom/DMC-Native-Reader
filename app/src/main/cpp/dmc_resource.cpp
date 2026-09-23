@@ -6,6 +6,9 @@
 #include <string>
 #include <string_view>
 
+#include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/uv_scroll.h"
+
 namespace dmcresource {
 namespace {
 
@@ -78,6 +81,19 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Shw, true, "SHW", "shadow", "render-scene",
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.shw");
     }
+    // Text scripts: .tsc texture scroll (".TSC" first token, 0x14030A9B0) and
+    // .clt chain parameters (";name.clt" + ClothNo, 0x1402CA345).
+    if (bytes != nullptr && size > 0U) {
+        const std::string_view text{reinterpret_cast<const char*>(bytes), size};
+        if (motion::looks_like_tsc(text)) {
+            return result(Format::Tsc, true, "TSC", "texture-scroll", "inspection",
+                          "EXE_CONFIRMED", "text/vnd.dmc.tsc");
+        }
+        if (motion::looks_like_clt(text)) {
+            return result(Format::Clt, true, "CLT", "cloth", "inspection",
+                          "EXE_CONFIRMED", "text/vnd.dmc.clt");
+        }
+    }
     // MOT keeps its identity at +0x04 after the u32 header size.
     if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'M', 'O', 'T', '\0')) {
         return result(Format::Mot, true, "MOT", "animation", "inspection",
@@ -136,6 +152,8 @@ const char* format_name(Format format) noexcept {
     case Format::Mot: return "MOT";
     case Format::Pnst: return "PNST";
     case Format::Shw: return "SHW";
+    case Format::Tsc: return "TSC";
+    case Format::Clt: return "CLT";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

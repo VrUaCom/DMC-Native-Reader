@@ -1,6 +1,7 @@
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/part_attachment.h"
+#include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/shadow_hull.h"
@@ -719,6 +720,39 @@ int main() {
         state.axis_by_node[1] = -1;
         const auto kept = motion::step_cloth_node(state, 1U, target, parent, parent, 10.0F, 1.0F);
         assert(near(kept[13], -10.0F));     // not simulated: rest target unchanged
+    }
+
+    // TSC (em028_013 layout): two scrolls, linear v and eased u with drift.
+    {
+        constexpr std::string_view tsc =
+            "\r\n.TSC\t\r\n\t# RELATIVE\t\r\n\t\t<Start\r\n\t\t\tScrlNo\t\t0\r\n"
+            "\t\t\tScrlType\t1\r\n\t\t\tTexNo\t\t3\r\n\t\t\tDirUV\t\tstay,   up\r\n"
+            "\t\t\tTimeUV\t\t0, \t90\r\n\t\tEnd>\r\n\t\t<Start\r\n\t\t\tScrlNo\t\t1\r\n"
+            "\t\t\tScrlType\t3\r\n\t\t\tTexNo\t\t2\r\n\t\t\tDirUV\t\tleft, stay\r\n"
+            "\t\t\tTimeUV\t\t400,      0\r\n\t\t\tMinimumUV\t0.0001,\t0.005\r\n\t\tEnd>\r\n"
+            "\t\t<Finish>\r\n$\t\r\n\t# ABSOLUTE\r\n\t\t<Start ScrlNo 7 ScrlType 1 End>\r\n";
+        assert(motion::looks_like_tsc(tsc));
+        const auto records = motion::parse_tsc(tsc);
+        assert(records.size() == 2U);  // '$' ends the text: ABSOLUTE is never read
+        assert(records[0].number == 0U && records[0].type == 1U && records[0].texture == 3);
+        assert(records[0].direction[0] == 0 && records[0].direction[1] == 1);
+        assert(near(records[0].time[1], 90.0F) && !records[0].has_minimum);
+        assert(records[1].type == 3U && records[1].direction[0] == 1 && records[1].has_minimum);
+        assert(near(records[1].time[0], 400.0F) && near(records[1].minimum[1], 0.005F));
+        // Linear: one full texture per 90 frames, quantized to 1/4096.
+        const auto linear = motion::scroll_offset(records[0], 45.0F);
+        assert(linear && near((*linear)[0], 0.0F) && near((*linear)[1], 0.5F));
+        // Eased: (cos((1 - p) pi) + 1) / 2 plus the MinimumUV drift; v stays.
+        const auto eased = motion::scroll_offset(records[1], 200.0F);
+        const float expected = std::floor(
+            ((std::cos(0.5F * 3.14159265F) + 1.0F) * 0.5F + 0.02F) * 4096.0F) / 4096.0F;
+        assert(eased && std::fabs((*eased)[0] - expected) < 0.0005F && near((*eased)[1], 0.0F));
+        assert(motion::object_scroll_number(0x01020000U) == 0);
+        assert(motion::object_scroll_number(0x02000000U) == 1);
+        assert(motion::object_scroll_number(0x00020000U) == -1);
+        assert(!motion::looks_like_tsc(";pl000_02.clt\nClothNo 0\n"));
+        assert(motion::tsc_slot_for("st/EM028.PAC", 6U) == 13U);
+        assert(!motion::tsc_slot_for("em028.pac", 4U).has_value());
     }
 
     // The same layout under a non-player name is not guessed at.

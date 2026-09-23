@@ -20,6 +20,8 @@ enum class Format : std::uint8_t {
     Mot,
     Pnst,
     Shw,
+    Tsc,
+    Clt,
 };
 
 struct ProbeResult {

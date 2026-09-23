@@ -97,8 +97,10 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
     modules/motion/cloth_chain.cpp
+    modules/motion/uv_scroll.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
+    modules/module_scripts.cpp
     modules/shadow_hull.cpp
     modules/pac_assembly.cpp
     spider/crusader.cpp

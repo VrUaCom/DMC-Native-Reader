@@ -12,6 +12,7 @@
 #include "dmcresource/composite_model.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/shadow_hull.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
@@ -72,6 +73,9 @@ struct Session {
 
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;
+
+    // TSC texture scroll ranges (CDrawUV), advanced with motion playback.
+    std::vector<motion::UvScrollBinding> uv_scrolls;
 
     // Bound MOT playback state (read-only preview; see motion/motion_player.h).
     std::shared_ptr<motion::MotionState> motion;

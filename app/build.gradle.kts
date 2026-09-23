@@ -39,8 +39,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 44
-        versionName = "1.0.17"
+        versionCode = 45
+        versionName = "1.0.18"
 
         // Do not set -std= or other semantic C++ flags here. Gradle's CMake
         // cppFlags are global to the external native build. Language mode is

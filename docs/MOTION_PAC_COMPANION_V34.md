@@ -175,6 +175,21 @@ fresh assembly settles them for 60. Capsule collisions (`c+0x48`/`c+0x58`) are
 not ported, so a coat can pass through legs. Evidence: rengine
 `docs/research/dmc3-cloth-chain-solver-2026-09-23.md`.
 
+**Texture scroll (v45).** `.tsc` texts are parsed like CDrawUV does
+(`motion/uv_scroll.cpp`; parser `0x14030A9B0`/`0x14030ABE0`: `.TSC`, only the
+`# RELATIVE` part, `$` ends the text). MOD objects whose source flags `+0x10`
+carry `ScrlNo + 1` in bits 24-27 (and whose mesh texture equals `TexNo`, if
+set) get their UVs offset by the record's value in 1/4096 texture:
+types 0/1 linear, 2/3 cosine-eased with MinimumUV drift, types 4/5/10 and
+RndUV not ported. The offset runs on a game-frame clock kept by motion
+playback. Binding: em028 slots 5 and 6 <- slot 13 (dress lightning strip
+scroll 0 flows up, bat fabric scroll 1 crawls sideways). em000's TSC (slot
+24) belongs to the EFM model of `CEm005Shl01` and is not shown yet.
+Standalone `.tsc` and `.clt` files open in `formats.tsc.scroll-reader` and
+`formats.clt.cloth-reader` (inspection: records / cloth blocks); inside a PAC
+their slots are now named `slot_NNNN.tsc` / `.clt`. Evidence: rengine
+`docs/research/dmc3-tsc-uv-scroll-2026-09-23.md`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
@@ -258,7 +273,8 @@ JNI (thin): `assemblePac`, `assemblePacs`, `hasShadows`, `motionLibraryCount/Nam
 MOT and PAC are no longer listed as banned legacy modules in CI; the remaining
 list covers only families that are still unpromoted (HITS, TXT, DCA, LIG2,
 NBZ, EFM, MRP adapters). PNST is read by `formats.pnst.archive-reader`
-(v39), SHW by `formats.shw.hull-reader` (v40).
+(v39), SHW by `formats.shw.hull-reader` (v40), TSC and CLT by
+`formats.tsc.scroll-reader` / `formats.clt.cloth-reader` (v45).
 
 ## 7. Next
 

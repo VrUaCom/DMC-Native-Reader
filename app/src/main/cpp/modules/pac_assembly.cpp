@@ -12,9 +12,11 @@
 #include <utility>
 #include <vector>
 
+#include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/shadow_hull.h"
 #include "dmcresource/motion/part_attachment.h"
+#include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/motion/skeleton_rig.h"
 #include "dmcresource/spider/session_actions.h"
 
@@ -414,6 +416,66 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                 }
             }
+            // Texture scrolls (.tsc, CDrawUV): objects whose source flags carry a
+            // scroll number move their UVs with the playback clock.
+            for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                const auto& entry = entries[model_entry[part]];
+                if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                const auto tsc_slot = motion::tsc_slot_for(archive_name, *entry.slot);
+                if (!tsc_slot) continue;
+                std::vector<motion::ScrollRecord> records;
+                for (const auto& e : entries) {
+                    if (e.archive != 0U || !e.container.empty() || e.slot != *tsc_slot) continue;
+                    records = motion::parse_tsc(
+                        {reinterpret_cast<const char*>(e.bytes->data()), e.bytes->size()});
+                }
+                if (records.empty()) continue;
+                const auto parsed = dmc::rengine::formats::mod::Parser::parse(
+                    std::as_bytes(std::span{entry.bytes->data(), entry.bytes->size()}));
+                if (!parsed.ok()) continue;
+                const auto& objects = parsed.document.outer_models;
+                std::size_t cursor = 0U;
+                for (std::size_t p = 0U; p < part; ++p) {
+                    for (const auto& primitive : assembled->composite_parts[p].scene.meshes) {
+                        cursor += primitive.mesh.vertices.size();
+                    }
+                }
+                std::size_t bound = 0U;
+                for (const auto& primitive : assembled->composite_parts[part].scene.meshes) {
+                    const auto begin = cursor;
+                    const auto count = primitive.mesh.vertices.size();
+                    cursor += count;
+                    if (primitive.object_index >= objects.size()) continue;
+                    const auto& object = objects[primitive.object_index];
+                    const int number = motion::object_scroll_number(object.source_flags);
+                    if (number < 0) continue;
+                    const motion::ScrollRecord* record = nullptr;
+                    for (const auto& candidate : records) {
+                        if (candidate.number == number) record = &candidate;
+                    }
+                    if (record == nullptr || primitive.mesh_index >= object.meshes.size()) continue;
+                    if (record->texture >= 0 &&
+                        object.meshes[primitive.mesh_index].texture_slot !=
+                            static_cast<std::uint16_t>(record->texture)) {
+                        continue;
+                    }
+                    const auto& uv = assembled->render_mesh.uv0;
+                    if (begin + count > uv.size()) continue;
+                    motion::UvScrollBinding binding;
+                    binding.vertex_begin = begin;
+                    binding.rest_uv.assign(uv.begin() + static_cast<std::ptrdiff_t>(begin),
+                                           uv.begin() + static_cast<std::ptrdiff_t>(begin + count));
+                    binding.record = *record;
+                    assembled->uv_scrolls.push_back(std::move(binding));
+                    ++bound;
+                }
+                if (bound > 0U) {
+                    ++report.uv_scroll_parts;
+                    report.detail_attachments += " tsc slot" + std::to_string(*entry.slot) +
+                        "<-slot" + std::to_string(*tsc_slot) + "(" + std::to_string(bound) +
+                        " meshes)";
+                }
+            }
             // Model objects the selected position does not draw (MOD object bit 0).
             if (position != nullptr && position->hide_count > 0U) {
                 for (std::size_t part = 0U; part < model_entry.size(); ++part) {
@@ -530,6 +592,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " shadowRecords=" + std::to_string(report.shadows) +
             " shadowsBound=" + std::to_string(report.shadows_bound) +
             " cloth=" + std::to_string(report.cloth_parts) +
+            " uvScroll=" + std::to_string(report.uv_scroll_parts) +
             " nestedArchives=" + std::to_string(report.nested_archives) +
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +

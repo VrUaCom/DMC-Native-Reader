@@ -41,6 +41,9 @@ struct ClothParams final {
     std::vector<ClothBone> bones;
 };
 
+// Byte identity: ';' comment first line and a "ClothNo" block key.
+[[nodiscard]] bool looks_like_clt(std::string_view text);
+
 // Every block of a .clt text; empty when the text is not a cloth file.
 [[nodiscard]] std::vector<ClothParams> parse_clt(std::string_view text);
 

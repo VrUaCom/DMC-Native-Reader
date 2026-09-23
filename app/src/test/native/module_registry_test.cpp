@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 9U);
+    assert(modules.size() == 11U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -49,6 +49,19 @@ int main() {
     assert(shw != nullptr && shw->format == Format::Shw && shw->renderable);
     const std::array<std::uint8_t, 4> shw_magic{'S', 'H', 'W', ' '};
     assert(probe("renamed.bin", shw_magic.data(), shw_magic.size()).format == Format::Shw);
+
+    // TSC / CLT text scripts: identified by content (".TSC" first token,
+    // ";name.clt" + ClothNo), inspection only.
+    const auto* tsc = NativeModuleRegistry::find("TSC");
+    const auto* clt = NativeModuleRegistry::find("CLT");
+    assert(tsc != nullptr && tsc->format == Format::Tsc && !tsc->renderable);
+    assert(clt != nullptr && clt->format == Format::Clt && !clt->renderable);
+    constexpr std::string_view tsc_text = "\r\n.TSC\t\n\t# RELATIVE\n<Finish>\n$";
+    constexpr std::string_view clt_text = ";a.clt\nClothNum 1\nClothNo 0\nBone 2 Y\nEnd\n$";
+    assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(tsc_text.data()),
+                 tsc_text.size()).format == Format::Tsc);
+    assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(clt_text.data()),
+                 clt_text.size()).format == Format::Clt);
 
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {

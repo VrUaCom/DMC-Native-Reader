@@ -89,6 +89,12 @@ void align_axis(Mat& m, std::uint8_t axis, Vec d, Vec r) noexcept {
 
 }  // namespace
 
+bool looks_like_clt(std::string_view text) {
+    if (text.empty() || text.front() != ';') return false;
+    const auto head = text.substr(0U, std::min<std::size_t>(text.size(), 1024U));
+    return head.find("ClothNo") != std::string_view::npos;
+}
+
 std::vector<ClothParams> parse_clt(std::string_view text) {
     std::vector<ClothParams> out;
     if (text.empty() || text.front() != ';') return out;
