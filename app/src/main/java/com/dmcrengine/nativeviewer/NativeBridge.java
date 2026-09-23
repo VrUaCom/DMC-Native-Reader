@@ -56,7 +56,7 @@ public final class NativeBridge {
                                         int renderFlags, Bitmap target);
 
     // Read-only PAC assembly: MODs in model space, slot-adjacent PTX, MOT library.
-    public static native long assemblePac(long handle);
+    public static native long assemblePac(long handle, String archiveName);
     public static native int motionLibraryCount(long handle);
     public static native String motionLibraryName(long handle, int index);
 

@@ -67,6 +67,7 @@ EXPECTED_CTESTS = (
     "workspace_graph",
     "motion_playback",
     "pac_assembly",
+    "player_coat",
 )
 
 

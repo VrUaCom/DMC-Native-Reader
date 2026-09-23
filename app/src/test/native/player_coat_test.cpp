@@ -1,0 +1,356 @@
+#include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/part_attachment.h"
+#include "dmcresource/pac_assembly.h"
+#include "dmcresource/resource_session.h"
+
+#include <bit>
+#include <cassert>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
+
+// IPlayer coat regression (EXE: CPlVergil 0x140225A16 / 0x1402260A4,
+// CPlDante 0x1402120A7): in a player PAC the coat MOD (slot 12) uses the body
+// texture (slot 0) and its skeleton hangs from body joint 3 with an identity
+// root local, following the animated body every frame.
+namespace {
+
+void put_u8(std::vector<std::uint8_t>& bytes,
+            std::size_t offset,
+            std::uint8_t value) {
+    assert(offset < bytes.size());
+    bytes[offset] = value;
+}
+
+void put_u16(std::vector<std::uint8_t>& bytes,
+             std::size_t offset,
+             std::uint16_t value) {
+    assert(offset + 2U <= bytes.size());
+    put_u8(bytes, offset + 0U,
+           static_cast<std::uint8_t>(value & 0xFFU));
+    put_u8(bytes, offset + 1U,
+           static_cast<std::uint8_t>((value >> 8U) & 0xFFU));
+}
+
+void put_u32(std::vector<std::uint8_t>& bytes,
+             std::size_t offset,
+             std::uint32_t value) {
+    assert(offset + 4U <= bytes.size());
+    for (std::size_t i = 0U; i < 4U; ++i) {
+        put_u8(bytes, offset + i,
+               static_cast<std::uint8_t>(
+                   (value >> (i * 8U)) & 0xFFU));
+    }
+}
+
+void put_u64(std::vector<std::uint8_t>& bytes,
+             std::size_t offset,
+             std::uint64_t value) {
+    assert(offset + 8U <= bytes.size());
+    for (std::size_t i = 0U; i < 8U; ++i) {
+        put_u8(bytes, offset + i,
+               static_cast<std::uint8_t>(
+                   (value >> (i * 8U)) & 0xFFU));
+    }
+}
+
+void put_f32(std::vector<std::uint8_t>& bytes,
+             std::size_t offset,
+             float value) {
+    put_u32(bytes, offset, std::bit_cast<std::uint32_t>(value));
+}
+
+void put_transform(std::vector<std::uint8_t>& bytes,
+                   std::size_t offset,
+                   float tx,
+                   float ty,
+                   float tz,
+                   float magnitude) {
+    put_f32(bytes, offset + 0x00U, tx);
+    put_f32(bytes, offset + 0x04U, ty);
+    put_f32(bytes, offset + 0x08U, tz);
+    put_f32(bytes, offset + 0x0CU, magnitude);
+    put_f32(bytes, offset + 0x10U, 0.0F);
+    put_f32(bytes, offset + 0x14U, 0.0F);
+    put_f32(bytes, offset + 0x18U, 0.0F);
+    put_f32(bytes, offset + 0x1CU, 0.0F);
+}
+
+std::vector<std::uint8_t> make_spatial_mod() {
+    std::vector<std::uint8_t> bytes(0x2A0U, 0U);
+    bytes[0] = 'M';
+    bytes[1] = 'O';
+    bytes[2] = 'D';
+    bytes[3] = ' ';
+    put_f32(bytes, 0x04U, 1.01F);
+    put_u8(bytes, 0x10U, 1U);
+    put_u8(bytes, 0x11U, 3U);
+    put_u64(bytes, 0x20U, 0x200U);
+
+    // One outer model, one 3-vertex inner mesh.
+    put_u8(bytes, 0x40U, 1U);
+    put_u16(bytes, 0x42U, 3U);
+    put_u64(bytes, 0x48U, 0x80U);
+
+    put_u16(bytes, 0x80U, 3U);
+    put_u16(bytes, 0x82U, 9U);
+    put_u16(bytes, 0x84U, 1U);
+    put_u16(bytes, 0x86U, 2U);
+    put_u16(bytes, 0x88U, 3U);
+    put_u16(bytes, 0x8AU, 4U);
+    put_u64(bytes, 0x90U, 0xD0U);
+    put_u64(bytes, 0x98U, 0x100U);
+    put_u64(bytes, 0xA0U, 0x130U);
+    put_u64(bytes, 0xA8U, 0x140U);
+    put_u64(bytes, 0xB0U, 0x150U);
+    put_u64(bytes, 0xB8U, 0U);
+    put_u64(bytes, 0xC0U, 0xE0U);
+    put_u32(bytes, 0xC8U, 0U);
+    put_u32(bytes, 0xCCU, 0U);
+
+    put_f32(bytes, 0xD0U, 0.0F);
+    put_f32(bytes, 0xD4U, 0.0F);
+    put_f32(bytes, 0xD8U, 0.0F);
+    put_f32(bytes, 0xDCU, 1.0F);
+    put_f32(bytes, 0xE0U, 0.0F);
+    put_f32(bytes, 0xE4U, 0.0F);
+    put_f32(bytes, 0xE8U, 0.0F);
+    put_f32(bytes, 0xECU, 1.0F);
+    put_f32(bytes, 0xF0U, 0.0F);
+
+    for (std::size_t i = 0U; i < 3U; ++i) {
+        const auto n = 0x100U + i * 12U;
+        put_f32(bytes, n + 0U, 0.0F);
+        put_f32(bytes, n + 4U, 0.0F);
+        put_f32(bytes, n + 8U, 1.0F);
+    }
+
+    put_u16(bytes, 0x130U, 0U);
+    put_u16(bytes, 0x132U, 0U);
+    put_u16(bytes, 0x134U, 4096U);
+    put_u16(bytes, 0x136U, 0U);
+    put_u16(bytes, 0x138U, 0U);
+    put_u16(bytes, 0x13AU, 4096U);
+
+    // BLENDINDICES remain zero. Control values are a valid one-influence skin
+    // encoding for bone 0 while the transform domain contains three nodes.
+    put_u16(bytes, 0x150U, 0x001FU);
+    put_u16(bytes, 0x152U, 0x001FU);
+    put_u16(bytes, 0x154U, 0x001FU);
+
+    // Canonical node-domain shell for count=3:
+    // parent +0x20, order +0x24, adapter +0x28, transforms +0x30.
+    put_u32(bytes, 0x200U, 0x20U);
+    put_u32(bytes, 0x204U, 0x24U);
+    put_u32(bytes, 0x208U, 0x28U);
+    put_u32(bytes, 0x20CU, 0x30U);
+
+    // Non-linear evaluation order proves parent values are node indices:
+    // root node0 -> node2 -> node1.
+    put_u8(bytes, 0x220U, 0xFFU);
+    put_u8(bytes, 0x221U, 0U);
+    put_u8(bytes, 0x222U, 2U);
+
+    put_u8(bytes, 0x224U, 0U);
+    put_u8(bytes, 0x225U, 2U);
+    put_u8(bytes, 0x226U, 1U);
+
+    put_u8(bytes, 0x228U, 0U);
+    put_u8(bytes, 0x229U, 0U);
+    put_u8(bytes, 0x22AU, 0U);
+
+    put_transform(bytes, 0x230U, 10.0F, 0.0F, 0.0F, 10.0F);
+    put_transform(bytes, 0x250U, 0.0F, 0.0F, 2.0F, 2.0F);
+    put_transform(bytes, 0x270U, 0.0F, 5.0F, 0.0F, 5.0F);
+    return bytes;
+}
+
+// Three-node MOT: node 0 translation-x only, one compression-2 track with
+// keys (frame 0 -> 10.0) and (frame 10 -> 20.0).
+std::vector<std::uint8_t> make_translation_mot() {
+    std::vector<std::uint8_t> bytes(0x50U, 0U);
+    put_u32(bytes, 0x00U, 0x30U);
+    bytes[4] = 'M';
+    bytes[5] = 'O';
+    bytes[6] = 'T';
+    bytes[7] = 0;
+    put_f32(bytes, 0x0CU, 10.0F);
+    put_f32(bytes, 0x14U, 10.0F);
+    put_u16(bytes, 0x1CU, 3U);
+    put_u16(bytes, 0x1EU, 0x040U);
+    put_u32(bytes, 0x30U, 1U);
+    put_u16(bytes, 0x34U, 0x18U);
+    put_u16(bytes, 0x36U, 2U);
+    put_u16(bytes, 0x38U, 2U);
+    put_u16(bytes, 0x3AU, 0U);
+    put_f32(bytes, 0x3CU, 10.0F);
+    put_f32(bytes, 0x40U, 10.0F);
+    put_u16(bytes, 0x44U, 0U);
+    put_u16(bytes, 0x46U, 0U);
+    put_u16(bytes, 0x48U, 10U);
+    put_u16(bytes, 0x4AU, 0xFFFFU);
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_pac(const std::vector<std::vector<std::uint8_t>>& payloads) {
+    std::size_t cursor = 8U + payloads.size() * 4U;
+    cursor = (cursor + 0x0FU) & ~std::size_t{0x0FU};
+    std::vector<std::uint8_t> bytes(cursor, 0U);
+    bytes[0] = 'P';
+    bytes[1] = 'A';
+    bytes[2] = 'C';
+    bytes[3] = 0U;
+    put_u32(bytes, 4U, static_cast<std::uint32_t>(payloads.size()));
+    for (std::size_t index = 0U; index < payloads.size(); ++index) {
+        put_u32(bytes, 8U + index * 4U, static_cast<std::uint32_t>(bytes.size()));
+        bytes.insert(bytes.end(), payloads[index].begin(), payloads[index].end());
+        bytes.resize((bytes.size() + 0x0FU) & ~std::size_t{0x0FU}, 0U);
+    }
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_one_slot_ptx() {
+    constexpr std::uint32_t width = 4U;
+    constexpr std::uint32_t height = 4U;
+    constexpr std::uint32_t mip_count = 3U;
+    constexpr std::size_t dds_size = 128U + 8U * mip_count;
+
+    std::vector<std::uint8_t> dds(dds_size, 0U);
+    dds[0] = 'D'; dds[1] = 'D'; dds[2] = 'S'; dds[3] = ' ';
+    put_u32(dds, 4U, 124U);
+    put_u32(dds, 8U, 0x000A1007U);
+    put_u32(dds, 12U, height);
+    put_u32(dds, 16U, width);
+    put_u32(dds, 20U, 8U);
+    put_u32(dds, 28U, mip_count);
+    put_u32(dds, 76U, 32U);
+    put_u32(dds, 80U, 4U);
+    dds[84] = 'D'; dds[85] = 'X'; dds[86] = 'T'; dds[87] = '1';
+    put_u32(dds, 108U, 0x00401008U);
+    put_u16(dds, 128U, 0xF800U);
+    put_u16(dds, 130U, 0x07E0U);
+    put_u32(dds, 132U, 0U);
+
+    std::vector<std::uint8_t> descriptor(0x70U, 0U);
+    put_u32(descriptor, 0x08U, 0x20000U | (mip_count << 8U) | 0x86U);
+    put_u32(descriptor, 0x0CU, 0xAAE4U);
+    put_u32(descriptor, 0x10U, (height << 16U) | width);
+    put_u32(descriptor, 0x14U, 1U);
+    put_u32(descriptor, 0x18U, width * 2U);
+    put_u32(descriptor, 0x20U, 0x40U);
+    put_u32(descriptor, 0x38U, static_cast<std::uint32_t>(dds.size() - 128U));
+    put_u32(descriptor, 0x3CU, 2U);
+    put_u32(descriptor, 0x40U, 1U);
+    put_u32(descriptor, 0x44U, (height << 16U) | width);
+    put_u32(descriptor, 0x48U,
+            std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(width)));
+    put_u32(descriptor, 0x4CU,
+            std::bit_cast<std::uint32_t>(1.0F / static_cast<float>(height)));
+    put_u32(descriptor, 0x60U, 0U);
+    put_u32(descriptor, 0x64U, static_cast<std::uint32_t>(dds.size()));
+    put_u32(descriptor, 0x68U, 8U);
+
+    std::vector<std::uint8_t> bundle(2U * 0x800U, 0U);
+    put_u32(bundle, 0U, 1U);
+    put_u32(bundle, 4U, 1U);
+    std::memcpy(bundle.data() + 0x800U, descriptor.data(), descriptor.size());
+    std::memcpy(bundle.data() + 0x870U, dds.data(), dds.size());
+    return bundle;
+}
+
+// Four-node chain body: node k sits 1.0 above node k-1, so node 3 is at y=3.
+std::vector<std::uint8_t> make_body_mod() {
+    auto bytes = make_spatial_mod();
+    bytes.resize(0x2C0U, 0U);
+    put_u8(bytes, 0x11U, 4U);
+    for (std::size_t i = 0x220U; i < 0x2C0U; ++i) bytes[i] = 0U;
+    const std::uint8_t parents[4] = {0xFFU, 0U, 1U, 2U};
+    for (std::size_t n = 0U; n < 4U; ++n) {
+        put_u8(bytes, 0x220U + n, parents[n]);
+        put_u8(bytes, 0x224U + n, static_cast<std::uint8_t>(n));
+        put_u8(bytes, 0x228U + n, 0U);
+    }
+    put_transform(bytes, 0x230U, 0.0F, 0.0F, 0.0F, 0.0F);
+    put_transform(bytes, 0x250U, 0.0F, 1.0F, 0.0F, 1.0F);
+    put_transform(bytes, 0x270U, 0.0F, 1.0F, 0.0F, 1.0F);
+    put_transform(bytes, 0x290U, 0.0F, 1.0F, 0.0F, 1.0F);
+    return bytes;
+}
+
+// Four-node MOT: node 0 translation-x from 0 (frame 0) to 10 (frame 10).
+std::vector<std::uint8_t> make_body_mot() {
+    auto bytes = make_translation_mot();
+    put_u16(bytes, 0x1CU, 4U);
+    put_u16(bytes, 0x1EU, 0x040U);
+    put_u16(bytes, 0x20U, 0U);
+    put_u16(bytes, 0x22U, 0U);
+    put_u16(bytes, 0x24U, 0U);
+    put_f32(bytes, 0x3CU, 0.0F);
+    put_f32(bytes, 0x40U, 10.0F);
+    return bytes;
+}
+
+[[nodiscard]] bool near(float a, float b) { return std::fabs(a - b) < 0.0005F; }
+
+}  // namespace
+
+int main() {
+    namespace motion = dmcresource::motion;
+    const auto ptx = make_one_slot_ptx();
+    const auto body = make_body_mod();
+    const auto coat = make_spatial_mod();   // 3 nodes, root rest at x=10
+    const auto mot = make_body_mot();
+    const std::vector<std::uint8_t> filler(16U, 0xABU);
+
+    std::vector<std::vector<std::uint8_t>> slots(14U, filler);
+    slots[0] = ptx;
+    slots[1] = body;
+    slots[12] = coat;
+    slots[13] = mot;
+    const auto pac = make_pac(slots);
+
+    auto archive = dmcresource::open_session("pl001.pac", pac.data(), pac.size());
+    assert(archive != nullptr);
+    dmcresource::pac_assembly::AssemblyReport report;
+    auto scene = dmcresource::pac_assembly::assemble_pac(*archive, &report, "pl001.pac");
+    assert(scene != nullptr);
+    assert(report.models == 2U);
+    assert(report.attached_parts == 1U);
+    assert(report.textures_attached == 2U);       // slot 0 shared by body and coat
+    assert(scene->texture_companion_attached);
+    assert(scene->composite_parts.size() == 2U);
+    assert(motion::is_attached_part(scene.get(), 1U));
+    assert(scene->composite_parts[1].placement.attachment_selector == 3U);
+
+    // Coat vertex = rest - coatRestRoot(10,0,0) + bodyJoint3(0,3,0).
+    const auto& coat_rest = scene->composite_parts[1].scene.meshes[0].mesh.vertices;
+    const std::size_t coat_begin = scene->composite_parts[0].scene.meshes[0].mesh.vertices.size();
+    for (std::size_t i = 0U; i < coat_rest.size(); ++i) {
+        const auto& v = scene->render_mesh.vertices[coat_begin + i];
+        assert(near(v.x, coat_rest[i].x - 10.0F));
+        assert(near(v.y, coat_rest[i].y + 3.0F));
+        assert(near(v.z, coat_rest[i].z));
+    }
+
+    // Playing the body MOT moves joint 3, and the coat follows it.
+    assert(scene->motion_library.size() == 1U);
+    const auto& payload = scene->motion_library.front();
+    const auto loaded = motion::load_motion(
+        scene.get(), payload.name, payload.bytes.data(), payload.bytes.size());
+    assert(loaded.ok && loaded.animated_parts == 1U);
+    assert(motion::apply_motion_frame(scene.get(), 5.0F));
+    for (std::size_t i = 0U; i < coat_rest.size(); ++i) {
+        const auto& v = scene->render_mesh.vertices[coat_begin + i];
+        assert(near(v.x, coat_rest[i].x - 10.0F + 5.0F));
+        assert(near(v.y, coat_rest[i].y + 3.0F));
+    }
+
+    // The same layout under a non-player name is not guessed at.
+    auto enemy = dmcresource::pac_assembly::assemble_pac(*archive, &report, "em001.pac");
+    assert(enemy != nullptr && report.attached_parts == 0U);
+    assert(!motion::is_attached_part(enemy.get(), 1U));
+    return 0;
+}

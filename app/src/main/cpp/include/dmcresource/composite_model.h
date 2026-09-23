@@ -19,6 +19,11 @@ inline constexpr std::uint32_t kNoAttachmentSelector =
 enum class CompositePlacementMode : std::uint8_t {
     SourceCoordinates,
     HostJoint,
+    // The part's own skeleton hangs from a host joint: its root node's world
+    // is the host joint's current world (root local forced to identity when
+    // requested), children compose normally and the mesh is re-skinned. This
+    // is how IPlayer classes drive the coat model (see motion/part_attachment.h).
+    HostJointSkeleton,
 };
 
 // Derived placement state for one source MOD inside a composite session.
@@ -32,6 +37,7 @@ struct CompositePlacement final {
     std::uint32_t attachment_selector{kNoAttachmentSelector};
     Matrix4 root_matrix{};
     bool resolved{false};
+    bool root_local_identity{false};
 };
 
 // One canonical source MOD inside a composite scene. asset_id / instance_id are

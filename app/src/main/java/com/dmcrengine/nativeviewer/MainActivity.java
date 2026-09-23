@@ -1024,7 +1024,7 @@ public final class MainActivity extends Activity {
 
         // A PAC opens as an assembled character/scene when it holds MODs; the
         // raw archive stays browsable from ⋮ (read-only, nothing is written).
-        final long assembled = NativeBridge.assemblePac(opened);
+        final long assembled = NativeBridge.assemblePac(opened, name);
         if (assembled != 0) {
             NativeBridge.close(opened);
             opened = assembled;

@@ -13,6 +13,7 @@
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/motion/motion_clip.h"
+#include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/scene_projection.h"
 
@@ -200,6 +201,16 @@ MotionLoadReport load_motion(Session* session,
             try_part(session->scene, nullptr, "model");
         } else {
             for (const auto& part : session->composite_parts) {
+                if (part.placement.mode == CompositePlacementMode::HostJointSkeleton) {
+                    // Driven by its host joint (IPlayer coat), not by the MOT.
+                    ++state->static_parts;
+                    if (!reasons.empty()) reasons += "; ";
+                    reasons += part.name + ": follows host joint " +
+                               std::to_string(part.placement.attachment_selector);
+                    vertex_cursor += scene_vertex_count(part.scene);
+                    node_cursor += part.scene.nodes.size();
+                    continue;
+                }
                 try_part(part.scene, &part.placement, part.name);
             }
         }
@@ -317,6 +328,8 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 session->scene.nodes[part.node_begin + node].world = placed_world;
             }
         }
+        // Parts hanging from a host joint follow the freshly posed host.
+        (void)apply_part_attachments(session);
         HierarchyOverlay overlay;
         if (materialize_hierarchy_overlay(session->scene, &overlay)) {
             session->hierarchy_overlay = std::move(overlay);

@@ -36,13 +36,23 @@ lock-step with the Rengine versions until the pin moves.
 
 ### 3.1 Companion MOD placement (hair, coat, accessories)
 
-The executable reads MOD header `+0x13` only as a translation probe, never as
-the root matrix of a model's geometry (see the Rengine note). Companion MODs
-are therefore shown in the character's model space:
-`CompositeBuilder: placement=source-coordinates`, with the selector reported as
-`defaultJointSelectors=[...] selectorRole=translation-probe-only`. The v33
-placement stays available only as an explicit opt-in
-(`BuildOptions::resolve_default_joint_attachments = true`).
+MOD header `+0x13` only anchors the model's shadow; it never roots geometry
+(see the Rengine notes), so it is reported, not applied. Parts start in their
+source coordinates.
+
+**Player coat (v35).** Rengine
+`docs/research/dmc3-player-coat-attachment-2026-09-23.md`: IPlayer classes load
+the coat from PAC slot 12 with the body texture of slot 0, force the coat root
+local to identity and every frame install body joint 3's world as the coat
+root. `pac_assembly` does the same for archives named `pl*`:
+
+- `motion/part_attachment` hangs the slot-12 part's skeleton from host node 3
+  (`CompositePlacementMode::HostJointSkeleton`, identity root local) and
+  re-skins it with its own inverse rest matrices;
+- `apply_motion_frame` re-poses attached parts after the body moves, so the
+  coat follows MOT playback;
+- the only assumption left is that the player's joint table index 3 is MOD
+  node 3; cloth simulation is not reproduced, so the coat keeps its rest shape.
 
 ### 3.2 MOT playback
 
@@ -78,9 +88,10 @@ Assembly (`pac_assembly::assemble_pac`):
 
 - every MOD, including MODs inside nested PACs (depth ≤ 3), becomes one
   composite part in model space;
-- a PTX is paired with the MOD that precedes it in slot order. This is a
-  **slot-adjacency policy**, reported as `ptxPairing=slot-adjacency`; the Model
-  Set pairing (`0x1402D83E0`) is not wired yet;
+- each MOD takes the nearest PTX before it in the same container (else the
+  nearest after it), reported as `ptxPairing=nearest-preceding-in-container`.
+  For player PACs this is slot 0 for body and coat, as the game loads them;
+  when every part pairs with the same PTX it is attached once as a shared bank;
 - MOTs become the session's motion library (motion strip cards);
 - SHW records are counted but not drawn yet.
 

@@ -6,7 +6,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 **Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
 **Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
-**Active candidate:** **v34 / versionName 1.0.7 / versionCode 34** (MOT playback, PAC, companion-MOD fix; previous candidate v33 / 1.0.6)  
+**Active candidate:** **v35 / versionName 1.0.8 / versionCode 35** (MOT playback, PAC, player coat on body joint 3; previous v34 / 1.0.7)  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  

@@ -453,11 +453,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePac(
-        JNIEnv*, jclass, jlong handle) {
+        JNIEnv* env, jclass, jlong handle, jstring archive_name) {
     const Session* session = from_handle(handle);
     if (session == nullptr) return 0;
     try {
-        return to_handle(dmcresource::pac_assembly::assemble_pac(*session).release());
+        const auto name = to_utf8(env, archive_name);
+        return to_handle(dmcresource::pac_assembly::assemble_pac(
+            *session, nullptr, name).release());
     } catch (...) { return 0; }
 }
 
