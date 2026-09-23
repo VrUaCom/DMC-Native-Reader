@@ -36,7 +36,7 @@ function(dmc_native_reader_require_cpp23 target visibility)
 endfunction()
 
 # Everything compiled into Native Reader is C++23, including the vendored
-# Rengine ReaderCore. Its reader_core.cmake keeps declaring cxx_std_20 as a
+# Rengine ReaderCore. Its reader_core.cmake keeps declaring the older standard as a
 # minimum feature; the target-scoped CXX_STANDARD 23 set here decides the
 # actual language mode. The submodule itself is not edited.
 dmc_native_reader_require_cpp23(dmc_rengine_reader_core PRIVATE)

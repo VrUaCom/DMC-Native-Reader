@@ -193,13 +193,11 @@ jobs:
             'formats.stage-txt.lexer' \
             'formats.dca.record-reader' \
             'formats.lig2.record-reader' \
-            'formats.pac.relative-slot-reader' \
             'formats.pnst.relative-slot-reader' \
             'formats.nbz.container-reader' \
             'formats.efm.family-adapter' \
             'formats.mrp.family-adapter' \
-            'formats.shw.family-adapter' \
-            'formats.mot.recognition'; do
+            'formats.shw.family-adapter'; do
             if grep -Fq "$legacy" /tmp/native-markers.txt; then
               echo "legacy module leaked into core APK: $legacy"
               exit 1
@@ -209,7 +207,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='33' versionName='1.0.6'" /tmp/core-badging.txt
+          grep -Fq "versionCode='34' versionName='1.0.7'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
@@ -222,13 +220,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-modular-debug
+          name: dmc-native-reader-v34-modular-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-modular-release-unsigned
+          name: dmc-native-reader-v34-modular-release-unsigned
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 7
 
@@ -236,7 +234,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-phase2-failure-evidence
+          name: dmc-native-reader-v34-phase2-failure-evidence
           path: |
             build/phase2-evidence/
             app/build/outputs/apk/debug/app-debug.apk
@@ -246,7 +244,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-phase2-evidence
+          name: dmc-native-reader-v34-phase2-evidence
           path: build/phase2-evidence/
           if-no-files-found: error
           retention-days: 7

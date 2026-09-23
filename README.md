@@ -6,11 +6,11 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 **Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
 **Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
-**Active candidate:** **v33 / versionName 1.0.6 / versionCode 33**  
+**Active candidate:** **v34 / versionName 1.0.7 / versionCode 34** (MOT playback, PAC, companion-MOD fix; previous candidate v33 / 1.0.6)  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  
-**Production registry:** **MOD / SCM / DDS / PTX / EventTbl**  
+**Production registry:** **MOD / SCM / DDS / PTX / EventTbl / PAC / MOT**  
 **Weight contract:** **APK <= 4 MiB; installed package/code <= 4 MiB on the acceptance Samsung**
 
 The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.

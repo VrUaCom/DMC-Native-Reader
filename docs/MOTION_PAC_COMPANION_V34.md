@@ -116,8 +116,16 @@ JNI (thin): `assemblePac`, `motionLibraryCount/Name`, `loadLibraryMotion`,
   parts). A mutation of the comp-2 interpolation fails `motion_playback`.
 - `tools/test_verify_device_apk.py`: 19/19.
 - `app_native.cpp` syntax-checked with g++ `-std=c++23` against JDK `jni.h`.
-- **Not done here:** no Android SDK/NDK in this environment, so the APK and
-  the Java shell were not built, and nothing was run on a device.
+- APK v34 / 1.0.7 built with Gradle 9.5.0, AGP 9.3.0, NDK r30
+  `30.0.16248370`, SDK 36 (`:app:assembleDebug`, stable test signer);
+  `tools/verify_device_apk.py --signing-policy stable-debug` passes
+  (single `libdmcviewer.so`, 16 KiB alignment, JNI export parity,
+  `modular_native_architecture: pass`).
+- **Not done:** nothing was run on a device (`device_test: pending`).
+
+MOT and PAC are no longer listed as banned legacy modules in CI; the remaining
+list covers only families that are still unpromoted (HITS, TXT, DCA, LIG2,
+PNST, NBZ, EFM, MRP, SHW adapters).
 
 ## 7. Next
 
