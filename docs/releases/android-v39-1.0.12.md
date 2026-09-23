@@ -27,6 +27,11 @@ never modifies, repacks or writes game data.
 - Weapons held in the hands (only the sheathed state).
 - Node constraints of enemies other than Nevan.
 
+## Install
+
+Download `DMC-Native-Reader-v39-1.0.12-<commit>.apk` on the phone, open it and
+allow installing from this source when Android asks.
+
 ## Package
 
 - `arm64-v8a`, Android 8.0+ (minSdk 26, targetSdk 36), one native library.
