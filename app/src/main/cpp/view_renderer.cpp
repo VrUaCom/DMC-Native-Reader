@@ -116,6 +116,25 @@ void put_rgba(RgbaImage& image, int x, int y,
     image.pixels[o + 3U] = 255U;
 }
 
+// GS ALPHA modes from the object flags (table 0x1405D0550): 2 adds the
+// source weighted by its alpha, 3 subtracts it; others blend normally.
+void blend_rgba(RgbaImage& image, int x, int y, std::uint8_t r, std::uint8_t g,
+                std::uint8_t b, std::uint8_t a, std::uint8_t mode) {
+    if (mode != 2U && mode != 3U) {
+        put_rgba(image, x, y, r, g, b, a);
+        return;
+    }
+    if (x < 0 || y < 0 || x >= image.width || y >= image.height || a == 0U) return;
+    const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
+    const std::uint8_t src[3] = {r, g, b};
+    for (std::size_t k = 0U; k < 3U; ++k) {
+        const int weighted = static_cast<int>(src[k]) * static_cast<int>(a) / 255;
+        const int value = mode == 2U ? image.pixels[o + k] + weighted
+                                     : image.pixels[o + k] - weighted;
+        image.pixels[o + k] = static_cast<std::uint8_t>(std::clamp(value, 0, 255));
+    }
+}
+
 void line(RgbaImage& image, P2 a, P2 b, std::uint8_t shade = 235) {
     int x0 = static_cast<int>(std::lround(a.x));
     int y0 = static_cast<int>(std::lround(a.y));
@@ -368,6 +387,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             continue;
         }
 
+        const bool colored = mesh.has_color0();
+        const std::uint8_t blend_mode = mesh.has_blend0() ? mesh.blend0[ia] : 0U;
         const ImagePreview* texture = nullptr;
         if (textured) {
             const auto slot = (*triangle_texture_slots)[t / 3U];
@@ -410,7 +431,27 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                     const float v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
                     std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
                     if (sample_texture(*texture, u, v, &tr, &tg, &tb, &ta)) {
+                        if (colored) {
+                            // PS2 modulate: texel x vertex colour / 0x80.
+                            const auto& ca = mesh.color0[ia];
+                            const auto& cb = mesh.color0[ib];
+                            const auto& cc = mesh.color0[ic];
+                            const auto mod = [&](std::uint8_t t, std::size_t k) {
+                                const float vc = w0 * ca[k] + w1 * cb[k] + w2 * cc[k];
+                                return static_cast<std::uint8_t>(
+                                    std::clamp(static_cast<int>(t * vc / 128.0F), 0, 255));
+                            };
+                            tr = mod(tr, 0U);
+                            tg = mod(tg, 1U);
+                            tb = mod(tb, 2U);
+                            ta = mod(ta, 3U);
+                        }
                         if (ta == 0U) continue;
+                        if (blend_mode == 2U || blend_mode == 3U) {
+                            // Additive / subtractive effects do not occlude.
+                            blend_rgba(image, x, y, tr, tg, tb, ta, blend_mode);
+                            continue;
+                        }
                         depth[pi] = z;
                         put_rgba(image, x, y, tr, tg, tb, ta);
                         continue;

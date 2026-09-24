@@ -528,6 +528,24 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                         "MOD canonical projection rejected mesh topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
+                // Object blend mode (source flags & 0xF, 0x140302640) and, for
+                // EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
+                                             static_cast<std::uint8_t>(object.source_flags & 0xFU));
+                if (view.efm() && source.reserved38 != 0U) {
+                    const auto count = primitive.mesh.vertices.size();
+                    const auto bytes_span = view.span();
+                    const auto start = source.reserved38;
+                    if (start < bytes_span.size() && count * 4U <= bytes_span.size() - start) {
+                        primitive.mesh.color0.resize(count);
+                        for (std::size_t v = 0U; v < count; ++v) {
+                            for (std::size_t k = 0U; k < 4U; ++k) {
+                                primitive.mesh.color0[v][k] = static_cast<std::uint8_t>(
+                                    bytes_span[start + v * 4U + k]);
+                            }
+                        }
+                    }
+                }
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());

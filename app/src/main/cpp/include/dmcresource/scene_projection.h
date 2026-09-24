@@ -18,6 +18,10 @@ struct HierarchyOverlay final {
     }
 };
 
+// Append `source`'s optional COLOR0 / blend channels to `out`, padding with
+// neutral values (0x80 grey, blend 0) when the source has none.
+void append_vertex_channels(const Mesh& source, bool color0, bool blend0, Mesh* out);
+
 [[nodiscard]] bool materialize_render_scene(const RenderScene& scene,
                                             Mesh* out) noexcept;
 

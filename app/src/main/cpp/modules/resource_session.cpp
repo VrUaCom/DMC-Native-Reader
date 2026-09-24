@@ -183,6 +183,8 @@ void retain_lazy_child_sources(Session* session,
         merged->render_mesh.vertices.insert(
             merged->render_mesh.vertices.end(),
             source_mesh.vertices.begin(), source_mesh.vertices.end());
+        // COLOR0 / blend channels ride along (neutral when a part has none).
+        append_vertex_channels(source_mesh, true, true, &merged->render_mesh);
 
         if (*uv_complete) {
             if (!source_mesh.has_uv0()) {

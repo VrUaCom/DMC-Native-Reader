@@ -204,6 +204,18 @@ a tenth position, `CEm005Shl01`: the projectile model in slot 23 with PTX 32
 (em028 slot 9) stay out of assemblies but open standalone. Evidence: rengine
 `docs/research/dmc3-efm-effect-model-2026-09-24.md`.
 
+**Blend, colour, more scrolls (v48).**
+- Every MOD/EFM vertex carries its object's blend mode (source flags `& 0xF`,
+  GS ALPHA table `0x1405D0550`): 1/4 alpha, 2 additive, 3 subtractive. The
+  renderer adds or subtracts the texel weighted by its alpha without writing
+  depth.
+- EFM COLOR0 modulates the texel as on PS2 (`texel · colour / 0x80`).
+- TSC scrolls now run a per-frame simulator identical to `0x14030C1C0`, adding
+  types 4/5 (DirUV ping-pong every TurnTimeUV steps) and type 10 (view-facing;
+  the viewer uses a fixed front view).
+- Nevan's hair collides with three capsules on body joints 5/4/3
+  (`0x140130D9A`). The dress and em000 cloaks have no collision in the game.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

@@ -69,6 +69,15 @@ inline constexpr std::array<ClothCapsule, 6> kPlayerCoatCapsules{{
     {20U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
 }};
 
+// CEm028 hair chain (slot 4 <- em028_01.clt): 0x140130D9A sets entry table
+// 0x140576110 (3 entries) on the body joints with shapes from .rdata
+// 0x140576120: neck/head segments. The dress chain gets no collision.
+inline constexpr std::array<ClothCapsule, 3> kEm028HairCapsules{{
+    {5U, {0.0F, 4.65F, 0.0F}, {0.0F, -4.65F, 0.0F}, 9.3F},
+    {4U, {0.0F, 6.0F, 0.0F}, {0.0F, -6.0F, 0.0F}, 12.0F},
+    {3U, {0.0F, 9.5F, 0.0F}, {0.0F, -9.5F, 0.0F}, 19.0F},
+}};
+
 // A capsule already placed in world space for this frame.
 struct WorldCapsule final {
     std::array<float, 3> a{};

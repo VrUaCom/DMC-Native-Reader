@@ -102,6 +102,7 @@ std::optional<ScrollRecord> parse_block(Tokens& tokens) {
         } else if (key == "TurnTimeUV") {
             record.turn_time[0] = tokens.next_float();
             record.turn_time[1] = tokens.next_float();
+            record.has_turn_time = true;
         } else if (key == "MinimumUV") {
             record.minimum[0] = tokens.next_float();
             record.minimum[1] = tokens.next_float();
@@ -116,12 +117,6 @@ std::optional<ScrollRecord> parse_block(Tokens& tokens) {
 
 [[nodiscard]] float wrap(float value) noexcept { return value - std::floor(value); }
 
-// Steps taken after `frames` frames: the InterUV counter starts at the
-// interval, drops by dt each frame and steps (then reloads) at <= 0.
-[[nodiscard]] float steps_after(float frames, float interval) noexcept {
-    const float period = interval > 1.0F ? std::ceil(interval) : 1.0F;
-    return std::floor(std::max(frames, 0.0F) / period);
-}
 
 }  // namespace
 
@@ -156,46 +151,143 @@ std::vector<ScrollRecord> parse_tsc(std::string_view text) {
     return out;
 }
 
+ScrollState start_scroll(const ScrollRecord& record) noexcept {
+    ScrollState state;
+    state.direction = record.direction;
+    // Record init (0x14030ABE0): counters start at 0 unless InterUV /
+    // TurnTimeUV primed them.
+    state.interval_left = record.interval;
+    if (record.has_turn_time) state.turn_left = record.turn_time;
+    return state;
+}
+
+namespace {
+
+constexpr float kPi = std::numbers::pi_v<float>;
+
+// 0x14030C2D0 / 0x14030C4F0: InterUV countdown, then phase += dir * rate.
+bool linear_step(const ScrollRecord& record, ScrollState& state, std::size_t axis, float rate) {
+    state.interval_left[axis] -= 1.0F;
+    if (0.0F < state.interval_left[axis]) return false;
+    state.interval_left[axis] = record.interval[axis];
+    state.phase[axis] = wrap(state.phase[axis] +
+                             static_cast<float>(state.direction[axis]) * rate);
+    state.output[axis] = static_cast<std::int32_t>(state.phase[axis] * 4096.0F);
+    return true;
+}
+
+// 0x14030C850 / 0x14030CC30: same countdown, cosine ease, MinimumUV drift.
+bool eased_step(const ScrollRecord& record, ScrollState& state, std::size_t axis, float rate) {
+    const float dir = static_cast<float>(state.direction[axis]);
+    if (record.time[axis] == 0.0F || dir == 0.0F) {
+        state.output[axis] = 0;
+        return false;
+    }
+    state.interval_left[axis] -= 1.0F;
+    if (0.0F < state.interval_left[axis]) return false;
+    state.interval_left[axis] = record.interval[axis];
+    state.phase[axis] = wrap(state.phase[axis] + dir * rate);
+    float value = (std::cos((1.0F - state.phase[axis]) * kPi) + 1.0F) * 0.5F;
+    if (record.has_minimum) {
+        state.drift[axis] = wrap(state.drift[axis] + dir * record.minimum[axis]);
+        value += state.drift[axis];
+    }
+    state.output[axis] = static_cast<std::int32_t>(value * 4096.0F);
+    return true;
+}
+
+// Types 4/5 (0x14030B820 / 0x14030B980): after a step, the turn counter
+// drops and, at <= 0, reloads with TurnTimeUV and reverses DirUV.
+void turn(const ScrollRecord& record, ScrollState& state, std::size_t axis) {
+    state.turn_left[axis] -= 1.0F;
+    if (0.0F < state.turn_left[axis]) return;
+    state.turn_left[axis] = record.turn_time[axis];
+    state.direction[axis] = static_cast<std::int16_t>(-state.direction[axis]);
+}
+
+}  // namespace
+
+void step_scroll(const ScrollRecord& record, ScrollState& state, float facing) noexcept {
+    ++state.frames;
+    for (std::size_t axis = 0U; axis < 2U; ++axis) {
+        const float dir = static_cast<float>(state.direction[axis]);
+        const float time = record.time[axis];
+        switch (record.type) {
+        case 0U:
+            (void)linear_step(record, state, axis, record.rate[axis]);
+            break;
+        case 1U:
+        case 4U:
+            // 0x14030C710: TimeUV 0 or stay -> offset 0.
+            if (time == 0.0F || dir == 0.0F) {
+                state.output[axis] = 0;
+                break;
+            }
+            if (linear_step(record, state, axis, 1.0F / time) && record.type == 4U) {
+                turn(record, state, axis);
+            }
+            break;
+        case 2U:
+            (void)eased_step(record, state, axis, record.rate[axis]);
+            break;
+        case 3U:
+        case 5U:
+            if (eased_step(record, state, axis, time != 0.0F ? 1.0F / time : 0.0F) &&
+                record.type == 5U) {
+                turn(record, state, axis);
+            }
+            break;
+        case 10U: {
+            // 0x14030BB50: s = (facing + 1) / 2, folded to 1 - s, times RateUV.
+            float s = (facing + 1.0F) * 0.5F;
+            s = s >= 0.0F ? 1.0F - s : 1.0F + s;
+            state.output[axis] = (record.rate[axis] == 0.0F || dir == 0.0F)
+                ? 0
+                : static_cast<std::int32_t>(s * record.rate[axis] * dir * 4096.0F);
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
 std::optional<std::array<float, 2>> scroll_offset(const ScrollRecord& record,
                                                   float frames) noexcept {
     if (!std::isfinite(frames)) return std::nullopt;
-    const bool eased = record.type == 2U || record.type == 3U;
-    const bool timed = record.type == 1U || record.type == 3U;
-    if (record.type > 3U) return std::nullopt;
-    std::array<float, 2> out{};
-    for (std::size_t axis = 0U; axis < 2U; ++axis) {
-        const float dir = static_cast<float>(record.direction[axis]);
-        // Types 1-3 (0x14030C710 / 0x14030C850 and their v twins) stop at
-        // TimeUV == 0 or DirUV stay; type 0 (0x14030C2D0) never checks.
-        if (record.type != 0U && (record.time[axis] == 0.0F || dir == 0.0F)) continue;
-        // Rate per step: 1/TimeUV for types 1 and 3 (dt 1), RateUV otherwise.
-        const float rate = timed ? 1.0F / record.time[axis] : record.rate[axis];
-        const float steps = steps_after(frames, record.interval[axis]);
-        const float phase = wrap(dir * rate * steps);
-        float value = phase;
-        if (eased) {
-            // 0x14030CA93: (cos((1 - p) * pi) + 1) * 0.5, then MinimumUV drift.
-            value = (std::cos((1.0F - phase) * std::numbers::pi_v<float>) + 1.0F) * 0.5F;
-            if (record.has_minimum) value += wrap(dir * record.minimum[axis] * steps);
-        }
-        // Stored as u16 (x 4096) and masked with 0xFFF by 0x140309570.
-        const auto fixed = static_cast<std::int32_t>(value * 4096.0F) & 0xFFF;
-        out[axis] = static_cast<float>(fixed) / 4096.0F;
-    }
-    return out;
+    if (record.type > 5U && record.type != 10U) return std::nullopt;
+    auto state = start_scroll(record);
+    const auto count = static_cast<std::uint32_t>(std::max(frames, 0.0F));
+    for (std::uint32_t i = 0U; i < count; ++i) step_scroll(record, state);
+    // 0x140309570 masks the u16 output with 0xFFF.
+    return std::array<float, 2>{static_cast<float>(state.output[0] & 0xFFF) / 4096.0F,
+                                static_cast<float>(state.output[1] & 0xFFF) / 4096.0F};
 }
 
 std::size_t apply_uv_scrolls(Session* session, float frames) noexcept {
-    if (session == nullptr) return 0U;
+    if (session == nullptr || !std::isfinite(frames)) return 0U;
     auto& uv = session->render_mesh.uv0;
+    const auto target = static_cast<std::uint32_t>(std::max(frames, 0.0F));
     std::size_t moved = 0U;
-    for (const auto& binding : session->uv_scrolls) {
-        const auto offset = scroll_offset(binding.record, frames);
-        if (!offset || binding.vertex_begin + binding.rest_uv.size() > uv.size()) continue;
+    for (auto& binding : session->uv_scrolls) {
+        const auto& record = binding.record;
+        if ((record.type > 5U && record.type != 10U) ||
+            binding.vertex_begin + binding.rest_uv.size() > uv.size()) {
+            continue;
+        }
+        // The clock only runs forward; a rewind restarts the record.
+        if (target < binding.state.frames) binding.state = start_scroll(record);
+        float facing = 0.0F;
+        if (record.type == 10U && binding.joint_node < session->scene.nodes.size()) {
+            // Viewer camera looks down -Z: facing = joint Z . (0, 0, 1).
+            facing = session->scene.nodes[binding.joint_node].world.values[10];
+        }
+        while (binding.state.frames < target) step_scroll(record, binding.state, facing);
+        const float du = static_cast<float>(binding.state.output[0] & 0xFFF) / 4096.0F;
+        const float dv = static_cast<float>(binding.state.output[1] & 0xFFF) / 4096.0F;
         for (std::size_t i = 0U; i < binding.rest_uv.size(); ++i) {
             // texcoord + offset (DMC3 shaders sample at uv + texOffset).
-            uv[binding.vertex_begin + i] = {binding.rest_uv[i].u + (*offset)[0],
-                                            binding.rest_uv[i].v + (*offset)[1]};
+            uv[binding.vertex_begin + i] = {binding.rest_uv[i].u + du, binding.rest_uv[i].v + dv};
         }
         ++moved;
     }

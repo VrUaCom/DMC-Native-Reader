@@ -769,6 +769,26 @@ int main() {
         const float expected = std::floor(
             ((std::cos(0.5F * 3.14159265F) + 1.0F) * 0.5F + 0.02F) * 4096.0F) / 4096.0F;
         assert(eased && std::fabs((*eased)[0] - expected) < 0.0005F && near((*eased)[1], 0.0F));
+        // Type 4 (0x14030B820): linear, DirUV reverses every TurnTimeUV steps.
+        motion::ScrollRecord ping;
+        ping.type = 4U;
+        ping.direction = {1, 0};
+        ping.time = {10.0F, 1.0F};
+        ping.turn_time = {5.0F, 5.0F};
+        ping.has_turn_time = true;
+        assert(near((*motion::scroll_offset(ping, 5.0F))[0], 0.5F));
+        assert(std::fabs((*motion::scroll_offset(ping, 7.0F))[0] - 0.3F) < 0.001F);
+        assert((*motion::scroll_offset(ping, 10.0F))[0] < 0.001F ||
+               (*motion::scroll_offset(ping, 10.0F))[0] > 0.999F);
+        // Type 10 (0x14030BB50): (1 - (facing + 1) / 2) * RateUV * dir.
+        motion::ScrollRecord facing;
+        facing.type = 10U;
+        facing.direction = {1, 0};
+        facing.rate = {0.5F, 0.0F};
+        auto facing_state = motion::start_scroll(facing);
+        motion::step_scroll(facing, facing_state, 0.0F);
+        assert(facing_state.output[0] == 1024 && facing_state.output[1] == 0);
+        assert(!motion::scroll_offset(motion::ScrollRecord{.type = 7U}, 3.0F).has_value());
         assert(motion::object_scroll_number(0x01020000U) == 0);
         assert(motion::object_scroll_number(0x02000000U) == 1);
         assert(motion::object_scroll_number(0x00020000U) == -1);

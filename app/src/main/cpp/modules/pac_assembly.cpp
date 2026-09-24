@@ -420,11 +420,17 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     if (!clt_slot) continue;
                     const auto text = clt_text(*clt_slot);
                     if (text.empty()) continue;
-                    // IPlayer coats collide with the body capsules (0x1402CA2F0).
-                    const auto nodes = motion::attach_part_cloth(
-                        assembled.get(), part, text, 60U,
-                        player ? std::span<const motion::ClothCapsule>{motion::kPlayerCoatCapsules}
-                               : std::span<const motion::ClothCapsule>{});
+                    // Chains with collision (0x1402CA2F0): IPlayer coats on the
+                    // body capsules, CEm028 hair on the neck/head capsules.
+                    std::span<const motion::ClothCapsule> capsules;
+                    if (player) {
+                        capsules = motion::kPlayerCoatCapsules;
+                    } else if (*entry.slot == 4U && *clt_slot == 7U &&
+                               motion::enemy_constraints_for(archive_name, 4U).has_value()) {
+                        capsules = motion::kEm028HairCapsules;
+                    }
+                    const auto nodes =
+                        motion::attach_part_cloth(assembled.get(), part, text, 60U, capsules);
                     if (nodes > 0U) {
                         ++report.cloth_parts;
                         report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
@@ -539,6 +545,18 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 binding.rest_uv.assign(uv.begin() + static_cast<std::ptrdiff_t>(begin),
                                        uv.begin() + static_cast<std::ptrdiff_t>(begin + count));
                 binding.record = *record;
+                binding.state = motion::start_scroll(*record);
+                // JntNo (type 10 facing): defaults to MOD +0x13, clamped to
+                // the node count (0x14030AFC0).
+                std::size_t node_begin = 0U;
+                for (std::size_t p = 0U; p < part && !assembled->composite_parts.empty(); ++p) {
+                    node_begin += assembled->composite_parts[p].scene.nodes.size();
+                }
+                const auto node_count = parsed.document.header.transform_domain_count;
+                const auto joint = record->joint >= 0 && record->joint <= node_count
+                    ? static_cast<std::size_t>(record->joint)
+                    : static_cast<std::size_t>(parsed.document.header.default_joint_index());
+                binding.joint_node = node_begin + joint;
                 assembled->uv_scrolls.push_back(std::move(binding));
                 ++bound;
             }
