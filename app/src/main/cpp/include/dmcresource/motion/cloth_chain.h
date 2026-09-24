@@ -87,7 +87,17 @@ struct WorldCapsule final {
 
 // Per-part solver state (simulated world and velocity of each listed node).
 struct ClothState final {
-    ClothParams params;
+    ClothParams params;  // block 0 (ClothNo 0)
+    // Every ClothNo block of the .clt (ClothNum of them) and the block that
+    // owns each node; a node steps with its own block's parameters
+    // (pl001_02.clt: block 0 the front and side panels, block 1 the back
+    // panel). Capsules only act on block 0 nodes (0x1402151E7).
+    std::vector<ClothParams> blocks;
+    std::vector<std::uint8_t> block_by_node;
+    [[nodiscard]] const ClothParams& params_for(std::uint32_t node) const noexcept {
+        return node < block_by_node.size() && block_by_node[node] < blocks.size() ? blocks[block_by_node[node]]
+                                                                                 : params;
+    }
     std::vector<std::array<float, 16>> sim;
     std::vector<std::array<float, 3>> velocity;
     std::vector<std::int8_t> axis_by_node;  // -1: not simulated

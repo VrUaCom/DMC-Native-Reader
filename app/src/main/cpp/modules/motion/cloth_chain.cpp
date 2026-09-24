@@ -160,7 +160,7 @@ std::array<float, 16> step_cloth_node(ClothState& state,
                                       float rest_length,
                                       float dt,
                                       std::span<const WorldCapsule> capsules) {
-    const auto& p = state.params;
+    const auto& p = state.params_for(node);
     if (node >= state.sim.size() || node >= state.axis_by_node.size() ||
         state.axis_by_node[node] < 0) {
         return target;
@@ -194,6 +194,10 @@ std::array<float, 16> step_cloth_node(ClothState& state,
     // Collision (0x1402C9714..0x1402C98F4): push the node out of every
     // capsule it is inside (0x1402D0630: closest point on a-b, then onto the
     // surface at the radius); any hit zeroes the x and z velocity.
+    // Only the first chain of a part collides: 0x140214D50 parses every
+    // ClothNo into consecutive chains (+0xA210, +0xA300, ...) but calls the
+    // capsule setter 0x1402CA2F0 on +0xA210 alone (0x1402151E7).
+    if (node < state.block_by_node.size() && state.block_by_node[node] != 0U) capsules = {};
     Vec t_hit = t;
     bool hit = false;
     for (const auto& capsule : capsules) {

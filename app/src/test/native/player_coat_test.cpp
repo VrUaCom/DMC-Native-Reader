@@ -759,6 +759,30 @@ int main() {
         state.axis_by_node[1] = -1;
         const auto kept = motion::step_cloth_node(state, 1U, target, parent, parent, 10.0F, 1.0F);
         assert(near(kept[13], -10.0F));     // not simulated: rest target unchanged
+
+        // ClothNum 2 (pl001_02.clt layout): every ClothNo is its own chain
+        // with its own parameters; only the first chain collides.
+        constexpr std::string_view two =
+            ";two.clt\n\nClothNum\t2\n\nClothNo     0\nGravity 0 -0.02 0\nBone 1 Y\nEnd\n\n"
+            "ClothNo     1\nGravity 0 -0.01 0\nStiffness 0.5\nBone 2 Y\nEnd\n$\n";
+        const auto pair = motion::parse_clt(two);
+        assert(pair.size() == 2U && pair[1].bones.size() == 1U && pair[1].bones[0].node == 2U);
+        motion::ClothState chains;
+        chains.params = pair[0];
+        chains.blocks = pair;
+        chains.block_by_node = {0U, 0U, 1U};
+        assert(near(chains.params_for(1U).gravity[1], -0.02F));
+        assert(near(chains.params_for(2U).stiffness, 0.5F));
+        assert(near(chains.params_for(9U).gravity[1], -0.02F));  // unlisted: block 0
+        chains.sim.assign(3U, target);
+        chains.velocity.assign(3U, {});
+        chains.axis_by_node = {-1, 1, 1};
+        const std::array<motion::WorldCapsule, 1> core{{
+            {{0.0F, -20.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 3.0F}}};
+        const auto first = motion::step_cloth_node(chains, 1U, target, parent, parent, 10.0F, 1.0F, core);
+        const auto second = motion::step_cloth_node(chains, 2U, target, parent, parent, 10.0F, 1.0F, core);
+        assert(std::fabs(first[12]) + std::fabs(first[14]) > 2.0F);   // pushed out
+        assert(std::fabs(second[12]) + std::fabs(second[14]) < 0.1F); // block 1: no capsule
     }
 
     // TSC (em028_013 layout): two scrolls, linear v and eased u with drift.

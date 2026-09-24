@@ -404,6 +404,17 @@ CEm004's slot 36 belongs to its part in slot 34, and that part does not play
 its own MOT yet. em000.pac has no SHW; the floor shadow is the mesh fallback.
 Evidence: rengine `dmc3-em000-class-slots-2026-09-24.md`.
 
+**Vergil's coat, several cloth blocks (v60).** `pl001_02.clt` has
+`ClothNum 2`. Block 0 holds the front and side panels (gravity -0.02). Block 1
+holds the back panel, bones 15-19 and 21-25 (gravity -0.01). The reader used to
+simulate block 0 only, so the back panel stayed rigid on the rest pose. Now
+each node steps with the parameters of its own block
+(`ClothState::params_for`). The game fills one chain per block (`0x140214D50`)
+and gives the body capsules to the first chain only (`0x1402151E7`), so only
+block 0 nodes collide. How far the coat trails while walking follows the game
+step: each chain node takes its rest target from its simulated parent (see
+rengine `dmc3-cloth-chain-solver-2026-09-23.md` §3.1).
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

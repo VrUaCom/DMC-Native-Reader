@@ -201,7 +201,7 @@ struct Range final {
                     continue;
                 }
                 const auto wind_parent = static_cast<std::size_t>(
-                    std::max(cloth->params.wind_parent, 0));
+                    std::max(cloth->params_for(static_cast<std::uint32_t>(node)).wind_parent, 0));
                 const auto& wind_world =
                     wind_parent < count ? (*current)[wind_parent] : root_base;
                 const auto& t = locals[node].values;
@@ -457,15 +457,21 @@ std::size_t attach_part_cloth(Session* session,
         if (blocks.empty()) return 0U;
         const auto count = part.scene.rig->node_count();
         auto state = std::make_shared<ClothState>();
-        state->params = std::move(blocks.front());
+        state->params = blocks.front();
+        state->blocks = std::move(blocks);
         state->sim.assign(count, {});
         state->velocity.assign(count, {});
         state->axis_by_node.assign(count, -1);
+        state->block_by_node.assign(count, 0U);
         std::size_t simulated = 0U;
-        for (const auto& bone : state->params.bones) {
-            if (bone.node >= count || bone.node == 0U) continue;
-            if (state->axis_by_node[bone.node] < 0) ++simulated;
-            state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
+        // Every ClothNo block (0x1402CA1D0 reads ClothNum of them).
+        for (std::size_t b = 0U; b < state->blocks.size() && b < 255U; ++b) {
+            for (const auto& bone : state->blocks[b].bones) {
+                if (bone.node >= count || bone.node == 0U) continue;
+                if (state->axis_by_node[bone.node] < 0) ++simulated;
+                state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
+                state->block_by_node[bone.node] = static_cast<std::uint8_t>(b);
+            }
         }
         if (simulated == 0U) return 0U;
         state->capsules.assign(capsules.begin(), capsules.end());
