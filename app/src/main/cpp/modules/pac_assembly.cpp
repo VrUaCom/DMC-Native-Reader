@@ -65,7 +65,8 @@ void collect(const Session& container,
         if (kind.format == Format::Pac || kind.format == Format::Pnst) {
             if (depth >= kMaxNestingDepth) continue;
             auto nested = open_session(name, child.source_bytes.data(), child.source_bytes.size());
-            if (!nested) continue;
+            // A rejected archive opens as a raw binary view without children.
+            if (!nested || nested->children.empty()) continue;
             ++report->nested_archives;
             nested_owner->push_back(std::move(nested));
             // A PNST nested in an archive is an effect bank: CEm028 hands its

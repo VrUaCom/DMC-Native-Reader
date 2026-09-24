@@ -30,11 +30,36 @@ struct WeaponStateKey final {
     std::uint8_t state{};
 };
 
+// What one script does, walked like the interpreter (first block chain up to
+// the motion end, a loop jump or a hand-over to another MOT).
+struct ScriptSummary final {
+    std::uint8_t play_bank{};    // opcode 1 byte 4
+    std::uint8_t play_index{};   // opcode 1 byte 5
+    std::uint16_t instructions{};
+    std::uint16_t waits{};       // opcode 0 blocks
+    std::uint16_t last_frame{};  // highest wait frame below 0x7FFF
+    bool loops{};                // opcode 2 (backward jump)
+    bool hands_over{};           // a second opcode 1
+    std::vector<WeaponStateKey> states;
+    std::array<std::uint16_t, 64> opcodes{};  // count per opcode (0..63)
+};
+
 class MotionScriptFile final {
 public:
     [[nodiscard]] static std::optional<MotionScriptFile> parse(std::span<const std::uint8_t> bytes);
 
+    // Structural identity for a lone file: header table, 0xFFFF-terminated
+    // bank list, and every non-empty bank's first script starts with opcode 1.
+    [[nodiscard]] static bool looks_like(std::span<const std::uint8_t> bytes);
+
     [[nodiscard]] std::size_t bank_count() const noexcept { return banks_.size(); }
+    [[nodiscard]] std::size_t size_bytes() const noexcept { return bytes_.size(); }
+    [[nodiscard]] std::size_t header_table() const noexcept { return table_; }
+
+    // Scripts in bank `bank` (entries before its 0xFFFF terminator).
+    [[nodiscard]] std::size_t script_count(std::size_t bank) const noexcept;
+
+    [[nodiscard]] std::optional<ScriptSummary> summarize(std::size_t bank, std::size_t index) const;
 
     // Weapon attach states of MOT `index` of bank `bank` (pl000_00_<bank>).
     [[nodiscard]] std::vector<WeaponStateKey> weapon_states(std::size_t bank,
@@ -43,6 +68,7 @@ public:
 private:
     std::vector<std::uint8_t> bytes_;
     std::vector<std::size_t> banks_;  // absolute bank table offsets
+    std::size_t table_{};
 };
 
 // Weapon state at `frame` from a timeline (0 when none applies yet).

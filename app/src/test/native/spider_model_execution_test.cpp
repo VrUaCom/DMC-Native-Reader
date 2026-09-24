@@ -123,7 +123,7 @@ int main() {
     using dmcresource::has_capability;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 12U);
+    assert(modules.size() == 13U);
 
     const auto* mod = NativeModuleRegistry::find("MOD");
     const auto* scm = NativeModuleRegistry::find("SCM");

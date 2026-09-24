@@ -236,6 +236,26 @@ evaluated with the playback evaluators (compression 3/2), one colour per node
 and lighter shades for y/z, value ranges and a frame axis. Adding a MOD with
 the same node count still plays it in 3D.
 
+**Stand-alone views (v51).** Every file now opens with a picture of what it
+holds, even when it has no mesh or pixels of its own (`format_views.cpp`,
+`raster_card.cpp`: a small software canvas with a 5x7 font):
+
+| File | View |
+| --- | --- |
+| MOD / SCM / EFM / SHW | 3D (unchanged) |
+| DDS / PTX | image; a PTX saved under another name (e.g. a PAC slot as `.bin`) is now recognised by its bytes |
+| MOT | channel curves (v50) |
+| PAC / PNST | child list (unchanged) |
+| TSC | per scroll record: U/V offset over 240 game frames from the `0x14030C1C0` simulator, plus a checker tile scrolled to frames 0/30/60/90 |
+| CLT | per block: the strands (a bone whose node is not the previous + 1 starts a strand; its parent is the fixed root), axis letters, gravity/wind arrows, solver parameters |
+| Motion script | pl000.pac slot 5 is now its own format (`MotionScript`, module `formats.motion-script.reader`), identified by structure (header table, 0xFFFF-terminated bank list, each bank's first script starts with opcode 1): per bank the script count, waits, last frame, loops and weapon states; the opcode histogram; the inspection lists every script (MOT bank/index, ops, waits, states with frames) |
+| Other accepted files (EventTbl, ...) | information card: title, detail, properties, inspection tree and a hex/ASCII dump |
+| Unknown or rejected bytes | raw binary view instead of an error: entropy per block, byte histogram, printable strings, FourCC, first u32 words, ascending offset-table hint, float32 share, record-stride guess, the rejection reason and a hex dump |
+
+The pipeline contract is unchanged: rejected files still leave
+`run_decode_pipeline` unaccepted; the binary view is made by `open_session`
+and claims no format ("BIN").
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

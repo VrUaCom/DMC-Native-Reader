@@ -20,6 +20,7 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         tsc_module(),
         clt_module(),
         efm_module(),
+        motion_script_module(),
     };
     return registry;
 }

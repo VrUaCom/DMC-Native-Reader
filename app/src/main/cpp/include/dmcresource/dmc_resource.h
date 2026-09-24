@@ -22,6 +22,7 @@ enum class Format : std::uint8_t {
     Shw,
     Tsc,
     Clt,
+    MotionScript,
 };
 
 struct ProbeResult {

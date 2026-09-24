@@ -5,6 +5,8 @@
 #include "dmc_rengine/formats/mot/ir.hpp"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
+#include "dmcresource/format_views.h"
+#include "dmcresource/raster_card.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/shadow_hull.h"
@@ -808,7 +810,7 @@ int main() {
             0x04, 0x00,                          // table[0] -> bank list at 6 + 4
             0x00, 0x00,
             0x04, 0x00, 0xFF, 0xFF,              // bank 0 at 10 + 4
-            0x02, 0x00,                          // bank 0: MOT 0 script at 14 + 2
+            0x04, 0x00, 0xFF, 0xFF,              // bank 0: MOT 0 script at 14 + 4
             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x7F,  // play MOT
             0x03, 0x80, 0x02, 0x00, 0x00, 0x00,  // state 2 (right hand)
             0x00, 0x00, 0x0A, 0x00, 0x00, 0x00,  // wait frame 10
@@ -822,6 +824,19 @@ int main() {
         assert(motion::weapon_state_at(keys, 0.0F) == 2U);
         assert(motion::weapon_state_at(keys, 10.0F) == 2U);   // runs once past frame 10
         assert(motion::weapon_state_at(keys, 11.0F) == 3U);
+        assert(script->script_count(0U) == 1U);
+        const auto summary = script->summarize(0U, 0U);
+        assert(summary && summary->waits == 1U && summary->last_frame == 10U &&
+               summary->opcodes[3] == 2U && !summary->loops);
+        assert(!script->summarize(0U, 1U).has_value());
+        assert(motion::MotionScriptFile::looks_like(file));
+        auto broken = file;
+        broken[18] = 0x03;  // first script no longer starts with "play MOT"
+        assert(!motion::MotionScriptFile::looks_like(broken));
+        const auto probed = dmcresource::probe("slot_0005.bin", file.data(), file.size());
+        assert(probed.format == dmcresource::Format::MotionScript);
+        const auto view = dmcresource::views::render_motion_script_view(*script);
+        assert(view.available() && view.width == 1080U);
         assert(motion::player_motion_bank("motion/PL000_00_13.PAC") == 13U);
         assert(!motion::player_motion_bank("pl000.pac").has_value());
         const auto* hand = motion::weapon_state_record("CPlWpSword", 2U);
@@ -848,5 +863,57 @@ int main() {
     auto enemy = dmcresource::pac_assembly::assemble_pac(*archive, &report, "em001.pac");
     assert(enemy != nullptr && report.attached_parts == 0U);
     assert(!motion::is_attached_part(enemy.get(), 1U));
+    // Stand-alone views: every file opens with a picture of what it holds.
+    {
+        namespace views = dmcresource::views;
+        const auto open_text = [](const char* name, std::string_view text) {
+            return dmcresource::open_session(
+                name, reinterpret_cast<const std::uint8_t*>(text.data()), text.size());
+        };
+        const auto has_view = [](const dmcresource::Session* session) {
+            return session != nullptr && session->image_preview.available() &&
+                   dmcresource::has_capability(session->capabilities,
+                                               dmcresource::ResourceCapability::ImagePreview);
+        };
+        const auto tsc = open_text("em028_013.tsc",
+            ".TSC\n# RELATIVE\n<Start\nScrlNo 0\nScrlType 1\nTexNo -1\nDirUV 1 0\n"
+            "TimeUV 60 1\nEnd>\n<Finish>\n$");
+        assert(has_view(tsc.get()) && tsc->probe.format == dmcresource::Format::Tsc);
+        const auto clt = open_text("pl000_02.clt",
+            ";pl000_02.clt\nClothNum 1\nClothNo 0\nGravity 0 -0.2 0\nBone 2 Y\nBone 3 Y\nEnd\n$");
+        assert(has_view(clt.get()) && clt->probe.format == dmcresource::Format::Clt);
+
+        // Unknown bytes: raw binary view (profile + hex), never a null session.
+        std::vector<std::uint8_t> blob(3000U);
+        for (std::size_t i = 0U; i < blob.size(); ++i) {
+            blob[i] = static_cast<std::uint8_t>((i * 37U) ^ (i >> 3U));
+        }
+        std::memcpy(blob.data() + 100U, "HELLO_STRING", 12U);
+        auto raw = dmcresource::open_session("mystery.dat", blob.data(), blob.size());
+        assert(has_view(raw.get()) && raw->inspection.format == "BIN" && !raw->renderable);
+        const auto profile = views::profile_binary(blob);
+        bool found = false;
+        for (const auto& text : profile.strings) {
+            found = found || text.find("HELLO_STRING") != std::string::npos;
+        }
+        assert(profile.size == 3000U && profile.entropy > 4.0 && found);
+        assert(profile.histogram.size() == 256U && !profile.block_entropy.empty());
+
+        // Offset-table hint: count + ascending offsets.
+        std::vector<std::uint8_t> table(64U, 0U);
+        const std::uint32_t words[] = {3U, 16U, 32U, 48U};
+        std::memcpy(table.data(), words, sizeof(words));
+        assert(views::profile_binary(table).offset_table_entries == 3U);
+
+        // Accepted but picture-less files (EventTbl-like cards) get the card.
+        dmcresource::InspectionDocument card_doc;
+        card_doc.format = "EventTbl";
+        card_doc.root.title = "Event table";
+        card_doc.root.properties.push_back({"Events", "4", dmcresource::EvidenceLevel::DataConfirmed});
+        const auto card = dmcresource::raster::render_info_card(card_doc, "detail", blob);
+        assert(card.available() && card.width == 1080U && card.height == 1440U);
+        assert(!dmcresource::open_session("empty.bin", nullptr, 0U));
+    }
+
     return 0;
 }

@@ -100,6 +100,8 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/uv_scroll.cpp
     modules/motion/motion_script.cpp
     modules/motion/motion_chart.cpp
+    modules/raster_card.cpp
+    modules/format_views.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
     modules/module_scripts.cpp

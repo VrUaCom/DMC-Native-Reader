@@ -4,6 +4,8 @@
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/texture_companion.h"
+#include "dmcresource/format_views.h"
+#include "dmcresource/raster_card.h"
 
 #include <span>
 #include <cmath>
@@ -386,6 +388,16 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
             return materialized;
         }
     }
+    if (!child.source_bytes.empty() && !child.probe.recognized) {
+        const std::string filename = child.suggested_filename.empty()
+            ? child.title
+            : child.suggested_filename;
+        auto raw = open_session(filename, child.source_bytes.data(), child.source_bytes.size());
+        if (raw) {
+            raw->detail += "\nOpened from container slot " + child.id;
+            return raw;
+        }
+    }
     return make_session(child, child.trace);
 }
 
@@ -412,10 +424,73 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
     });
 }
 
+namespace {
+
+// Every opened file gets a picture: a session with no mesh, no pixels, no
+// child list and no UV map draws its inspection card (title, properties,
+// tree) over a hex dump of its bytes.
+void attach_standalone_view(Session* session, std::span<const std::uint8_t> bytes) {
+    if (session == nullptr || session->renderable || session->image_preview.available() ||
+        !session->children.empty() || session->uv_gallery) {
+        return;
+    }
+    try {
+        session->image_preview =
+            raster::render_info_card(session->inspection, session->detail, bytes);
+        session->capabilities = session->capabilities | ResourceCapability::ImagePreview;
+    } catch (...) {
+        session->image_preview = {};
+    }
+}
+
+// Files outside the registry (or rejected by their module) still open as raw
+// binary: byte profile, strings, offset-table hint and hex dump. Read-only;
+// nothing here claims a format.
+std::unique_ptr<Session> open_binary_session(std::string_view name,
+                                             std::span<const std::uint8_t> bytes,
+                                             const PipelineResult& rejected) {
+    if (bytes.empty()) return nullptr;
+    try {
+        auto session = std::make_unique<Session>();
+        session->probe = rejected.probe;
+        session->capabilities = capability(ResourceCapability::Inspection) |
+                                ResourceCapability::ImagePreview;
+        session->inspection.format = "BIN";
+        session->inspection.root.id = "binary";
+        session->inspection.root.title = std::string{name.substr(name.find_last_of("/\\") + 1U)};
+        session->inspection.root.kind = InspectionKind::Document;
+        session->inspection.root.source_span = SourceSpan{0U, bytes.size()};
+        const bool recognized = rejected.probe.recognized;
+        session->inspection.root.properties.push_back(
+            {"Status",
+             recognized ? std::string{rejected.probe.family} + " identity, module rejected the bytes"
+                        : std::string{"no known format identity"},
+             EvidenceLevel::Recognized});
+        if (!rejected.detail.empty()) {
+            session->inspection.root.properties.push_back(
+                {"Reason", rejected.detail, EvidenceLevel::Recognized});
+        }
+        const auto profile = views::profile_binary(bytes);
+        views::append_binary_inspection(session->inspection, profile);
+        session->detail = "Raw binary view | bytes=" + std::to_string(bytes.size());
+        session->trace = "modules:\n  [OK] native.binary-profile";
+        session->image_preview =
+            views::render_binary_view(session->inspection, session->detail, profile, bytes);
+        return session;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+}  // namespace
+
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
     auto pipeline = dmcresource::run_decode_pipeline(name, bytes, size);
-    if (!pipeline.accepted) return nullptr;
+    if (!pipeline.accepted) {
+        if (bytes == nullptr) return nullptr;
+        return open_binary_session(name, std::span<const std::uint8_t>{bytes, size}, pipeline);
+    }
 
     bool community_ptx = false;
     for (const auto& module : pipeline.modules) {
@@ -433,6 +508,7 @@ std::unique_ptr<Session> open_session(std::string_view name,
             "validator rejects them, the viewer reads header, sector spans and DDS only");
     }
     retain_lazy_child_sources(session.get(), bytes, size);
+    attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     return session;
 }
 

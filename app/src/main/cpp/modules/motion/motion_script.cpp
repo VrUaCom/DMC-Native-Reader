@@ -1,7 +1,9 @@
 #include "dmcresource/motion/motion_script.h"
 
+#include <algorithm>
 #include <cctype>
 #include <span>
+#include <utility>
 
 namespace dmcresource::motion {
 namespace {
@@ -51,13 +53,42 @@ std::optional<MotionScriptFile> MotionScriptFile::parse(std::span<const std::uin
     }
     if (out.banks_.empty()) return std::nullopt;
     out.bytes_.assign(bytes.begin(), bytes.end());
+    out.table_ = *table;
     return out;
 }
 
-std::vector<WeaponStateKey> MotionScriptFile::weapon_states(std::size_t bank,
-                                                           std::size_t index) const {
-    std::vector<WeaponStateKey> keys;
-    if (bank >= banks_.size()) return keys;
+bool MotionScriptFile::looks_like(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() < 16U || (bytes[0] & 1U) != 0U || bytes[1] != 0U || bytes[0] > 64U) {
+        return false;
+    }
+    const auto file = parse(bytes);
+    if (!file) return false;
+    std::size_t scripts = 0U;
+    for (std::size_t bank = 0U; bank < file->bank_count(); ++bank) {
+        const auto count = file->script_count(bank);
+        if (count == 0U) continue;
+        const auto first = file->summarize(bank, 0U);
+        if (!first || first->opcodes[1] == 0U) return false;
+        scripts += count;
+    }
+    return scripts != 0U;
+}
+
+std::size_t MotionScriptFile::script_count(std::size_t bank) const noexcept {
+    if (bank >= banks_.size()) return 0U;
+    std::size_t count = 0U;
+    for (std::size_t o = banks_[bank]; o + 2U <= bytes_.size() && count < 1024U; o += 2U) {
+        const auto entry = static_cast<std::size_t>(bytes_[o]) |
+                           (static_cast<std::size_t>(bytes_[o + 1U]) << 8U);
+        if (entry == 0xFFFFU) return count;
+        ++count;
+    }
+    return 0U;  // no terminator: not a bank list
+}
+
+std::optional<ScriptSummary> MotionScriptFile::summarize(std::size_t bank,
+                                                        std::size_t index) const {
+    if (bank >= banks_.size() || index >= script_count(bank)) return std::nullopt;
     const auto& s = bytes_;
     const auto u16 = [&s](std::size_t o) -> std::size_t {
         return o + 2U <= s.size()
@@ -65,36 +96,54 @@ std::vector<WeaponStateKey> MotionScriptFile::weapon_states(std::size_t bank,
             : 0xFFFFFFFFU;
     };
     const std::size_t sub = banks_[bank];
-    const std::size_t entry = u16(sub + index * 2U);
-    if (entry == 0xFFFFFFFFU) return keys;
-    std::size_t p = sub + entry;
+    std::size_t p = sub + u16(sub + index * 2U);
+    if (p >= s.size()) return std::nullopt;
+    ScriptSummary out;
     float after = -1.0F;
     bool started = false;
     for (int step = 0; step < 4096 && p < s.size(); ++step) {
         const std::uint8_t op = s[p];
+        if (op < out.opcodes.size()) ++out.opcodes[op];
+        ++out.instructions;
         if (op == 0U) {
-            // Wait: the next block runs once the frame is past `frame`.
             const auto frame = u16(p + 2U);
             if (frame == 0xFFFFFFFFU || frame == 0x7FFFU) break;
+            ++out.waits;
+            out.last_frame = static_cast<std::uint16_t>(std::max<std::size_t>(out.last_frame, frame));
             after = static_cast<float>(frame);
             p += 6U;
             continue;
         }
         if (op == 1U) {
-            // Play MOT: a second one hands over to another motion.
-            if (started) break;
+            if (started) {
+                out.hands_over = true;
+                break;
+            }
             started = true;
+            if (p + 6U <= s.size()) {
+                out.play_bank = s[p + 4U];
+                out.play_index = s[p + 5U];
+            }
         }
-        if (op == 2U) break;  // backward jump (loop)
+        if (op == 2U) {
+            out.loops = true;
+            break;
+        }
         if (op == 3U && p + 6U <= s.size()) {
-            const std::uint8_t state = static_cast<std::uint8_t>(s[p + 2U] & 0x3FU);
-            if (state != 0U) keys.push_back({after, state});
+            const auto state = static_cast<std::uint8_t>(s[p + 2U] & 0x3FU);
+            if (state != 0U) out.states.push_back({after, state});
         }
         const auto length = opcode_length(op);
         if (length == 0U) break;
         p += length;
     }
-    return keys;
+    return out;
+}
+
+std::vector<WeaponStateKey> MotionScriptFile::weapon_states(std::size_t bank,
+                                                           std::size_t index) const {
+    auto summary = summarize(bank, index);
+    return summary ? std::move(summary->states) : std::vector<WeaponStateKey>{};
 }
 
 std::uint8_t weapon_state_at(const std::vector<WeaponStateKey>& keys, float frame) noexcept {

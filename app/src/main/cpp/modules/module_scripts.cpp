@@ -5,9 +5,12 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <span>
 #include <utility>
 
+#include "dmcresource/format_views.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/motion/motion_script.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/uv_scroll.h"
 
@@ -26,9 +29,9 @@ namespace {
     case 1U: return "1 linear (one texture per TimeUV frames)";
     case 2U: return "2 eased (RateUV, cosine ease)";
     case 3U: return "3 eased (one texture per TimeUV frames, cosine ease)";
-    case 4U: return "4 (not ported)";
-    case 5U: return "5 (not ported)";
-    case 10U: return "10 (model flag 2, not ported)";
+    case 4U: return "4 ping-pong (turns after TurnTimeUV)";
+    case 5U: return "5 ping-pong, cosine ease";
+    case 10U: return "10 facing (JntNo Z axis vs view)";
     default: return "unknown";
     }
 }
@@ -111,6 +114,10 @@ PipelineResult run_tsc_module(const NativeModule& module,
                    << " time " << r.time[0] << "/" << r.time[1];
         }
         out.detail = detail.str();
+        out.image_preview = views::render_tsc_view(records);
+        out.inspection.root.properties.push_back(
+            {"View", "U/V offset per scroll over 240 frames + scrolled checker",
+             EvidenceLevel::ExeConfirmed});
         return out;
     } catch (...) {
         return module_support::reject_minimal(probe);
@@ -171,6 +178,73 @@ PipelineResult run_clt_module(const NativeModule& module,
                    << gravity.str() << ", stiffness " << p.stiffness;
         }
         out.detail = detail.str();
+        out.image_preview = views::render_clt_view(blocks);
+        out.inspection.root.properties.push_back(
+            {"View", "bone chains, gravity/wind arrows, solver parameters",
+             EvidenceLevel::ExeConfirmed});
+        return out;
+    } catch (...) {
+        return module_support::reject_minimal(probe);
+    }
+}
+
+// Player motion script (pl000.pac slot 5; loader 0x1400594B0, interpreter
+// 0x140058FE0).
+PipelineResult run_motion_script_module(const NativeModule& module,
+                                        std::string_view,
+                                        const std::uint8_t* bytes,
+                                        std::size_t size,
+                                        const ProbeResult& probe) noexcept {
+    try {
+        const auto file = motion::MotionScriptFile::parse(std::span<const std::uint8_t>{bytes, size});
+        if (!file) {
+            return module_support::reject(probe, module.id, "motion script bank tables do not parse");
+        }
+        auto out = accepted(module, probe, size, "MotionScript", "canonical.motion-script.parser",
+                            "Player motion script");
+        const auto add_root = [&out](const char* key, std::string value) {
+            out.inspection.root.properties.push_back({key, std::move(value), EvidenceLevel::ExeConfirmed});
+        };
+        std::size_t total = 0U;
+        for (std::size_t bank = 0U; bank < file->bank_count(); ++bank) total += file->script_count(bank);
+        add_root("Header table", "+" + std::to_string(file->header_table()));
+        add_root("Banks", std::to_string(file->bank_count()) + " (motion\\pl000\\pl000_00_N.pac)");
+        add_root("Scripts", std::to_string(total));
+        add_root("Weapon states", "opcode 3 byte 2 & 0x3F -> player+0x39C3 (0x1401F01F0)");
+        std::ostringstream detail;
+        detail << "Player motion script | banks=" << file->bank_count() << " scripts=" << total;
+        for (std::size_t bank = 0U; bank < file->bank_count(); ++bank) {
+            InspectionNode node;
+            node.id = "bank-" + std::to_string(bank);
+            const auto count = file->script_count(bank);
+            node.title = "Bank " + std::to_string(bank) + " (pl000_00_" + std::to_string(bank) +
+                         ") " + std::to_string(count) + " scripts";
+            node.kind = InspectionKind::Collection;
+            for (std::size_t i = 0U; i < count && i < 128U; ++i) {
+                const auto s = file->summarize(bank, i);
+                if (!s) continue;
+                std::ostringstream v;
+                v << "MOT " << static_cast<unsigned>(s->play_bank) << "/"
+                  << static_cast<unsigned>(s->play_index) << ", " << s->instructions << " ops, "
+                  << s->waits << " waits";
+                if (s->last_frame != 0U) v << " to F" << s->last_frame;
+                if (s->loops) v << ", loop";
+                if (s->hands_over) v << ", hands over";
+                if (!s->states.empty()) {
+                    v << ", states";
+                    for (const auto& key : s->states) {
+                        v << ' ' << static_cast<unsigned>(key.state);
+                        if (key.after_frame >= 0.0F) v << "@" << key.after_frame;
+                    }
+                }
+                node.properties.push_back({"Script " + std::to_string(i), v.str(),
+                                           EvidenceLevel::ExeConfirmed});
+            }
+            out.inspection.root.children.push_back(std::move(node));
+            detail << "\n  bank " << bank << ": " << count << " scripts";
+        }
+        out.detail = detail.str();
+        out.image_preview = views::render_motion_script_view(*file);
         return out;
     } catch (...) {
         return module_support::reject_minimal(probe);
@@ -181,12 +255,20 @@ PipelineResult run_clt_module(const NativeModule& module,
 
 NativeModule tsc_module() noexcept {
     return {"formats.tsc.scroll-reader", "TSC", Format::Tsc, ModuleKind::Structural, false,
-            run_tsc_module, capability(ResourceCapability::Inspection)};
+            run_tsc_module,
+            capability(ResourceCapability::Inspection) | ResourceCapability::ImagePreview};
 }
 
 NativeModule clt_module() noexcept {
     return {"formats.clt.cloth-reader", "CLT", Format::Clt, ModuleKind::Structural, false,
-            run_clt_module, capability(ResourceCapability::Inspection)};
+            run_clt_module,
+            capability(ResourceCapability::Inspection) | ResourceCapability::ImagePreview};
+}
+
+NativeModule motion_script_module() noexcept {
+    return {"formats.motion-script.reader", "MotionScript", Format::MotionScript,
+            ModuleKind::Structural, false, run_motion_script_module,
+            capability(ResourceCapability::Inspection) | ResourceCapability::ImagePreview};
 }
 
 }  // namespace dmcresource

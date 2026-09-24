@@ -17,6 +17,7 @@
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_chart.h"
 #include "dmcresource/motion/uv_scroll.h"
+#include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
 #include "dmcresource/resource_limits.h"
 
@@ -58,6 +59,12 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             const auto parsed = ptx_compat::parse_texture_bundle(
                 std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
             if (parsed.ok()) return {Format::Ptx, "PTX", "ptx"};
+        } catch (...) {
+        }
+        try {
+            if (motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
+                return {Format::MotionScript, "MotionScript", "msc"};
+            }
         } catch (...) {
         }
     }

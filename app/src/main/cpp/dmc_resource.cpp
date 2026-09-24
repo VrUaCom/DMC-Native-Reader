@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 
 #include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/motion_script.h"
+#include "dmcresource/ptx_framing_compat.h"
 #include "dmcresource/motion/uv_scroll.h"
 
 namespace dmcresource {
@@ -130,6 +133,23 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
     }
+    // Player motion script (pl000.pac slot 5, loader 0x1400594B0): no magic,
+    // identified by its bank tables (last, after every magic and extension).
+    if (bytes != nullptr &&
+        motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::MotionScript, true, "MotionScript", "motion-script", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.motion-script");
+    }
+    // Descriptor texture bundles saved under another name (a PAC slot dumped
+    // as .bin): the same byte validation the PAC classifier uses.
+    if (bytes != nullptr && size != 0U) {
+        const auto parsed = ptx_compat::parse_texture_bundle(
+            std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
+        if (parsed.ok()) {
+            return result(Format::Ptx, true, "PTX", "texture", "child-resources",
+                          "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
+        }
+    }
     return {};
 }
 
@@ -159,6 +179,7 @@ const char* format_name(Format format) noexcept {
     case Format::Shw: return "SHW";
     case Format::Tsc: return "TSC";
     case Format::Clt: return "CLT";
+    case Format::MotionScript: return "MotionScript";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

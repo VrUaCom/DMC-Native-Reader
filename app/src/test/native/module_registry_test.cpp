@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 12U);
+    assert(modules.size() == 13U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -56,8 +56,13 @@ int main() {
     // ";name.clt" + ClothNo), inspection only.
     const auto* tsc = NativeModuleRegistry::find("TSC");
     const auto* clt = NativeModuleRegistry::find("CLT");
-    assert(tsc != nullptr && tsc->format == Format::Tsc && !tsc->renderable);
-    assert(clt != nullptr && clt->format == Format::Clt && !clt->renderable);
+    assert(tsc != nullptr && tsc->format == Format::Tsc && !tsc->renderable &&
+           has_capability(tsc->capabilities, ResourceCapability::ImagePreview));
+    assert(clt != nullptr && clt->format == Format::Clt && !clt->renderable &&
+           has_capability(clt->capabilities, ResourceCapability::ImagePreview));
+    const auto* script = NativeModuleRegistry::find("MotionScript");
+    assert(script != nullptr && script->format == Format::MotionScript && !script->renderable &&
+           has_capability(script->capabilities, ResourceCapability::ImagePreview));
     constexpr std::string_view tsc_text = "\r\n.TSC\t\n\t# RELATIVE\n<Finish>\n$";
     constexpr std::string_view clt_text = ";a.clt\nClothNum 1\nClothNo 0\nBone 2 Y\nEnd\n$";
     assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(tsc_text.data()),
