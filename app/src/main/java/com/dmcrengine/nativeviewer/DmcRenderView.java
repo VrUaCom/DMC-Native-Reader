@@ -5,6 +5,8 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
@@ -143,13 +145,9 @@ public final class DmcRenderView extends View {
         @Override public void run() {
             if (!motionPlaying || session == 0) return;
             final long now = SystemClock.uptimeMillis();
-            if (now - lastRenderMs >= motionMinFrameMs) {
+            if (now - lastRequestMs >= motionMinFrameMs) {
                 lastMotionFrame = currentMotionFrame(now);
-                if (!NativeBridge.setMotionFrame(session, lastMotionFrame)) {
-                    motionPlaying = false;
-                    return;
-                }
-                renderNow();
+                requestFrame(lastMotionFrame);  // posed on the render thread
             }
             postOnAnimation(this);
         }
@@ -282,12 +280,21 @@ public final class DmcRenderView extends View {
 
     /** The picture on screen, for a screenshot. */
     public Bitmap snapshot() {
-        if (showingPreview) {
-            touching = false;
-            renderNow();  // a full-quality frame for the picture
+        if (session == 0 || staticImagePreview) {
+            return bitmap == null || bitmap.isRecycled() ? null : bitmap.copy(Bitmap.Config.ARGB_8888, false);
         }
-        if (bitmap == null || bitmap.isRecycled()) return null;
-        return bitmap.copy(Bitmap.Config.ARGB_8888, false);
+        // A full-quality frame for the picture, rendered right here.
+        try {
+            final Bitmap image = Bitmap.createBitmap(renderWidth(), renderHeight(), Bitmap.Config.ARGB_8888);
+            if (NativeBridge.renderEx(session, image.getWidth(), image.getHeight(), yaw, pitch, zoom,
+                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, image)) {
+                return image;
+            }
+            image.recycle();
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
+            return null;
+        }
+        return null;
     }
 
     private boolean canUseStaticImagePreview() {
@@ -409,6 +416,10 @@ public final class DmcRenderView extends View {
 
     public void setSession(long newSession) {
         pauseMotion();
+        ++generation;
+        synchronized (renderLock) {
+            pendingRequest = null;
+        }
         session = newSession;
         // Shadows start on; native ignores the flag when no SHW is bound.
         renderFlags = (shadowsAtOpen ? RENDER_SHADOWS : 0) | (roomVisible ? RENDER_ROOM : 0);
@@ -564,43 +575,198 @@ public final class DmcRenderView extends View {
         return Math.max(64, Math.round(h * s));
     }
 
+    // ---- Render thread ----------------------------------------------------
+    //
+    // The UI thread only describes the frame it wants (camera, flags, motion
+    // frame); the "dmc-render" thread poses and renders the latest request
+    // into a direct buffer, and the UI thread copies it into the shown
+    // bitmap. Requests replace each other, so a slow frame never builds a
+    // queue, and touches are handled while a frame is being drawn.
+    private static final class FrameRequest {
+        long session;
+        int generation;
+        int width;
+        int height;
+        float yaw, pitch, zoom, panX, panY, roomYaw, motionFrame;
+        int flags;
+        boolean follow;
+        boolean preview;
+    }
+
+    private static final class FrameBuffer {
+        final java.nio.ByteBuffer pixels;
+        final int width;
+        final int height;
+        boolean busy;
+
+        FrameBuffer(int width, int height) {
+            this.width = width;
+            this.height = height;
+            pixels = java.nio.ByteBuffer.allocateDirect(width * height * 4);
+        }
+    }
+
+    private final Object renderLock = new Object();
+    private final java.util.ArrayList<FrameBuffer> frameBuffers = new java.util.ArrayList<>();
+    private HandlerThread renderThread;
+    private Handler renderHandler;
+    private FrameRequest pendingRequest;
+    private boolean renderScheduled;
+    private int generation;
+    private long lastRequestMs;
+
+    private final Runnable renderJob = new Runnable() {
+        @Override public void run() {
+            while (true) {
+                final FrameRequest request;
+                FrameBuffer target = null;
+                synchronized (renderLock) {
+                    request = pendingRequest;
+                    pendingRequest = null;
+                    if (request == null) {
+                        renderScheduled = false;
+                        return;
+                    }
+                    for (FrameBuffer buffer : frameBuffers) {
+                        if (!buffer.busy && buffer.width == request.width && buffer.height == request.height) {
+                            target = buffer;
+                            break;
+                        }
+                    }
+                    if (target == null) {
+                        // Drop buffers of other sizes that are free; keep at most a few.
+                        for (int k = frameBuffers.size() - 1; k >= 0; --k) {
+                            final FrameBuffer old = frameBuffers.get(k);
+                            if (!old.busy && (old.width != request.width || old.height != request.height)) {
+                                frameBuffers.remove(k);
+                            }
+                        }
+                        if (frameBuffers.size() >= 4) {
+                            // Every buffer is still on its way to the screen:
+                            // keep the request; releasing a buffer resumes it.
+                            if (pendingRequest == null) pendingRequest = request;
+                            renderScheduled = false;
+                            return;
+                        }
+                        try {
+                            target = new FrameBuffer(request.width, request.height);
+                        } catch (OutOfMemoryError error) {
+                            renderScheduled = false;
+                            return;
+                        }
+                        frameBuffers.add(target);
+                    }
+                    target.busy = true;
+                }
+                target.pixels.clear();
+                final int status = NativeBridge.renderToBuffer(request.session, request.width, request.height,
+                        request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
+                        request.roomYaw, request.follow, request.motionFrame, target.pixels);
+                final FrameBuffer done = target;
+                post(() -> present(request, done, status));
+            }
+        }
+    };
+
+    private void releaseFrame(FrameBuffer buffer) {
+        synchronized (renderLock) {
+            buffer.busy = false;
+            if (pendingRequest != null && !renderScheduled && renderHandler != null) {
+                renderScheduled = true;
+                renderHandler.post(renderJob);
+            }
+        }
+    }
+
+    private void present(FrameRequest request, FrameBuffer buffer, int status) {
+        if (request.generation != generation || status == 0 || staticImagePreview) {
+            releaseFrame(buffer);
+            return;
+        }
+        final Bitmap target = request.preview ? previewTarget(request.width, request.height)
+                : writableBitmap(request.width, request.height);
+        if (target != null) {
+            buffer.pixels.rewind();
+            target.copyPixelsFromBuffer(buffer.pixels);
+            showingPreview = request.preview;
+        }
+        releaseFrame(buffer);
+        if (status == 2 && motionPlaying) {
+            motionPlaying = false;
+            removeCallbacks(motionTick);
+        }
+        lastRenderMs = SystemClock.uptimeMillis();
+        invalidate();
+        if (request.preview) {
+            removeCallbacks(fullFrame);
+            postDelayed(fullFrame, 150);
+        }
+    }
+
+    /** Ask the render thread for a frame; motionFrame NaN keeps the pose. */
+    private void requestFrame(float motionFrame) {
+        if (session == 0 || getWidth() <= 0 || getHeight() <= 0 || staticImagePreview) return;
+        final FrameRequest request = new FrameRequest();
+        request.preview = fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
+        request.width = request.preview ? Math.max(64, renderWidth() / 2) : renderWidth();
+        request.height = request.preview ? Math.max(64, renderHeight() / 2) : renderHeight();
+        request.session = session;
+        request.generation = generation;
+        request.yaw = yaw;
+        request.pitch = pitch;
+        request.zoom = zoom;
+        request.flags = renderFlags | settingsFlags | (request.preview ? RENDER_PREVIEW : 0);
+        request.panX = panX;
+        request.panY = panY;
+        request.roomYaw = roomYaw;
+        request.follow = follow;
+        request.motionFrame = motionFrame;
+        lastRequestMs = SystemClock.uptimeMillis();
+        synchronized (renderLock) {
+            // A pending pose must not be lost when a camera-only request replaces it.
+            if (Float.isNaN(motionFrame) && pendingRequest != null && !Float.isNaN(pendingRequest.motionFrame)) {
+                request.motionFrame = pendingRequest.motionFrame;
+            }
+            pendingRequest = request;
+            if (renderHandler == null) {
+                renderThread = new HandlerThread("dmc-render");
+                renderThread.start();
+                renderHandler = new Handler(renderThread.getLooper());
+            }
+            if (!renderScheduled) {
+                renderScheduled = true;
+                renderHandler.post(renderJob);
+            }
+        }
+    }
+
     public void renderNow() {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return;
         if (staticImagePreview) {
             invalidate();
             return;
         }
-
-        final boolean preview = fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
-        final int rw = preview ? Math.max(64, renderWidth() / 2) : renderWidth();
-        final int rh = preview ? Math.max(64, renderHeight() / 2) : renderHeight();
-        final Bitmap target = preview ? previewTarget(rw, rh) : writableBitmap(rw, rh);
-        if (target == null || !NativeBridge.renderEx(
-                session, rw, rh, yaw, pitch, zoom, renderFlags | settingsFlags | (preview ? RENDER_PREVIEW : 0),
-                panX, panY, roomYaw, follow, target)) {
-            releaseBitmap();
-            invalidate();
-            return;
-        }
-        showingPreview = preview;
-        lastRenderMs = SystemClock.uptimeMillis();
-        invalidate();
-        if (preview) {
-            removeCallbacks(fullFrame);
-            postDelayed(fullFrame, 150);
-        }
+        requestFrame(Float.NaN);
     }
 
     private void renderThrottled(boolean force) {
         if (staticImagePreview) return;
-        long now = SystemClock.uptimeMillis();
-        if (force || now - lastRenderMs >= 45) renderNow();
+        requestFrame(Float.NaN);
     }
 
     @Override protected void onDetachedFromWindow() {
         pauseMotion();
         removeCallbacks(spinTick);
         removeCallbacks(fullFrame);
+        synchronized (renderLock) {
+            pendingRequest = null;
+            if (renderThread != null) {
+                renderThread.quitSafely();
+                renderThread = null;
+                renderHandler = null;
+                renderScheduled = false;
+            }
+        }
         super.onDetachedFromWindow();
     }
 
@@ -742,7 +908,7 @@ public final class DmcRenderView extends View {
                     final float end = NativeBridge.motionEndFrame(session);
                     if (end > 0.0f && scrubFrame > end) scrubFrame = end;
                     lastMotionFrame = scrubFrame;
-                    if (NativeBridge.setMotionFrame(session, scrubFrame)) renderThrottled(false);
+                    requestFrame(scrubFrame);
                 } else if (edgeStart == EDGE_NONE && !scaleDetector.isInProgress()) {
                     float dx = x - lastX;
                     float dy = y - lastY;

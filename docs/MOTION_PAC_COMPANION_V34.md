@@ -502,6 +502,29 @@ Timings for the st000 room at 540×720 on a 4-core host:
 | Room, fast preview | — | 7 ms |
 | Model only | 6.3 ms | 3.7 ms |
 
+**Render thread (v65).** The UI thread no longer draws. It only describes the
+frame it wants: camera, flags, gesture controls and the motion frame. The
+`dmc-render` thread takes the latest request and calls
+`NativeBridge.renderToBuffer`, which poses the MOT and renders into a direct
+buffer. The UI thread then copies the buffer into the shown bitmap:
+
+- A newer request replaces a pending one, so a slow frame never builds up a
+  queue, and touches keep flowing while a frame is drawn.
+- A pending pose is never dropped: a camera-only request keeps the motion
+  frame of the request it replaces.
+- Frames of a session that has been replaced (generation counter) are
+  discarded.
+- Natively, every JNI entry that touches a session holds one recursive lock.
+  A handle is honoured only while it is registered (`to_handle` / `close`),
+  so a frame queued for a closed session finds nothing.
+- File opening and the room calls do not take the lock, so a long load does
+  not stall rendering.
+
+The room rasteriser now works out each row's covered span and steps the
+barycentric weights along it; it no longer tests every pixel of the bounding
+box. The st000 frame drops from 20.6 ms to 17.8 ms; colours differ by at most
+one level from rounding.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

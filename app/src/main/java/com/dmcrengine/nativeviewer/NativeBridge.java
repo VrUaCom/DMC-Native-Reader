@@ -88,6 +88,13 @@ public final class NativeBridge {
     public static native boolean renderEx(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
             boolean follow, android.graphics.Bitmap target);
+    /**
+     * Worker-thread frame: pose the MOT at motionFrame (NaN: keep the pose),
+     * render and write RGBA8 into a direct buffer; 0 failed, 1 ok, 2 pose failed.
+     */
+    public static native int renderToBuffer(long handle, int width, int height, float yaw,
+            float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
+            boolean follow, float motionFrame, java.nio.ByteBuffer out);
     /** "model|joint", "room|joint", "placed|joint" or "none|joint" under (x, y). */
     public static native String pickView(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,

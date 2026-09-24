@@ -608,24 +608,55 @@ void raster_room(const RoomTri& tri, bool translucent_pass, bool smooth, float c
     const int y0 = std::max(row_begin, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
     const int y1 = std::min(row_end - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
     if (y0 > y1) return;
-    const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
-    const int x1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
-    if (x0 > x1) return;
+    const int bx0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+    const int bx1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+    if (bx0 > bx1) return;
     const float inv_area = 1.0F / area;
     const float light = tri.light;
+    // The normalised barycentrics are linear in the pixel centre:
+    // w_i(x, y) = ax_i * x + ay_i * y + k_i.
+    const auto coeffs = [&](const P2& p, const P2& q, float* ax, float* ay, float* k) {
+        // edge(p, q, x, y) = (x - p.x) * (q.y - p.y) - (y - p.y) * (q.x - p.x)
+        *ax = (q.y - p.y) * inv_area;
+        *ay = -(q.x - p.x) * inv_area;
+        *k = (-p.x * (q.y - p.y) + p.y * (q.x - p.x)) * inv_area;
+    };
+    float ax0, ay0, k0, ax1, ay1, k1, ax2, ay2, k2;
+    coeffs(pb, pc, &ax0, &ay0, &k0);
+    coeffs(pc, pa, &ax1, &ay1, &k1);
+    coeffs(pa, pb, &ax2, &ay2, &k2);
     for (int y = y0; y <= y1; ++y) {
         const float py = static_cast<float>(y) + 0.5F;
-        for (int x = x0; x <= x1; ++x) {
-            const float px = static_cast<float>(x) + 0.5F;
-            const float w0 = edge(pb, pc, px, py) * inv_area;
-            const float w1 = edge(pc, pa, px, py) * inv_area;
-            const float w2 = edge(pa, pb, px, py) * inv_area;
+        // Span where every weight is >= 0 (pixel centres), one pixel of
+        // margin each side; the per-pixel test below stays exact.
+        float lo = static_cast<float>(bx0) + 0.5F;
+        float hi = static_cast<float>(bx1) + 0.5F;
+        const float row[3][2] = {{ax0, ay0 * py + k0}, {ax1, ay1 * py + k1}, {ax2, ay2 * py + k2}};
+        bool empty = false;
+        for (const auto& e : row) {
+            if (e[0] > 1.0e-12F) {
+                lo = std::max(lo, -e[1] / e[0]);
+            } else if (e[0] < -1.0e-12F) {
+                hi = std::min(hi, -e[1] / e[0]);
+            } else if (e[1] < 0.0F) {
+                empty = true;
+            }
+        }
+        if (empty || lo > hi + 1.0F) continue;
+        const int x0 = std::max(bx0, static_cast<int>(std::floor(lo - 0.5F)) - 1);
+        const int x1 = std::min(bx1, static_cast<int>(std::ceil(hi - 0.5F)) + 1);
+        float px = static_cast<float>(x0) + 0.5F;
+        float w0 = row[0][0] * px + row[0][1];
+        float w1 = row[1][0] * px + row[1][1];
+        float w2 = row[2][0] * px + row[2][1];
+        const auto rowbase = static_cast<std::size_t>(y) * static_cast<std::size_t>(image.width);
+        for (int x = x0; x <= x1; ++x, w0 += ax0, w1 += ax1, w2 += ax2) {
             if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
             const float iz = w0 * a.iz + w1 * b.iz + w2 * c.iz;
             if (!(iz > 0.0F)) continue;
             const float zc = 1.0F / iz;
             const float dz = zc - cd;
-            const auto pi = static_cast<std::size_t>(y * image.width + x);
+            const auto pi = rowbase + static_cast<std::size_t>(x);
             if (dz >= depth[pi]) continue;
             const auto at = [&](float p, float q, float r) { return (w0 * p + w1 * q + w2 * r) * zc; };
             int texel[4] = {128, 128, 128, 255};
