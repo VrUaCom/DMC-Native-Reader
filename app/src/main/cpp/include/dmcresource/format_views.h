@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/image_preview.h"
 #include "dmcresource/inspection_document.h"
 #include "dmcresource/motion/cloth_chain.h"
@@ -37,6 +38,12 @@ inline constexpr int kViewHeight = 1440;
 // spheres as circles, capsules as two circles joined, boxes as their
 // rotated outline; each labelled with its record index.
 [[nodiscard]] ImagePreview render_collision_view(const std::vector<collision::Shape>& shapes);
+
+// Sprite animation (effect kind A): the texture (when the bank holds it) with
+// every frame rectangle numbered, and the frames in a row. `texture` may be
+// nullptr (frames drawn as outlines on the texture's pixel grid).
+[[nodiscard]] ImagePreview render_sprite_view(const effect_bank::SpriteAnimation& animation,
+                                              std::uint32_t record_id, const ImagePreview* texture);
 
 // Attack index: every entry (id, target mask, bone, shape).
 [[nodiscard]] ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>& entries);

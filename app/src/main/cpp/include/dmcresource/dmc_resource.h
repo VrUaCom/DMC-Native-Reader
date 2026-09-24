@@ -25,6 +25,7 @@ enum class Format : std::uint8_t {
     MotionScript,
     CollisionShapes,
     AttackIndex,
+    EffectBank,
 };
 
 struct ProbeResult {

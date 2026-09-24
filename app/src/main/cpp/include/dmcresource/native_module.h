@@ -70,5 +70,6 @@ public:
 [[nodiscard]] NativeModule motion_script_module() noexcept;
 [[nodiscard]] NativeModule colshape_module() noexcept;
 [[nodiscard]] NativeModule colindex_module() noexcept;
+[[nodiscard]] NativeModule effect_bank_module() noexcept;
 
 }  // namespace dmcresource

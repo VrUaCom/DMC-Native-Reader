@@ -390,7 +390,9 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
             return materialized;
         }
     }
-    if (!child.source_bytes.empty() && !child.probe.recognized) {
+    // Unknown bytes open as the raw binary view, unless the container already
+    // drew a view for them (e.g. an effect sprite over its bank texture).
+    if (!child.source_bytes.empty() && !child.probe.recognized && !child.image_preview.available()) {
         const std::string filename = child.suggested_filename.empty()
             ? child.title
             : child.suggested_filename;

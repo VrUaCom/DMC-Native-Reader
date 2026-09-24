@@ -105,6 +105,8 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/collision_shapes.cpp
     modules/collision_debug.cpp
     modules/neutral_texture.cpp
+    modules/effect_bank.cpp
+    modules/module_effects.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
     modules/module_scripts.cpp

@@ -8,6 +8,7 @@
 #include "dmcresource/format_views.h"
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/collision_debug.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
@@ -1027,6 +1028,65 @@ int main() {
         auto index_view = dmcresource::open_session("slot_0006.colidx", index.data(), index.size());
         assert(index_view && index_view->inspection.format == "COLINDEX" &&
                index_view->image_preview.available());
+    }
+
+    // Effect bank (loader 0x1402C04C0): PNST{manifest, PNST{records}};
+    // "<kind> <id>" per record, M takes two slots, '#' ends the manifest.
+    {
+        namespace fx = dmcresource::effect_bank;
+        const auto pnst = [](const std::vector<std::vector<std::uint8_t>>& slots) {
+            std::vector<std::uint8_t> out{'P', 'N', 'S', 'T'};
+            const auto put32 = [&out](std::size_t at, std::uint32_t v) {
+                for (int k = 0; k < 4; ++k) out[at + static_cast<std::size_t>(k)] = static_cast<std::uint8_t>(v >> (8 * k));
+            };
+            out.resize(8U + slots.size() * 4U, 0U);
+            put32(4U, static_cast<std::uint32_t>(slots.size()));
+            for (std::size_t i = 0U; i < slots.size(); ++i) {
+                while (out.size() % 16U != 0U) out.push_back(0U);
+                put32(8U + i * 4U, static_cast<std::uint32_t>(out.size()));
+                out.insert(out.end(), slots[i].begin(), slots[i].end());
+            }
+            return out;
+        };
+        const std::string manifest = "T 5\r\nM 7\r\nA 9\r\nE 3\r\n# End\r\n";
+        std::vector<std::uint8_t> texture(fx::kTextureDescriptorSize + 200U, 0U);
+        std::memcpy(texture.data() + fx::kTextureDescriptorSize, "DDS ", 4U);
+        const std::vector<std::uint8_t> model{'M', 'O', 'D', ' ', 1, 2, 3, 4};
+        std::vector<std::uint8_t> companion(16U, 0U);
+        companion[0] = 0x31U;
+        std::vector<std::uint8_t> sprite(336U, 0U);
+        const std::uint8_t header[] = {1, 5, 3, 1, 1, 0,
+                                       0, 0, 0, 0, 64, 0, 64, 0, 0, 0,     // frame 0: 0,0 64x64
+                                       64, 0, 0, 0, 32, 0, 16, 0, 0, 0};   // frame 1: 64,0 32x16
+        std::memcpy(sprite.data(), header, sizeof(header));
+        const std::vector<std::uint8_t> effect(544U, 9U);
+        const auto records = pnst({texture, model, companion, sprite, effect});
+        const auto bank_bytes = pnst({std::vector<std::uint8_t>(manifest.begin(), manifest.end()), records});
+        assert(fx::looks_like_bank(bank_bytes));
+        const auto bank = fx::parse_bank(bank_bytes);
+        assert(bank && bank->terminated && bank->record_slots == 5U && bank->records.size() == 4U);
+        assert(bank->records[0].kind == 'T' && bank->records[0].id == 5U && bank->records[0].slot == 0U);
+        assert(bank->records[1].kind == 'M' && bank->records[1].slot == 1U &&
+               bank->records[1].companion.size() == 16U);
+        assert(bank->records[2].kind == 'A' && bank->records[2].slot == 3U);   // after the companion
+        assert(bank->records[3].kind == 'E' && bank->records[3].bytes.size() == 544U);
+        assert(fx::texture_dds(bank->records[0]).size() >= 200U);   // + slot alignment
+        const auto anim = fx::sprite_animation(bank->records[2]);
+        assert(anim && anim->texture == 5U && anim->frame_time == 3U && anim->loop && anim->frames.size() == 2U &&
+               anim->frames[1].x == 64U && anim->frames[1].w == 32U && anim->frames[1].h == 16U);
+        assert(fx::registrar('M') == 0x1402E35D0ULL && fx::registrar('Z') == 0U);
+        assert(dmcresource::probe("x.bin", bank_bytes.data(), bank_bytes.size()).format ==
+               dmcresource::Format::EffectBank);
+        auto session = dmcresource::open_session("slot_0041.fxbank", bank_bytes.data(), bank_bytes.size());
+        assert(session && session->inspection.format == "FXBANK" && session->children.size() == 4U);
+        assert(session->children[0].suggested_filename == "T005.dds" &&
+               session->children[1].suggested_filename == "M007.mod" &&
+               session->children[2].suggested_filename == "A009.fxa" &&
+               session->children[2].image_preview.available());      // sprite view
+        auto sprite_child = dmcresource::open_session_child(session.get(), 2);
+        assert(sprite_child && sprite_child->image_preview.available());
+        const std::vector<std::uint8_t> plain = pnst({model, model});
+        assert(!fx::looks_like_bank(plain));
     }
 
     return 0;

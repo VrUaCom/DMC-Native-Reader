@@ -324,6 +324,36 @@ two-sided camera light on the face normal. The form stays readable, and EFM
 vertex colours come through as on PS2. The depth-shaded grey remains only
 for callers that pass no fallback.
 
+**Smooth lighting (v55).** MOD and SCM normals are kept as `Mesh::normal0`.
+Each frame the renderer rebuilds vertex normals from the current posed
+positions. It welds coincident vertices whose file normals agree, so strip
+seams become smooth while authored hard edges (the cube `at001`) stay hard.
+Lighting is Gouraud:
+- the neutral texture gets full lighting;
+- real textures get mild lighting;
+- COLOR0-prelit and additive or subtractive triangles are not lit.
+
+**Effect banks (v55).** Enemy and weapon effect banks have their own family,
+`FXBANK`:
+- em028 slot 9;
+- em000, em006 and em007 slot 41;
+- plwp_* slot 2.
+
+The EXE loader `0x1402C04C0` reads slot 0 (the manifest) with the `.tsc`
+tokenizer. For each `<kind> <id>` it hands the next record of slot 1 to the
+kind's registrar (A C E G M P T V). An `M` takes two slots, the model and a
+16-byte companion. A `#` token ends the manifest.
+
+The viewer lists every named record as a child file:
+- `T072.dds`: the 112-byte descriptor is dropped and the DDS decoded, with
+  thumbnails;
+- `M130.efm` / `M009.mod`: opens in 3D;
+- `A009.fxa`: a sprite animation drawn over its texture from the same bank,
+  with numbered frame rectangles and the frames in a row;
+- E / P / G / V / C: the raw binary view.
+
+Evidence: rengine `dmc3-effect-bank-loader-2026-09-24.md`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 15U);
+    assert(modules.size() == 16U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -76,6 +76,9 @@ int main() {
     assert(colindex != nullptr && colindex->format == Format::AttackIndex && !colindex->renderable);
     assert(probe("slot_0006.colidx", nullptr, 0U).format == Format::AttackIndex);
     assert(!probe("slot_0006.colidx", nullptr, 0U).content_confirmed);
+
+    const auto* fxbank = NativeModuleRegistry::find("FXBANK");
+    assert(fxbank != nullptr && fxbank->format == Format::EffectBank && !fxbank->renderable);
 
     // EFM effect models: own family, MOD document route (0x1402F7A90).
     const auto* efm = NativeModuleRegistry::find("EFM");

@@ -63,7 +63,7 @@ void collect(const Session& container,
         const auto kind = archive::classify_payload(child.source_bytes.data(),
                                                     child.source_bytes.size());
         const std::string name = prefix + child.suggested_filename;
-        if (kind.format == Format::Pac || kind.format == Format::Pnst) {
+        if (kind.format == Format::Pac || kind.format == Format::Pnst || kind.format == Format::EffectBank) {
             if (depth >= kMaxNestingDepth) continue;
             auto nested = open_session(name, child.source_bytes.data(), child.source_bytes.size());
             // A rejected archive opens as a raw binary view without children.
@@ -74,7 +74,8 @@ void collect(const Session& container,
             // slot 9 to 0x1402C04C0 (slot 0 table + slot 1 resource PNST),
             // never to a model loader; weapon PNSTs keep trails in slot 2.
             collect(*nested_owner->back(), archive, name + "/", depth + 1U,
-                    effect_bank || kind.format == Format::Pnst, nested_owner, out, report);
+                    effect_bank || kind.format == Format::Pnst || kind.format == Format::EffectBank,
+                    nested_owner, out, report);
             continue;
         }
         if (kind.shadow) ++report->shadows;

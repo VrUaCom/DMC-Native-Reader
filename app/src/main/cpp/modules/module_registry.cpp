@@ -23,6 +23,7 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         motion_script_module(),
         colshape_module(),
         colindex_module(),
+        effect_bank_module(),
     };
     return registry;
 }

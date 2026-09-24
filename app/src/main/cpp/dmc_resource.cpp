@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -81,6 +82,12 @@ ProbeResult probe(std::string_view filename,
     }
     // PNST: same relative-slot layout as PAC (weapon archives obj\\plwp_*.pac
     // use it despite the .pac name).
+    // Effect bank (loader 0x1402C04C0): a PNST whose slot 0 is the manifest.
+    if (magic4(bytes, size, 'P', 'N', 'S', 'T') &&
+        effect_bank::looks_like_bank(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::EffectBank, true, "FXBANK", "effect", "child-resources",
+                      "EXE_CONFIRMED", "application/vnd.dmc.fxbank");
+    }
     if (magic4(bytes, size, 'P', 'N', 'S', 'T')) {
         return result(Format::Pnst, true, "PNST", "archive", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.pac");
@@ -196,6 +203,7 @@ const char* format_name(Format format) noexcept {
     case Format::MotionScript: return "MotionScript";
     case Format::CollisionShapes: return "COLSHAPE";
     case Format::AttackIndex: return "COLINDEX";
+    case Format::EffectBank: return "FXBANK";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

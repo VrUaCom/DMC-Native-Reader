@@ -15,6 +15,7 @@
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_chart.h"
 #include "dmcresource/motion/uv_scroll.h"
@@ -44,7 +45,12 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "SCM ")) return {Format::Scm, "SCM", "scm"};
     if (magic_at(bytes, size, 0U, "DDS ")) return {Format::Dds, "DDS", "dds"};
     if (magic_at(bytes, size, 0U, "PAC\0")) return {Format::Pac, "PAC", "pac"};
-    if (magic_at(bytes, size, 0U, "PNST")) return {Format::Pnst, "PNST", "pnst"};
+    if (magic_at(bytes, size, 0U, "PNST")) {
+        if (effect_bank::looks_like_bank(std::span<const std::uint8_t>{bytes, size})) {
+            return {Format::EffectBank, "FXBANK", "fxbank"};
+        }
+        return {Format::Pnst, "PNST", "pnst"};
+    }
     if (magic_at(bytes, size, 0U, "EVT\0")) return {Format::Evt, "EventTbl", "bin"};
     if (magic_at(bytes, size, 4U, "MOT\0")) return {Format::Mot, "MOT", "mot"};
     if (magic_at(bytes, size, 0U, "SHW ")) {

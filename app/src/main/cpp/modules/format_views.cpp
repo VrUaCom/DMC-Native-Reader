@@ -579,6 +579,69 @@ ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>&
     return canvas.take();
 }
 
+ImagePreview render_sprite_view(const effect_bank::SpriteAnimation& a, std::uint32_t record_id,
+                                const ImagePreview* texture) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    char head[96];
+    std::snprintf(head, sizeof(head), "SPRITE A%u  TEXTURE T%03u  %zu FRAMES", record_id, a.texture, a.frames.size());
+    canvas.text(10, 8, head, raster::kAccent, scale);
+    std::snprintf(head, sizeof(head), "FRAME TIME %u  %s%s", a.frame_time, a.loop ? "LOOP" : "ONCE",
+                  texture == nullptr ? "  (TEXTURE NOT IN THIS BANK)" : "");
+    canvas.text(10, 8 + 9 * scale, head, raster::kDim, small);
+    const int top = 8 + 9 * scale + 9 * small + 12;
+    const int tw = texture != nullptr ? static_cast<int>(texture->width) : 256;
+    const int th = texture != nullptr ? static_cast<int>(texture->height) : 256;
+    const int box = kViewWidth - 40;
+    const float fit = std::min(static_cast<float>(box) / static_cast<float>(tw),
+                               static_cast<float>(kViewHeight / 2) / static_cast<float>(th));
+    const int x0 = 20, y0 = top;
+    const auto sample = [&](int tx, int ty) -> Rgb {
+        if (texture == nullptr || tx < 0 || ty < 0 || tx >= tw || ty >= th) return raster::kPanel;
+        const auto o = (static_cast<std::size_t>(ty) * texture->width + static_cast<std::size_t>(tx)) * 4U;
+        const float al = texture->rgba8[o + 3U] / 255.0F;
+        const auto mix = [al](std::uint8_t c, std::uint8_t bg) {
+            return static_cast<std::uint8_t>(c * al + bg * (1.0F - al));
+        };
+        return {mix(texture->rgba8[o], 28), mix(texture->rgba8[o + 1U], 29), mix(texture->rgba8[o + 2U], 36)};
+    };
+    const int dw = static_cast<int>(tw * fit), dh = static_cast<int>(th * fit);
+    for (int y = 0; y < dh; ++y) {
+        for (int x = 0; x < dw; ++x) {
+            canvas.put(x0 + x, y0 + y, sample(static_cast<int>(x / fit), static_cast<int>(y / fit)));
+        }
+    }
+    for (std::size_t i = 0U; i < a.frames.size(); ++i) {
+        const auto& f = a.frames[i];
+        const int fx0 = x0 + static_cast<int>(f.x * fit), fy0 = y0 + static_cast<int>(f.y * fit);
+        const int fx1 = x0 + static_cast<int>((f.x + f.w) * fit) - 1, fy1 = y0 + static_cast<int>((f.y + f.h) * fit) - 1;
+        canvas.line(fx0, fy0, fx1, fy0, raster::kAccent);
+        canvas.line(fx1, fy0, fx1, fy1, raster::kAccent);
+        canvas.line(fx1, fy1, fx0, fy1, raster::kAccent);
+        canvas.line(fx0, fy1, fx0, fy0, raster::kAccent);
+        canvas.text(fx0 + 3, fy0 + 3, std::to_string(i), raster::kAccent, small);
+    }
+    // Frame strip.
+    int sx = 20;
+    const int sy = y0 + dh + 20;
+    const int cell = 120;
+    for (std::size_t i = 0U; i < a.frames.size() && sy + cell < kViewHeight; ++i) {
+        const auto& f = a.frames[i];
+        if (f.w == 0U || f.h == 0U) continue;
+        if (sx + cell > kViewWidth - 10) break;
+        const float k = std::min(static_cast<float>(cell) / f.w, static_cast<float>(cell) / f.h);
+        for (int y = 0; y < static_cast<int>(f.h * k); ++y) {
+            for (int x = 0; x < static_cast<int>(f.w * k); ++x) {
+                canvas.put(sx + x, sy + y, sample(f.x + static_cast<int>(x / k), f.y + static_cast<int>(y / k)));
+            }
+        }
+        canvas.text(sx, sy + cell + 4, std::to_string(i), raster::kLabel, small);
+        sx += cell + 12;
+    }
+    return canvas.take();
+}
+
 BinaryProfile profile_binary(std::span<const std::uint8_t> bytes) {
     BinaryProfile out;
     out.size = bytes.size();
