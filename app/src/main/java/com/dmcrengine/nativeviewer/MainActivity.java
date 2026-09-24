@@ -114,6 +114,13 @@ public final class MainActivity extends Activity {
     private Button infoButton;
     private HorizontalScrollView motionScroll;
     private HorizontalScrollView toolScroll;
+    // In-viewport notice (replaces Toasts so messages never cover the motion
+    // strip or the tool bar).
+    private TextView noticeView;
+    private final Runnable hideNotice = () -> {
+        if (noticeView != null) noticeView.animate().alpha(0f).setDuration(250)
+                .withEndAction(() -> noticeView.setVisibility(View.GONE)).start();
+    };
     private LinearLayout motionBar;
 
     private long session;
@@ -181,6 +188,16 @@ public final class MainActivity extends Activity {
 
     // Unavailable tools are hidden rather than greyed out; the tool bar
     // scrolls sideways when the remaining ones do not fit.
+    private void notice(CharSequence text, int length) {
+        if (noticeView == null) return;
+        noticeView.removeCallbacks(hideNotice);
+        noticeView.animate().cancel();
+        noticeView.setText(text);
+        noticeView.setAlpha(1f);
+        noticeView.setVisibility(View.VISIBLE);
+        noticeView.postDelayed(hideNotice, length == Toast.LENGTH_LONG ? 3500 : 2000);
+    }
+
     private void setToolAvailable(Button button, boolean available) {
         button.setEnabled(available);
         button.setAlpha(1.0f);
@@ -374,6 +391,23 @@ public final class MainActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
 
+        noticeView = new TextView(this);
+        noticeView.setTextColor(Color.WHITE);
+        noticeView.setTextSize(14f);
+        noticeView.setMaxLines(3);
+        noticeView.setEllipsize(TextUtils.TruncateAt.END);
+        noticeView.setPadding(dp(14), dp(8), dp(14), dp(8));
+        noticeView.setBackgroundColor(Color.argb(210, 32, 34, 44));
+        noticeView.setVisibility(View.GONE);
+        noticeView.setOnClickListener(v -> hideNotice.run());
+        FrameLayout.LayoutParams noticeParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        noticeParams.topMargin = dp(10);
+        noticeParams.leftMargin = dp(12);
+        noticeParams.rightMargin = dp(12);
+        viewport.addView(noticeView, noticeParams);
+
         root.addView(viewport, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -451,12 +485,12 @@ public final class MainActivity extends Activity {
             if (collisionCursor >= ids.length) {
                 collisionCursor = -2;
                 renderView.setCollisionVisible(false);
-                Toast.makeText(this, "Hitboxes off", Toast.LENGTH_SHORT).show();
+                notice("Hitboxes off", Toast.LENGTH_SHORT);
             } else {
                 final int attack = collisionCursor < 0 ? -1 : ids[collisionCursor];
                 final String label = NativeBridge.selectCollisionAttack(session, attack);
                 renderView.setCollisionVisible(true);
-                Toast.makeText(this, "Hitboxes: " + label, Toast.LENGTH_SHORT).show();
+                notice("Hitboxes: " + label, Toast.LENGTH_SHORT);
             }
             applyResourceUiState();
         });
@@ -473,7 +507,7 @@ public final class MainActivity extends Activity {
             if (!blackWidowState.canShowUv) return;
             final long gallery = NativeBridge.openUvGallery(session);
             if (gallery == 0) {
-                Toast.makeText(this, "UV maps unavailable: incomplete bindings", Toast.LENGTH_LONG).show();
+                notice("UV maps unavailable: incomplete bindings", Toast.LENGTH_LONG);
                 return;
             }
             navigateToSession(gallery, titleView.getText() + " · UV");
@@ -662,9 +696,7 @@ public final class MainActivity extends Activity {
         refreshMotionStrip();
         if (bound) renderView.startMotion();
         else renderView.renderNow();
-        Toast.makeText(this,
-                bound ? entry.name + " ▶" : (report == null ? "Motion rejected" : report),
-                Toast.LENGTH_LONG).show();
+        notice(bound ? entry.name + " ▶" : (report == null ? "Motion rejected" : report), Toast.LENGTH_LONG);
         rebuildInfo(titleView.getText().toString());
         if (report != null && !report.isEmpty()) {
             setInfo(infoText + "\nMOTION\n" + report + "\n");
@@ -752,7 +784,7 @@ public final class MainActivity extends Activity {
             for (long handle : handles) if (handle != 0) NativeBridge.close(handle);
         }
         if (scene == 0) {
-            Toast.makeText(this, failure, Toast.LENGTH_LONG).show();
+            notice(failure, Toast.LENGTH_LONG);
             return;
         }
         final Uri character = assembledPacUri;
@@ -769,7 +801,7 @@ public final class MainActivity extends Activity {
         }
         for (Uri uri : extras) title.append(" + ").append(displayName(uri));
         activateSession(scene, title.toString());
-        Toast.makeText(this, title + " assembled", Toast.LENGTH_LONG).show();
+        notice(title + " assembled", Toast.LENGTH_LONG);
     }
 
     private void browseAssembledPac() {
@@ -782,7 +814,7 @@ public final class MainActivity extends Activity {
             archive = 0;
         }
         if (archive == 0) {
-            Toast.makeText(this, "Could not re-open " + name, Toast.LENGTH_LONG).show();
+            notice("Could not re-open " + name, Toast.LENGTH_LONG);
             return;
         }
         renderView.pauseMotion();
@@ -845,7 +877,7 @@ public final class MainActivity extends Activity {
 
     private void chooseAdditionalMods() {
         if (!hasModCompositionContext()) {
-            Toast.makeText(this, "Open a MOD scene first", Toast.LENGTH_LONG).show();
+            notice("Open a MOD scene first", Toast.LENGTH_LONG);
             return;
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -1059,9 +1091,7 @@ public final class MainActivity extends Activity {
         if (ROLE_MOTION.equals(role)) refreshMotionStrip();
         rebuildInfo(titleView.getText().toString());
         applyResourceUiState();
-        Toast.makeText(this,
-                added + " " + role + " resource(s) staged",
-                Toast.LENGTH_LONG).show();
+        notice(added + " " + role + " resource(s) staged", Toast.LENGTH_LONG);
     }
 
     private ArrayList<Uri> selectedUris(Intent data) {
@@ -1250,14 +1280,14 @@ public final class MainActivity extends Activity {
         } catch (Exception error) {
             setInfo(name + "\nOpen failed: " + error);
             applyResourceUiState();
-            Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
+            notice("Could not read file", Toast.LENGTH_LONG);
             return;
         }
 
         if (opened == 0) {
             setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX / PAC / MOT.");
             applyResourceUiState();
-            Toast.makeText(this, "Unsupported or malformed DMC resource", Toast.LENGTH_LONG).show();
+            notice("Unsupported or malformed DMC resource", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1295,7 +1325,7 @@ public final class MainActivity extends Activity {
             }
         }
         if (additions.isEmpty()) {
-            Toast.makeText(this, "No new MOD parts selected", Toast.LENGTH_LONG).show();
+            notice("No new MOD parts selected", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1342,9 +1372,7 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
-            Toast.makeText(this,
-                    failure == null ? "MOD composition failed" : failure,
-                    Toast.LENGTH_LONG).show();
+            notice(failure == null ? "MOD composition failed" : failure, Toast.LENGTH_LONG);
             return;
         }
 
@@ -1361,9 +1389,7 @@ public final class MainActivity extends Activity {
 
         activateSession(composite, "MOD scene · " + combinedUris.size() + " parts");
         reattachSavedPtxToComposite();
-        Toast.makeText(this,
-                combinedUris.size() + " MOD parts composed from the live base session",
-                Toast.LENGTH_LONG).show();
+        notice(combinedUris.size() + " MOD parts composed from the live base session", Toast.LENGTH_LONG);
     }
 
     private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets) {
@@ -1408,9 +1434,7 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
-            Toast.makeText(this,
-                    failure == null ? "MOD composition failed" : failure,
-                    Toast.LENGTH_LONG).show();
+            notice(failure == null ? "MOD composition failed" : failure, Toast.LENGTH_LONG);
             return;
         }
 
@@ -1425,9 +1449,7 @@ public final class MainActivity extends Activity {
 
         activateSession(composite, "MOD scene · " + uris.size() + " parts");
         reattachSavedPtxToComposite();
-        Toast.makeText(this,
-                uris.size() + " MOD parts composed in source coordinates",
-                Toast.LENGTH_LONG).show();
+        notice(uris.size() + " MOD parts composed in source coordinates", Toast.LENGTH_LONG);
     }
 
     private void reattachSavedPtxToComposite() {
@@ -1489,7 +1511,7 @@ public final class MainActivity extends Activity {
                     ? NativeBridge.attachPtxToPart(session, partIndex, pfd.getFd(), ptxName)
                     : NativeBridge.attachPtx(session, pfd.getFd(), ptxName);
         } catch (Exception error) {
-            Toast.makeText(this, "Could not read PTX", Toast.LENGTH_LONG).show();
+            notice("Could not read PTX", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1500,19 +1522,15 @@ public final class MainActivity extends Activity {
             renderView.renderNow();
             rebuildInfo(titleView.getText().toString());
             applyResourceUiState();
-            Toast.makeText(this,
-                    diagnostic == null || diagnostic.isEmpty()
+            notice(diagnostic == null || diagnostic.isEmpty()
                             ? "PTX textures attached"
-                            : diagnostic,
-                    Toast.LENGTH_LONG).show();
+                            : diagnostic, Toast.LENGTH_LONG);
         } else {
             rebuildInfo(titleView.getText().toString());
             applyResourceUiState();
-            Toast.makeText(this,
-                    diagnostic == null || diagnostic.isEmpty()
+            notice(diagnostic == null || diagnostic.isEmpty()
                             ? "PTX could not be matched to this model"
-                            : diagnostic,
-                    Toast.LENGTH_LONG).show();
+                            : diagnostic, Toast.LENGTH_LONG);
         }
     }
 
@@ -1615,9 +1633,7 @@ public final class MainActivity extends Activity {
         Bitmap bitmap = bitmapForSession(handle);
         boolean saved = saveBitmapToUri(bitmap, target);
         if (bitmap != null) bitmap.recycle();
-        Toast.makeText(this,
-                saved ? "PNG saved" : "Could not export PNG",
-                Toast.LENGTH_LONG).show();
+        notice(saved ? "PNG saved" : "Could not export PNG", Toast.LENGTH_LONG);
     }
 
     private void exportGalleryToTree(Uri treeUri) {
@@ -1625,7 +1641,7 @@ public final class MainActivity extends Activity {
         if (handle == 0) return;
         final int count = NativeBridge.childResourceCount(handle);
         if (count <= 0) {
-            Toast.makeText(this, "No gallery images to export", Toast.LENGTH_LONG).show();
+            notice("No gallery images to export", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1634,7 +1650,7 @@ public final class MainActivity extends Activity {
             String documentId = DocumentsContract.getTreeDocumentId(treeUri);
             parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
         } catch (RuntimeException error) {
-            Toast.makeText(this, "Selected folder is not writable", Toast.LENGTH_LONG).show();
+            notice("Selected folder is not writable", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1659,16 +1675,14 @@ public final class MainActivity extends Activity {
             }
         }
 
-        Toast.makeText(this,
-                "PNG export: " + saved + "/" + count,
-                Toast.LENGTH_LONG).show();
+        notice("PNG export: " + saved + "/" + count, Toast.LENGTH_LONG);
     }
 
     private void openChildResource(int index, String childTitle) {
         if (session == 0) return;
         final long child = NativeBridge.openChild(session, index);
         if (child == 0) {
-            Toast.makeText(this, "Could not open child resource", Toast.LENGTH_LONG).show();
+            notice("Could not open child resource", Toast.LENGTH_LONG);
             return;
         }
         navigateToSession(child, childTitle);

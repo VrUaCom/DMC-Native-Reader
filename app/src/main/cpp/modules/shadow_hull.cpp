@@ -1,5 +1,6 @@
 #include "dmcresource/shadow_hull.h"
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <span>
@@ -117,6 +118,27 @@ std::vector<Vec3> posed_hull_triangles(const Session& session) {
             if (!ok) continue;
             for (const auto index : hull.indices) out.push_back(posed[index]);
         }
+    }
+    return out;
+}
+
+std::vector<Vec3> mesh_floor_shadow(const Mesh& mesh, Vec3 light, float floor_y) {
+    std::vector<Vec3> out;
+    if (!(light.y < -1.0e-4F)) return out;
+    out.reserve(mesh.indices.size());
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        bool ok = true;
+        std::array<Vec3, 3> tri{};
+        for (std::size_t k = 0U; k < 3U && ok; ++k) {
+            const auto i = mesh.indices[t + k];
+            ok = i < mesh.vertices.size();
+            if (!ok) break;
+            const auto& p = mesh.vertices[i];
+            const float s = (floor_y - p.y) / light.y;
+            tri[k] = {p.x + light.x * s, floor_y, p.z + light.z * s};
+            ok = finite(tri[k]);
+        }
+        if (ok) out.insert(out.end(), tri.begin(), tri.end());
     }
     return out;
 }

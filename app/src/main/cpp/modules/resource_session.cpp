@@ -705,16 +705,19 @@ RgbaImage render_session(const Session* session, int requested_width,
         : &session->attached_textures;
     // SHW footprint on a floor under the feet (lowest rest vertex).
     std::vector<dmcresource::Vec3> floor_shadow;
-    if (!view.uv_layout && !session->shadow_bindings.empty() &&
-        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Shadows)) {
+    if (!view.uv_layout && dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Shadows)) {
         const auto& rest = view.framing_vertices.empty()
             ? std::span<const dmcresource::Vec3>{session->render_mesh.vertices}
             : view.framing_vertices;
         float floor_y = std::numeric_limits<float>::infinity();
         for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
         if (std::isfinite(floor_y)) {
-            floor_shadow = dmcresource::shadow::floor_shadow_triangles(
-                *session, dmcresource::shadow::kViewerLightDirection, floor_y);
+            // SHW hulls when the archive has them, else the mesh itself.
+            floor_shadow = session->shadow_bindings.empty()
+                ? dmcresource::shadow::mesh_floor_shadow(
+                      session->render_mesh, dmcresource::shadow::kViewerLightDirection, floor_y)
+                : dmcresource::shadow::floor_shadow_triangles(
+                      *session, dmcresource::shadow::kViewerLightDirection, floor_y);
             view.floor = true;
             view.floor_y = floor_y;
             view.floor_shadow = floor_shadow;

@@ -532,7 +532,9 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
         JNIEnv*, jclass, jlong handle) {
     const auto* session = from_handle(handle);
-    return session != nullptr && !session->shadow_bindings.empty() ? JNI_TRUE : JNI_FALSE;
+    // SHW hulls, or the mesh fallback for any renderable model.
+    return session != nullptr && (session->renderable || !session->shadow_bindings.empty()) ? JNI_TRUE
+                                                                                              : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

@@ -365,6 +365,21 @@ playback uses; host-joint parts such as coats do not count). Examples:
   (`mot-channel-domain-differs-from-model-nodes`). That binding remains an
   open research item.
 
+**Motion groups, shadows, messages (v57).**
+
+- **MOT binding.** `0x140310A61` walks every joint, consumes one mask per
+  joint and binds only joints of the evaluated motion group (`+0xF8`). A MOT
+  whose domain covers the leading joints therefore drives a model whose extra
+  trailing joints are in groups the covered joints do not use. The em000
+  bodies of variants 0–3 have 23 nodes, node 22 in group 2, and play slot 35's
+  22-node MOTs. All six em000 variants now animate: 77 MOTs each.
+- **Floor shadow.** The ◐ button is available for every renderable model.
+  With an SHW, the hulls cast the shadow. Without one (em000, lone MODs), the
+  mesh triangles are projected: a viewer fallback, not game data.
+- **Messages.** Messages appear in a notice at the top of the 3D view (tap to
+  dismiss) instead of Android toasts, so they no longer cover the motion
+  strip or the tool bar.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

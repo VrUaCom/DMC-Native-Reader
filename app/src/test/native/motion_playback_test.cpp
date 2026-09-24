@@ -277,5 +277,22 @@ int main() {
     const auto rejected = motion::load_motion(session.get(), "wrong.mot", wrong.data(), wrong.size());
     assert(!rejected.ok);
     assert(!motion::has_motion(session.get()));
+
+    // 0x140310A61 binds only joints of the evaluated motion group: a MOT
+    // covering the leading joints drives a model whose extra trailing joints
+    // belong to another group (em000: 22-node MOTs on 23-node bodies).
+    auto short_mot = make_translation_mot();
+    put_u16(short_mot, 0x1CU, 2U);
+    assert(!motion::load_motion(session.get(), "short.mot", short_mot.data(), short_mot.size()).ok);
+    auto grouped_mod = make_spatial_mod();
+    put_u8(grouped_mod, 0x229U, 2U);   // order position 1 = node 2 -> motion group 2
+    auto grouped = dmcresource::open_session("grouped.mod", grouped_mod.data(), grouped_mod.size());
+    assert(grouped && grouped->scene.rig && grouped->scene.rig->motion_group_by_node.size() == 3U &&
+           grouped->scene.rig->motion_group_by_node[2] == 2U);
+    const auto grouped_report =
+        motion::load_motion(grouped.get(), "short.mot", short_mot.data(), short_mot.size());
+    assert(grouped_report.ok && grouped_report.animated_parts == 1U);
+    assert(motion::motion_can_drive(*grouped, short_mot));
+    assert(!motion::motion_can_drive(*session, short_mot));
     return 0;
 }

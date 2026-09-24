@@ -128,10 +128,27 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
 
         const auto node_count = rig.node_count();
         if (node_count == 0U) return std::unexpected(ClipError::NoSkeleton);
-        if (static_cast<std::size_t>(parsed.document->channel_domain_count) != node_count) {
-            return std::unexpected(ClipError::NodeCountMismatch);
+        // 0x140310A61 walks every CMotionJoint, consumes one channel mask per
+        // joint and binds only joints whose motion group (+0xF8) is the one
+        // being evaluated; joints of other groups skip their tracks. A MOT
+        // whose domain covers the leading joints therefore drives a model
+        // with extra trailing joints when those joints belong to motion groups
+        // none of the covered joints uses (em000 bodies: 22-node MOTs, node 22
+        // in group 2). The extra joints keep their rest locals.
+        const auto domain = static_cast<std::size_t>(parsed.document->channel_domain_count);
+        if (domain != node_count) {
+            if (domain == 0U || domain > node_count || rig.motion_group_by_node.size() != node_count) {
+                return std::unexpected(ClipError::NodeCountMismatch);
+            }
+            for (std::size_t extra = domain; extra < node_count; ++extra) {
+                for (std::size_t covered = 0U; covered < domain; ++covered) {
+                    if (rig.motion_group_by_node[covered] == rig.motion_group_by_node[extra]) {
+                        return std::unexpected(ClipError::NodeCountMismatch);
+                    }
+                }
+            }
         }
-        const auto binding = mot_analysis::project_normal_binding(*parsed.document, node_count);
+        const auto binding = mot_analysis::project_normal_binding(*parsed.document, domain);
         if (!binding.has_value()) return std::unexpected(ClipError::BindingRejected);
 
         MotionClip clip;

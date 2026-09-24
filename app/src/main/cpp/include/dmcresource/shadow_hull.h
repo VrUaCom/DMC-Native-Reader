@@ -69,6 +69,11 @@ inline constexpr Vec3 kViewerLightDirection{0.35F, -1.0F, 0.25F};
 // Current hull vertices of every binding (selector joint skin matrices).
 [[nodiscard]] std::vector<Vec3> posed_hull_triangles(const Session& session);
 
+// Viewer fallback for models without an SHW (e.g. em000): the current mesh
+// triangles projected along `light` onto y = floor_y. Not game data -- the
+// game casts from the SHW hulls where it has them.
+[[nodiscard]] std::vector<Vec3> mesh_floor_shadow(const Mesh& mesh, Vec3 light, float floor_y);
+
 // Floor footprint: posed hull triangles projected along `light` onto y = floor_y.
 [[nodiscard]] std::vector<Vec3> floor_shadow_triangles(const Session& session,
                                                        Vec3 light,
