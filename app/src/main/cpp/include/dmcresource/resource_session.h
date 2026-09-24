@@ -12,6 +12,8 @@
 #include "dmcresource/composite_model.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/motion/motion_script.h"
+#include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/shadow_hull.h"
 #include "dmcresource/spider/black_widow.h"
@@ -65,6 +67,9 @@ struct Session {
     struct MotionPayload final {
         std::string name;
         std::vector<std::uint8_t> bytes;
+        // Motion script address (pl000_00_<bank>.pac, MOT index); -1 unknown.
+        int bank{-1};
+        int index{-1};
     };
     std::vector<MotionPayload> motion_library;
 
@@ -73,6 +78,11 @@ struct Session {
 
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;
+
+    // Player motion script (pl000.pac slot 5) and the weapon parts whose
+    // attach record follows it during playback.
+    std::shared_ptr<const motion::MotionScriptFile> motion_script;
+    std::vector<motion::WeaponBinding> weapon_bindings;
 
     // TSC texture scroll ranges (CDrawUV), advanced with motion playback.
     std::vector<motion::UvScrollBinding> uv_scrolls;

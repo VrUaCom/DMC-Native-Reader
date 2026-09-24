@@ -519,6 +519,45 @@ Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
     return out;
 }
 
+const WeaponStateRecord* weapon_state_record(std::string_view class_name,
+                                             std::uint8_t state) noexcept {
+    if (state >= 24U) return nullptr;
+    for (const auto& table : kWeaponStateTables) {
+        if (table.class_name != class_name) continue;
+        const auto& record = table.states[state];
+        if (record.branch > 1U) return nullptr;  // 255 empty, >= 2 special poses
+        return &record;
+    }
+    return nullptr;
+}
+
+bool set_weapon_state(Session* session, WeaponBinding& binding, std::uint8_t state) noexcept {
+    if (session == nullptr || binding.part >= session->composite_parts.size()) return false;
+    const auto* record = weapon_state_record(binding.class_name, state);
+    if (record == nullptr) return false;
+    try {
+        auto& placement = session->composite_parts[binding.part].placement;
+        const auto second = weapon_second_part(binding.class_name);
+        if (second && !placement.node_constraints.empty()) {
+            placement.node_constraints = {
+                {second->first_node, record->joint,
+                 attach_local_matrix(record->translation, record->rotation_xyz_radians)},
+                {second->second_node, record->second_joint,
+                 attach_local_matrix(record->second_translation,
+                                     record->second_rotation_xyz_radians)},
+            };
+        } else {
+            placement.attachment_selector = record->joint;
+            placement.attachment_offset =
+                attach_local_matrix(record->translation, record->rotation_xyz_radians);
+        }
+        binding.state = state;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
     return attach_local_matrix(record.translation, record.rotation_xyz_radians);
 }

@@ -1,5 +1,6 @@
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/motion_script.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/pac_assembly.h"
@@ -795,6 +796,37 @@ int main() {
         assert(!motion::looks_like_tsc(";pl000_02.clt\nClothNo 0\n"));
         assert(motion::tsc_slot_for("st/EM028.PAC", 6U) == 13U);
         assert(!motion::tsc_slot_for("em028.pac", 4U).has_value());
+    }
+
+    // Motion script (pl000.pac slot 5): header -> bank list -> MOT scripts;
+    // opcode 3 byte 2 low 6 bits = weapon state, opcode 0 = wait for frame.
+    {
+        const std::vector<std::uint8_t> file{
+            0x06, 0x00, 0x00, 0x00, 0x00, 0x00,  // +0: table at 6
+            0x04, 0x00,                          // table[0] -> bank list at 6 + 4
+            0x00, 0x00,
+            0x04, 0x00, 0xFF, 0xFF,              // bank 0 at 10 + 4
+            0x02, 0x00,                          // bank 0: MOT 0 script at 14 + 2
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x7F,  // play MOT
+            0x03, 0x80, 0x02, 0x00, 0x00, 0x00,  // state 2 (right hand)
+            0x00, 0x00, 0x0A, 0x00, 0x00, 0x00,  // wait frame 10
+            0x03, 0x80, 0x83, 0x00, 0x00, 0x00,  // state 3 (flag bits dropped)
+            0x00, 0x00, 0xFF, 0x7F, 0x00, 0x00,  // until the end
+        };
+        const auto script = motion::MotionScriptFile::parse(file);
+        assert(script && script->bank_count() == 1U);
+        const auto keys = script->weapon_states(0U, 0U);
+        assert(keys.size() == 2U && keys[0].state == 2U && keys[1].state == 3U);
+        assert(motion::weapon_state_at(keys, 0.0F) == 2U);
+        assert(motion::weapon_state_at(keys, 10.0F) == 2U);   // runs once past frame 10
+        assert(motion::weapon_state_at(keys, 11.0F) == 3U);
+        assert(motion::player_motion_bank("motion/PL000_00_13.PAC") == 13U);
+        assert(!motion::player_motion_bank("pl000.pac").has_value());
+        const auto* hand = motion::weapon_state_record("CPlWpSword", 2U);
+        assert(hand != nullptr && hand->joint == 9U && near(hand->translation[0], -7.6F));
+        assert(motion::weapon_state_record("CPlWpSword", 3U)->joint == 13U);
+        assert(motion::weapon_state_record("CPlWpSword", 7U) == nullptr);   // empty
+        assert(motion::weapon_state_record("CPlWpGuitar", 5U) == nullptr);  // play pose
     }
 
     // The same layout under a non-player name is not guessed at.

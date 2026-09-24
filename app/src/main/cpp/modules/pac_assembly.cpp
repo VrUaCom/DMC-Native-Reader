@@ -261,9 +261,29 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 const auto bank = entry.archive < archive_names.size()
                     ? motion::weapon_motion_bank(archive_names[entry.archive])
                     : std::nullopt;
-                motions.push_back({bank ? std::string{bank->weapon_name} + " · " + entry.name
-                                        : entry.name,
-                                   *entry.bytes});
+                Session::MotionPayload payload{
+                    bank ? std::string{bank->weapon_name} + " · " + entry.name : entry.name,
+                    *entry.bytes};
+                // Motion script address: pl000.pac slots 2/3/4 hold banks 0/1/2
+                // (pl000_00_0..2), an added pl000_00_<N>.pac is bank N; the MOT
+                // index is its slot.
+                if (entry.slot) {
+                    std::optional<std::size_t> script_bank;
+                    if (entry.archive == 0U && player_archive(archive_name) && entry.depth == 1U) {
+                        for (std::uint32_t k = 2U; k <= 4U; ++k) {
+                            if (entry.container == archive::slot_filename(k, {Format::Pac, "PAC", "pac"}) + "/") {
+                                script_bank = k - 2U;
+                            }
+                        }
+                    } else if (entry.archive < archive_names.size() && entry.depth == 0U) {
+                        script_bank = motion::player_motion_bank(archive_names[entry.archive]);
+                    }
+                    if (script_bank) {
+                        payload.bank = static_cast<int>(*script_bank);
+                        payload.index = static_cast<int>(*entry.slot);
+                    }
+                }
+                motions.push_back(std::move(payload));
             }
         }
         if (models.empty()) {
@@ -473,6 +493,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         }};
                         if (motion::attach_part_nodes(assembled.get(), *body, part, nodes)) {
                             ++report.attached_parts;
+                            assembled->weapon_bindings.push_back({part, record->class_name, 0U});
                             report.detail_attachments += " " + std::string{record->class_name} +
                                 "->bodyJoint" + std::to_string(record->joint) + "(node" +
                                 std::to_string(second->first_node) + "+node" +
@@ -483,6 +504,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     if (motion::attach_part_skeleton(assembled.get(), *body, part,
                                                      record->joint, false, offset)) {
                         ++report.attached_parts;
+                        assembled->weapon_bindings.push_back({part, record->class_name, 0U});
                         report.detail_attachments += " " + std::string{record->class_name} +
                             "->bodyJoint" + std::to_string(record->joint);
                     }
@@ -619,6 +641,21 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         report.models = models.size();
         report.motions = motions.size();
         assembled->motion_library = std::move(motions);
+        // IPlayer motion script: pl000.pac slot 5 (resource type 0, slot 5 of
+        // the character archive, 0x1401EF461).
+        if (player_archive(archive_name)) {
+            for (const auto& e : entries) {
+                if (e.archive != 0U || !e.container.empty() || e.slot != 5U) continue;
+                auto script = motion::MotionScriptFile::parse(
+                    std::span<const std::uint8_t>{e.bytes->data(), e.bytes->size()});
+                if (script) {
+                    report.detail_attachments += " motionScript=slot5(" +
+                        std::to_string(script->bank_count()) + " banks)";
+                    assembled->motion_script =
+                        std::make_shared<const motion::MotionScriptFile>(std::move(*script));
+                }
+            }
+        }
         assembled->children = pac.children;
         (void)archive_name;
         if (!assembled->children.empty()) {

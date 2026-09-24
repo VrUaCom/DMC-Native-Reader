@@ -14,6 +14,7 @@
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/motion/motion_clip.h"
+#include "dmcresource/motion/motion_script.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/resource_session.h"
@@ -110,6 +111,8 @@ struct MotionState final {
     float last_frame{-1.0F};
     // Game-frame clock for TSC scrolls (keeps running across loops).
     float scroll_clock{};
+    // Weapon attach states from the motion script (pl000.pac slot 5).
+    std::vector<WeaponStateKey> weapon_keys;
 };
 
 namespace {
@@ -183,6 +186,15 @@ MotionLoadReport load_motion(Session* session,
             reinterpret_cast<const std::byte*>(bytes), size};
         auto state = std::make_shared<MotionState>();
         state->name = std::string{name};
+        // Motion script: weapon attach state per frame (0x1401F01F0).
+        if (session->motion_script != nullptr) {
+            for (const auto& payload : session->motion_library) {
+                if (payload.name != name || payload.bank < 0 || payload.index < 0) continue;
+                state->weapon_keys = session->motion_script->weapon_states(
+                    static_cast<std::size_t>(payload.bank), static_cast<std::size_t>(payload.index));
+                break;
+            }
+        }
 
         std::string reasons;
         std::size_t vertex_cursor = 0U;
@@ -356,6 +368,14 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
             state.scroll_clock += delta < 0.0F ? 1.0F : delta;
         }
         state.last_frame = frame;
+        // Weapon in hand / on the back as the motion script says; before the
+        // first key the default state 0 (idle record) holds.
+        if (!session->weapon_bindings.empty()) {
+            const auto wanted = weapon_state_at(state.weapon_keys, frame);
+            for (auto& binding : session->weapon_bindings) {
+                if (wanted != binding.state) (void)set_weapon_state(session, binding, wanted);
+            }
+        }
         (void)apply_part_attachments(session, cloth_steps);
         (void)apply_uv_scrolls(session, state.scroll_clock);
         HierarchyOverlay overlay;
@@ -382,6 +402,12 @@ void clear_motion(Session* session) noexcept {
     }
     session->hierarchy_overlay = std::move(state->source_overlay);
     (void)apply_uv_scrolls(session, 0.0F);
+    // Back to the idle attach record.
+    bool moved = false;
+    for (auto& binding : session->weapon_bindings) {
+        if (binding.state != 0U) moved = set_weapon_state(session, binding, 0U) || moved;
+    }
+    if (moved) (void)apply_part_attachments(session);
 }
 
 bool has_motion(const Session* session) noexcept {

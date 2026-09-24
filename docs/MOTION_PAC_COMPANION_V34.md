@@ -216,6 +216,18 @@ a tenth position, `CEm005Shl01`: the projectile model in slot 23 with PTX 32
 - Nevan's hair collides with three capsules on body joints 5/4/3
   (`0x140130D9A`). The dress and em000 cloaks have no collision in the game.
 
+**Weapon in hand (v49).** pl000.pac slot 5 is the player motion script
+(`motion/motion_script.cpp`): 34 banks (= `pl000_00_N.pac`; pl000.pac slots
+2/3/4 are banks 0/1/2), one byte-code script per MOT. Opcode 3 byte 2 (low 6
+bits) is the weapon attach state that `0x1401F01F0` copies to
+`player+0x39C3`; opcode 0 waits for a frame. Every motion library entry knows
+its bank and MOT index, and while it plays the viewer re-points each attached
+weapon at the class's record for the current state (tables from the EXE, 24
+states per class: Rebellion 0/1 back, 2 right hand joint 9, 3 left hand joint
+13). States 0, empty records and special pose branches (Nevan's play poses)
+keep the previous record; stopping the motion returns to state 0. Evidence:
+rengine `docs/research/dmc3-player-motion-script-2026-09-24.md`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
