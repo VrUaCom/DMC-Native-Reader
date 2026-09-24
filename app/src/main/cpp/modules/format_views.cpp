@@ -471,7 +471,7 @@ ImagePreview render_collision_view(const std::vector<collision::Shape>& shapes) 
             grow(s.a, s.radius);
             grow(s.b, s.radius);
         }
-        if (s.type == 3U) grow(s.a, 0.5F * std::max({s.size[0], s.size[1], s.size[2]}) * 1.8F);
+        if (s.type == 3U) grow(s.a, std::max({s.size[0], s.size[1], s.size[2]}) * 1.8F);
     }
     if (lo[0] > hi[0]) {
         canvas.text(10, 80, "NO SPHERE / BOX / CAPSULE RECORDS", raster::kLabel, scale);
@@ -517,8 +517,9 @@ ImagePreview render_collision_view(const std::vector<collision::Shape>& shapes) 
             } else if (s.type == 3U) {
                 std::array<std::array<int, 2>, 8> corner{};
                 for (int k = 0; k < 8; ++k) {
-                    std::array<float, 3> q{(k & 1 ? 0.5F : -0.5F) * s.size[0], (k & 2 ? 0.5F : -0.5F) * s.size[1],
-                                           (k & 4 ? 0.5F : -0.5F) * s.size[2]};
+                    // Unit cube corners are +-1 (0x1405CEC60): size is the half extent.
+                    std::array<float, 3> q{(k & 1 ? 1.0F : -1.0F) * s.size[0], (k & 2 ? 1.0F : -1.0F) * s.size[1],
+                                           (k & 4 ? 1.0F : -1.0F) * s.size[2]};
                     q = rotate_euler(q, s.b);
                     corner[static_cast<std::size_t>(k)] = P({s.a[0] + q[0], s.a[1] + q[1], s.a[2] + q[2]});
                 }

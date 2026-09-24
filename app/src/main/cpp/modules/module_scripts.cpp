@@ -301,7 +301,7 @@ PipelineResult run_colshape_module(const NativeModule& module,
             case 3U:
                 node.title = "#" + std::to_string(i) + " box";
                 v << "centre " << s.a[0] << ", " << s.a[1] << ", " << s.a[2] << "  rotation " << s.b[0]
-                  << ", " << s.b[1] << ", " << s.b[2] << " deg  size " << s.size[0] << ", " << s.size[1]
+                  << ", " << s.b[1] << ", " << s.b[2] << " deg  half size " << s.size[0] << ", " << s.size[1]
                   << ", " << s.size[2];
                 break;
             case 4U:

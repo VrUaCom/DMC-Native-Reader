@@ -28,7 +28,8 @@ struct AttackEntry final {
 
 enum class ShapeType : std::uint8_t {
     Sphere = 2,   // centre +0x10, radius +0x20
-    Box = 3,      // centre +0x10, Euler degrees +0x1C/+0x20/+0x24, size +0x28 (0x1402CC115)
+    Box = 3,      // centre +0x10, Euler degrees +0x1C/+0x20/+0x24, half size +0x28 (0x1402CC115,
+                  // corners +-1 at 0x1405CEC60)
     Capsule = 4,  // a +0x10, b +0x20, radius +0x30 (0x1402CC300)
 };
 
@@ -36,7 +37,7 @@ struct Shape final {
     std::uint8_t type{};  // ShapeType, other values kept as read (0..6 dispatch)
     std::array<float, 3> a{};
     std::array<float, 3> b{};  // capsule end; box Euler degrees
-    std::array<float, 3> size{};
+    std::array<float, 3> size{};  // box half extents
     float radius{};
     std::array<float, 16> raw{};  // +0x10..+0x4C as read
 };
