@@ -17,6 +17,7 @@
 
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/stage_room.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/pac_assembly.h"
@@ -535,6 +536,48 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
     // SHW hulls, or the mesh fallback for any renderable model.
     return session != nullptr && (session->renderable || !session->shadow_bindings.empty()) ? JNI_TRUE
                                                                                               : JNI_FALSE;
+}
+
+// Viewer room (stage_room.h): built from a file descriptor, kept natively and
+// drawn around every non-stage model while RenderFlag::Room is set.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return nullptr;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return nullptr;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto room = dmcresource::stage_room::build_room(name, mapped.data(), mapped.size());
+        if (!room) return nullptr;
+        const auto detail = room->detail;
+        dmcresource::stage_room::set_current(std::move(room));
+        return env->NewStringUTF(detail.c_str());
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoom(JNIEnv*, jclass) {
+    dmcresource::stage_room::set_current(nullptr);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomSpotCount(JNIEnv*, jclass) {
+    const auto room = dmcresource::stage_room::current();
+    return room ? static_cast<jint>(room->spots.size()) : 0;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_nextRoomSpot(JNIEnv*, jclass) {
+    dmcresource::stage_room::set_spot(dmcresource::stage_room::spot() + 1U);
+    return static_cast<jint>(dmcresource::stage_room::spot());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_isStageSession(
+        JNIEnv*, jclass, jlong handle) {
+    const auto* session = from_handle(handle);
+    return session != nullptr && dmcresource::stage_room::is_stage_session(*session) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

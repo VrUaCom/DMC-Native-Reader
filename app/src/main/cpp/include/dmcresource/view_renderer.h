@@ -19,6 +19,7 @@ enum class RenderFlag : std::uint32_t {
     UvLayout = 1U << 5U,
     Shadows = 1U << 6U,
     Collision = 1U << 7U,
+    Room = 1U << 8U,
 };
 
 using RenderFlags = std::uint32_t;
@@ -52,6 +53,15 @@ struct ViewState {
     // Texture for triangles without one (neutral_texture.h); lit by a
     // camera light so the form stays readable. nullptr: depth-shaded grey.
     const ImagePreview* fallback_texture{nullptr};
+    // Optional room (stage_room.h) drawn around the model instead of the
+    // floor: its mesh moved by room_offset, near-plane clipped, perspective-
+    // correct, faces turned away from the camera skipped (so the wall between
+    // the camera and the model does not hide it).
+    const Mesh* room_mesh{nullptr};
+    const std::vector<std::uint32_t>* room_texture_slots{nullptr};
+    const std::vector<ImagePreview>* room_textures{nullptr};
+    const std::vector<std::uint8_t>* room_translucent_triangles{nullptr};
+    Vec3 room_offset{};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,

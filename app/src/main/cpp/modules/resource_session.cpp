@@ -3,6 +3,7 @@
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
+#include "dmcresource/stage_room.h"
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/format_views.h"
@@ -721,6 +722,36 @@ RgbaImage render_session(const Session* session, int requested_width,
             view.floor = true;
             view.floor_y = floor_y;
             view.floor_shadow = floor_shadow;
+        }
+    }
+    // Room (stage_room.h): the chosen stage around the model, its floor spot
+    // under the model's feet; a stage itself is shown without one.
+    std::shared_ptr<const stage_room::Room> room;
+    if (!view.uv_layout && !view.wireframe &&
+        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Room) &&
+        !stage_room::is_stage_session(*session)) {
+        room = stage_room::current();
+    }
+    if (room) {
+        const auto& rest = view.framing_vertices.empty()
+            ? std::span<const dmcresource::Vec3>{session->render_mesh.vertices}
+            : view.framing_vertices;
+        if (!rest.empty()) {
+            double sx = 0.0, sz = 0.0;
+            float low = std::numeric_limits<float>::infinity();
+            for (const auto& v : rest) {
+                sx += v.x;
+                sz += v.z;
+                low = std::min(low, v.y);
+            }
+            const auto n = static_cast<double>(rest.size());
+            const auto& spots = room->spots;
+            const Vec3 spot = spots.empty() ? Vec3{} : spots[stage_room::spot() % spots.size()];
+            view.room_mesh = &room->mesh;
+            view.room_texture_slots = &room->triangle_texture_slots;
+            view.room_textures = &room->textures;
+            view.room_translucent_triangles = &room->translucent_triangles;
+            view.room_offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
         }
     }
     // Attack collision shapes on the current pose (debug meshes at000-at003).

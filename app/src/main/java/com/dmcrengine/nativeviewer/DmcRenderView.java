@@ -16,6 +16,7 @@ public final class DmcRenderView extends View {
     private static final int RENDER_UV_LAYOUT = 1 << 5;
     private static final int RENDER_SHADOWS = 1 << 6;
     private static final int RENDER_COLLISION = 1 << 7;
+    private static final int RENDER_ROOM = 1 << 8;
 
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final ScaleGestureDetector scaleDetector;
@@ -28,6 +29,9 @@ public final class DmcRenderView extends View {
     private float pitch = -0.45f;
     private float zoom = 1.0f;
     private int renderFlags;
+    // The chosen room (Settings): kept across sessions; native skips it for
+    // stages (SCM / archives holding SCM) and in wireframe / UV views.
+    private boolean roomVisible;
     private boolean hierarchyAvailable;
     private boolean staticImagePreview;
     private float lastX;
@@ -144,7 +148,7 @@ public final class DmcRenderView extends View {
         pauseMotion();
         session = newSession;
         // Shadows start on; native ignores the flag when no SHW is bound.
-        renderFlags = RENDER_SHADOWS;
+        renderFlags = RENDER_SHADOWS | (roomVisible ? RENDER_ROOM : 0);
         hierarchyAvailable = false;
         staticImagePreview = false;
         releaseBitmap();
@@ -233,6 +237,21 @@ public final class DmcRenderView extends View {
         if (staticImagePreview || isUvLayoutVisible()) return;
         renderFlags ^= RENDER_SHADOWS;
         renderNow();
+    }
+
+    public void setRoomVisible(boolean visible) {
+        roomVisible = visible;
+        if (isUvLayoutVisible()) return;
+        if (visible) {
+            renderFlags |= RENDER_ROOM;
+        } else {
+            renderFlags &= ~RENDER_ROOM;
+        }
+        if (!staticImagePreview) renderNow();
+    }
+
+    public void refreshRoom() {
+        if (!staticImagePreview && !isUvLayoutVisible()) renderNow();
     }
 
     public void setCollisionVisible(boolean visible) {

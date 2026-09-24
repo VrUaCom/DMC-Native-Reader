@@ -84,6 +84,12 @@ public final class NativeBridge {
 
     // Attack collision shapes on the body bones (drawn with RENDER_COLLISION):
     // used attack ids, and the selection (-1 = every attack) with its label.
+    /** Builds the viewer room from a stage archive; its summary, or null. */
+    public static native String loadRoom(int fd, String filename);
+    public static native void clearRoom();
+    public static native int roomSpotCount();
+    public static native int nextRoomSpot();
+    public static native boolean isStageSession(long handle);
     public static native boolean hasCollision(long handle);
     public static native int[] collisionAttackIds(long handle);
     public static native String selectCollisionAttack(long handle, int attack);

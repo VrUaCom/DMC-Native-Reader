@@ -219,6 +219,30 @@ void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
     return true;
 }
 
+// Bilinear, wrapping (room textures are magnified a lot near the camera).
+[[nodiscard]] bool sample_bilinear(const ImagePreview& texture, float u, float v, float* rgba) noexcept {
+    if (!texture.available() || !std::isfinite(u) || !std::isfinite(v)) return false;
+    const auto w = static_cast<int>(texture.width);
+    const auto h = static_cast<int>(texture.height);
+    if (texture.rgba8.size() < static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4U) return false;
+    const float x = repeat_unit(u) * static_cast<float>(w) - 0.5F;
+    const float y = repeat_unit(v) * static_cast<float>(h) - 0.5F;
+    const float fx0 = std::floor(x), fy0 = std::floor(y);
+    const float tx = x - fx0, ty = y - fy0;
+    const int x0 = (static_cast<int>(fx0) % w + w) % w, x1 = (x0 + 1) % w;
+    const int y0 = (static_cast<int>(fy0) % h + h) % h, y1 = (y0 + 1) % h;
+    const auto at = [&](int px, int py, int k) {
+        return static_cast<float>(texture.rgba8[(static_cast<std::size_t>(py) * static_cast<std::size_t>(w) +
+                                                 static_cast<std::size_t>(px)) * 4U + static_cast<std::size_t>(k)]);
+    };
+    for (int k = 0; k < 4; ++k) {
+        const float top = at(x0, y0, k) + (at(x1, y0, k) - at(x0, y0, k)) * tx;
+        const float bottom = at(x0, y1, k) + (at(x1, y1, k) - at(x0, y1, k)) * tx;
+        rgba[k] = top + (bottom - top) * ty;
+    }
+    return true;
+}
+
 void draw_uv_layout(std::span<const Vec2> coordinates,
                     std::span<const std::uint32_t> indices,
                     const ViewState& view, RgbaImage* image) {
@@ -367,6 +391,206 @@ RgbaImage make_canvas(int width, int height) {
 
 }  // namespace
 
+// Room pass (stage_room.h): the room triangles in camera space, clipped at
+// a near plane (the room surrounds the camera), faces whose source normal
+// points away from the camera skipped, textures interpolated perspective-
+// correctly. Depth uses the model pass's convention (camera z - distance).
+static void draw_room(const ViewState& view, const CameraFrame& frame, float zoom, RgbaImage& image,
+               std::vector<float>& depth) {
+    const Mesh& rm = *view.room_mesh;
+    const bool uv = rm.has_uv0();
+    const bool colored = rm.has_color0();
+    const bool normals = rm.has_normal0();
+    const bool textured = uv && view.room_textures != nullptr && view.room_texture_slots != nullptr &&
+        view.room_texture_slots->size() == rm.indices.size() / 3U;
+    const float near_z = std::max(1.0F, frame.radius * 0.05F);
+    const float focal = zoom * frame.focal_px;
+    const float hw = static_cast<float>(image.width) * 0.5F;
+    const float hh = static_cast<float>(image.height) * 0.5F;
+    const float cd = frame.camera_distance;
+
+    struct Cv final { float x, y, z, u, v, r, g, b, a; };
+    struct Sv final { float x, y, iz, uz, vz, rz, gz, bz, az; };
+    const auto camera = [&](std::uint32_t i) {
+        const auto& w = rm.vertices[i];
+        const Vec3 local{w.x + view.room_offset.x - frame.center.x, w.y + view.room_offset.y - frame.center.y,
+                         w.z + view.room_offset.z - frame.center.z};
+        const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
+        Cv out{r.x, r.y, r.z + cd, 0.0F, 0.0F, 128.0F, 128.0F, 128.0F, 128.0F};
+        if (uv) {
+            out.u = rm.uv0[i].u;
+            out.v = rm.uv0[i].v;
+        }
+        if (colored) {
+            out.r = rm.color0[i][0];
+            out.g = rm.color0[i][1];
+            out.b = rm.color0[i][2];
+            out.a = rm.color0[i][3];
+        }
+        return out;
+    };
+    const auto mix = [](const Cv& a, const Cv& b, float t) {
+        const auto l = [t](float p, float q) { return p + (q - p) * t; };
+        return Cv{l(a.x, b.x), l(a.y, b.y), l(a.z, b.z), l(a.u, b.u), l(a.v, b.v),
+                  l(a.r, b.r), l(a.g, b.g), l(a.b, b.b), l(a.a, b.a)};
+    };
+
+    std::vector<Cv> poly;
+    std::vector<Cv> clipped;
+    std::vector<Sv> screen;
+    const auto* soft = view.room_translucent_triangles != nullptr &&
+            view.room_translucent_triangles->size() == rm.indices.size() / 3U
+        ? view.room_translucent_triangles
+        : nullptr;
+    // Pass 0: opaque texels (depth written); pass 1: soft-alpha texels of
+    // flagged triangles blended over what is already drawn.
+    for (int pass = 0; pass < 2; ++pass) {
+    for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
+        const bool translucent = soft != nullptr && (*soft)[t / 3U] != 0U;
+        if (pass == 1 && !translucent) continue;
+        const std::uint32_t idx[3] = {rm.indices[t], rm.indices[t + 1U], rm.indices[t + 2U]};
+        if (idx[0] >= rm.vertices.size() || idx[1] >= rm.vertices.size() || idx[2] >= rm.vertices.size()) continue;
+        poly = {camera(idx[0]), camera(idx[1]), camera(idx[2])};
+        if (poly[0].z < near_z && poly[1].z < near_z && poly[2].z < near_z) continue;
+
+        // Facing: source normal against the view ray of the first corner.
+        float facing = 1.0F;
+        if (normals) {
+            const Vec3 n{rm.normal0[idx[0]].x + rm.normal0[idx[1]].x + rm.normal0[idx[2]].x,
+                         rm.normal0[idx[0]].y + rm.normal0[idx[1]].y + rm.normal0[idx[2]].y,
+                         rm.normal0[idx[0]].z + rm.normal0[idx[1]].z + rm.normal0[idx[2]].z};
+            const auto nr = rotate(n, view.yaw_radians, view.pitch_radians);
+            const float nl = std::sqrt(nr.x * nr.x + nr.y * nr.y + nr.z * nr.z);
+            const float pl = std::sqrt(poly[0].x * poly[0].x + poly[0].y * poly[0].y + poly[0].z * poly[0].z);
+            if (nl > 0.0F && pl > 0.0F) {
+                const float d = (nr.x * poly[0].x + nr.y * poly[0].y + nr.z * poly[0].z) / (nl * pl);
+                if (d > 0.0F) continue;  // turned away from the camera
+                facing = -d;
+            }
+        }
+
+        clipped.clear();
+        for (std::size_t i = 0U; i < poly.size(); ++i) {
+            const auto& a = poly[i];
+            const auto& b = poly[(i + 1U) % poly.size()];
+            const bool ina = a.z >= near_z;
+            const bool inb = b.z >= near_z;
+            if (ina) clipped.push_back(a);
+            if (ina != inb) clipped.push_back(mix(a, b, (near_z - a.z) / (b.z - a.z)));
+        }
+        if (clipped.size() < 3U) continue;
+
+        screen.clear();
+        float minx = std::numeric_limits<float>::max(), maxx = -minx;
+        float miny = minx, maxy = -minx;
+        for (const auto& c : clipped) {
+            const float iz = 1.0F / c.z;
+            const Sv s{hw + focal * c.x * iz, hh - focal * c.y * iz, iz, c.u * iz, c.v * iz,
+                       c.r * iz, c.g * iz, c.b * iz, c.a * iz};
+            minx = std::min(minx, s.x);
+            maxx = std::max(maxx, s.x);
+            miny = std::min(miny, s.y);
+            maxy = std::max(maxy, s.y);
+            screen.push_back(s);
+        }
+        if (maxx < 0.0F || maxy < 0.0F || minx >= static_cast<float>(image.width) ||
+            miny >= static_cast<float>(image.height)) {
+            continue;
+        }
+
+        const ImagePreview* texture = nullptr;
+        if (textured) {
+            const auto slot = (*view.room_texture_slots)[t / 3U];
+            if (slot != kNoTextureSlot && slot < view.room_textures->size() &&
+                (*view.room_textures)[slot].available()) {
+                texture = &(*view.room_textures)[slot];
+            }
+        }
+        const bool neutral = texture == nullptr && view.fallback_texture != nullptr &&
+            view.fallback_texture->available();
+        if (neutral) texture = view.fallback_texture;
+        // Stages are prelit (COLOR0); a soft head light keeps unlit ones readable.
+        const float light = colored && !neutral ? 1.0F : (neutral ? 0.45F + 0.55F * facing : 0.7F + 0.3F * facing);
+
+        for (std::size_t k = 1U; k + 1U < screen.size(); ++k) {
+            const Sv& a = screen[0];
+            const Sv& b = screen[k];
+            const Sv& c = screen[k + 1U];
+            const P2 pa{a.x, a.y, 0.0F}, pb{b.x, b.y, 0.0F}, pc{c.x, c.y, 0.0F};
+            const float area = edge(pa, pb, c.x, c.y);
+            if (std::fabs(area) < 1.0e-6F) continue;
+            const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+            const int y0 = std::max(0, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+            const int x1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+            const int y1 = std::min(image.height - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+            for (int y = y0; y <= y1; ++y) {
+                for (int x = x0; x <= x1; ++x) {
+                    const float px = static_cast<float>(x) + 0.5F;
+                    const float py = static_cast<float>(y) + 0.5F;
+                    const float w0 = edge(pb, pc, px, py) / area;
+                    const float w1 = edge(pc, pa, px, py) / area;
+                    const float w2 = edge(pa, pb, px, py) / area;
+                    if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
+                    const float iz = w0 * a.iz + w1 * b.iz + w2 * c.iz;
+                    if (!(iz > 0.0F)) continue;
+                    const float zc = 1.0F / iz;
+                    const float dz = zc - cd;
+                    const auto pi = static_cast<std::size_t>(y * image.width + x);
+                    if (dz >= depth[pi]) continue;
+                    const auto at = [&](float p, float q, float r) { return (w0 * p + w1 * q + w2 * r) * zc; };
+                    float cr = 128.0F, cg = 128.0F, cb = 128.0F;
+                    if (texture != nullptr) {
+                        float texel[4];
+                        if (!sample_bilinear(*texture, at(a.uz, b.uz, c.uz), at(a.vz, b.vz, c.vz), texel)) {
+                            continue;
+                        }
+                        if (texel[3] < 8.0F) continue;
+                        const bool opaque = texel[3] >= 240.0F || !translucent;
+                        if (opaque ? pass == 1 : pass == 0) continue;
+                        if (!translucent && texel[3] < 32.0F) continue;  // alpha-tested cut-outs
+                        cr = texel[0];
+                        cg = texel[1];
+                        cb = texel[2];
+                        if (!opaque) {
+                            float rz = 1.0F, gz = 1.0F, bz = 1.0F;
+                            if (colored) {
+                                rz = at(a.rz, b.rz, c.rz) / 128.0F;
+                                gz = at(a.gz, b.gz, c.gz) / 128.0F;
+                                bz = at(a.bz, b.bz, c.bz) / 128.0F;
+                            }
+                            const float k = texel[3] / 255.0F;
+                            const auto o = pi * 4U;
+                            const auto mixc = [&](std::size_t ch, float value) {
+                                const float d = image.pixels[o + ch];
+                                image.pixels[o + ch] = static_cast<std::uint8_t>(
+                                    std::clamp(static_cast<int>(d + (value * light - d) * k), 0, 255));
+                            };
+                            mixc(0U, cr * rz);
+                            mixc(1U, cg * gz);
+                            mixc(2U, cb * bz);
+                            continue;
+                        }
+                    } else if (pass == 1) {
+                        continue;
+                    }
+                    if (colored) {
+                        // PS2 modulate: texel x vertex colour / 0x80.
+                        cr = cr * at(a.rz, b.rz, c.rz) / 128.0F;
+                        cg = cg * at(a.gz, b.gz, c.gz) / 128.0F;
+                        cb = cb * at(a.bz, b.bz, c.bz) / 128.0F;
+                    }
+                    const auto out = [light](float value) {
+                        return static_cast<std::uint8_t>(std::clamp(static_cast<int>(value * light), 0, 255));
+                    };
+                    depth[pi] = dz;
+                    put_rgba(image, x, y, out(cr), out(cg), out(cb), 255U);
+                }
+            }
+        }
+    }
+    }
+}
+
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
     std::span<const std::uint32_t> indices, int width, int height, float zoom) {
     auto image = make_canvas(width, height);
@@ -446,8 +670,11 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         }
     };
 
+    const bool room = view.room_mesh != nullptr && !view.wireframe &&
+        view.room_mesh->indices.size() >= 3U;
+    if (room) draw_room(view, frame, zoom, image, depth);
     const bool floor = view.floor && !view.wireframe;
-    if (floor) {
+    if (floor && !room) {
         const float half = radius * 1.4F;
         const Vec3 corners[4] = {
             {frame.center.x - half, view.floor_y, frame.center.z - half},

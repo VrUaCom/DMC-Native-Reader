@@ -6,6 +6,7 @@
 #include "dmcresource/neutral_texture.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
+#include "dmcresource/stage_room.h"
 #include "dmcresource/inspection_format.h"
 
 #include <bit>
@@ -292,6 +293,53 @@ int main() {
             .triangle_texture_slots = slots,
         });
         assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
+    }
+
+    // Viewer room (stage_room.h): a lone SCM is a room; a stage never gets one;
+    // floor spots stand on the centre of the floor; the room pass paints the
+    // background around a model and hides the wall facing away from the camera.
+    {
+        namespace room = dmcresource::stage_room;
+        const auto built = room::build_room("sample.scm", scm.data(), scm.size());
+        assert(built && built->pieces == 1U && built->mesh.indices.size() == 3U);
+        assert(built->triangle_texture_slots.size() == 1U && !built->spots.empty());
+        const auto stage = dmcresource::open_session("sample.scm", scm.data(), scm.size());
+        const auto model = dmcresource::open_session("sample.mod", mod.data(), mod.size());
+        assert(stage && room::is_stage_session(*stage) && model && !room::is_stage_session(*model));
+        assert(!room::build_room("x.bin", mod.data(), 8U));
+
+        dmcresource::Mesh box;
+        const auto quad = [&box](dmcresource::Vec3 a, dmcresource::Vec3 b, dmcresource::Vec3 c,
+                                 dmcresource::Vec3 d, dmcresource::Vec3 n) {
+            const auto base = static_cast<std::uint32_t>(box.vertices.size());
+            for (const auto& v : {a, b, c, d}) {
+                box.vertices.push_back(v);
+                box.normal0.push_back(n);
+            }
+            for (const auto i : {0U, 1U, 2U, 0U, 2U, 3U}) box.indices.push_back(base + i);
+        };
+        quad({-500, 0, -500}, {500, 0, -500}, {500, 0, 500}, {-500, 0, 500}, {0, 1, 0});   // floor
+        quad({-500, 0, 500}, {500, 0, 500}, {500, 400, 500}, {-500, 400, 500}, {0, 0, -1});  // far wall
+        quad({-500, 0, -500}, {-500, 400, -500}, {500, 400, -500}, {500, 0, -500}, {0, 0, 1});  // near wall
+        const auto spots = room::floor_spots(box);
+        assert(!spots.empty() && std::fabs(spots[0].x) < 1.0F && std::fabs(spots[0].y) < 1.0F &&
+               std::fabs(spots[0].z) < 1.0F);
+        const auto under = room::floor_spots_near(box, {100.0F, 300.0F, 100.0F});
+        assert(under && std::fabs(under->y) < 1.0F);
+        assert(!room::floor_spots_near(box, {0.0F, -10.0F, 0.0F}));  // nothing below
+
+        dmcresource::ViewState view;
+        view.yaw_radians = 0.0F;
+        view.pitch_radians = -0.3F;
+        const auto bare = dmcresource::render_view(model->render_mesh, 128, 128, view);
+        view.room_mesh = &box;
+        view.room_offset = {0.0F, -50.0F, 0.0F};
+        const auto roomed = dmcresource::render_view(model->render_mesh, 128, 128, view);
+        std::size_t changed = 0U;
+        for (std::size_t o = 0U; o < bare.pixels.size(); o += 4U) {
+            if (bare.pixels[o] != roomed.pixels[o]) ++changed;
+        }
+        assert(changed > 128U * 128U / 4U);  // floor and far wall behind the model
     }
 
     // A known old-family filename must remain outside the clean main surface.

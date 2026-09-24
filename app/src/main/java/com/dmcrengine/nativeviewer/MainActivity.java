@@ -46,6 +46,11 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_EXPORT_GALLERY_TREE = 1004;
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
     private static final int REQUEST_ADD_PAC = 1011;
+    private static final int REQUEST_ROOM = 1012;
+    private static final String PREFS = "viewer";
+    private static final String PREF_ROOM_NAME = "room.name";
+    private static final String PREF_ROOM_SHOWN = "room.shown";
+    private static final String ROOM_FILE = "room.bin";
     private static final int REQUEST_STAGE_MOTION = 1006;
     private static final int REQUEST_STAGE_TEXTURE = 1007;
     private static final int REQUEST_STAGE_PHYSICS = 1008;
@@ -62,6 +67,10 @@ public final class MainActivity extends Activity {
     private static final int MENU_ADD_OTHER = 8;
     private static final int MENU_BROWSE_PAC = 9;
     private static final int MENU_ADD_PAC = 10;
+    private static final int MENU_ROOM_CHOOSE = 20;
+    private static final int MENU_ROOM_SHOW = 21;
+    private static final int MENU_ROOM_SPOT = 22;
+    private static final int MENU_ROOM_REMOVE = 23;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -150,6 +159,7 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        restoreRoom();
         handleIncomingIntent(getIntent());
     }
 
@@ -521,11 +531,151 @@ public final class MainActivity extends Activity {
         infoButton.setOnClickListener(v -> showInfoDialog());
         addToolButton(bar, infoButton);
 
+        Button settingsButton = makeSquareButton("\u2699", "Settings: room", 22f);
+        settingsButton.setOnClickListener(v -> showSettingsMenu(v));
+        addToolButton(bar, settingsButton);
+
         root.addView(toolScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
         showIdleStatus();
+    }
+
+    // ---- Room: a stage archive shown around every model instead of the floor.
+
+    private boolean roomLoaded;
+    private String roomName = "";
+
+    private File roomFile() {
+        return new File(getFilesDir(), ROOM_FILE);
+    }
+
+    private boolean roomShown() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ROOM_SHOWN, true);
+    }
+
+    private void showSettingsMenu(View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add(0, MENU_ROOM_CHOOSE, 0,
+                roomLoaded ? "Room: replace stage (st*.pac / .scm)\u2026" : "Room: choose stage (st*.pac / .scm)\u2026");
+        if (roomLoaded) {
+            menu.getMenu().add(0, MENU_ROOM_SHOW, 1, "Room: show " + roomName)
+                    .setCheckable(true).setChecked(roomShown());
+            if (NativeBridge.roomSpotCount() > 1) {
+                menu.getMenu().add(0, MENU_ROOM_SPOT, 2, "Room: next floor spot");
+            }
+            menu.getMenu().add(0, MENU_ROOM_REMOVE, 3, "Room: remove");
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case MENU_ROOM_CHOOSE: {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                    startActivityForResult(intent, REQUEST_ROOM);
+                    return true;
+                }
+                case MENU_ROOM_SHOW: {
+                    final boolean shown = !roomShown();
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_ROOM_SHOWN, shown).apply();
+                    renderView.setRoomVisible(shown && roomLoaded);
+                    return true;
+                }
+                case MENU_ROOM_SPOT: {
+                    final int spot = NativeBridge.nextRoomSpot();
+                    notice("Room: floor spot " + (spot + 1) + " / " + NativeBridge.roomSpotCount(),
+                            Toast.LENGTH_SHORT);
+                    renderView.refreshRoom();
+                    return true;
+                }
+                case MENU_ROOM_REMOVE: {
+                    NativeBridge.clearRoom();
+                    roomLoaded = false;
+                    roomName = "";
+                    //noinspection ResultOfMethodCallIgnored
+                    roomFile().delete();
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(PREF_ROOM_NAME).apply();
+                    renderView.setRoomVisible(false);
+                    notice("Room removed: plain floor", Toast.LENGTH_SHORT);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        });
+        menu.show();
+    }
+
+    /** Copies the picked stage into app storage (it is reloaded on start). */
+    private void chooseRoom(Uri uri) {
+        final String name = displayName(uri);
+        notice("Room: loading " + name + "\u2026", Toast.LENGTH_SHORT);
+        new Thread(() -> {
+            final File target = roomFile();
+            final File partial = new File(getFilesDir(), ROOM_FILE + ".part");
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new java.io.FileOutputStream(partial)) {
+                if (in != null) {
+                    byte[] buffer = new byte[1 << 16];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception ignored) {
+                copied = false;
+            }
+            if (!copied) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+                runOnUiThread(() -> notice("Room: could not read " + name, Toast.LENGTH_LONG));
+                return;
+            }
+            final String detail = loadRoomFile(partial, name);
+            if (detail == null) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+                runOnUiThread(() -> notice("Room: nothing to draw in " + name, Toast.LENGTH_LONG));
+                return;
+            }
+            //noinspection ResultOfMethodCallIgnored
+            target.delete();
+            //noinspection ResultOfMethodCallIgnored
+            partial.renameTo(target);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(PREF_ROOM_NAME, name).putBoolean(PREF_ROOM_SHOWN, true).apply();
+            runOnUiThread(() -> {
+                roomLoaded = true;
+                roomName = name;
+                renderView.setRoomVisible(true);
+                notice("Room: " + detail, Toast.LENGTH_LONG);
+            });
+        }).start();
+    }
+
+    private void restoreRoom() {
+        final File file = roomFile();
+        final String name = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_ROOM_NAME, null);
+        if (name == null || !file.isFile()) return;
+        new Thread(() -> {
+            final String detail = loadRoomFile(file, name);
+            if (detail == null) return;
+            runOnUiThread(() -> {
+                roomLoaded = true;
+                roomName = name;
+                renderView.setRoomVisible(roomShown());
+            });
+        }).start();
+    }
+
+    /** Native room build (stage_room.h) from a local file; its summary or null. */
+    private static String loadRoomFile(File file, String name) {
+        try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            return NativeBridge.loadRoom(pfd.getFd(), name);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void showCompanionMenu(View anchor) {
@@ -1009,6 +1159,10 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        if (requestCode == REQUEST_ROOM) {
+            if (data != null && data.getData() != null) chooseRoom(data.getData());
+            return;
+        }
         if (requestCode == REQUEST_ADD_PAC) {
             Uri uri = data.getData();
             if (uri == null) return;

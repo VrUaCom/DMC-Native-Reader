@@ -415,6 +415,21 @@ block 0 nodes collide. How far the coat trails while walking follows the game
 step: each chain node takes its rest target from its simulated parent (see
 rengine `dmc3-cloth-chain-solver-2026-09-23.md` §3.1).
 
+**Room backdrop (v61).** The ⚙ button opens the room settings. *Room: choose
+stage* copies the picked file (st*.pac, a .scm, or any archive with models) to
+app storage as `room.bin` and reloads it on start. `stage_room::build_room`
+merges every SCM/MOD, including those in nested PACs, with the nearest PTX that
+attaches. The objects of the stage's `# GAME` layout are added at their `pos`,
+`rot` and `scale` (rengine `dmc3-stage-game-layout-2026-09-24.md`). The room is
+drawn around every model instead of the floor (RenderFlag::Room). The renderer
+clips room triangles at a near plane, interpolates textures perspective-
+correctly and bilinearly, and skips faces whose normal points away from the
+camera, so a wall between the camera and the model does not hide it. Soft-alpha
+textures are blended after the opaque pass. The model stands on a floor spot:
+first the spot near `cam_init` and the placed objects, and *Room: next floor
+spot* cycles through the others. An SCM, or an archive that holds SCMs, is
+shown without a room.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
