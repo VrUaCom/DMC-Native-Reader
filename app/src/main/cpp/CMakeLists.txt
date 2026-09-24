@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(dmcviewer LANGUAGES CXX)
 
+# The debug APK is the one people install and try: the software renderer
+# needs optimised native code in every configuration (-O0 runs it 5-10x
+# slower). Later compile options win over the configuration's -O0.
+if(ANDROID AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O2)
+endif()
+# The renderer rasterises row bands on several cores.
+find_package(Threads REQUIRED)
+
 set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 
 # Canonical portable read-only dependency slice owned by DMC Rengine.
@@ -151,6 +160,7 @@ target_link_libraries(dmc_native_reader_core
     PUBLIC
         DMCRengine::ReaderCore
         dmc_native_reader_rengine_viewer
+        Threads::Threads
 )
 
 target_compile_definitions(dmc_native_reader_core PUBLIC

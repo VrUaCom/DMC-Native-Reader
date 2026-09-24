@@ -474,6 +474,34 @@ turns the view and a pinch zooms; both are always on.
 reports what is under a pixel. Both share one view preparation with
 `render_session`, so a pick matches the picture pixel for pixel.
 
+**Faster rendering (v64).** The game gives every SCM object to the GPU. It
+only sorts the objects by view depth, into 126 buckets (rengine
+`dmc3-scm-draw-order-2026-09-24.md`). The viewer rasterises on the CPU, so it
+now works the same way:
+
+- **Once per frame:** it prepares the room. Each vertex is moved into camera
+  space once, triangles are clipped at a near plane and faces turned away from
+  the camera are dropped.
+- **Draw order:** opaque triangles go front to back, so the depth test rejects
+  hidden pixels before any texel is read. Soft-alpha triangles go back to
+  front, after the model.
+- **Textures:** integer bilinear sampling.
+- **Cores:** the rows are rasterised in 32-row bands on several cores. Each
+  pixel belongs to one band, so the picture is the same.
+- **Optimisation:** the debug APK's native code is now built at `-O2`. Before,
+  no optimisation flag was passed, so it ran at `-O0`.
+- **Fast preview:** while a finger moves, the view spins or a motion plays,
+  frames render at half size with nearest texels (RenderFlag::Preview). 150 ms
+  after it stops, a full-quality frame follows. Settings can turn this off.
+
+Timings for the st000 room at 540×720 on a 4-core host:
+
+| Frame | Before | Now |
+| --- | --- | --- |
+| Room | 108 ms | 21 ms |
+| Room, fast preview | — | 7 ms |
+| Model only | 6.3 ms | 3.7 ms |
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

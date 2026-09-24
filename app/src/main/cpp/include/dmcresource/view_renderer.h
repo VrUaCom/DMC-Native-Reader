@@ -22,6 +22,7 @@ enum class RenderFlag : std::uint32_t {
     Room = 1U << 8U,
     SmoothTextures = 1U << 9U,  // bilinear texture filtering on models
     Unlit = 1U << 10U,          // no camera light on models
+    Preview = 1U << 13U,        // fast frame while the view moves: nearest texels
     // Bits 11-12: background (0 dark, 1 grey, 2 light, 3 black).
 };
 inline constexpr std::uint32_t kRenderBackgroundShift = 11U;
@@ -69,6 +70,7 @@ struct ViewState {
     // Viewer settings: bilinear model textures, no model light, background.
     bool smooth_textures{false};
     bool unlit{false};
+    bool fast_preview{false};  // nearest texels everywhere (a frame while moving)
     std::uint8_t background{0U};
     // Gesture camera controls: camera-plane pan in framing radii, a shift of
     // the framing centre (camera follows the model), and the room turned

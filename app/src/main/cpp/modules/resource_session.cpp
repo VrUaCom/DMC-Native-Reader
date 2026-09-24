@@ -695,6 +695,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.fallback_texture = &neutral_texture();
     view.smooth_textures = has_render_flag(flags, RenderFlag::SmoothTextures);
     view.unlit = has_render_flag(flags, RenderFlag::Unlit);
+    view.fast_preview = has_render_flag(flags, RenderFlag::Preview);
     view.background = static_cast<std::uint8_t>((flags >> kRenderBackgroundShift) & 3U);
     view.pan_x = std::isfinite(controls.pan_x) ? std::clamp(controls.pan_x, -20.0F, 20.0F) : 0.0F;
     view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;

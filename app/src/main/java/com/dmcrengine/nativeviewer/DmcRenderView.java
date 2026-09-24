@@ -19,6 +19,17 @@ public final class DmcRenderView extends View {
     private static final int RENDER_SHADOWS = 1 << 6;
     private static final int RENDER_COLLISION = 1 << 7;
     private static final int RENDER_ROOM = 1 << 8;
+    private static final int RENDER_PREVIEW = 1 << 13;
+    // Fast preview: while a finger moves, the view spins or a motion plays,
+    // frames render at half size with nearest texels; 150 ms after the last
+    // touch a full-quality frame follows.
+    private boolean fastPreview = true;
+    private boolean touching;
+    private Bitmap previewBitmap;
+    private boolean showingPreview;
+    private final Runnable fullFrame = () -> {
+        if (!moving()) renderNow();
+    };
 
     // Gestures (each can be switched off in the Gestures window).
     public static final int G_PAN = 1;            // two fingers drag: pan
@@ -87,7 +98,7 @@ public final class DmcRenderView extends View {
             } else {
                 spinYaw = 0.0f;
                 spinPitch = 0.0f;
-                renderThrottled(true);
+                renderNow();
             }
         }
     };
@@ -271,6 +282,10 @@ public final class DmcRenderView extends View {
 
     /** The picture on screen, for a screenshot. */
     public Bitmap snapshot() {
+        if (showingPreview) {
+            touching = false;
+            renderNow();  // a full-quality frame for the picture
+        }
         if (bitmap == null || bitmap.isRecycled()) return null;
         return bitmap.copy(Bitmap.Config.ARGB_8888, false);
     }
@@ -287,6 +302,29 @@ public final class DmcRenderView extends View {
             bitmap.recycle();
             bitmap = null;
         }
+        if (previewBitmap != null) {
+            previewBitmap.recycle();
+            previewBitmap = null;
+        }
+        showingPreview = false;
+    }
+
+    private Bitmap previewTarget(int width, int height) {
+        if (previewBitmap != null && !previewBitmap.isRecycled()
+                && previewBitmap.getWidth() == width && previewBitmap.getHeight() == height) {
+            return previewBitmap;
+        }
+        if (previewBitmap != null) previewBitmap.recycle();
+        try {
+            previewBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
+            previewBitmap = null;
+        }
+        return previewBitmap;
+    }
+
+    private boolean moving() {
+        return touching || motionPlaying || spinYaw != 0.0f || spinPitch != 0.0f;
     }
 
     private Bitmap writableBitmap(int width, int height) {
@@ -316,7 +354,9 @@ public final class DmcRenderView extends View {
     }
 
     /** Applies the viewer settings; a playing motion keeps its frame. */
-    public void applySettings(int maxSide, long frameMs, float speed, int flags, boolean shadows) {
+    public void applySettings(int maxSide, long frameMs, float speed, int flags, boolean shadows,
+                              boolean preview) {
+        fastPreview = preview;
         final long now = SystemClock.uptimeMillis();
         if (motionPlaying && speed > 0.0f && speed != motionSpeed) {
             final float frame = rawMotionFrame(now);
@@ -354,8 +394,13 @@ public final class DmcRenderView extends View {
 
     /** Freeze on the current pose (the motion stays bound). */
     public void pauseMotion() {
+        final boolean was = motionPlaying;
         motionPlaying = false;
         removeCallbacks(motionTick);
+        if (was) {
+            removeCallbacks(fullFrame);
+            postDelayed(fullFrame, 150);
+        }
     }
 
     public boolean isMotionPlaying() {
@@ -526,18 +571,24 @@ public final class DmcRenderView extends View {
             return;
         }
 
-        final int rw = renderWidth();
-        final int rh = renderHeight();
-        final Bitmap target = writableBitmap(rw, rh);
+        final boolean preview = fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
+        final int rw = preview ? Math.max(64, renderWidth() / 2) : renderWidth();
+        final int rh = preview ? Math.max(64, renderHeight() / 2) : renderHeight();
+        final Bitmap target = preview ? previewTarget(rw, rh) : writableBitmap(rw, rh);
         if (target == null || !NativeBridge.renderEx(
-                session, rw, rh, yaw, pitch, zoom, renderFlags | settingsFlags,
+                session, rw, rh, yaw, pitch, zoom, renderFlags | settingsFlags | (preview ? RENDER_PREVIEW : 0),
                 panX, panY, roomYaw, follow, target)) {
             releaseBitmap();
             invalidate();
             return;
         }
+        showingPreview = preview;
         lastRenderMs = SystemClock.uptimeMillis();
         invalidate();
+        if (preview) {
+            removeCallbacks(fullFrame);
+            postDelayed(fullFrame, 150);
+        }
     }
 
     private void renderThrottled(boolean force) {
@@ -549,6 +600,7 @@ public final class DmcRenderView extends View {
     @Override protected void onDetachedFromWindow() {
         pauseMotion();
         removeCallbacks(spinTick);
+        removeCallbacks(fullFrame);
         super.onDetachedFromWindow();
     }
 
@@ -575,13 +627,14 @@ public final class DmcRenderView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        if (bitmap == null || bitmap.isRecycled()) return;
-
         if (!staticImagePreview) {
-            canvas.drawBitmap(bitmap, null,
+            final Bitmap shown = showingPreview ? previewBitmap : bitmap;
+            if (shown == null || shown.isRecycled()) return;
+            canvas.drawBitmap(shown, null,
                     new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
             return;
         }
+        if (bitmap == null || bitmap.isRecycled()) return;
 
         final float sx = (float) getWidth() / (float) bitmap.getWidth();
         final float sy = (float) getHeight() / (float) bitmap.getHeight();
@@ -606,6 +659,7 @@ public final class DmcRenderView extends View {
         final float density = getResources().getDisplayMetrics().density;
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
+                touching = true;
                 removeCallbacks(spinTick);
                 spinYaw = 0.0f;
                 spinPitch = 0.0f;
@@ -703,12 +757,14 @@ public final class DmcRenderView extends View {
                 return true;
             }
             case MotionEvent.ACTION_UP: {
+                touching = false;
                 finishGesture(event, density);
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
                 renderThrottled(true);
                 return true;
             }
             case MotionEvent.ACTION_CANCEL:
+                touching = false;
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
                 scrubbing = false;
                 recycleVelocity();

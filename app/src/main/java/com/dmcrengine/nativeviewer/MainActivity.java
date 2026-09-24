@@ -560,6 +560,7 @@ public final class MainActivity extends Activity {
     private static final String SET_BACKGROUND = "set.background";
     private static final String SET_SHADOWS = "set.shadows";
     private static final String SET_SPEED = "set.speed";
+    private static final String SET_FAST_PREVIEW = "set.fastPreview";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
@@ -567,7 +568,8 @@ public final class MainActivity extends Activity {
                 | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
                 | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11);
         renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
-                p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true));
+                p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
+                p.getBoolean(SET_FAST_PREVIEW, true));
     }
 
     private void roomToggle() {
@@ -700,6 +702,10 @@ public final class MainActivity extends Activity {
                 indexOf(sides, p.getInt(SET_MAX_SIDE, 720), 2),
                 i -> { p.edit().putInt(SET_MAX_SIDE, sides[i]).apply(); apply.run(); }));
         final int[] frames = {50, 33, 16};
+        content.addView(choiceRow("While moving (drag, flick, animation)",
+                new String[]{"Fast preview (half size)", "Full quality"},
+                p.getBoolean(SET_FAST_PREVIEW, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_FAST_PREVIEW, i == 0).apply(); apply.run(); }));
         content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
                 indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
                 i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
