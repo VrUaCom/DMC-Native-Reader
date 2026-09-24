@@ -49,6 +49,9 @@ struct ViewState {
     std::span<const Vec3> floor_shadow{};
     // Optional coloured line pairs drawn over the model (collision debug).
     std::span<const Vec3> overlay_lines{};
+    // Texture for triangles without one (neutral_texture.h); lit by a
+    // camera light so the form stays readable. nullptr: depth-shaded grey.
+    const ImagePreview* fallback_texture{nullptr};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,

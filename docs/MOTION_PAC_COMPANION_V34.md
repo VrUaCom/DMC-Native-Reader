@@ -313,6 +313,17 @@ shape and mask) → off. A long press turns the overlay off. Attacks are started
 by game code (`0x14005C740` with constant ids), so the viewer lets you choose
 the id instead of following a timeline.
 
+**Neutral texture (v54).** Geometry without a texture of its own gets the
+same texture the game gives its debug meshes. Examples: a lone MOD, SCM or EFM,
+or an assembled part without its PTX. In the game that texture is
+`obj\\debug\\at.ptx`: 128×64, flat 0x80, the PS2 ×1 modulation. The file is
+not shipped; `neutral_texture.cpp` generates it (exact 0x80, alpha 0xFF).
+
+The renderer draws such triangles as texel × COLOR0 (when present) × a
+two-sided camera light on the face normal. The form stays readable, and EFM
+vertex colours come through as on PS2. The depth-shaded grey remains only
+for callers that pass no fallback.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

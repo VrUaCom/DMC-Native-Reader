@@ -419,6 +419,25 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 texture = &(*textures)[slot];
             }
         }
+        // No texture of its own: the neutral texture, lit by a camera light
+        // (two-sided, face normal in camera space).
+        float light = 1.0F;
+        if (texture == nullptr && view.fallback_texture != nullptr && view.fallback_texture->available()) {
+            texture = view.fallback_texture;
+            const auto& va = mesh.vertices[ia];
+            const auto& vb = mesh.vertices[ib];
+            const auto& vc = mesh.vertices[ic];
+            const Vec3 e1{vb.x - va.x, vb.y - va.y, vb.z - va.z};
+            const Vec3 e2{vc.x - va.x, vc.y - va.y, vc.z - va.z};
+            const Vec3 n{e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
+            const float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+            if (len > 1.0e-12F) {
+                const auto r = rotate({n.x / len, n.y / len, n.z / len}, view.yaw_radians,
+                                      view.pitch_radians);
+                constexpr float lx = -0.30F, ly = 0.45F, lz = -0.84F;  // from the camera, up-left
+                light = 0.45F + 0.85F * std::fabs(r.x * lx + r.y * ly + r.z * lz);
+            }
+        }
 
         const float area = edge(a, b, c.x, c.y);
         if (std::fabs(area) < 1.0e-6F) continue;
@@ -446,11 +465,14 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 if (z >= depth[pi]) continue;
 
                 if (texture != nullptr) {
-                    const auto& uva = mesh.uv0[ia];
-                    const auto& uvb = mesh.uv0[ib];
-                    const auto& uvc = mesh.uv0[ic];
-                    const float u = w0 * uva.u + w1 * uvb.u + w2 * uvc.u;
-                    const float v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
+                    float u = 0.0F, v = 0.0F;
+                    if (mesh.has_uv0()) {
+                        const auto& uva = mesh.uv0[ia];
+                        const auto& uvb = mesh.uv0[ib];
+                        const auto& uvc = mesh.uv0[ic];
+                        u = w0 * uva.u + w1 * uvb.u + w2 * uvc.u;
+                        v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
+                    }
                     std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
                     if (sample_texture(*texture, u, v, &tr, &tg, &tb, &ta)) {
                         if (colored) {
@@ -467,6 +489,15 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                             tg = mod(tg, 1U);
                             tb = mod(tb, 2U);
                             ta = mod(ta, 3U);
+                        }
+                        if (light != 1.0F) {
+                            const auto lit = [light](std::uint8_t c) {
+                                return static_cast<std::uint8_t>(
+                                    std::clamp(static_cast<int>(static_cast<float>(c) * light), 0, 255));
+                            };
+                            tr = lit(tr);
+                            tg = lit(tg);
+                            tb = lit(tb);
                         }
                         if (ta == 0U) continue;
                         if (blend_mode == 2U || blend_mode == 3U) {

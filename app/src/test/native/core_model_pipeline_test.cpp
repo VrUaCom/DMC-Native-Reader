@@ -3,6 +3,7 @@
 #include "dmcresource/model_texture_binding.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/neutral_texture.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/inspection_format.h"
@@ -302,11 +303,24 @@ int main() {
         assert(widow::has_state(dmcresource::black_widow_state(session.get()),
                                widow::StateFlag::TextureCompanionAttachable));
         assert(session->render_triangle_texture_slots[0] == (bytes == &scm ? 0U : 5U));
-        const dmcresource::ViewState view;
+        // Untextured geometry renders with the generated neutral texture
+        // (at.ptx stand-in: 128x64 flat 0x80), lit by the camera light.
+        dmcresource::ViewState view;
+        view.fallback_texture = &dmcresource::neutral_texture();
         const auto direct = dmcresource::render_view(session->render_mesh, 128, 128, view);
         const auto via_session = dmcresource::render_session(session.get(), 128, 128,
             view.yaw_radians, view.pitch_radians, view.zoom, 0U);
         assert(via_session.pixels == direct.pixels);
+        const auto& neutral = dmcresource::neutral_texture();
+        assert(neutral.width == 128U && neutral.height == 64U && neutral.available());
+        assert(neutral.rgba8[0] == 0x80U && neutral.rgba8[1] == 0x80U && neutral.rgba8[2] == 0x80U &&
+               neutral.rgba8[3] == 0xFFU && neutral.rgba8[neutral.rgba8.size() - 4U] == 0x80U);
+        std::size_t grey = 0U;
+        for (std::size_t o = 0U; o + 3U < via_session.pixels.size(); o += 4U) {
+            const auto r = via_session.pixels[o], g = via_session.pixels[o + 1U], b = via_session.pixels[o + 2U];
+            if (r == g && g == b && r >= 0x38U && r <= 0xB0U) ++grey;
+        }
+        assert(grey > 0U);
         assert(!dmcresource::describe_session(session.get()).empty());
         const auto mesh_info = dmcresource::inspect_session(session.get(), dmcresource::InspectionTopic::Meshes);
         assert(dmcresource::count_inspection_nodes(mesh_info.root, dmcresource::InspectionKind::Object) == 1);

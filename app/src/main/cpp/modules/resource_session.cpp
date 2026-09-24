@@ -6,6 +6,7 @@
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/format_views.h"
+#include "dmcresource/neutral_texture.h"
 #include "dmcresource/raster_card.h"
 
 #include <span>
@@ -684,6 +685,7 @@ RgbaImage render_session(const Session* session, int requested_width,
     view.uv_layout = dmcresource::has_render_flag(
         flags, dmcresource::RenderFlag::UvLayout);
     view.framing_vertices = dmcresource::motion::motion_rest_vertices(session);
+    view.fallback_texture = &dmcresource::neutral_texture();
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
