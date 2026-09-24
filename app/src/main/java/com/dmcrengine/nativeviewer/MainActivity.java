@@ -121,6 +121,10 @@ public final class MainActivity extends Activity {
     private long pendingExportSession;
     private int pendingPtxPart = -1;
     private int selectedMotionIndex = -1;
+    private LinearLayout headerBar;
+    // Hidden by the top-edge swipe: bars and the visibility each had.
+    private boolean uiHidden;
+    private final int[] barVisibility = new int[4];
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
@@ -145,6 +149,7 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         buildUi();
         applyViewerSettings();
+        renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
         restoreRoom();
         handleIncomingIntent(getIntent());
     }
@@ -326,6 +331,7 @@ public final class MainActivity extends Activity {
         applySystemBarInsets(root);
 
         LinearLayout header = new LinearLayout(this);
+        headerBar = header;
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
@@ -376,6 +382,7 @@ public final class MainActivity extends Activity {
 
         FrameLayout viewport = new FrameLayout(this);
         renderView = new DmcRenderView(this);
+        renderView.setGestureListener(gestureListener);
         viewport.addView(renderView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
@@ -760,6 +767,181 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
+    // ---- Gestures (DmcRenderView): the activity side and the Gestures window.
+
+    private static final String PREF_GESTURES = "gestures.mask";
+
+    private final DmcRenderView.GestureListener gestureListener = new DmcRenderView.GestureListener() {
+        @Override public void onStepMotion(int direction) {
+            final ArrayList<MotionEntry> motions = motionEntries();
+            if (session == 0 || motions.isEmpty()) {
+                notice("No animations here", Toast.LENGTH_SHORT);
+                return;
+            }
+            final int n = motions.size();
+            final int next = selectedMotionIndex < 0
+                    ? (direction > 0 ? 0 : n - 1)
+                    : ((selectedMotionIndex + direction) % n + n) % n;
+            selectMotion(next);
+            if (motionBar != null && next < motionBar.getChildCount()) {
+                final View card = motionBar.getChildAt(next);
+                motionScroll.post(() -> motionScroll.smoothScrollTo(
+                        Math.max(0, card.getLeft() - dp(24)), 0));
+            }
+        }
+
+        @Override public void onStepVariant(int direction) {
+            final String[] positions = (isRootScene() && assembledPacUri != null)
+                    ? NativeBridge.archiveVariantNames(displayName(assembledPacUri))
+                    : null;
+            if (positions == null || positions.length < 2) {
+                notice("No other positions here", Toast.LENGTH_SHORT);
+                return;
+            }
+            final int n = positions.length;
+            enemyVariant = ((enemyVariant + direction) % n + n) % n;
+            assembleWithAddedPacs(null);
+            notice(positions[enemyVariant], Toast.LENGTH_SHORT);
+        }
+
+        @Override public void onToggleUi() {
+            final View[] bars = {headerBar, variantScroll, motionScroll, toolScroll};
+            uiHidden = !uiHidden;
+            for (int i = 0; i < bars.length; ++i) {
+                if (bars[i] == null) continue;
+                if (uiHidden) {
+                    barVisibility[i] = bars[i].getVisibility();
+                    bars[i].setVisibility(View.GONE);
+                } else {
+                    bars[i].setVisibility(barVisibility[i]);
+                }
+            }
+            if (!uiHidden) {
+                refreshMotionStrip();
+                refreshVariantBar();
+            }
+            notice(uiHidden ? "Full view — swipe down from the top to bring the bars back" : "Bars shown",
+                    Toast.LENGTH_SHORT);
+        }
+
+        @Override public void onScreenshot(Bitmap image) {
+            saveScreenshot(image);
+        }
+
+        @Override public void onGestureNotice(String text) {
+            notice(text, Toast.LENGTH_SHORT);
+        }
+    };
+
+    /** PNG into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
+    private void saveScreenshot(Bitmap image) {
+        final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                .format(new java.util.Date()) + ".png";
+        new Thread(() -> {
+            String where = null;
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    final android.content.ContentValues values = new android.content.ContentValues();
+                    values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name);
+                    values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png");
+                    values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DMC Native Reader");
+                    final Uri target = getContentResolver().insert(
+                            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                    if (target != null) {
+                        try (OutputStream out = getContentResolver().openOutputStream(target)) {
+                            if (out != null && image.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                                where = "Pictures/DMC Native Reader/" + name;
+                            }
+                        }
+                    }
+                } else {
+                    final File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+                    if (dir != null && (dir.isDirectory() || dir.mkdirs())) {
+                        final File file = new File(dir, name);
+                        try (OutputStream out = new java.io.FileOutputStream(file)) {
+                            if (image.compress(Bitmap.CompressFormat.PNG, 100, out)) where = file.getPath();
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                where = null;
+            }
+            final String saved = where;
+            runOnUiThread(() -> notice(saved != null ? "📸 Saved " + saved : "Screenshot failed",
+                    Toast.LENGTH_LONG));
+        }).start();
+    }
+
+    /** Full-screen list of the gestures, each switchable, plus the camera follow. */
+    private void showGesturesDialog() {
+        final android.app.Dialog dialog = new android.app.Dialog(this,
+                android.R.style.Theme_DeviceDefault_NoActionBar);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(24));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Gestures");
+        title.setTextSize(22f);
+        title.setTextColor(0xffffffff);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button close = makeSquareButton("✕", "Close gestures", 20f);
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+        content.addView(header);
+
+        TextView always = new TextView(this);
+        always.setTextColor(0xffc8ccd6);
+        always.setTextSize(14f);
+        always.setPadding(0, dp(8), 0, dp(4));
+        always.setText("Always on: one finger turns the view, pinch zooms.");
+        content.addView(always);
+
+        content.addView(choiceRow("Camera (a four-finger tap switches it)",
+                new String[]{"Follows the model", "Stays in place"}, renderView.isFollowing() ? 0 : 1,
+                i -> renderView.setFollow(i == 0)));
+
+        final Object[][] list = {
+                {DmcRenderView.G_PAN, "Two fingers drag — pan the camera"},
+                {DmcRenderView.G_TWIST, "Two fingers twist — turn the model in the room (the view when there is no room)"},
+                {DmcRenderView.G_DOUBLE_TAP, "Double tap — reset the view; on the room floor: stand the model there"},
+                {DmcRenderView.G_TAP_PAUSE, "Tap the model — pause / resume the animation"},
+                {DmcRenderView.G_FLING, "Flick — the view keeps turning and slows down"},
+                {DmcRenderView.G_SCRUB, "Long press, then drag sideways — step through animation frames"},
+                {DmcRenderView.G_BONE, "Long press — name and number of the joint under the finger"},
+                {DmcRenderView.G_EDGE_MOTION, "Swipe in from the left / right edge — previous / next animation"},
+                {DmcRenderView.G_THREE_SWIPE, "Three fingers sideways — previous / next position (enemy class, weapon, dress)"},
+                {DmcRenderView.G_TOP_UI, "Swipe down from the top of the view — hide / show the bars"},
+                {DmcRenderView.G_SCREENSHOT, "Three-finger tap — save a PNG of the view"},
+                {DmcRenderView.G_FOLLOW, "Four-finger tap — camera follows the model / stays in place"},
+        };
+        for (Object[] entry : list) {
+            final int bit = (Integer) entry[0];
+            final int mask = prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL);
+            content.addView(choiceRow((String) entry[1], new String[]{"On", "Off"}, (mask & bit) != 0 ? 0 : 1, i -> {
+                int current = prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL);
+                current = i == 0 ? (current | bit) : (current & ~bit);
+                prefs().edit().putInt(PREF_GESTURES, current).apply();
+                renderView.setGestures(current);
+            }));
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(0xff16171c);
+        applySystemBarInsets(frame);
+        frame.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT));
+        dialog.setContentView(frame);
+        dialog.show();
+    }
+
     /** The ⋮ menu: a row of square shortcuts (settings first), then actions. */
     private void showCompanionMenu(View anchor) {
         LinearLayout panel = new LinearLayout(this);
@@ -781,6 +963,7 @@ public final class MainActivity extends Activity {
             icons.addView(button, params);
         };
         addIcon.accept(makeSquareButton("⚙", "Settings", 22f), this::showSettingsDialog);
+        addIcon.accept(makeSquareButton("\u270b", "Gestures", 22f), this::showGesturesDialog);
         if (roomLoaded) {
             Button room = makeSquareButton("⌂", roomShown() ? "Hide the room" : "Show the room", 22f);
             room.setAlpha(roomShown() ? 1f : 0.5f);
@@ -939,7 +1122,7 @@ public final class MainActivity extends Activity {
             button.setOnClickListener(v -> selectMotion(motionIndex));
             addToolButton(motionBar, button);
         }
-        motionScroll.setVisibility(View.VISIBLE);
+        motionScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
     }
 
     private CharSequence motionCardLabel(String name) {
@@ -1038,7 +1221,7 @@ public final class MainActivity extends Activity {
             params.setMarginEnd(dp(TOOL_GAP_DP));
             variantBar.addView(button, params);
         }
-        variantScroll.setVisibility(View.VISIBLE);
+        variantScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
     }
 
     private void chooseAdditionalPac() {

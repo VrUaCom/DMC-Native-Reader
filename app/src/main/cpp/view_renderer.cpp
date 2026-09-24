@@ -42,6 +42,8 @@ struct CameraFrame {
     float radius{1.0e-4F};
     float camera_distance{};
     float focal_px{};
+    float pan_x{};  // camera-plane shift in world units
+    float pan_y{};
 };
 
 constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
@@ -83,8 +85,36 @@ P2 project_in_frame(const CameraFrame& frame, const Vec3& world, float yaw, floa
     const auto r = rotate(local, yaw, pitch);
     const float z_cam = r.z + frame.camera_distance;
     const float inv_z = 1.0F / std::max(z_cam, 1.0e-3F);
-    return {static_cast<float>(width) * 0.5F + zoom * frame.focal_px * r.x * inv_z,
-           static_cast<float>(height) * 0.5F - zoom * frame.focal_px * r.y * inv_z, r.z};
+    return {static_cast<float>(width) * 0.5F + zoom * frame.focal_px * (r.x - frame.pan_x) * inv_z,
+           static_cast<float>(height) * 0.5F - zoom * frame.focal_px * (r.y - frame.pan_y) * inv_z, r.z};
+}
+
+// The camera of a view: framed on the rest pose (or the mesh), then moved by
+// the follow shift and the gesture pan.
+CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int height) {
+    auto frame = compute_camera_frame(
+        view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices} : view.framing_vertices,
+        width, height);
+    frame.center.x += view.frame_shift.x;
+    frame.center.y += view.frame_shift.y;
+    frame.center.z += view.frame_shift.z;
+    frame.pan_x = view.pan_x * frame.radius;
+    frame.pan_y = view.pan_y * frame.radius;
+    return frame;
+}
+
+// Room vertex / normal placement: turned by room_yaw about room_pivot, then
+// moved by room_offset.
+Vec3 room_place(const ViewState& view, const Vec3& v) {
+    const float c = std::cos(view.room_yaw), s = std::sin(view.room_yaw);
+    const float x = v.x - view.room_pivot.x, z = v.z - view.room_pivot.z;
+    return {c * x + s * z + view.room_pivot.x + view.room_offset.x, v.y + view.room_offset.y,
+            -s * x + c * z + view.room_pivot.z + view.room_offset.z};
+}
+
+Vec3 room_turn(const ViewState& view, const Vec3& n) {
+    const float c = std::cos(view.room_yaw), s = std::sin(view.room_yaw);
+    return {c * n.x + s * n.z, n.y, -s * n.x + c * n.z};
 }
 
 void put_pixel(RgbaImage& image, int x, int y, std::uint8_t shade) {
@@ -420,11 +450,10 @@ static void draw_room(const ViewState& view, const CameraFrame& frame, float zoo
     struct Cv final { float x, y, z, u, v, r, g, b, a; };
     struct Sv final { float x, y, iz, uz, vz, rz, gz, bz, az; };
     const auto camera = [&](std::uint32_t i) {
-        const auto& w = rm.vertices[i];
-        const Vec3 local{w.x + view.room_offset.x - frame.center.x, w.y + view.room_offset.y - frame.center.y,
-                         w.z + view.room_offset.z - frame.center.z};
+        const auto w = room_place(view, rm.vertices[i]);
+        const Vec3 local{w.x - frame.center.x, w.y - frame.center.y, w.z - frame.center.z};
         const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-        Cv out{r.x, r.y, r.z + cd, 0.0F, 0.0F, 128.0F, 128.0F, 128.0F, 128.0F};
+        Cv out{r.x - frame.pan_x, r.y - frame.pan_y, r.z + cd, 0.0F, 0.0F, 128.0F, 128.0F, 128.0F, 128.0F};
         if (uv) {
             out.u = rm.uv0[i].u;
             out.v = rm.uv0[i].v;
@@ -467,7 +496,7 @@ static void draw_room(const ViewState& view, const CameraFrame& frame, float zoo
             const Vec3 n{rm.normal0[idx[0]].x + rm.normal0[idx[1]].x + rm.normal0[idx[2]].x,
                          rm.normal0[idx[0]].y + rm.normal0[idx[1]].y + rm.normal0[idx[2]].y,
                          rm.normal0[idx[0]].z + rm.normal0[idx[1]].z + rm.normal0[idx[2]].z};
-            const auto nr = rotate(n, view.yaw_radians, view.pitch_radians);
+            const auto nr = rotate(room_turn(view, n), view.yaw_radians, view.pitch_radians);
             const float nl = std::sqrt(nr.x * nr.x + nr.y * nr.y + nr.z * nr.z);
             const float pl = std::sqrt(poly[0].x * poly[0].x + poly[0].y * poly[0].y + poly[0].z * poly[0].z);
             if (nl > 0.0F && pl > 0.0F) {
@@ -628,10 +657,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     // compute_camera_frame's camera_distance pushes a real camera back from
     // the model center; project_in_frame's divide by z_cam is the actual
     // perspective divide that was missing.
-    const auto frame = compute_camera_frame(
-        view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices}
-                                      : view.framing_vertices,
-        image.width, image.height);
+    const auto frame = view_frame(mesh, view, image.width, image.height);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
     const float radius = frame.radius;
 
@@ -875,6 +901,112 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     return image;
 }
 
+ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& view, float px, float py,
+                   const HierarchyOverlay* hierarchy, float max_joint_px) {
+    ViewPick out;
+    if (mesh.vertices.empty()) return out;
+    const int w = std::clamp(width, 1, 2048);
+    const int h = std::clamp(height, 1, 2048);
+    const auto frame = view_frame(mesh, view, w, h);
+    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float focal = zoom * frame.focal_px;
+    // Camera-space ray from the eye through the pixel centre.
+    const Vec3 dir{(px + 0.5F - static_cast<float>(w) * 0.5F) / focal,
+                   -(py + 0.5F - static_cast<float>(h) * 0.5F) / focal, 1.0F};
+    const auto to_camera = [&](const Vec3& world) {
+        const auto r = rotate({world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z},
+                              view.yaw_radians, view.pitch_radians);
+        return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
+    };
+    // Moller-Trumbore; t along dir (camera z), barycentrics u, v.
+    const auto hit = [&](const Vec3& a, const Vec3& b, const Vec3& c, float* t, float* u, float* v) {
+        const Vec3 e1{b.x - a.x, b.y - a.y, b.z - a.z};
+        const Vec3 e2{c.x - a.x, c.y - a.y, c.z - a.z};
+        const Vec3 p{dir.y * e2.z - dir.z * e2.y, dir.z * e2.x - dir.x * e2.z, dir.x * e2.y - dir.y * e2.x};
+        const float det = e1.x * p.x + e1.y * p.y + e1.z * p.z;
+        if (std::fabs(det) < 1.0e-9F) return false;
+        const float inv = 1.0F / det;
+        const Vec3 s{-a.x, -a.y, -a.z};
+        *u = (s.x * p.x + s.y * p.y + s.z * p.z) * inv;
+        if (*u < 0.0F || *u > 1.0F) return false;
+        const Vec3 q{s.y * e1.z - s.z * e1.y, s.z * e1.x - s.x * e1.z, s.x * e1.y - s.y * e1.x};
+        *v = (dir.x * q.x + dir.y * q.y + dir.z * q.z) * inv;
+        if (*v < 0.0F || *u + *v > 1.0F) return false;
+        *t = (e2.x * q.x + e2.y * q.y + e2.z * q.z) * inv;
+        return *t > 1.0e-3F;
+    };
+    float best = std::numeric_limits<float>::infinity();
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t], ib = mesh.indices[t + 1U], ic = mesh.indices[t + 2U];
+        if (ia >= mesh.vertices.size() || ib >= mesh.vertices.size() || ic >= mesh.vertices.size()) continue;
+        float d = 0.0F, u = 0.0F, v = 0.0F;
+        if (hit(to_camera(mesh.vertices[ia]), to_camera(mesh.vertices[ib]), to_camera(mesh.vertices[ic]), &d, &u, &v) &&
+            d < best) {
+            best = d;
+            out.model = true;
+        }
+    }
+    if (view.room_mesh != nullptr) {
+        const Mesh& rm = *view.room_mesh;
+        const bool normals = rm.has_normal0();
+        const float near_z = std::max(1.0F, frame.radius * 0.05F);
+        for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
+            const auto ia = rm.indices[t], ib = rm.indices[t + 1U], ic = rm.indices[t + 2U];
+            if (ia >= rm.vertices.size() || ib >= rm.vertices.size() || ic >= rm.vertices.size()) continue;
+            const auto a = to_camera(room_place(view, rm.vertices[ia]));
+            const auto b = to_camera(room_place(view, rm.vertices[ib]));
+            const auto c = to_camera(room_place(view, rm.vertices[ic]));
+            if (normals) {
+                // Faces the room pass skips (turned away) are not hit either.
+                const Vec3 n{rm.normal0[ia].x + rm.normal0[ib].x + rm.normal0[ic].x,
+                             rm.normal0[ia].y + rm.normal0[ib].y + rm.normal0[ic].y,
+                             rm.normal0[ia].z + rm.normal0[ib].z + rm.normal0[ic].z};
+                const auto nr = rotate(room_turn(view, n), view.yaw_radians, view.pitch_radians);
+                if (nr.x * a.x + nr.y * a.y + nr.z * a.z > 0.0F) continue;
+            }
+            float d = 0.0F, u = 0.0F, v = 0.0F;
+            if (!hit(a, b, c, &d, &u, &v) || d >= best || d < near_z) continue;
+            best = d;
+            out.model = false;
+            out.room = true;
+            const auto& ra = rm.vertices[ia];
+            const auto& rb = rm.vertices[ib];
+            const auto& rc = rm.vertices[ic];
+            const float k = 1.0F - u - v;
+            out.room_point = {k * ra.x + u * rb.x + v * rc.x, k * ra.y + u * rb.y + v * rc.y,
+                              k * ra.z + u * rb.z + v * rc.z};
+            // Upward surface: source normals when present, else the plane.
+            Vec3 up{};
+            if (normals) {
+                up = {rm.normal0[ia].x + rm.normal0[ib].x + rm.normal0[ic].x,
+                      rm.normal0[ia].y + rm.normal0[ib].y + rm.normal0[ic].y,
+                      rm.normal0[ia].z + rm.normal0[ib].z + rm.normal0[ic].z};
+            } else {
+                const Vec3 e1{rb.x - ra.x, rb.y - ra.y, rb.z - ra.z};
+                const Vec3 e2{rc.x - ra.x, rc.y - ra.y, rc.z - ra.z};
+                up = {e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
+                up.y = std::fabs(up.y);
+            }
+            const float ul = std::sqrt(up.x * up.x + up.y * up.y + up.z * up.z);
+            out.room_floor = ul > 0.0F && up.y / ul > 0.7F;
+        }
+    }
+    if (hierarchy != nullptr && hierarchy->available()) {
+        float nearest = max_joint_px;
+        for (std::size_t i = 0U; i < hierarchy->points.size(); ++i) {
+            const auto p = project_in_frame(frame, hierarchy->points[i], view.yaw_radians, view.pitch_radians,
+                                            zoom, w, h);
+            const float d = std::hypot(p.x - px, p.y - py);
+            if (d <= nearest) {
+                nearest = d;
+                out.joint = static_cast<int>(i);
+                out.joint_px = d;
+            }
+        }
+    }
+    return out;
+}
+
 std::vector<HierarchyScreenPoint> project_hierarchy_points(const Mesh& mesh,
     const HierarchyOverlay& hierarchy, int width, int height, const ViewState& view) {
     std::vector<HierarchyScreenPoint> out;
@@ -882,10 +1014,7 @@ std::vector<HierarchyScreenPoint> project_hierarchy_points(const Mesh& mesh,
 
     const int clamped_width = std::clamp(width, 1, 2048);
     const int clamped_height = std::clamp(height, 1, 2048);
-    const auto frame = compute_camera_frame(
-        view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices}
-                                      : view.framing_vertices,
-        clamped_width, clamped_height);
+    const auto frame = view_frame(mesh, view, clamped_width, clamped_height);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
 
     out.reserve(hierarchy.points.size());

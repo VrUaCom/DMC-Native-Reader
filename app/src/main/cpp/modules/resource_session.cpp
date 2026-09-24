@@ -665,8 +665,124 @@ std::string describe_session(const Session* session) {
     return out.str();
 }
 
+namespace {
+
+// Everything a view of a session needs; spans in `view` point into the
+// vectors here, so a PreparedView is filled in place and never moved.
+struct PreparedView final {
+    ViewState view;
+    int width{};
+    int height{};
+    const HierarchyOverlay* hierarchy{};
+    const std::vector<std::uint32_t>* texture_slots{};
+    const std::vector<ImagePreview>* textures{};
+    std::vector<Vec3> floor_shadow;
+    std::vector<Vec3> collision_lines;
+    std::shared_ptr<const stage_room::Room> room;
+};
+
+void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
+                  float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                  PreparedView* out) {
+    const auto flags = static_cast<RenderFlags>(render_flags);
+    auto& view = out->view;
+    view.yaw_radians = yaw;
+    view.pitch_radians = std::clamp(pitch, -1.55f, 1.55f);
+    view.zoom = std::clamp(zoom, 0.15f, 8.0f);
+    view.wireframe = has_render_flag(flags, RenderFlag::Wireframe);
+    view.uv_layout = has_render_flag(flags, RenderFlag::UvLayout);
+    view.framing_vertices = motion::motion_rest_vertices(&session);
+    view.fallback_texture = &neutral_texture();
+    view.smooth_textures = has_render_flag(flags, RenderFlag::SmoothTextures);
+    view.unlit = has_render_flag(flags, RenderFlag::Unlit);
+    view.background = static_cast<std::uint8_t>((flags >> kRenderBackgroundShift) & 3U);
+    view.pan_x = std::isfinite(controls.pan_x) ? std::clamp(controls.pan_x, -20.0F, 20.0F) : 0.0F;
+    view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;
+
+    out->width = std::clamp(requested_width, 64, 1024);
+    out->height = std::clamp(requested_height, 64, 1024);
+    out->hierarchy = !view.uv_layout && has_render_flag(flags, RenderFlag::Hierarchy) &&
+            session.hierarchy_overlay.available()
+        ? &session.hierarchy_overlay
+        : nullptr;
+    out->texture_slots = session.render_triangle_texture_slots.empty() ? nullptr : &session.render_triangle_texture_slots;
+    out->textures = session.attached_textures.empty() ? nullptr : &session.attached_textures;
+
+    const auto& rest = view.framing_vertices.empty() ? std::span<const Vec3>{session.render_mesh.vertices}
+                                                     : view.framing_vertices;
+    // Camera follow: frame the model where its motion has taken it (x/z of
+    // the vertex centre against the rest pose; height stays put).
+    if (controls.follow && !view.framing_vertices.empty() && !session.render_mesh.vertices.empty()) {
+        double rx = 0.0, rz = 0.0, cx = 0.0, cz = 0.0;
+        for (const auto& v : view.framing_vertices) {
+            rx += v.x;
+            rz += v.z;
+        }
+        for (const auto& v : session.render_mesh.vertices) {
+            cx += v.x;
+            cz += v.z;
+        }
+        const auto rn = static_cast<double>(view.framing_vertices.size());
+        const auto cn = static_cast<double>(session.render_mesh.vertices.size());
+        view.frame_shift = {static_cast<float>(cx / cn - rx / rn), 0.0F, static_cast<float>(cz / cn - rz / rn)};
+    }
+
+    // SHW footprint on a floor under the feet (lowest rest vertex).
+    if (!view.uv_layout && has_render_flag(flags, RenderFlag::Shadows)) {
+        float floor_y = std::numeric_limits<float>::infinity();
+        for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
+        if (std::isfinite(floor_y)) {
+            // SHW hulls when the archive has them, else the mesh itself.
+            out->floor_shadow = session.shadow_bindings.empty()
+                ? shadow::mesh_floor_shadow(session.render_mesh, shadow::kViewerLightDirection, floor_y)
+                : shadow::floor_shadow_triangles(session, shadow::kViewerLightDirection, floor_y);
+            view.floor = true;
+            view.floor_y = floor_y;
+            view.floor_shadow = out->floor_shadow;
+        }
+    }
+    // Room (stage_room.h): the chosen stage around the model, its floor spot
+    // (or the point placed by a double tap) under the model's feet, turned
+    // about that spot by the twist gesture; a stage itself has no room.
+    if (!view.uv_layout && !view.wireframe && has_render_flag(flags, RenderFlag::Room) &&
+        !stage_room::is_stage_session(session)) {
+        out->room = stage_room::current();
+    }
+    if (out->room && !rest.empty()) {
+        double sx = 0.0, sz = 0.0;
+        float low = std::numeric_limits<float>::infinity();
+        for (const auto& v : rest) {
+            sx += v.x;
+            sz += v.z;
+            low = std::min(low, v.y);
+        }
+        const auto n = static_cast<double>(rest.size());
+        const Vec3 spot = stage_room::spot_position();
+        view.room_mesh = &out->room->mesh;
+        view.room_texture_slots = &out->room->triangle_texture_slots;
+        view.room_textures = &out->room->textures;
+        view.room_translucent_triangles = &out->room->translucent_triangles;
+        view.room_pivot = spot;
+        view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
+        view.room_offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+    }
+    // Attack collision shapes on the current pose (debug meshes at000-at003).
+    if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
+        out->collision_lines = collision::posed_collision_lines(session);
+        view.overlay_lines = out->collision_lines;
+    }
+}
+
+}  // namespace
+
 RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags) {
+    return render_session(session, requested_width, requested_height, yaw, pitch, zoom, render_flags,
+                          ViewControls{});
+}
+
+RgbaImage render_session(const Session* session, int requested_width, int requested_height, float yaw,
+                         float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls) {
     if (session == nullptr) return {};
     if (session->uv_gallery && session->uv_map_index &&
         *session->uv_map_index < session->uv_gallery->maps.size()) {
@@ -676,96 +792,45 @@ RgbaImage render_session(const Session* session, int requested_width,
             std::clamp(requested_height, 64, 1024), zoom);
     }
     if (!session->renderable) return {};
-    const auto flags = static_cast<dmcresource::RenderFlags>(
-        static_cast<std::uint32_t>(render_flags));
+    PreparedView prepared;
+    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    return render_view(session->render_mesh, prepared.width, prepared.height, prepared.view,
+                       prepared.hierarchy, prepared.texture_slots, prepared.textures);
+}
 
-    dmcresource::ViewState view;
-    view.yaw_radians = static_cast<float>(yaw);
-    view.pitch_radians = std::clamp(static_cast<float>(pitch), -1.55f, 1.55f);
-    view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
-    view.wireframe = dmcresource::has_render_flag(
-        flags, dmcresource::RenderFlag::Wireframe);
-    view.uv_layout = dmcresource::has_render_flag(
-        flags, dmcresource::RenderFlag::UvLayout);
-    view.framing_vertices = dmcresource::motion::motion_rest_vertices(session);
-    view.fallback_texture = &dmcresource::neutral_texture();
-    view.smooth_textures = dmcresource::has_render_flag(flags, dmcresource::RenderFlag::SmoothTextures);
-    view.unlit = dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Unlit);
-    view.background = static_cast<std::uint8_t>((flags >> dmcresource::kRenderBackgroundShift) & 3U);
-
-    const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
-    const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
-    const auto* hierarchy =
-        !view.uv_layout &&
-        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
-        session->hierarchy_overlay.available()
-            ? &session->hierarchy_overlay
-            : nullptr;
-    const auto* texture_slots = session->render_triangle_texture_slots.empty()
-        ? nullptr
-        : &session->render_triangle_texture_slots;
-    const auto* textures = session->attached_textures.empty()
-        ? nullptr
-        : &session->attached_textures;
-    // SHW footprint on a floor under the feet (lowest rest vertex).
-    std::vector<dmcresource::Vec3> floor_shadow;
-    if (!view.uv_layout && dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Shadows)) {
-        const auto& rest = view.framing_vertices.empty()
-            ? std::span<const dmcresource::Vec3>{session->render_mesh.vertices}
-            : view.framing_vertices;
-        float floor_y = std::numeric_limits<float>::infinity();
-        for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
-        if (std::isfinite(floor_y)) {
-            // SHW hulls when the archive has them, else the mesh itself.
-            floor_shadow = session->shadow_bindings.empty()
-                ? dmcresource::shadow::mesh_floor_shadow(
-                      session->render_mesh, dmcresource::shadow::kViewerLightDirection, floor_y)
-                : dmcresource::shadow::floor_shadow_triangles(
-                      *session, dmcresource::shadow::kViewerLightDirection, floor_y);
-            view.floor = true;
-            view.floor_y = floor_y;
-            view.floor_shadow = floor_shadow;
-        }
-    }
-    // Room (stage_room.h): the chosen stage around the model, its floor spot
-    // under the model's feet; a stage itself is shown without one.
-    std::shared_ptr<const stage_room::Room> room;
-    if (!view.uv_layout && !view.wireframe &&
-        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Room) &&
-        !stage_room::is_stage_session(*session)) {
-        room = stage_room::current();
-    }
-    if (room) {
-        const auto& rest = view.framing_vertices.empty()
-            ? std::span<const dmcresource::Vec3>{session->render_mesh.vertices}
-            : view.framing_vertices;
-        if (!rest.empty()) {
-            double sx = 0.0, sz = 0.0;
-            float low = std::numeric_limits<float>::infinity();
-            for (const auto& v : rest) {
-                sx += v.x;
-                sz += v.z;
-                low = std::min(low, v.y);
+SessionPick pick_session(const Session* session, int requested_width, int requested_height, float yaw,
+                         float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                         float x, float y) {
+    SessionPick out;
+    if (session == nullptr || !session->renderable || session->uv_gallery) return out;
+    PreparedView prepared;
+    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    if (prepared.view.uv_layout) return out;
+    const auto* bones = session->hierarchy_overlay.available() ? &session->hierarchy_overlay : nullptr;
+    const auto pick = pick_view(session->render_mesh, prepared.width, prepared.height, prepared.view, x, y, bones);
+    out.model = pick.model;
+    out.room = pick.room;
+    out.room_floor = pick.room_floor;
+    out.room_point = pick.room_point;
+    out.joint = pick.joint;
+    if (pick.joint >= 0 && static_cast<std::size_t>(pick.joint) < session->scene.nodes.size()) {
+        // Composite scenes list their parts' nodes one part after another.
+        std::string part;
+        std::size_t local = static_cast<std::size_t>(pick.joint);
+        std::size_t begin = 0U;
+        for (const auto& p : session->composite_parts) {
+            const auto count = p.scene.nodes.size();
+            if (local >= begin && local < begin + count) {
+                part = p.name;
+                local -= begin;
+                break;
             }
-            const auto n = static_cast<double>(rest.size());
-            const auto& spots = room->spots;
-            const Vec3 spot = spots.empty() ? Vec3{} : spots[stage_room::spot() % spots.size()];
-            view.room_mesh = &room->mesh;
-            view.room_texture_slots = &room->triangle_texture_slots;
-            view.room_textures = &room->textures;
-            view.room_translucent_triangles = &room->translucent_triangles;
-            view.room_offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+            begin += count;
         }
+        const auto& name = session->scene.nodes[static_cast<std::size_t>(pick.joint)].name;
+        out.joint_name = "joint " + std::to_string(local) + (name.empty() ? "" : " · " + name) +
+                         (part.empty() ? "" : " (" + part + ")");
     }
-    // Attack collision shapes on the current pose (debug meshes at000-at003).
-    std::vector<dmcresource::Vec3> collision_lines;
-    if (!view.uv_layout && session->collision != nullptr &&
-        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Collision)) {
-        collision_lines = dmcresource::collision::posed_collision_lines(*session);
-        view.overlay_lines = collision_lines;
-    }
-    return dmcresource::render_view(
-        session->render_mesh, width, height, view,
-        hierarchy, texture_slots, textures);
+    return out;
 }
 }  // namespace dmcresource

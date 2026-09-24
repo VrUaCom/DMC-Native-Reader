@@ -84,6 +84,14 @@ public final class NativeBridge {
 
     // Attack collision shapes on the body bones (drawn with RENDER_COLLISION):
     // used attack ids, and the selection (-1 = every attack) with its label.
+    /** Render with gesture controls: pan (framing radii), room twist, follow. */
+    public static native boolean renderEx(long handle, int width, int height, float yaw,
+            float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
+            boolean follow, android.graphics.Bitmap target);
+    /** "model|joint", "room|joint", "placed|joint" or "none|joint" under (x, y). */
+    public static native String pickView(long handle, int width, int height, float yaw,
+            float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
+            boolean follow, float x, float y, boolean place);
     /** Builds the viewer room from a stage archive; its summary, or null. */
     public static native String loadRoom(int fd, String filename);
     public static native void clearRoom();

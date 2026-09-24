@@ -341,6 +341,35 @@ int main() {
         }
         assert(changed > 128U * 128U / 4U);  // floor and far wall behind the model
 
+        // Gesture picks: the model under the view centre; the room floor under
+        // the bottom of the view (room point on the floor, y = 0 in the room).
+        {
+            dmcresource::Mesh square;
+            square.vertices = {{-20, 0, 0}, {20, 0, 0}, {20, 40, 0}, {-20, 40, 0}};
+            square.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = -0.3F;
+            const auto centre = dmcresource::pick_view(square, 200, 200, look, 100.0F, 100.0F);
+            assert(centre.model && !centre.room);
+            assert(!dmcresource::pick_view(square, 200, 200, look, 2.0F, 2.0F).model);
+            look.room_mesh = &box;
+            look.room_offset = {0.0F, 0.0F, 0.0F};
+            const auto floor = dmcresource::pick_view(square, 200, 200, look, 100.0F, 190.0F);
+            assert(floor.room && floor.room_floor && !floor.model && std::fabs(floor.room_point.y) < 0.5F);
+            const auto wall = dmcresource::pick_view(square, 200, 200, look, 100.0F, 8.0F);
+            assert(!wall.room || !wall.room_floor);  // the far wall is no floor
+            // Pan moves the picture: the centre pixel no longer hits the model.
+            look.pan_x = 3.0F;
+            assert(!dmcresource::pick_view(square, 200, 200, look, 100.0F, 100.0F).model);
+            look.pan_x = 0.0F;
+            // Turning the room about its pivot changes what is drawn.
+            const auto before = dmcresource::render_view(square, 96, 96, look);
+            look.room_yaw = 0.8F;
+            const auto after = dmcresource::render_view(square, 96, 96, look);
+            assert(before.pixels != after.pixels);
+        }
+
         // Settings bits: background 2 (light) fills the corner.
         const auto light = dmcresource::render_session(model.get(), 64, 64, 0.0F, 0.0F, 1.0F,
             2U << dmcresource::kRenderBackgroundShift);

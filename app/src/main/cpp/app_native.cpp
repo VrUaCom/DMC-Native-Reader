@@ -439,6 +439,50 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_render(
     } catch (...) { return JNI_FALSE; }
 }
 
+// Render with the gesture controls (pan, room twist, camera follow).
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_renderEx(
+        JNIEnv* env, jclass, jlong handle, jint requested_width,
+        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
+        jboolean follow, jobject target) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return JNI_FALSE;
+    try {
+        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const auto image = dmcresource::render_session(
+            session, requested_width, requested_height, yaw, pitch, zoom,
+            static_cast<std::uint32_t>(render_flags), controls);
+        return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
+    } catch (...) { return JNI_FALSE; }
+}
+
+// What is under image pixel (x, y): "model|<joint>", "room|<joint>",
+// "placed|<joint>" (place = true and an upward room surface was hit: the model now
+// stands there) or "none|<joint>"; <joint> is empty when no joint is near.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_pickView(
+        JNIEnv* env, jclass, jlong handle, jint requested_width,
+        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
+        jboolean follow, jfloat x, jfloat y, jboolean place) {
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return nullptr;
+    try {
+        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const auto pick = dmcresource::pick_session(
+            session, requested_width, requested_height, yaw, pitch, zoom,
+            static_cast<std::uint32_t>(render_flags), controls, x, y);
+        std::string kind = pick.model ? "model" : pick.room ? "room" : "none";
+        if (pick.room && pick.room_floor && !pick.model && place == JNI_TRUE) {
+            dmcresource::stage_room::place_at(pick.room_point);
+            kind = "placed";
+        }
+        const auto text = kind + "|" + pick.joint_name;
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return nullptr; }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
         JNIEnv* env, jclass, jlong handle, jint topic) {

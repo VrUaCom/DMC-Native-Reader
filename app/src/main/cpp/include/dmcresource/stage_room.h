@@ -56,6 +56,11 @@ void set_current(std::shared_ptr<const Room> room) noexcept;
 // Spot the model stands on (wraps around the room's spots).
 void set_spot(std::size_t index) noexcept;
 [[nodiscard]] std::size_t spot() noexcept;
+// A point the user placed the model on (double tap on the room floor); it
+// wins over the listed spots until the room or the spot changes.
+void place_at(const Vec3& point) noexcept;
+// Where the model stands now: the placed point, else the current spot.
+[[nodiscard]] Vec3 spot_position() noexcept;
 
 // A stage itself (SCM, or a session holding SCM children) never gets a room.
 [[nodiscard]] bool is_stage_session(const Session& session) noexcept;

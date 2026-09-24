@@ -137,4 +137,31 @@ struct Session {
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags);
 
+// Camera and room controls from the viewer's gestures.
+struct ViewControls final {
+    float pan_x{};     // camera-plane shift, in framing radii
+    float pan_y{};
+    float room_yaw{};  // room turned about the model's spot (radians)
+    bool follow{};     // camera follows the model as its motion moves it
+};
+
+[[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls);
+
+// What lies under image pixel (x, y) of that same view: the model, the room
+// (with the room point) and the nearest drawn joint ("joint 9 · name (part)").
+struct SessionPick final {
+    bool model{};
+    bool room{};
+    bool room_floor{};
+    Vec3 room_point{};
+    int joint{-1};
+    std::string joint_name;
+};
+
+[[nodiscard]] SessionPick pick_session(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls, float x, float y);
+
 }  // namespace dmcresource

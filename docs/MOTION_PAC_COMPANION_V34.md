@@ -451,6 +451,29 @@ applied at once:
 - Playback speed: ¼× to 2×.
 - Room: choose, show, next spot or remove.
 
+**Gestures (v63).** The ✋ icon sits next to ⚙ in the ⋮ shortcut row and
+opens the Gestures window. Each gesture there has its own on/off switch
+(stored as a mask), and the window also sets the camera follow. One finger
+turns the view and a pinch zooms; both are always on.
+
+| Gesture | Effect |
+| --- | --- |
+| Two fingers drag | Pan in the camera plane (`ViewControls::pan_x/pan_y`, in framing radii) |
+| Two fingers twist | Turn the room about the model's spot (`room_yaw`); with no room, turn the view |
+| Double tap | Reset the view; on an upward room surface, stand the model there (`pick_session` + `stage_room::place_at`) |
+| Tap the model | Pause or resume the animation from the same frame |
+| Flick | The view keeps turning and slows down |
+| Long press | Show the joint under the finger (`joint N · name (part)`); drag sideways to scrub frames |
+| Swipe in from the left / right edge | Previous / next animation. A 200 dp band in the middle of each edge is excluded from the system back gesture |
+| Three fingers sideways | Previous / next position (enemy class, weapon, dress) |
+| Three-finger tap | Save a PNG to Pictures/DMC Native Reader (Android 10+) or to the app's picture folder |
+| Swipe down from the top of the view | Hide or show the bars |
+| Four-finger tap | The camera follows the model as its motion moves it, or stays in place |
+
+`NativeBridge.renderEx` renders with the gesture controls. `NativeBridge.pickView`
+reports what is under a pixel. Both share one view preparation with
+`render_session`, so a pick matches the picture pixel for pixel.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

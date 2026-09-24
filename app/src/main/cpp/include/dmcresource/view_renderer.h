@@ -70,6 +70,14 @@ struct ViewState {
     bool smooth_textures{false};
     bool unlit{false};
     std::uint8_t background{0U};
+    // Gesture camera controls: camera-plane pan in framing radii, a shift of
+    // the framing centre (camera follows the model), and the room turned
+    // about room_pivot (room coordinates) before room_offset moves it.
+    float pan_x{0.0F};
+    float pan_y{0.0F};
+    Vec3 frame_shift{};
+    float room_yaw{0.0F};
+    Vec3 room_pivot{};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
@@ -90,6 +98,22 @@ struct HierarchyScreenPoint {
     float x{};
     float y{};
 };
+
+// What lies under an image pixel: the nearest model or visible room surface
+// on the view ray, the room point in room coordinates, and the hierarchy
+// joint drawn nearest to the pixel (within max_joint_px).
+struct ViewPick {
+    bool model{false};
+    bool room{false};
+    bool room_floor{false};  // the room surface hit faces up (a model can stand on it)
+    Vec3 room_point{};
+    int joint{-1};
+    float joint_px{0.0F};
+};
+
+[[nodiscard]] ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& view,
+                                 float x, float y, const HierarchyOverlay* hierarchy = nullptr,
+                                 float max_joint_px = 28.0F);
 
 [[nodiscard]] std::vector<HierarchyScreenPoint> project_hierarchy_points(
     const Mesh& mesh, const HierarchyOverlay& hierarchy, int width, int height,

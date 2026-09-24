@@ -229,6 +229,7 @@ void place(Mesh& mesh, const GameSet& set) {
 std::mutex g_mutex;
 std::shared_ptr<const Room> g_room;
 std::size_t g_spot = 0U;
+std::optional<Vec3> g_placed;
 
 }  // namespace
 
@@ -505,6 +506,7 @@ void set_current(std::shared_ptr<const Room> room) noexcept {
     const std::lock_guard lock{g_mutex};
     g_room = std::move(room);
     g_spot = 0U;
+    g_placed.reset();
 }
 
 std::shared_ptr<const Room> current() noexcept {
@@ -515,6 +517,19 @@ std::shared_ptr<const Room> current() noexcept {
 void set_spot(std::size_t index) noexcept {
     const std::lock_guard lock{g_mutex};
     g_spot = g_room && !g_room->spots.empty() ? index % g_room->spots.size() : 0U;
+    g_placed.reset();
+}
+
+void place_at(const Vec3& point) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (g_room) g_placed = point;
+}
+
+Vec3 spot_position() noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (g_placed) return *g_placed;
+    if (!g_room || g_room->spots.empty()) return {};
+    return g_room->spots[g_spot % g_room->spots.size()];
 }
 
 std::size_t spot() noexcept {
