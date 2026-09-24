@@ -8,6 +8,7 @@
 #include <span>
 #include <utility>
 
+#include "dmcresource/collision_shapes.h"
 #include "dmcresource/format_views.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/motion/motion_script.h"
@@ -201,14 +202,20 @@ PipelineResult run_motion_script_module(const NativeModule& module,
             return module_support::reject(probe, module.id, "motion script bank tables do not parse");
         }
         auto out = accepted(module, probe, size, "MotionScript", "canonical.motion-script.parser",
-                            "Player motion script");
+                            file->nested() ? "Player motion script" : "Enemy motion script");
         const auto add_root = [&out](const char* key, std::string value) {
             out.inspection.root.properties.push_back({key, std::move(value), EvidenceLevel::ExeConfirmed});
         };
         std::size_t total = 0U;
         for (std::size_t bank = 0U; bank < file->bank_count(); ++bank) total += file->script_count(bank);
         add_root("Header table", "+" + std::to_string(file->header_table()));
-        add_root("Banks", std::to_string(file->bank_count()) + " (motion\\pl000\\pl000_00_N.pac)");
+        add_root("Form", file->nested()
+                             ? "player (bind mode 0: banks = pl000_00_N.pac)"
+                             : "enemy (bind mode 1: actions of the actor's motion PACs)");
+        add_root("Motion resources", file->has_resources()
+                                         ? "table B: action -> MOT id (group * 100 + slot), loop flag"
+                                         : "none");
+        add_root("Banks", std::to_string(file->bank_count()));
         add_root("Scripts", std::to_string(total));
         add_root("Weapon states", "opcode 3 byte 2 & 0x3F -> player+0x39C3 (0x1401F01F0)");
         std::ostringstream detail;
@@ -217,8 +224,10 @@ PipelineResult run_motion_script_module(const NativeModule& module,
             InspectionNode node;
             node.id = "bank-" + std::to_string(bank);
             const auto count = file->script_count(bank);
-            node.title = "Bank " + std::to_string(bank) + " (pl000_00_" + std::to_string(bank) +
-                         ") " + std::to_string(count) + " scripts";
+            node.title = file->nested()
+                ? "Bank " + std::to_string(bank) + " (pl000_00_" + std::to_string(bank) + ") " +
+                      std::to_string(count) + " scripts"
+                : "Bank " + std::to_string(bank) + " " + std::to_string(count) + " actions";
             node.kind = InspectionKind::Collection;
             for (std::size_t i = 0U; i < count && i < 128U; ++i) {
                 const auto s = file->summarize(bank, i);
@@ -230,6 +239,12 @@ PipelineResult run_motion_script_module(const NativeModule& module,
                 if (s->last_frame != 0U) v << " to F" << s->last_frame;
                 if (s->loops) v << ", loop";
                 if (s->hands_over) v << ", hands over";
+                for (const auto& r : file->resources(bank, i)) {
+                    if (r.object != 0U) continue;
+                    v << ", plays MOT " << r.id << " (PAC group " << r.group() << " slot "
+                      << r.slot() << (r.loop == 1U ? ", loop" : r.loop == 2U ? ", actor loop" : "")
+                      << ")";
+                }
                 if (!s->states.empty()) {
                     v << ", states";
                     for (const auto& key : s->states) {
@@ -251,7 +266,119 @@ PipelineResult run_motion_script_module(const NativeModule& module,
     }
 }
 
+// Collision shape table (ICollisionHandle records, 0x14005C260 / 0x1402CC115).
+PipelineResult run_colshape_module(const NativeModule& module,
+                                   std::string_view,
+                                   const std::uint8_t* bytes,
+                                   std::size_t size,
+                                   const ProbeResult& probe) noexcept {
+    try {
+        const std::span<const std::uint8_t> data{bytes, size};
+        if (!collision::looks_like_shape_table(data)) {
+            return module_support::reject(probe, module.id, "not whole 80-byte shape records");
+        }
+        const auto shapes = collision::parse_shapes(data);
+        auto out = accepted(module, probe, size, "COLSHAPE", "canonical.collision.shape-reader",
+                            "Collision shapes");
+        out.inspection.root.properties.push_back(
+            {"Records", std::to_string(shapes.size()) + " x 80 bytes", EvidenceLevel::ExeConfirmed});
+        out.inspection.root.properties.push_back(
+            {"Placement", "bone space; the attack index names the bone", EvidenceLevel::ExeConfirmed});
+        std::ostringstream detail;
+        detail << "Collision shapes | records=" << shapes.size();
+        for (std::size_t i = 0U; i < shapes.size() && i < 512U; ++i) {
+            const auto& s = shapes[i];
+            InspectionNode node;
+            node.id = "shape-" + std::to_string(i);
+            node.kind = InspectionKind::Object;
+            std::ostringstream v;
+            v.precision(4);
+            switch (s.type) {
+            case 2U:
+                node.title = "#" + std::to_string(i) + " sphere";
+                v << "centre " << s.a[0] << ", " << s.a[1] << ", " << s.a[2] << "  radius " << s.radius;
+                break;
+            case 3U:
+                node.title = "#" + std::to_string(i) + " box";
+                v << "centre " << s.a[0] << ", " << s.a[1] << ", " << s.a[2] << "  rotation " << s.b[0]
+                  << ", " << s.b[1] << ", " << s.b[2] << " deg  size " << s.size[0] << ", " << s.size[1]
+                  << ", " << s.size[2];
+                break;
+            case 4U:
+                node.title = "#" + std::to_string(i) + " capsule";
+                v << "a " << s.a[0] << ", " << s.a[1] << ", " << s.a[2] << "  b " << s.b[0] << ", " << s.b[1]
+                  << ", " << s.b[2] << "  radius " << s.radius;
+                break;
+            default:
+                node.title = "#" + std::to_string(i) + " type " + std::to_string(s.type);
+                v << "not drawn (type " << static_cast<unsigned>(s.type) << ")";
+                break;
+            }
+            node.properties.push_back({"Shape", v.str(),
+                                       s.type >= 2U && s.type <= 4U ? EvidenceLevel::ExeConfirmed
+                                                                    : EvidenceLevel::Recognized});
+            out.inspection.root.children.push_back(std::move(node));
+        }
+        out.detail = detail.str();
+        out.image_preview = views::render_collision_view(shapes);
+        return out;
+    } catch (...) {
+        return module_support::reject_minimal(probe);
+    }
+}
+
+// Attack index (0x14005C740: entry = mask, bone, u16 shape).
+PipelineResult run_colindex_module(const NativeModule& module,
+                                   std::string_view,
+                                   const std::uint8_t* bytes,
+                                   std::size_t size,
+                                   const ProbeResult& probe) noexcept {
+    try {
+        const std::span<const std::uint8_t> data{bytes, size};
+        if (!collision::looks_like_attack_index(data, std::nullopt)) {
+            return module_support::reject(probe, module.id, "not 4-byte attack entries");
+        }
+        const auto entries = collision::parse_attack_index(data);
+        auto out = accepted(module, probe, size, "COLINDEX", "canonical.collision.index-reader",
+                            "Attack collision index");
+        std::size_t used = 0U;
+        std::ostringstream list;
+        for (std::size_t i = 0U; i < entries.size(); ++i) {
+            const auto& e = entries[i];
+            if (e.mask == 0U) continue;
+            if (used < 400U) {
+                list << (used == 0U ? "" : "; ") << i << ": mask " << static_cast<unsigned>(e.mask) << " bone "
+                     << static_cast<unsigned>(e.bone) << " shape " << e.shape;
+            }
+            ++used;
+        }
+        out.inspection.root.properties.push_back(
+            {"Attack ids", std::to_string(entries.size()) + " (" + std::to_string(used) + " used)",
+             EvidenceLevel::ExeConfirmed});
+        out.inspection.root.properties.push_back(
+            {"Entries", list.str(), EvidenceLevel::ExeConfirmed});
+        out.detail = "Attack collision index | ids=" + std::to_string(entries.size()) +
+                     " used=" + std::to_string(used);
+        out.image_preview = views::render_attack_index_view(entries);
+        return out;
+    } catch (...) {
+        return module_support::reject_minimal(probe);
+    }
+}
+
 }  // namespace
+
+NativeModule colshape_module() noexcept {
+    return {"formats.collision.shape-reader", "COLSHAPE", Format::CollisionShapes,
+            ModuleKind::Structural, false, run_colshape_module,
+            capability(ResourceCapability::Inspection) | ResourceCapability::ImagePreview};
+}
+
+NativeModule colindex_module() noexcept {
+    return {"formats.collision.index-reader", "COLINDEX", Format::AttackIndex,
+            ModuleKind::Structural, false, run_colindex_module,
+            capability(ResourceCapability::Inspection) | ResourceCapability::ImagePreview};
+}
 
 NativeModule tsc_module() noexcept {
     return {"formats.tsc.scroll-reader", "TSC", Format::Tsc, ModuleKind::Structural, false,

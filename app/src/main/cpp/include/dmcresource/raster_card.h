@@ -58,8 +58,9 @@ private:
 // Prints title, detail lines, root properties and the inspection tree from
 // `y`, then fills the rest with a hex + ASCII dump of `bytes`. Returns the y
 // after the last line drawn.
+// `hex` false: the byte count still shows, the dump is left to the caller.
 int draw_info_card(Canvas& canvas, int y, const InspectionDocument& inspection,
-                   std::string_view detail, std::span<const std::uint8_t> bytes);
+                   std::string_view detail, std::span<const std::uint8_t> bytes, bool hex = true);
 
 // Hex dump rows (offset, 16 bytes, ASCII) from `y` to the canvas bottom.
 int draw_hex_dump(Canvas& canvas, int y, std::span<const std::uint8_t> bytes,

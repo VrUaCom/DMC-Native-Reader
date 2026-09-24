@@ -267,7 +267,63 @@ ImagePreview render_clt_view(const std::vector<motion::ClothParams>& blocks) {
     return canvas.take();
 }
 
+namespace {
+
+// Enemy form (mode 1): every action with the MOT id(s) it plays, per bank.
+ImagePreview render_action_grid(const motion::MotionScriptFile& file) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    std::size_t total = 0U;
+    for (std::size_t b = 0U; b < file.bank_count(); ++b) total += file.script_count(b);
+    canvas.text(10, 8, "MOTION SCRIPT  " + std::to_string(file.bank_count()) + " BANKS  " +
+                           std::to_string(total) + " ACTIONS",
+                raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale, "ACTION>MOT ID (GROUP*100+SLOT)  L = LOOP  * = WEAPON STATE",
+                raster::kDim, small);
+    static constexpr std::array<Rgb, 6> kGroup{{
+        {140, 230, 150}, {120, 200, 255}, {250, 190, 90}, {220, 140, 250}, {250, 130, 130}, {200, 200, 120}}};
+    int y = 8 + 9 * scale + 9 * small + 10;
+    const int line_h = 9 * small + 2;
+    for (std::size_t bank = 0U; bank < file.bank_count() && y + line_h < kViewHeight; ++bank) {
+        const auto count = file.script_count(bank);
+        canvas.fill(10, y, kViewWidth - 10, y + line_h, raster::kPanel);
+        canvas.text(14, y + 1, "BANK " + std::to_string(bank) + "  " + std::to_string(count) + " ACTIONS",
+                    raster::kLabel, small);
+        y += line_h + 2;
+        int x = 14;
+        for (std::size_t a = 0U; a < count; ++a) {
+            const auto res = file.resources(bank, a);
+            std::string cell = std::to_string(a) + ">";
+            Rgb colour = raster::kDim;
+            if (res.empty()) {
+                cell += "-";
+            } else {
+                cell += std::to_string(res.front().id);
+                if (res.front().loop == 1U) cell += "L";
+                colour = kGroup[res.front().group() % kGroup.size()];
+            }
+            const auto summary = file.summarize(bank, a);
+            if (summary && !summary->states.empty()) cell += "*";
+            cell += " ";
+            const int w = Canvas::text_width(cell, small);
+            if (x + w > kViewWidth - 10) {
+                x = 14;
+                y += line_h;
+                if (y + line_h > kViewHeight) break;
+            }
+            canvas.text(x, y, cell, colour, small);
+            x += w;
+        }
+        y += line_h + 6;
+    }
+    return canvas.take();
+}
+
+}  // namespace
+
 ImagePreview render_motion_script_view(const motion::MotionScriptFile& file) {
+    if (!file.nested()) return render_action_grid(file);
     Canvas canvas{kViewWidth, kViewHeight};
     const int scale = raster::card_scale(kViewWidth);
     const int small = std::max(1, scale - 1);
@@ -353,6 +409,172 @@ ImagePreview render_motion_script_view(const motion::MotionScriptFile& file) {
         line += item;
     }
     if (!line.empty()) canvas.text(10, fy, line, raster::kDim, small);
+    return canvas.take();
+}
+
+namespace {
+
+[[nodiscard]] std::array<float, 3> rotate_euler(std::array<float, 3> p, const std::array<float, 3>& deg) {
+    constexpr float k = 3.14159265F / 180.0F;
+    const float cx = std::cos(deg[0] * k), sx = std::sin(deg[0] * k);
+    const float cy = std::cos(deg[1] * k), sy = std::sin(deg[1] * k);
+    const float cz = std::cos(deg[2] * k), sz = std::sin(deg[2] * k);
+    // X, then Y, then Z (0x140030F10 / 0x140030FC0 / 0x140031080 order).
+    p = {p[0], p[1] * cx - p[2] * sx, p[1] * sx + p[2] * cx};
+    p = {p[0] * cy + p[2] * sy, p[1], -p[0] * sy + p[2] * cy};
+    p = {p[0] * cz - p[1] * sz, p[0] * sz + p[1] * cz, p[2]};
+    return p;
+}
+
+void ring(Canvas& canvas, int cx, int cy, int r, Rgb c) {
+    if (r < 1) r = 1;
+    const int steps = std::clamp(r, 12, 90);
+    int px = cx + r, py = cy;
+    for (int i = 1; i <= steps; ++i) {
+        const float t = 6.2831853F * static_cast<float>(i) / static_cast<float>(steps);
+        const int x = cx + static_cast<int>(std::cos(t) * static_cast<float>(r));
+        const int y = cy + static_cast<int>(std::sin(t) * static_cast<float>(r));
+        canvas.line(px, py, x, y, c);
+        px = x;
+        py = y;
+    }
+}
+
+}  // namespace
+
+ImagePreview render_collision_view(const std::vector<collision::Shape>& shapes) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    std::array<std::size_t, 7> counts{};
+    for (const auto& s : shapes) ++counts[std::min<std::size_t>(s.type, 6U)];
+    canvas.text(10, 8, "COLLISION SHAPES  " + std::to_string(shapes.size()) + " RECORDS", raster::kAccent,
+                scale);
+    canvas.text(10, 8 + 9 * scale,
+                "SPHERE " + std::to_string(counts[2]) + "  BOX " + std::to_string(counts[3]) + "  CAPSULE " +
+                    std::to_string(counts[4]) + "   BONE SPACE, EACH ON ITS ATTACK'S BONE",
+                raster::kDim, small);
+    static constexpr std::array<Rgb, 7> kType{{
+        {130, 134, 150}, {130, 134, 150}, {140, 230, 150}, {250, 190, 90}, {120, 200, 255},
+        {220, 140, 250}, {250, 130, 130}}};
+    // Bounds over every shape (centre +- radius / half size).
+    float lo[3] = {1e9F, 1e9F, 1e9F}, hi[3] = {-1e9F, -1e9F, -1e9F};
+    const auto grow = [&](const std::array<float, 3>& p, float r) {
+        for (int k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], p[static_cast<std::size_t>(k)] - r);
+            hi[k] = std::max(hi[k], p[static_cast<std::size_t>(k)] + r);
+        }
+    };
+    for (const auto& s : shapes) {
+        if (s.type == 2U) grow(s.a, s.radius);
+        if (s.type == 4U) {
+            grow(s.a, s.radius);
+            grow(s.b, s.radius);
+        }
+        if (s.type == 3U) grow(s.a, 0.5F * std::max({s.size[0], s.size[1], s.size[2]}) * 1.8F);
+    }
+    if (lo[0] > hi[0]) {
+        canvas.text(10, 80, "NO SPHERE / BOX / CAPSULE RECORDS", raster::kLabel, scale);
+        return canvas.take();
+    }
+    const int top = 8 + 9 * scale + 9 * small + 12;
+    const int panel_h = (kViewHeight - top - 20) / 2 - 6;
+    struct View final {
+        int axis_u;
+        const char* name;
+    };
+    const View views[2] = {{0, "FRONT X / Y"}, {2, "SIDE Z / Y"}};
+    for (int v = 0; v < 2; ++v) {
+        const int y0 = top + v * (panel_h + 12);
+        const int y1 = y0 + panel_h;
+        canvas.fill(10, y0, kViewWidth - 10, y1, raster::kPanel);
+        canvas.text(16, y0 + 6, views[v].name, raster::kLabel, small);
+        const int u = views[v].axis_u;
+        const float span_u = hi[u] - lo[u], span_v = hi[1] - lo[1];
+        const float fit = std::min((kViewWidth - 60) / std::max(span_u, 1.0F),
+                                   (panel_h - 40) / std::max(span_v, 1.0F));
+        const float cu = 0.5F * (lo[u] + hi[u]), cv = 0.5F * (lo[1] + hi[1]);
+        const auto to_x = [&](float x) { return kViewWidth / 2 + static_cast<int>((x - cu) * fit); };
+        const auto to_y = [&](float y) { return (y0 + y1) / 2 + 10 - static_cast<int>((y - cv) * fit); };
+        // Bone origin.
+        canvas.line(to_x(0.0F) - 8, to_y(0.0F), to_x(0.0F) + 8, to_y(0.0F), raster::kGrid);
+        canvas.line(to_x(0.0F), to_y(0.0F) - 8, to_x(0.0F), to_y(0.0F) + 8, raster::kGrid);
+        for (std::size_t i = 0U; i < shapes.size(); ++i) {
+            const auto& s = shapes[i];
+            const Rgb c = kType[std::min<std::size_t>(s.type, 6U)];
+            const auto P = [&](const std::array<float, 3>& p) {
+                return std::array<int, 2>{to_x(p[static_cast<std::size_t>(u)]), to_y(p[1])};
+            };
+            if (s.type == 2U) {
+                const auto p = P(s.a);
+                ring(canvas, p[0], p[1], static_cast<int>(s.radius * fit), c);
+            } else if (s.type == 4U) {
+                const auto a = P(s.a), b = P(s.b);
+                const int r = static_cast<int>(s.radius * fit);
+                ring(canvas, a[0], a[1], r, c);
+                ring(canvas, b[0], b[1], r, c);
+                canvas.line(a[0], a[1], b[0], b[1], c);
+            } else if (s.type == 3U) {
+                std::array<std::array<int, 2>, 8> corner{};
+                for (int k = 0; k < 8; ++k) {
+                    std::array<float, 3> q{(k & 1 ? 0.5F : -0.5F) * s.size[0], (k & 2 ? 0.5F : -0.5F) * s.size[1],
+                                           (k & 4 ? 0.5F : -0.5F) * s.size[2]};
+                    q = rotate_euler(q, s.b);
+                    corner[static_cast<std::size_t>(k)] = P({s.a[0] + q[0], s.a[1] + q[1], s.a[2] + q[2]});
+                }
+                for (int k = 0; k < 8; ++k) {
+                    for (int bit : {1, 2, 4}) {
+                        if ((k & bit) == 0) {
+                            const auto& a = corner[static_cast<std::size_t>(k)];
+                            const auto& b = corner[static_cast<std::size_t>(k | bit)];
+                            canvas.line(a[0], a[1], b[0], b[1], c);
+                        }
+                    }
+                }
+            } else {
+                continue;
+            }
+            if (shapes.size() <= 64U) {
+                const auto p = P(s.a);
+                canvas.text(p[0] + 3, p[1] + 3, std::to_string(i), raster::kLabel, 1);
+            }
+        }
+        char range[96];
+        std::snprintf(range, sizeof(range), "%.0f..%.0f / %.0f..%.0f", static_cast<double>(lo[u]),
+                      static_cast<double>(hi[u]), static_cast<double>(lo[1]), static_cast<double>(hi[1]));
+        canvas.text(kViewWidth - 16 - Canvas::text_width(range, small), y0 + 6, range, raster::kDim, small);
+    }
+    return canvas.take();
+}
+
+ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>& entries) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    std::size_t used = 0U;
+    for (const auto& e : entries) used += e.mask != 0U ? 1U : 0U;
+    canvas.text(10, 8, "ATTACK INDEX  " + std::to_string(entries.size()) + " IDS  " + std::to_string(used) + " USED",
+                raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale, "ID:MASK/BONE>SHAPE   MASK 1/2/4 = TARGET LAYERS (0x1402CCD60)", raster::kDim,
+                small);
+    int x = 14, y = 8 + 9 * scale + 9 * small + 12;
+    const int line_h = 9 * small + 2;
+    for (std::size_t i = 0U; i < entries.size(); ++i) {
+        const auto& e = entries[i];
+        std::string cell = std::to_string(i) + ":" +
+                           (e.mask == 0U ? std::string{"-"}
+                                         : std::to_string(e.mask) + "/" + std::to_string(e.bone) + ">" +
+                                               std::to_string(e.shape)) +
+                           "  ";
+        const int w = Canvas::text_width(cell, small);
+        if (x + w > kViewWidth - 10) {
+            x = 14;
+            y += line_h;
+            if (y + line_h > kViewHeight) break;
+        }
+        canvas.text(x, y, cell, e.mask == 0U ? raster::kDim : kGood, small);
+        x += w;
+    }
     return canvas.take();
 }
 
@@ -561,7 +783,36 @@ ImagePreview render_binary_view(const InspectionDocument& inspection, std::strin
         canvas.fill(x0, y + hist_h - static_cast<int>(v * (hist_h - 4)), x1, y + hist_h, c);
     }
     y += hist_h + 10;
-    (void)raster::draw_info_card(canvas, y, inspection, detail, bytes);
+    // Parameter blocks (nearly all words are floats): a value grid instead of
+    // hex, so every field can be read by its offset.
+    const bool floats = profile.float_ratio >= 0.9 && bytes.size() >= 16U && bytes.size() % 4U == 0U;
+    if (!floats) {
+        (void)raster::draw_info_card(canvas, y, inspection, detail, bytes);
+        return canvas.take();
+    }
+    y = raster::draw_info_card(canvas, y, inspection, detail, bytes, false);
+    y += 8;
+    canvas.fill(0, y, kViewWidth, y + 2, raster::kGrid);
+    y += 6;
+    canvas.text(10, y, "FLOAT32 BY OFFSET", raster::kLabel, small);
+    y += 9 * small + 2;
+    const int tiny = 1;
+    const int col_w = 6 * tiny * 18;
+    const int columns = std::max(1, (kViewWidth - 20) / col_w);
+    const int line_h = 9 * tiny;
+    for (std::size_t o = 0U, k = 0U; o + 4U <= bytes.size(); o += 4U, ++k) {
+        const int row = static_cast<int>(k) / columns, col = static_cast<int>(k) % columns;
+        const int yy = y + row * line_h;
+        if (yy + line_h > kViewHeight) break;
+        std::uint32_t w = static_cast<std::uint32_t>(bytes[o]) | (static_cast<std::uint32_t>(bytes[o + 1U]) << 8U) |
+                          (static_cast<std::uint32_t>(bytes[o + 2U]) << 16U) |
+                          (static_cast<std::uint32_t>(bytes[o + 3U]) << 24U);
+        float f;
+        std::memcpy(&f, &w, sizeof(f));
+        char cell[40];
+        std::snprintf(cell, sizeof(cell), "%03zX %.6g", o, static_cast<double>(f));
+        canvas.text(10 + col * col_w, yy, cell, w == 0U ? raster::kDim : raster::kLabel, tiny);
+    }
     return canvas.take();
 }
 

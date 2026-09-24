@@ -218,11 +218,11 @@ int draw_hex_dump(Canvas& canvas, int y, std::span<const std::uint8_t> bytes,
 }
 
 int draw_info_card(Canvas& canvas, int y, const InspectionDocument& inspection,
-                   std::string_view detail, std::span<const std::uint8_t> bytes) {
+                   std::string_view detail, std::span<const std::uint8_t> bytes, bool hex) {
     const int scale = card_scale(canvas.width());
     const int line_h = 9 * scale;
     // Leave room for at least a few hex rows.
-    const int hex_reserve = bytes.empty() ? 0 : 10 * 9 * std::max(1, scale - 1) + 12;
+    const int hex_reserve = bytes.empty() || !hex ? 0 : 10 * 9 * std::max(1, scale - 1) + 12;
     const int bottom = canvas.height() - hex_reserve;
 
     std::string title = inspection.format.empty() ? std::string{"RESOURCE"} : inspection.format;
@@ -254,7 +254,7 @@ int draw_info_card(Canvas& canvas, int y, const InspectionDocument& inspection,
     y += 4;
     int budget = 400;
     tree(canvas, y, inspection.root, 0, scale, bottom, budget);
-    if (!bytes.empty()) y = draw_hex_dump(canvas, y + 6, bytes);
+    if (!bytes.empty() && hex) y = draw_hex_dump(canvas, y + 6, bytes);
     return y;
 }
 

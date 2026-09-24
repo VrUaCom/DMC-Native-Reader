@@ -6,6 +6,7 @@
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/format_views.h"
+#include "dmcresource/collision_shapes.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
@@ -835,6 +836,44 @@ int main() {
         assert(!motion::MotionScriptFile::looks_like(broken));
         const auto probed = dmcresource::probe("slot_0005.bin", file.data(), file.size());
         assert(probed.format == dmcresource::Format::MotionScript);
+        assert(script->nested() && !script->has_resources());
+
+        // Enemy form (bind mode 1): A lists banks directly, B maps actions
+        // to MOT ids (group * 100 + slot) with a loop flag.
+        const std::vector<std::uint8_t> enemy{
+            0x06, 0x00, 0x1E, 0x00, 0xFF, 0xFF,  // A = 6, B = 30, C unused
+            0x04, 0x00, 0xFF, 0xFF,              // A: bank 0 at 6 + 4
+            0x06, 0x00, 0x0C, 0x00, 0xFF, 0xFF,  // bank 0: actions at 10 + 6, 10 + 12
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00,  // action 0: play (bank 0, action 0)
+            0x00, 0x00, 0xFF, 0x7F, 0x00, 0x00,  // ... until the end
+            0x01, 0x00,                          // action 1 (truncated play)
+            0x04, 0x00, 0xFF, 0xFF,              // B: bank 0 at 30 + 4
+            0x06, 0x00, 0x0E, 0x00, 0xFF, 0xFF,  // B bank 0: records at 34 + 6, 34 + 14
+            0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0C, 0x00,  // 1 record: obj 0 loop, MOT 12
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x65, 0x00,  // 1 record: obj 0 once, MOT 101
+        };
+        const auto enemy_script = motion::MotionScriptFile::parse(enemy);
+        assert(enemy_script && !enemy_script->nested() && enemy_script->bank_count() == 1U);
+        assert(enemy_script->script_count(0U) == 2U && enemy_script->has_resources());
+        const auto played = enemy_script->resources(0U, 0U);
+        assert(played.size() == 1U && played[0].id == 12U && played[0].loop == 1U &&
+               played[0].group() == 0U && played[0].slot() == 12U);
+        assert(enemy_script->resources(0U, 1U).front().id == 101U);
+        assert(enemy_script->resources(0U, 2U).empty());      // past the 0xFFFF end
+        assert(enemy_script->actions_for(101U).size() == 1U &&
+               enemy_script->actions_for(101U)[0].action == 1U);
+        assert((enemy_script->resource_ids() == std::vector<std::uint16_t>{12U, 101U}));
+        const std::vector<motion::MotionPack> packs{{2U, {0U, 5U}}, {3U, {12U, 13U}}, {4U, {1U}}};
+        const auto groups = motion::bind_motion_groups(*enemy_script, packs, "em999.pac");
+        assert(groups.size() == 2U && groups[0].group == 0U && groups[0].archive_slot == 3U &&
+               !groups[0].exe_confirmed && groups[1].group == 1U && groups[1].archive_slot == 4U);
+        const std::vector<motion::MotionPack> em028_packs{{2U, {0U, 12U}}, {3U, {20U}}};
+        const auto em028_groups = motion::bind_motion_groups(*enemy_script, em028_packs, "st/EM028.PAC");
+        assert(em028_groups[0].archive_slot == 2U && em028_groups[0].exe_confirmed);
+        assert(em028_groups[1].archive_slot == 3U && em028_groups[1].exe_confirmed);  // class array
+        assert(motion::MotionScriptFile::looks_like(enemy));
+        assert(dmcresource::views::render_motion_script_view(*enemy_script).available());
+
         const auto view = dmcresource::views::render_motion_script_view(*script);
         assert(view.available() && view.width == 1080U);
         assert(motion::player_motion_bank("motion/PL000_00_13.PAC") == 13U);
@@ -913,6 +952,45 @@ int main() {
         const auto card = dmcresource::raster::render_info_card(card_doc, "detail", blob);
         assert(card.available() && card.width == 1080U && card.height == 1440U);
         assert(!dmcresource::open_session("empty.bin", nullptr, 0U));
+    }
+
+    // Collision tables (ICollisionHandle, 0x14005C260): 80-byte shape
+    // records (2 sphere, 3 box, 4 capsule) and 4-byte attack entries.
+    {
+        namespace collision = dmcresource::collision;
+        std::vector<std::uint8_t> shapes(3U * collision::kShapeRecordSize, 0U);
+        const auto put_f = [&shapes](std::size_t o, float v) { std::memcpy(shapes.data() + o, &v, 4U); };
+        shapes[0] = 2U;                      // sphere: centre (0, 50, 0), radius 40
+        put_f(0x14U, 50.0F); put_f(0x1CU, 1.0F); put_f(0x20U, 40.0F);
+        shapes[0x50] = 4U;                   // capsule a (0,500,0) b (0,0,0) r 120
+        put_f(0x50U + 0x14U, 500.0F); put_f(0x50U + 0x1CU, 1.0F); put_f(0x50U + 0x2CU, 1.0F);
+        put_f(0x50U + 0x30U, 120.0F);
+        shapes[0xA0] = 3U;                   // box: centre (41,40,5) rot (13,11,0) size (58,54,5)
+        put_f(0xA0U + 0x10U, 41.0F); put_f(0xA0U + 0x14U, 40.0F); put_f(0xA0U + 0x18U, 5.0F);
+        put_f(0xA0U + 0x1CU, 13.0F); put_f(0xA0U + 0x20U, 11.0F);
+        put_f(0xA0U + 0x28U, 58.0F); put_f(0xA0U + 0x2CU, 54.0F); put_f(0xA0U + 0x30U, 5.0F);
+        assert(collision::looks_like_shape_table(shapes));
+        const auto parsed = collision::parse_shapes(shapes);
+        assert(parsed.size() == 3U && near(parsed[0].a[1], 50.0F) && near(parsed[0].radius, 40.0F));
+        assert(near(parsed[1].a[1], 500.0F) && near(parsed[1].b[1], 0.0F) && near(parsed[1].radius, 120.0F));
+        assert(near(parsed[2].b[0], 13.0F) && near(parsed[2].size[1], 54.0F));
+        auto bad = shapes;
+        bad[3] = 1U;                         // padding must stay zero
+        assert(!collision::looks_like_shape_table(bad));
+        assert(dmcresource::probe("x.bin", shapes.data(), shapes.size()).format ==
+               dmcresource::Format::CollisionShapes);
+        const std::vector<std::uint8_t> index{6, 0, 0, 0, 2, 3, 1, 0, 0, 0, 0, 0, 1, 9, 2, 0};
+        assert(collision::looks_like_attack_index(index, 3U));
+        assert(!collision::looks_like_attack_index(index, 2U));   // shape 2 missing
+        const auto attacks = collision::parse_attack_index(index);
+        assert(attacks.size() == 4U && attacks[1].bone == 3U && attacks[1].shape == 1U &&
+               attacks[2].mask == 0U && attacks[3].bone == 9U);
+        auto shape_view = dmcresource::open_session("shapes.bin", shapes.data(), shapes.size());
+        assert(shape_view && shape_view->inspection.format == "COLSHAPE" &&
+               shape_view->image_preview.available() && shape_view->inspection.root.children.size() == 3U);
+        auto index_view = dmcresource::open_session("slot_0006.colidx", index.data(), index.size());
+        assert(index_view && index_view->inspection.format == "COLINDEX" &&
+               index_view->image_preview.available());
     }
 
     return 0;

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "dmcresource/collision_shapes.h"
 #include "dmcresource/image_preview.h"
 #include "dmcresource/inspection_document.h"
 #include "dmcresource/motion/cloth_chain.h"
@@ -31,6 +32,14 @@ inline constexpr int kViewHeight = 1440;
 [[nodiscard]] ImagePreview render_tsc_view(const std::vector<motion::ScrollRecord>& records);
 [[nodiscard]] ImagePreview render_clt_view(const std::vector<motion::ClothParams>& blocks);
 [[nodiscard]] ImagePreview render_motion_script_view(const motion::MotionScriptFile& file);
+
+// Collision shapes in bone space: front (X/Y) and side (Z/Y) projections,
+// spheres as circles, capsules as two circles joined, boxes as their
+// rotated outline; each labelled with its record index.
+[[nodiscard]] ImagePreview render_collision_view(const std::vector<collision::Shape>& shapes);
+
+// Attack index: every entry (id, target mask, bone, shape).
+[[nodiscard]] ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>& entries);
 
 struct BinaryProfile final {
     std::size_t size{};

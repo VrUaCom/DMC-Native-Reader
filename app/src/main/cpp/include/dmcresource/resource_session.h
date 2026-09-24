@@ -70,6 +70,12 @@ struct Session {
         // Motion script address (pl000_00_<bank>.pac, MOT index); -1 unknown.
         int bank{-1};
         int index{-1};
+        // Motion PAC this MOT sits in (archive slot) and its slot there;
+        // -1 when the MOT is not inside a nested motion PAC.
+        int pack_slot{-1};
+        int mot_slot{-1};
+        // Script actions that play it ("act 3,7 loop"), empty when unknown.
+        std::string actions;
     };
     std::vector<MotionPayload> motion_library;
 

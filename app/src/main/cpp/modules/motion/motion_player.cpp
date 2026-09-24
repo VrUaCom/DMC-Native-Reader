@@ -190,7 +190,7 @@ MotionLoadReport load_motion(Session* session,
         if (session->motion_script != nullptr) {
             for (const auto& payload : session->motion_library) {
                 if (payload.name != name || payload.bank < 0 || payload.index < 0) continue;
-                state->weapon_keys = session->motion_script->weapon_states(
+                state->weapon_keys = session->motion_script->weapon_states_for_motion(
                     static_cast<std::size_t>(payload.bank), static_cast<std::size_t>(payload.index));
                 break;
             }

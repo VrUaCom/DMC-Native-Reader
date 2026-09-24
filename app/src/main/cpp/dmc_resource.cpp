@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "dmcresource/collision_shapes.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -129,9 +130,22 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Dds, false, "DDS", "texture", "image-preview",
                       "STRUCTURAL_CONFIRMED", "image/vnd-ms.dds");
     }
+    // Attack index tables have no content identity of their own (4-byte
+    // entries); a PAC names them .colidx when the next slot is their shape
+    // table, and the module validates the entries.
+    if (extension == "colidx") {
+        return result(Format::AttackIndex, false, "COLINDEX", "collision", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.colidx");
+    }
     if (extension == "ptx") {
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
+    }
+    // Collision shape tables (ICollisionHandle, 0x14005C260): 80-byte records.
+    if (bytes != nullptr &&
+        collision::looks_like_shape_table(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::CollisionShapes, true, "COLSHAPE", "collision", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.colshape");
     }
     // Player motion script (pl000.pac slot 5, loader 0x1400594B0): no magic,
     // identified by its bank tables (last, after every magic and extension).
@@ -180,6 +194,8 @@ const char* format_name(Format format) noexcept {
     case Format::Tsc: return "TSC";
     case Format::Clt: return "CLT";
     case Format::MotionScript: return "MotionScript";
+    case Format::CollisionShapes: return "COLSHAPE";
+    case Format::AttackIndex: return "COLINDEX";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

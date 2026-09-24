@@ -21,6 +21,8 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         clt_module(),
         efm_module(),
         motion_script_module(),
+        colshape_module(),
+        colindex_module(),
     };
     return registry;
 }

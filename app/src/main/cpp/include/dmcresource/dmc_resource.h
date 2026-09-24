@@ -23,6 +23,8 @@ enum class Format : std::uint8_t {
     Tsc,
     Clt,
     MotionScript,
+    CollisionShapes,
+    AttackIndex,
 };
 
 struct ProbeResult {

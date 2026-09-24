@@ -1,6 +1,8 @@
 #include "dmcresource/motion/motion_script.h"
 
 #include <algorithm>
+#include <array>
+#include <string>
 #include <cctype>
 #include <span>
 #include <utility>
@@ -37,13 +39,29 @@ std::optional<MotionScriptFile> MotionScriptFile::parse(std::span<const std::uin
         if (o + 2U > bytes.size()) return std::nullopt;
         return static_cast<std::size_t>(bytes[o]) | (static_cast<std::size_t>(bytes[o + 1U]) << 8U);
     };
-    // 0x1400594B0 (mode 0): table = file + u16[0]; banks = table + u16[table].
+    // 0x1400594B0: A = file + u16[0] (scripts), B = file + u16[2] (motion
+    // resources). Mode 0 nests once: banks = A + u16[A], resources = B + u16[B].
     const auto table = u16(0U);
-    if (!table || *table < 6U) return std::nullopt;
-    const auto first = u16(*table);
-    if (!first) return std::nullopt;
-    const std::size_t base = *table + *first;
+    if (!table || *table < 6U || *table >= bytes.size()) return std::nullopt;
+    const auto resources = u16(2U);
+    // Mode detection: the enemy form (mode 1) has a script (opcode 1) right
+    // behind bank 0's first entry; the player form has another offset list.
+    bool nested = true;
+    if (const auto first = u16(*table)) {
+        const std::size_t sub = *table + *first;
+        if (const auto entry = u16(sub); entry && *entry != 0xFFFFU && sub + *entry < bytes.size() &&
+                                         bytes[sub + *entry] == 1U) {
+            nested = false;
+        }
+    }
+    std::size_t base = *table;
+    if (nested) {
+        const auto first = u16(*table);
+        if (!first) return std::nullopt;
+        base = *table + *first;
+    }
     MotionScriptFile out;
+    out.nested_ = nested;
     for (std::size_t o = base; out.banks_.size() < 64U; o += 2U) {
         const auto entry = u16(o);
         if (!entry) return std::nullopt;
@@ -52,6 +70,14 @@ std::optional<MotionScriptFile> MotionScriptFile::parse(std::span<const std::uin
         out.banks_.push_back(base + *entry);
     }
     if (out.banks_.empty()) return std::nullopt;
+    if (resources && *resources != 0U && *resources < bytes.size()) {
+        std::size_t r = *resources;
+        if (nested) {
+            const auto first = u16(r);
+            r = first && *first != 0xFFFFU ? r + *first : 0U;
+        }
+        out.resources_ = r < bytes.size() ? r : 0U;
+    }
     out.bytes_.assign(bytes.begin(), bytes.end());
     out.table_ = *table;
     return out;
@@ -141,9 +167,165 @@ std::optional<ScriptSummary> MotionScriptFile::summarize(std::size_t bank,
 }
 
 std::vector<WeaponStateKey> MotionScriptFile::weapon_states(std::size_t bank,
-                                                           std::size_t index) const {
-    auto summary = summarize(bank, index);
+                                                           std::size_t action) const {
+    auto summary = summarize(bank, action);
     return summary ? std::move(summary->states) : std::vector<WeaponStateKey>{};
+}
+
+std::vector<MotionResource> MotionScriptFile::resources(std::size_t bank,
+                                                        std::size_t action) const {
+    std::vector<MotionResource> out;
+    if (resources_ == 0U) return out;
+    const auto& s = bytes_;
+    const auto u16 = [&s](std::size_t o) -> std::size_t {
+        return o + 2U <= s.size()
+            ? static_cast<std::size_t>(s[o]) | (static_cast<std::size_t>(s[o + 1U]) << 8U)
+            : 0xFFFFFFFFU;
+    };
+    // 0x14005A360: r10 = B + u16[B + 2 bank]; record = r10 + u16[r10 + 2 action].
+    const auto bank_entry = u16(resources_ + bank * 2U);
+    if (bank_entry == 0xFFFFFFFFU || bank_entry == 0xFFFFU) return out;
+    // Bank lists end at 0xFFFF; an action past the end has no record.
+    for (std::size_t b = 0U; b <= bank; ++b) {
+        const auto e = u16(resources_ + b * 2U);
+        if (e == 0xFFFFFFFFU || e == 0xFFFFU) return out;
+    }
+    const std::size_t sub = resources_ + bank_entry;
+    for (std::size_t a = 0U; a <= action; ++a) {
+        const auto e = u16(sub + a * 2U);
+        if (e == 0xFFFFFFFFU || e == 0xFFFFU) return out;
+    }
+    const auto entry = u16(sub + action * 2U);
+    const std::size_t record = sub + entry;
+    if (record >= s.size()) return out;
+    const std::size_t count = s[record];
+    for (std::size_t k = 0U; k < count && k < 16U; ++k) {
+        const std::size_t o = record + 2U + k * 6U;
+        if (o + 6U > s.size()) break;
+        out.push_back({s[o], s[o + 1U], s[o + 2U], s[o + 3U],
+                       static_cast<std::uint16_t>(s[o + 4U] | (s[o + 5U] << 8U))});
+    }
+    return out;
+}
+
+std::vector<ScriptAction> MotionScriptFile::actions_for(std::uint16_t id) const {
+    std::vector<ScriptAction> out;
+    for (std::size_t bank = 0U; bank < banks_.size(); ++bank) {
+        const auto count = script_count(bank);
+        for (std::size_t action = 0U; action < count; ++action) {
+            for (const auto& r : resources(bank, action)) {
+                if (r.id == id) {
+                    out.push_back({bank, action});
+                    break;
+                }
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<WeaponStateKey> MotionScriptFile::weapon_states_for_motion(std::size_t group,
+                                                                       std::size_t slot) const {
+    if (resources_ != 0U && group < 656U && slot < 100U) {
+        const auto actions = actions_for(static_cast<std::uint16_t>(group * 100U + slot));
+        const ScriptAction* pick = nullptr;
+        for (const auto& a : actions) {
+            if (a.bank != group) continue;
+            if (a.action == slot) {
+                pick = &a;
+                break;
+            }
+            if (pick == nullptr) pick = &a;
+        }
+        if (pick != nullptr) return weapon_states(pick->bank, pick->action);
+    }
+    return weapon_states(group, slot);
+}
+
+std::vector<std::uint16_t> MotionScriptFile::resource_ids() const {
+    std::vector<std::uint16_t> ids;
+    for (std::size_t bank = 0U; bank < banks_.size(); ++bank) {
+        const auto count = script_count(bank);
+        for (std::size_t action = 0U; action < count; ++action) {
+            for (const auto& r : resources(bank, action)) ids.push_back(r.id);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    return ids;
+}
+
+namespace {
+
+[[nodiscard]] std::string lower_stem(std::string_view name) {
+    const auto slash = name.find_last_of("/\\");
+    if (slash != std::string_view::npos) name.remove_prefix(slash + 1U);
+    std::string out;
+    for (const char c : name) {
+        if (c == '.') break;
+        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return out;
+}
+
+struct ExeGroups final {
+    std::string_view stem;
+    std::array<int, 4> slots;  // -1 = not set by the class
+};
+
+// Motion PAC arrays read from the class inits (see bind_motion_groups).
+constexpr std::array<ExeGroups, 2> kExeGroups{{
+    {"em028", {2, 3, -1, -1}},
+    {"em000", {35, -1, -1, -1}},
+}};
+
+}  // namespace
+
+std::vector<MotionGroupBinding> bind_motion_groups(const MotionScriptFile& script,
+                                                   std::span<const MotionPack> packs,
+                                                   std::string_view archive_name) {
+    std::vector<MotionGroupBinding> out;
+    for (const auto id : script.resource_ids()) {
+        const std::uint16_t group = id / 100U;
+        if (out.empty() || out.back().group != group) out.push_back({group, {}, std::nullopt, false});
+        out.back().slots.push_back(id % 100U);
+    }
+    const auto stem = lower_stem(archive_name);
+    const ExeGroups* exe = nullptr;
+    for (const auto& e : kExeGroups) {
+        if (e.stem == stem) exe = &e;
+    }
+    std::vector<bool> used(packs.size(), false);
+    const auto covers = [](const MotionPack& pack, const std::vector<std::uint32_t>& need) {
+        for (const auto s : need) {
+            if (std::find(pack.slots.begin(), pack.slots.end(), s) == pack.slots.end()) return false;
+        }
+        return true;
+    };
+    for (auto& binding : out) {
+        if (exe != nullptr && binding.group < exe->slots.size() && exe->slots[binding.group] >= 0) {
+            const auto slot = static_cast<std::uint32_t>(exe->slots[binding.group]);
+            for (std::size_t p = 0U; p < packs.size(); ++p) {
+                if (packs[p].archive_slot == slot) {
+                    binding.archive_slot = slot;
+                    binding.exe_confirmed = true;
+                    used[p] = true;
+                }
+            }
+        }
+    }
+    // A pack serves one group; a group no unused pack covers stays unbound
+    // (its PAC comes from elsewhere, e.g. a shared archive).
+    for (auto& binding : out) {
+        if (binding.archive_slot) continue;
+        for (std::size_t p = 0U; p < packs.size(); ++p) {
+            if (used[p] || !covers(packs[p], binding.slots)) continue;
+            binding.archive_slot = packs[p].archive_slot;
+            used[p] = true;
+            break;
+        }
+    }
+    return out;
 }
 
 std::uint8_t weapon_state_at(const std::vector<WeaponStateKey>& keys, float frame) noexcept {

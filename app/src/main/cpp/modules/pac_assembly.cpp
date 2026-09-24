@@ -110,6 +110,61 @@ void collect(const Session& container,
     return std::nullopt;
 }
 
+// Enemy motions: bind each id group of the script to a motion PAC and label
+// every MOT with the actions that play it (table B, 0x14005A360).
+void label_enemy_motions(const motion::MotionScriptFile& script,
+                         std::string_view archive_name,
+                         std::vector<Session::MotionPayload>& motions,
+                         std::string* detail) {
+    std::vector<motion::MotionPack> packs;
+    for (const auto& m : motions) {
+        if (m.pack_slot < 0 || m.mot_slot < 0) continue;
+        const auto slot = static_cast<std::uint32_t>(m.pack_slot);
+        auto it = std::find_if(packs.begin(), packs.end(),
+                               [slot](const motion::MotionPack& p) { return p.archive_slot == slot; });
+        if (it == packs.end()) {
+            packs.push_back({slot, {}});
+            it = std::prev(packs.end());
+        }
+        it->slots.push_back(static_cast<std::uint32_t>(m.mot_slot));
+    }
+    std::sort(packs.begin(), packs.end(),
+              [](const motion::MotionPack& a, const motion::MotionPack& b) {
+                  return a.archive_slot < b.archive_slot;
+              });
+    const auto groups = motion::bind_motion_groups(script, packs, archive_name);
+    for (const auto& g : groups) {
+        if (detail != nullptr) {
+            *detail += " motionGroup" + std::to_string(g.group) + "=" +
+                (g.archive_slot ? "slot" + std::to_string(*g.archive_slot) : std::string{"unbound"}) +
+                (g.exe_confirmed ? "(exe)" : "(data)");
+        }
+        if (!g.archive_slot) continue;
+        for (auto& m : motions) {
+            if (m.pack_slot != static_cast<int>(*g.archive_slot) || m.mot_slot < 0) continue;
+            if (!m.actions.empty()) continue;  // first (lowest) group wins the label
+            const auto id = static_cast<std::uint16_t>(g.group * 100U + static_cast<unsigned>(m.mot_slot));
+            const auto actions = script.actions_for(id);
+            if (actions.empty()) continue;
+            std::string label = "act";
+            bool loop = false;
+            for (std::size_t k = 0U; k < actions.size(); ++k) {
+                if (k == 6U) {
+                    label += ",+" + std::to_string(actions.size() - 6U);
+                    break;
+                }
+                label += (k == 0U ? " " : ",") + std::to_string(actions[k].action);
+            }
+            for (const auto& r : script.resources(actions.front().bank, actions.front().action)) {
+                if (r.id == id && r.loop == 1U) loop = true;
+            }
+            if (loop) label += " loop";
+            m.actions = label;
+            m.name = label + " · " + m.name;
+        }
+    }
+}
+
 [[nodiscard]] bool player_archive(std::string_view name) noexcept {
     const auto slash = name.find_last_of("/\\");
     if (slash != std::string_view::npos) name.remove_prefix(slash + 1U);
@@ -282,6 +337,15 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     if (script_bank) {
                         payload.bank = static_cast<int>(*script_bank);
                         payload.index = static_cast<int>(*entry.slot);
+                    }
+                }
+                if (entry.slot && entry.depth == 1U && entry.container.size() > 5U &&
+                    entry.container.rfind("slot_", 0) == 0U) {
+                    try {
+                        payload.pack_slot = std::stoi(entry.container.substr(5U, 4U));
+                        payload.mot_slot = static_cast<int>(*entry.slot);
+                    } catch (...) {
+                        payload.pack_slot = -1;
                     }
                 }
                 motions.push_back(std::move(payload));
@@ -642,20 +706,24 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         report.models = models.size();
         report.motions = motions.size();
         assembled->motion_library = std::move(motions);
-        // IPlayer motion script: pl000.pac slot 5 (resource type 0, slot 5 of
-        // the character archive, 0x1401EF461).
-        if (player_archive(archive_name)) {
-            for (const auto& e : entries) {
-                if (e.archive != 0U || !e.container.empty() || e.slot != 5U) continue;
-                auto script = motion::MotionScriptFile::parse(
-                    std::span<const std::uint8_t>{e.bytes->data(), e.bytes->size()});
-                if (script) {
-                    report.detail_attachments += " motionScript=slot5(" +
-                        std::to_string(script->bank_count()) + " banks)";
-                    assembled->motion_script =
-                        std::make_shared<const motion::MotionScriptFile>(std::move(*script));
-                }
+        // Motion script: IPlayer pl000.pac slot 5 (0x1401EF461); enemies bind
+        // their own script slot (em028 slot 10 at 0x140131037, em000 slot 38
+        // at 0x1400982D9). Identified by its tables (MotionScriptFile).
+        for (const auto& e : entries) {
+            if (e.archive != 0U || !e.container.empty() || !e.slot ||
+                e.kind.format != Format::MotionScript) {
+                continue;
             }
+            auto script = motion::MotionScriptFile::parse(
+                std::span<const std::uint8_t>{e.bytes->data(), e.bytes->size()});
+            if (!script) continue;
+            report.detail_attachments += " motionScript=slot" + std::to_string(*e.slot) + "(" +
+                std::to_string(script->bank_count()) + " banks)";
+            auto shared = std::make_shared<const motion::MotionScriptFile>(std::move(*script));
+            if (!shared->nested()) label_enemy_motions(*shared, archive_name, assembled->motion_library,
+                                                       &report.detail_attachments);
+            assembled->motion_script = std::move(shared);
+            break;
         }
         assembled->children = pac.children;
         (void)archive_name;

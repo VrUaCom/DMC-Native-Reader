@@ -14,6 +14,7 @@
 #include "dmc_rengine/formats/pnst.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/collision_shapes.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_chart.h"
 #include "dmcresource/motion/uv_scroll.h"
@@ -62,6 +63,9 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         } catch (...) {
         }
         try {
+            if (collision::looks_like_shape_table(std::span<const std::uint8_t>{bytes, size})) {
+                return {Format::CollisionShapes, "COLSHAPE", "colshape"};
+            }
             if (motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
                 return {Format::MotionScript, "MotionScript", "msc"};
             }
@@ -147,7 +151,26 @@ PipelineResult run_pac_module(const NativeModule& module,
             ++populated;
             const auto* payload = bytes + static_cast<std::size_t>(entry.offset);
             const auto payload_size = static_cast<std::size_t>(entry.size);
-            const auto kind = archive::classify_payload(payload, payload_size);
+            auto kind = archive::classify_payload(payload, payload_size);
+            // Attack index: the slot before a shape table whose entries all
+            // name one of its shapes (0x14005C260 takes the pair together).
+            if (kind.format == Format::Unknown) {
+                for (const auto& next : document.entries) {
+                    if (next.slot_index <= entry.slot_index || !next.populated || next.size == 0U ||
+                        !next.valid(document.container_size)) {
+                        continue;
+                    }
+                    const std::span<const std::uint8_t> shapes{
+                        bytes + static_cast<std::size_t>(next.offset), static_cast<std::size_t>(next.size)};
+                    if (collision::looks_like_shape_table(shapes) &&
+                        collision::looks_like_attack_index(
+                            std::span<const std::uint8_t>{payload, payload_size},
+                            shapes.size() / collision::kShapeRecordSize)) {
+                        kind = {Format::AttackIndex, "COLINDEX", "colidx"};
+                    }
+                    break;
+                }
+            }
             ++by_format[static_cast<std::size_t>(kind.format) & 15U];
             if (kind.shadow) ++shadows;
 

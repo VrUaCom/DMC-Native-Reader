@@ -256,6 +256,34 @@ The pipeline contract is unchanged: rejected files still leave
 `run_decode_pipeline` unaccepted; the binary view is made by `open_session`
 and claims no format ("BIN").
 
+**Enemy scripts and collision tables (v52).** The motion script format is
+shared by the player and enemies (bind `0x1400594B0`: mode 0 player, mode 1
+enemies). A third header table (B, resolver `0x14005A360`) maps each script
+action to the MOT that it plays (`id = group·100 + slot`, loop flag), so:
+
+- the script view shows each enemy's action grid (action → MOT id, L = loop,
+  \* = weapon state);
+- in an assembled enemy PAC every MOT is labelled with the actions that play
+  it (e.g. `act 12,15,34 · slot_0002.pac/slot_0012.mot`). Id groups are bound
+  to the class's motion PACs: em028 {2, 3} and em000 {35} from the EXE, the
+  others by data (the first unused MOT PAC that holds every slot), otherwise
+  left unbound;
+- the player's weapon states now go through the same table (a MOT
+  `pl000_00_N` slot *k* takes the action of bank *N* that plays `N·100+k`).
+
+The pair of slots next to the script is the collision handle
+(`ICollisionHandle`, `0x14005C260`): an attack index (4-byte entries: target
+mask, bone, shape; the `.colidx` family, recognised as the slot before a shape
+table) and 80-byte shape records (2 sphere, 3 box with Euler degrees, 4
+capsule; `COLSHAPE`, recognised by content). Both have their own views:
+- shapes: front and side projections in bone space;
+- index: every attack id.
+
+Player slots 9 and 11 are float parameter blocks; the binary view shows them
+as a value grid by offset. Evidence: rengine
+`dmc3-enemy-motion-script-2026-09-24.md` and
+`dmc3-collision-tables-2026-09-24.md`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

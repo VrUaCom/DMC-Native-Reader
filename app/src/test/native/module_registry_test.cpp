@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 13U);
+    assert(modules.size() == 15U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -69,6 +69,13 @@ int main() {
                  tsc_text.size()).format == Format::Tsc);
     assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(clt_text.data()),
                  clt_text.size()).format == Format::Clt);
+
+    const auto* colshape = NativeModuleRegistry::find("COLSHAPE");
+    const auto* colindex = NativeModuleRegistry::find("COLINDEX");
+    assert(colshape != nullptr && colshape->format == Format::CollisionShapes && !colshape->renderable);
+    assert(colindex != nullptr && colindex->format == Format::AttackIndex && !colindex->renderable);
+    assert(probe("slot_0006.colidx", nullptr, 0U).format == Format::AttackIndex);
+    assert(!probe("slot_0006.colidx", nullptr, 0U).content_confirmed);
 
     // EFM effect models: own family, MOD document route (0x1402F7A90).
     const auto* efm = NativeModuleRegistry::find("EFM");
