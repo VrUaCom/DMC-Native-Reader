@@ -19,7 +19,12 @@ float edge(const P2& a, const P2& b, float x, float y) {
     return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
 }
 
-P3 rotate(const Vec3& v, float yaw, float pitch) {
+// World to camera orientation. DMC3 data are right-handed (the right hand,
+// body joint 9 of the sword state-2 record, is on -X of a model facing +Z)
+// while this camera looks down +Z with +X to the right, so X is mirrored
+// first; without it every model and stage showed as its mirror image.
+P3 rotate(const Vec3& world, float yaw, float pitch) {
+    const Vec3 v{-world.x, world.y, world.z};
     const float cy = std::cos(yaw), sy = std::sin(yaw);
     const float cp = std::cos(pitch), sp = std::sin(pitch);
     const float x1 = cy * v.x + sy * v.z;
@@ -305,16 +310,19 @@ void draw_uv_layout(std::span<const Vec2> coordinates,
     }
 }
 
-RgbaImage make_canvas(int width, int height) {
+RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
+    // Dark (default), grey, light, black.
+    static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
+    const auto& bg = kBackgrounds[background & 3U];
     RgbaImage image;
     image.width = std::clamp(width, 1, 2048);
     image.height = std::clamp(height, 1, 2048);
     image.pixels.assign(
         static_cast<std::size_t>(image.width * image.height * 4), 0U);
     for (std::size_t i = 0U; i < image.pixels.size(); i += 4U) {
-        image.pixels[i + 0U] = 18U;
-        image.pixels[i + 1U] = 18U;
-        image.pixels[i + 2U] = 22U;
+        image.pixels[i + 0U] = bg[0];
+        image.pixels[i + 1U] = bg[1];
+        image.pixels[i + 2U] = bg[2];
         image.pixels[i + 3U] = 255U;
     }
     return image;
@@ -605,7 +613,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const HierarchyOverlay* hierarchy,
                       const std::vector<std::uint32_t>* triangle_texture_slots,
                       const std::vector<ImagePreview>* textures) {
-    auto image = make_canvas(width, height);
+    auto image = make_canvas(width, height, view.background);
     if (mesh.vertices.empty() || mesh.indices.size() < 3U) return image;
 
     if (view.uv_layout) {
@@ -693,7 +701,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         fill(q[0], q[2], q[3], floor_pixel);
     }
 
-    const auto lights = view.wireframe ? std::vector<float>{}
+    const auto lights = view.wireframe || view.unlit ? std::vector<float>{}
                                        : vertex_light(mesh, view.yaw_radians, view.pitch_radians, radius);
     for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
         const auto ia = mesh.indices[t + 0U];
@@ -766,7 +774,20 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                         v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
                     }
                     std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
-                    if (sample_texture(*texture, u, v, &tr, &tg, &tb, &ta)) {
+                    bool sampled = false;
+                    if (view.smooth_textures) {
+                        float texel[4];
+                        if (sample_bilinear(*texture, u, v, texel)) {
+                            tr = static_cast<std::uint8_t>(texel[0] + 0.5F);
+                            tg = static_cast<std::uint8_t>(texel[1] + 0.5F);
+                            tb = static_cast<std::uint8_t>(texel[2] + 0.5F);
+                            ta = static_cast<std::uint8_t>(texel[3] + 0.5F);
+                            sampled = true;
+                        }
+                    } else {
+                        sampled = sample_texture(*texture, u, v, &tr, &tg, &tb, &ta);
+                    }
+                    if (sampled) {
                         if (colored) {
                             // PS2 modulate: texel x vertex colour / 0x80.
                             const auto& ca = mesh.color0[ia];

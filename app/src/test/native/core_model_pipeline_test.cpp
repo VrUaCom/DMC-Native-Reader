@@ -340,6 +340,40 @@ int main() {
             if (bare.pixels[o] != roomed.pixels[o]) ++changed;
         }
         assert(changed > 128U * 128U / 4U);  // floor and far wall behind the model
+
+        // Settings bits: background 2 (light) fills the corner.
+        const auto light = dmcresource::render_session(model.get(), 64, 64, 0.0F, 0.0F, 1.0F,
+            2U << dmcresource::kRenderBackgroundShift);
+        assert(light.pixels[0] == 196U && light.pixels[1] == 198U && light.pixels[2] == 204U);
+
+        // Right-handed data: with the camera looking down +Z, a point on +X
+        // shows left of centre (the viewer mirrors X; a sword in the right
+        // hand, body joint 9 on -X, is on the model's right side).
+        dmcresource::Mesh marker;
+        // A square at the origin and a thin marker above it on +X.
+        marker.vertices = {{-10, -10, 0}, {10, -10, 0}, {-10, 10, 0}, {100, 30, 0}, {110, 30, 0}, {100, 32, 0}};
+        marker.indices = {0, 1, 2, 3, 4, 5};
+        dmcresource::ViewState straight;
+        straight.yaw_radians = 0.0F;
+        straight.pitch_radians = 0.0F;
+        const auto seen = dmcresource::render_view(marker, 200, 200, straight);
+        double square_x = 0.0, marker_x = 0.0;
+        std::size_t square_n = 0U, marker_n = 0U;
+        for (int y = 0; y < 200; ++y) {
+            for (int x = 0; x < 200; ++x) {
+                const auto o = static_cast<std::size_t>(y * 200 + x) * 4U;
+                if (seen.pixels[o] == 18U && seen.pixels[o + 2U] == 22U) continue;  // background
+                if (y < 100) {
+                    marker_x += x;
+                    ++marker_n;
+                } else {
+                    square_x += x;
+                    ++square_n;
+                }
+            }
+        }
+        assert(marker_n > 0U && square_n > 0U);
+        assert(marker_x / static_cast<double>(marker_n) < square_x / static_cast<double>(square_n));
     }
 
     // A known old-family filename must remain outside the clean main surface.

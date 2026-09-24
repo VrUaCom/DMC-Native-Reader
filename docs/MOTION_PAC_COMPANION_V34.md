@@ -430,6 +430,27 @@ first the spot near `cam_init` and the placed objects, and *Room: next floor
 spot* cycles through the others. An SCM, or an archive that holds SCMs, is
 shown without a room.
 
+**Right-handed view and Settings (v62).** DMC3 data are right-handed: the
+sword's right-hand record (state 2) sits on body joint 9 at −X of a model that
+faces +Z. The renderer used to put +X on the right while looking down +Z, so
+it showed every model and stage mirrored. It now negates X before the camera
+rotation, for positions and normals (rengine
+`dmc3-coordinate-handedness-2026-09-24.md`).
+
+The ⋮ menu opens with a row of square shortcuts: ⚙ Settings, then the room
+toggle and *next floor spot* when a room is loaded. The actions follow below
+the row. Settings is a full-screen window, and every choice is stored and
+applied at once:
+
+- Render resolution: 360, 540, 720 or 1024 px on the longest side.
+- Animation frame rate: 20, 30 or 60 fps.
+- Model textures: pixel or smooth (RenderFlag bit 9).
+- Model lighting: camera light or flat (bit 10).
+- Background: dark, grey, light or black (bits 11-12).
+- Shadows when a file opens.
+- Playback speed: ¼× to 2×.
+- Room: choose, show, next spot or remove.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

@@ -689,6 +689,9 @@ RgbaImage render_session(const Session* session, int requested_width,
         flags, dmcresource::RenderFlag::UvLayout);
     view.framing_vertices = dmcresource::motion::motion_rest_vertices(session);
     view.fallback_texture = &dmcresource::neutral_texture();
+    view.smooth_textures = dmcresource::has_render_flag(flags, dmcresource::RenderFlag::SmoothTextures);
+    view.unlit = dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Unlit);
+    view.background = static_cast<std::uint8_t>((flags >> dmcresource::kRenderBackgroundShift) & 3U);
 
     const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
     const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);

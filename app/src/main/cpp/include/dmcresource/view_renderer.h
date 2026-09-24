@@ -20,7 +20,11 @@ enum class RenderFlag : std::uint32_t {
     Shadows = 1U << 6U,
     Collision = 1U << 7U,
     Room = 1U << 8U,
+    SmoothTextures = 1U << 9U,  // bilinear texture filtering on models
+    Unlit = 1U << 10U,          // no camera light on models
+    // Bits 11-12: background (0 dark, 1 grey, 2 light, 3 black).
 };
+inline constexpr std::uint32_t kRenderBackgroundShift = 11U;
 
 using RenderFlags = std::uint32_t;
 
@@ -62,6 +66,10 @@ struct ViewState {
     const std::vector<ImagePreview>* room_textures{nullptr};
     const std::vector<std::uint8_t>* room_translucent_triangles{nullptr};
     Vec3 room_offset{};
+    // Viewer settings: bilinear model textures, no model light, background.
+    bool smooth_textures{false};
+    bool unlit{false};
+    std::uint8_t background{0U};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,

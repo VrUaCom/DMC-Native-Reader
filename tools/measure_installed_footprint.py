@@ -23,7 +23,7 @@ from typing import NoReturn, Sequence
 
 DEFAULT_PACKAGE = "com.dmcrengine.nativereader"
 EXPECTED_VERSION_CODE = "50"
-EXPECTED_VERSION_NAME = "1.0.34"
+EXPECTED_VERSION_NAME = "1.0.35"
 MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 ART_COMPILE_NONE = "none"
 ART_COMPILE_SPEED = "speed"

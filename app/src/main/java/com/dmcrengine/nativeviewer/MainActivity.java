@@ -27,7 +27,6 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -57,20 +56,6 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_STAGE_CLOTH = 1009;
     private static final int REQUEST_STAGE_OTHER = 1010;
 
-    private static final int MENU_OPEN = 1;
-    private static final int MENU_ADD_MOD = 2;
-    private static final int MENU_ATTACH_PTX = 3;
-    private static final int MENU_ADD_MOTION = 4;
-    private static final int MENU_ADD_TEXTURE = 5;
-    private static final int MENU_ADD_PHYSICS = 6;
-    private static final int MENU_ADD_CLOTH = 7;
-    private static final int MENU_ADD_OTHER = 8;
-    private static final int MENU_BROWSE_PAC = 9;
-    private static final int MENU_ADD_PAC = 10;
-    private static final int MENU_ROOM_CHOOSE = 20;
-    private static final int MENU_ROOM_SHOW = 21;
-    private static final int MENU_ROOM_SPOT = 22;
-    private static final int MENU_ROOM_REMOVE = 23;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -159,6 +144,7 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        applyViewerSettings();
         restoreRoom();
         handleIncomingIntent(getIntent());
     }
@@ -531,9 +517,6 @@ public final class MainActivity extends Activity {
         infoButton.setOnClickListener(v -> showInfoDialog());
         addToolButton(bar, infoButton);
 
-        Button settingsButton = makeSquareButton("\u2699", "Settings: room", 22f);
-        settingsButton.setOnClickListener(v -> showSettingsMenu(v));
-        addToolButton(bar, settingsButton);
 
         root.addView(toolScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -555,56 +538,283 @@ public final class MainActivity extends Activity {
         return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ROOM_SHOWN, true);
     }
 
-    private void showSettingsMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, MENU_ROOM_CHOOSE, 0,
-                roomLoaded ? "Room: replace stage (st*.pac / .scm)\u2026" : "Room: choose stage (st*.pac / .scm)\u2026");
-        if (roomLoaded) {
-            menu.getMenu().add(0, MENU_ROOM_SHOW, 1, "Room: show " + roomName)
-                    .setCheckable(true).setChecked(roomShown());
-            if (NativeBridge.roomSpotCount() > 1) {
-                menu.getMenu().add(0, MENU_ROOM_SPOT, 2, "Room: next floor spot");
-            }
-            menu.getMenu().add(0, MENU_ROOM_REMOVE, 3, "Room: remove");
+    private String roomDetail = "";
+
+    private android.content.SharedPreferences prefs() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+
+    // ---- Viewer settings (persisted; applied to the render view).
+
+    private static final String SET_MAX_SIDE = "set.maxSide";
+    private static final String SET_FRAME_MS = "set.frameMs";
+    private static final String SET_SMOOTH = "set.smooth";
+    private static final String SET_UNLIT = "set.unlit";
+    private static final String SET_BACKGROUND = "set.background";
+    private static final String SET_SHADOWS = "set.shadows";
+    private static final String SET_SPEED = "set.speed";
+
+    private void applyViewerSettings() {
+        final android.content.SharedPreferences p = prefs();
+        final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
+                | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
+                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11);
+        renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
+                p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true));
+    }
+
+    private void roomToggle() {
+        final boolean shown = !roomShown();
+        prefs().edit().putBoolean(PREF_ROOM_SHOWN, shown).apply();
+        renderView.setRoomVisible(shown && roomLoaded);
+        notice(shown ? "Room shown: " + roomName : "Room hidden", Toast.LENGTH_SHORT);
+    }
+
+    private void roomNextSpot() {
+        final int spot = NativeBridge.nextRoomSpot();
+        notice("Room: floor spot " + (spot + 1) + " / " + NativeBridge.roomSpotCount(), Toast.LENGTH_SHORT);
+        renderView.refreshRoom();
+    }
+
+    private void roomChoose() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_ROOM);
+    }
+
+    private void roomRemove() {
+        NativeBridge.clearRoom();
+        roomLoaded = false;
+        roomName = "";
+        roomDetail = "";
+        //noinspection ResultOfMethodCallIgnored
+        roomFile().delete();
+        prefs().edit().remove(PREF_ROOM_NAME).apply();
+        renderView.setRoomVisible(false);
+        notice("Room removed: plain floor", Toast.LENGTH_SHORT);
+    }
+
+    /** One setting: a label and a row of choices, the stored one highlighted. */
+    private LinearLayout choiceRow(String label, String[] names, int selected,
+                                   java.util.function.IntConsumer onPick) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(10), 0, dp(4));
+        TextView title = new TextView(this);
+        title.setText(label);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        block.addView(title);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        final TextView[] chips = new TextView[names.length];
+        for (int i = 0; i < names.length; ++i) {
+            final int index = i;
+            TextView chip = new TextView(this);
+            chip.setText(names[i]);
+            chip.setTextSize(14f);
+            chip.setGravity(Gravity.CENTER);
+            chip.setPadding(dp(12), dp(8), dp(12), dp(8));
+            chips[i] = chip;
+            chip.setOnClickListener(v -> {
+                for (int k = 0; k < chips.length; ++k) styleChip(chips[k], k == index);
+                onPick.accept(index);
+            });
+            styleChip(chip, i == selected);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            params.setMarginEnd(dp(6));
+            row.addView(chip, params);
         }
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case MENU_ROOM_CHOOSE: {
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    intent.setType("*/*");
-                    startActivityForResult(intent, REQUEST_ROOM);
-                    return true;
-                }
-                case MENU_ROOM_SHOW: {
-                    final boolean shown = !roomShown();
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_ROOM_SHOWN, shown).apply();
-                    renderView.setRoomVisible(shown && roomLoaded);
-                    return true;
-                }
-                case MENU_ROOM_SPOT: {
-                    final int spot = NativeBridge.nextRoomSpot();
-                    notice("Room: floor spot " + (spot + 1) + " / " + NativeBridge.roomSpotCount(),
-                            Toast.LENGTH_SHORT);
-                    renderView.refreshRoom();
-                    return true;
-                }
-                case MENU_ROOM_REMOVE: {
-                    NativeBridge.clearRoom();
-                    roomLoaded = false;
-                    roomName = "";
-                    //noinspection ResultOfMethodCallIgnored
-                    roomFile().delete();
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(PREF_ROOM_NAME).apply();
-                    renderView.setRoomVisible(false);
-                    notice("Room removed: plain floor", Toast.LENGTH_SHORT);
-                    return true;
-                }
-                default:
-                    return false;
-            }
+        block.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return block;
+    }
+
+    private void styleChip(TextView chip, boolean selected) {
+        chip.setBackgroundColor(selected ? 0xff8a2432 : 0xff2a2c34);
+        chip.setTextColor(selected ? 0xffffffff : 0xffb8bcc6);
+    }
+
+    private TextView sectionTitle(String text) {
+        TextView title = new TextView(this);
+        title.setText(text);
+        title.setTextColor(0xffffffff);
+        title.setTextSize(18f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(0, dp(18), 0, dp(2));
+        return title;
+    }
+
+    private TextView actionChip(String text, Runnable action) {
+        TextView chip = new TextView(this);
+        chip.setText(text);
+        chip.setTextSize(14f);
+        chip.setGravity(Gravity.CENTER);
+        chip.setPadding(dp(12), dp(10), dp(12), dp(10));
+        styleChip(chip, false);
+        chip.setOnClickListener(v -> action.run());
+        return chip;
+    }
+
+    private static int indexOf(int[] values, int value, int fallback) {
+        for (int i = 0; i < values.length; ++i) if (values[i] == value) return i;
+        return fallback;
+    }
+
+    /** Full-screen settings window: render quality, animation, room. */
+    private void showSettingsDialog() {
+        final android.app.Dialog dialog = new android.app.Dialog(this,
+                android.R.style.Theme_DeviceDefault_NoActionBar);
+        final android.content.SharedPreferences p = prefs();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(24));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Settings");
+        title.setTextSize(22f);
+        title.setTextColor(0xffffffff);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button close = makeSquareButton("✕", "Close settings", 20f);
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+        content.addView(header);
+
+        final Runnable apply = this::applyViewerSettings;
+        content.addView(sectionTitle("Render"));
+        final int[] sides = {360, 540, 720, 1024};
+        content.addView(choiceRow("Resolution (longest side, px)", new String[]{"360", "540", "720", "1024"},
+                indexOf(sides, p.getInt(SET_MAX_SIDE, 720), 2),
+                i -> { p.edit().putInt(SET_MAX_SIDE, sides[i]).apply(); apply.run(); }));
+        final int[] frames = {50, 33, 16};
+        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
+                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
+                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Model textures", new String[]{"Pixel (original)", "Smooth"},
+                p.getBoolean(SET_SMOOTH, false) ? 1 : 0,
+                i -> { p.edit().putBoolean(SET_SMOOTH, i == 1).apply(); apply.run(); }));
+        content.addView(choiceRow("Model lighting", new String[]{"Camera light", "Off (flat)"},
+                p.getBoolean(SET_UNLIT, false) ? 1 : 0,
+                i -> { p.edit().putBoolean(SET_UNLIT, i == 1).apply(); apply.run(); }));
+        content.addView(choiceRow("Background", new String[]{"Dark", "Grey", "Light", "Black"},
+                p.getInt(SET_BACKGROUND, 0) & 3,
+                i -> { p.edit().putInt(SET_BACKGROUND, i).apply(); apply.run(); }));
+        content.addView(choiceRow("Shadows when a file opens", new String[]{"On", "Off"},
+                p.getBoolean(SET_SHADOWS, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_SHADOWS, i == 0).apply(); apply.run(); }));
+
+        content.addView(sectionTitle("Animation"));
+        final float[] speeds = {0.25f, 0.5f, 1.0f, 2.0f};
+        int speedIndex = 2;
+        for (int i = 0; i < speeds.length; ++i) {
+            if (Math.abs(speeds[i] - p.getFloat(SET_SPEED, 1.0f)) < 0.01f) speedIndex = i;
+        }
+        content.addView(choiceRow("Playback speed", new String[]{"¼×", "½×", "1×", "2×"},
+                speedIndex, i -> { p.edit().putFloat(SET_SPEED, speeds[i]).apply(); apply.run(); }));
+
+        content.addView(sectionTitle("Room"));
+        TextView status = new TextView(this);
+        status.setTextColor(0xffc8ccd6);
+        status.setTextSize(14f);
+        status.setPadding(0, dp(6), 0, dp(6));
+        status.setText(roomLoaded
+                ? (roomDetail.isEmpty() ? roomName : roomDetail)
+                : "No room: models stand on the plain floor. Choose a stage (st*.pac or .scm) to show "
+                        + "every model inside it.");
+        content.addView(status);
+        LinearLayout roomActions = new LinearLayout(this);
+        roomActions.setOrientation(LinearLayout.VERTICAL);
+        final java.util.function.BiConsumer<String, Runnable> addAction = (text, action) -> {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.topMargin = dp(6);
+            roomActions.addView(actionChip(text, action), params);
+        };
+        addAction.accept(roomLoaded ? "Replace stage…" : "Choose stage…", () -> {
+            dialog.dismiss();
+            roomChoose();
         });
-        menu.show();
+        if (roomLoaded) {
+            content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
+                    i -> { if ((i == 0) != roomShown()) roomToggle(); }));
+            if (NativeBridge.roomSpotCount() > 1) addAction.accept("Next floor spot", this::roomNextSpot);
+            addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
+        }
+        content.addView(roomActions);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(0xff16171c);
+        applySystemBarInsets(frame);
+        frame.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT));
+        dialog.setContentView(frame);
+        dialog.show();
+    }
+
+    /** The ⋮ menu: a row of square shortcuts (settings first), then actions. */
+    private void showCompanionMenu(View anchor) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(0xff23252c);
+        panel.setPadding(dp(8), dp(8), dp(8), dp(8));
+        final android.widget.PopupWindow popup = new android.widget.PopupWindow(panel,
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff23252c));
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(8));
+
+        LinearLayout icons = new LinearLayout(this);
+        icons.setOrientation(LinearLayout.HORIZONTAL);
+        final java.util.function.BiConsumer<Button, Runnable> addIcon = (button, action) -> {
+            button.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
+            params.setMarginEnd(dp(6));
+            icons.addView(button, params);
+        };
+        addIcon.accept(makeSquareButton("⚙", "Settings", 22f), this::showSettingsDialog);
+        if (roomLoaded) {
+            Button room = makeSquareButton("⌂", roomShown() ? "Hide the room" : "Show the room", 22f);
+            room.setAlpha(roomShown() ? 1f : 0.5f);
+            addIcon.accept(room, this::roomToggle);
+            if (NativeBridge.roomSpotCount() > 1) {
+                addIcon.accept(makeSquareButton("⇄", "Next floor spot", 20f), this::roomNextSpot);
+            }
+        }
+        panel.addView(icons);
+
+        final java.util.function.BiConsumer<String, Runnable> addRow = (text, action) -> {
+            TextView row = new TextView(this);
+            row.setText(text);
+            row.setTextSize(16f);
+            row.setTextColor(0xffe8eaf0);
+            row.setPadding(dp(8), dp(12), dp(16), dp(12));
+            row.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+            panel.addView(row);
+        };
+        addRow.accept("Open / replace resource", this::chooseFile);
+        if (isRootScene() && assembledPacUri != null) {
+            addRow.accept("Add weapon / .PAC…", this::chooseAdditionalPac);
+            addRow.accept("Browse .PAC files…", this::browseAssembledPac);
+        }
+        if (hasModCompositionContext()) addRow.accept("Add .MOD part(s)", this::chooseAdditionalMods);
+        if (isRootScene() && canAttachPtx()) addRow.accept("Attach .PTX texture", this::choosePtxForCurrentSession);
+        if (isRootScene() && blackWidowState.canStageCompanion) {
+            addRow.accept("Add animation / motion…", () -> chooseStagedAssets(REQUEST_STAGE_MOTION, true));
+            addRow.accept("Add texture asset (.TM2 / .DDS / …)", () -> chooseStagedAssets(REQUEST_STAGE_TEXTURE, true));
+            addRow.accept("Add physics resource…", () -> chooseStagedAssets(REQUEST_STAGE_PHYSICS, true));
+            addRow.accept("Add cloth resource…", () -> chooseStagedAssets(REQUEST_STAGE_CLOTH, true));
+            addRow.accept("Add other companion…", () -> chooseStagedAssets(REQUEST_STAGE_OTHER, true));
+        }
+        popup.showAsDropDown(anchor);
     }
 
     /** Copies the picked stage into app storage (it is reloaded on start). */
@@ -648,6 +858,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 roomLoaded = true;
                 roomName = name;
+                roomDetail = detail;
                 renderView.setRoomVisible(true);
                 notice("Room: " + detail, Toast.LENGTH_LONG);
             });
@@ -664,6 +875,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 roomLoaded = true;
                 roomName = name;
+                roomDetail = detail;
                 renderView.setRoomVisible(roomShown());
             });
         }).start();
@@ -678,64 +890,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void showCompanionMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, MENU_OPEN, 0, "Open / replace resource");
-        if (isRootScene() && assembledPacUri != null) {
-            menu.getMenu().add(0, MENU_ADD_PAC, 1, "Add weapon / .PAC…");
-            menu.getMenu().add(0, MENU_BROWSE_PAC, 1, "Browse .PAC files…");
-        }
-        if (hasModCompositionContext()) {
-            menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
-        }
-        if (isRootScene() && canAttachPtx()) {
-            menu.getMenu().add(0, MENU_ATTACH_PTX, 2, "Attach .PTX texture");
-        }
-        if (isRootScene() && blackWidowState.canStageCompanion) {
-            menu.getMenu().add(0, MENU_ADD_MOTION, 3, "Add animation / motion…");
-            menu.getMenu().add(0, MENU_ADD_TEXTURE, 4, "Add texture asset (.TM2 / .DDS / …)");
-            menu.getMenu().add(0, MENU_ADD_PHYSICS, 5, "Add physics resource…");
-            menu.getMenu().add(0, MENU_ADD_CLOTH, 6, "Add cloth resource…");
-            menu.getMenu().add(0, MENU_ADD_OTHER, 7, "Add other companion…");
-        }
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case MENU_OPEN:
-                    chooseFile();
-                    return true;
-                case MENU_BROWSE_PAC:
-                    browseAssembledPac();
-                    return true;
-                case MENU_ADD_PAC:
-                    chooseAdditionalPac();
-                    return true;
-                case MENU_ADD_MOD:
-                    chooseAdditionalMods();
-                    return true;
-                case MENU_ATTACH_PTX:
-                    choosePtxForCurrentSession();
-                    return true;
-                case MENU_ADD_MOTION:
-                    chooseStagedAssets(REQUEST_STAGE_MOTION, true);
-                    return true;
-                case MENU_ADD_TEXTURE:
-                    chooseStagedAssets(REQUEST_STAGE_TEXTURE, true);
-                    return true;
-                case MENU_ADD_PHYSICS:
-                    chooseStagedAssets(REQUEST_STAGE_PHYSICS, true);
-                    return true;
-                case MENU_ADD_CLOTH:
-                    chooseStagedAssets(REQUEST_STAGE_CLOTH, true);
-                    return true;
-                case MENU_ADD_OTHER:
-                    chooseStagedAssets(REQUEST_STAGE_OTHER, true);
-                    return true;
-                default:
-                    return false;
-            }
-        });
-        menu.show();
-    }
 
     /** One motion card: a MOT found in the assembled PAC or a staged file. */
     private static final class MotionEntry {

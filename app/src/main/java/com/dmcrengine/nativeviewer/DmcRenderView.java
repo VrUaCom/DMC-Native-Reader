@@ -42,7 +42,13 @@ public final class DmcRenderView extends View {
 
     // MOT playback: frames are MOT timeline units, 60 per second in DMC3.
     private static final float MOTION_FRAMES_PER_SECOND = 60.0f;
-    private static final long MOTION_MIN_FRAME_MS = 33;
+    // Viewer settings (SettingsDialog): render size, motion frame interval
+    // and speed, quality flags (native RenderFlag bits 9-12), shadows at open.
+    private int maxRenderSide = 720;
+    private long motionMinFrameMs = 33;
+    private float motionSpeed = 1.0f;
+    private int settingsFlags;
+    private boolean shadowsAtOpen = true;
     private boolean motionPlaying;
     private long motionStartMs;
     private float motionEndFrame;
@@ -51,7 +57,7 @@ public final class DmcRenderView extends View {
         @Override public void run() {
             if (!motionPlaying || session == 0) return;
             final long now = SystemClock.uptimeMillis();
-            if (now - lastRenderMs >= MOTION_MIN_FRAME_MS) {
+            if (now - lastRenderMs >= motionMinFrameMs) {
                 if (!NativeBridge.setMotionFrame(session, currentMotionFrame(now))) {
                     motionPlaying = false;
                     return;
@@ -113,8 +119,27 @@ public final class DmcRenderView extends View {
         invalidate();
     }
 
+    private float rawMotionFrame(long nowMs) {
+        return (nowMs - motionStartMs) * (MOTION_FRAMES_PER_SECOND * motionSpeed / 1000.0f);
+    }
+
+    /** Applies the viewer settings; a playing motion keeps its frame. */
+    public void applySettings(int maxSide, long frameMs, float speed, int flags, boolean shadows) {
+        final long now = SystemClock.uptimeMillis();
+        if (motionPlaying && speed > 0.0f && speed != motionSpeed) {
+            final float frame = rawMotionFrame(now);
+            motionStartMs = now - Math.round(frame * 1000.0f / (MOTION_FRAMES_PER_SECOND * speed));
+        }
+        maxRenderSide = Math.max(128, Math.min(1024, maxSide));
+        motionMinFrameMs = Math.max(8, frameMs);
+        motionSpeed = speed > 0.0f ? speed : 1.0f;
+        settingsFlags = flags;
+        shadowsAtOpen = shadows;
+        if (!staticImagePreview) renderNow();
+    }
+
     private float currentMotionFrame(long nowMs) {
-        final float elapsed = (nowMs - motionStartMs) * (MOTION_FRAMES_PER_SECOND / 1000.0f);
+        final float elapsed = rawMotionFrame(nowMs);
         if (motionEndFrame <= 0.0f || elapsed <= motionEndFrame) return elapsed;
         final float loopSpan = motionEndFrame - motionLoopStartFrame;
         if (loopSpan <= 0.0f) return motionEndFrame;
@@ -148,7 +173,7 @@ public final class DmcRenderView extends View {
         pauseMotion();
         session = newSession;
         // Shadows start on; native ignores the flag when no SHW is bound.
-        renderFlags = RENDER_SHADOWS | (roomVisible ? RENDER_ROOM : 0);
+        renderFlags = (shadowsAtOpen ? RENDER_SHADOWS : 0) | (roomVisible ? RENDER_ROOM : 0);
         hierarchyAvailable = false;
         staticImagePreview = false;
         releaseBitmap();
@@ -281,7 +306,7 @@ public final class DmcRenderView extends View {
     private int renderWidth() {
         int w = Math.max(64, getWidth());
         int h = Math.max(64, getHeight());
-        int max = 720;
+        int max = maxRenderSide;
         if (w <= max && h <= max) return w;
         float s = Math.min((float) max / w, (float) max / h);
         return Math.max(64, Math.round(w * s));
@@ -290,7 +315,7 @@ public final class DmcRenderView extends View {
     private int renderHeight() {
         int w = Math.max(64, getWidth());
         int h = Math.max(64, getHeight());
-        int max = 720;
+        int max = maxRenderSide;
         if (w <= max && h <= max) return h;
         float s = Math.min((float) max / w, (float) max / h);
         return Math.max(64, Math.round(h * s));
@@ -307,7 +332,7 @@ public final class DmcRenderView extends View {
         final int rh = renderHeight();
         final Bitmap target = writableBitmap(rw, rh);
         if (target == null || !NativeBridge.render(
-                session, rw, rh, yaw, pitch, zoom, renderFlags, target)) {
+                session, rw, rh, yaw, pitch, zoom, renderFlags | settingsFlags, target)) {
             releaseBitmap();
             invalidate();
             return;
