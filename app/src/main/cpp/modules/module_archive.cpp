@@ -15,6 +15,7 @@
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/motion_chart.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/ptx_framing_compat.h"
 #include "dmcresource/resource_limits.h"
@@ -243,6 +244,12 @@ PipelineResult run_mot_module(const NativeModule& module,
         add("Header+0x10", std::to_string(document.raw_f32_10), EvidenceLevel::DataConfirmed);
         add("Playback", "stage this MOT on a MOD with the same node count",
             EvidenceLevel::Recognized);
+        // A lone MOT has no mesh or hierarchy: show its curves instead.
+        if (auto chart = motion::render_motion_chart(document, 1080, 1440)) {
+            out.image_preview = std::move(*chart);
+            add("View", "channel curves per node (rotation / translation / scale)",
+                EvidenceLevel::DataConfirmed);
+        }
 
         std::ostringstream detail;
         detail << "MOT canonical reader | nodes=" << document.channel_domain_count
@@ -292,7 +299,7 @@ NativeModule mot_module() noexcept {
         ModuleKind::Structural,
         false,
         run_mot_module,
-        capability(ResourceCapability::Inspection),
+        capability(ResourceCapability::Inspection) | ResourceCapability::ImagePreview,
     };
 }
 

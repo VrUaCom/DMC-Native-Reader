@@ -30,6 +30,8 @@ int main() {
     const auto* mot = NativeModuleRegistry::find("MOT");
     assert(pac != nullptr && pac->format == Format::Pac && !pac->renderable);
     assert(mot != nullptr && mot->format == Format::Mot && !mot->renderable);
+    // A lone MOT shows its curves as an image preview.
+    assert(has_capability(mot->capabilities, ResourceCapability::ImagePreview));
     const std::array<std::uint8_t, 8> pac_magic{'P', 'A', 'C', 0U, 0U, 0U, 0U, 0U};
     const std::array<std::uint8_t, 8> mot_magic{0x30U, 0U, 0U, 0U, 'M', 'O', 'T', 0U};
     assert(probe("renamed.bin", pac_magic.data(), pac_magic.size()).format == Format::Pac);

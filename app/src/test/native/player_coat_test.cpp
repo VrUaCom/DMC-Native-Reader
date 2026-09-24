@@ -1,6 +1,8 @@
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
+#include "dmcresource/motion/motion_chart.h"
+#include "dmc_rengine/formats/mot/ir.hpp"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/pac_assembly.h"
@@ -827,6 +829,19 @@ int main() {
         assert(motion::weapon_state_record("CPlWpSword", 3U)->joint == 13U);
         assert(motion::weapon_state_record("CPlWpSword", 7U) == nullptr);   // empty
         assert(motion::weapon_state_record("CPlWpGuitar", 5U) == nullptr);  // play pose
+    }
+
+    // A lone MOT is drawn as its channel curves (no mesh or hierarchy in it).
+    {
+        dmc::rengine::formats::mot::Document doc;
+        doc.channel_domain_count = 2U;
+        doc.channel_masks = {0U, 0U};
+        doc.record_count = 0U;
+        doc.raw_f32_0c = 30.0F;
+        const auto chart = motion::render_motion_chart(doc, 540, 720);
+        assert(chart && chart->available() && chart->width == 540U && chart->height == 720U);
+        doc.channel_masks = {0x008U};  // mask count != node count: no binding
+        assert(!motion::render_motion_chart(doc, 540, 720).has_value());
     }
 
     // The same layout under a non-player name is not guessed at.

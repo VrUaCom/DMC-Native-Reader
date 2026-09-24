@@ -228,6 +228,14 @@ states per class: Rebellion 0/1 back, 2 right hand joint 9, 3 left hand joint
 keep the previous record; stopping the motion returns to state 0. Evidence:
 rengine `docs/research/dmc3-player-motion-script-2026-09-24.md`.
 
+**Lone MOT view (v50).** A MOT opened on its own has no mesh, hierarchy or
+rest pose (those live in the MOD), so instead of an empty 3D view it shows an
+image of its curves (`motion/motion_chart.cpp`): rotation, translation and
+scale panels with every animated channel from frame 0 to the end frame,
+evaluated with the playback evaluators (compression 3/2), one colour per node
+and lighter shades for y/z, value ranges and a frame axis. Adding a MOD with
+the same node count still plays it in 3D.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
