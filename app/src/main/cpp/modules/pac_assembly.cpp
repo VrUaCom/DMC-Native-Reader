@@ -17,6 +17,7 @@
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/mod_bytes.h"
 #include "dmcresource/shadow_hull.h"
+#include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/motion/skeleton_rig.h"
@@ -749,6 +750,20 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
 
         report.models = models.size();
         report.motions = motions.size();
+        // Only motions that can drive this scene are offered (e.g. em000's
+        // body motions are hidden on the CEm005Shl01 shell).
+        {
+            std::vector<Session::MotionPayload> drivable;
+            drivable.reserve(motions.size());
+            for (auto& m : motions) {
+                if (motion::motion_can_drive(*assembled, m.bytes)) drivable.push_back(std::move(m));
+            }
+            if (drivable.size() != motions.size()) {
+                report.detail_attachments += " motionsHidden=" + std::to_string(motions.size() - drivable.size());
+            }
+            motions = std::move(drivable);
+            report.motions = motions.size();
+        }
         assembled->motion_library = std::move(motions);
         // Motion script: IPlayer pl000.pac slot 5 (0x1401EF461); enemies bind
         // their own script slot (em028 slot 10 at 0x140131037, em000 slot 38

@@ -354,6 +354,17 @@ The viewer lists every named record as a child file:
 
 Evidence: rengine `dmc3-effect-bank-loader-2026-09-24.md`.
 
+**Tool bar and motion strip (v56).** Tools that do not apply to the open
+resource are hidden instead of greyed out. The bottom tool bar sits in a
+horizontal scroll view: centred while it fits, scrollable when it does not.
+The motion strip only lists MOTs that can drive at least one skinned part of
+the assembled model (`motion::motion_can_drive`, the same binding that
+playback uses; host-joint parts such as coats do not count). Examples:
+- em000 variants 4/5: the 22-node body in slot 8 keeps 77 of the 82 MOTs.
+- The 23-node bodies of variants 0–3 bind none of slot 35's 22-node MOTs
+  (`mot-channel-domain-differs-from-model-nodes`). That binding remains an
+  open research item.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

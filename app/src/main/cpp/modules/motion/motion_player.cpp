@@ -422,6 +422,24 @@ float motion_loop_start_frame(const Session* session) noexcept {
     return has_motion(session) ? session->motion->loop_start_frame : 0.0F;
 }
 
+bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept {
+    try {
+        const std::span<const std::byte> bytes{reinterpret_cast<const std::byte*>(mot.data()), mot.size()};
+        const auto fits = [&bytes](const RenderScene& scene) {
+            return scene.rig != nullptr && scene.nodes.size() == scene.rig->node_count() &&
+                   MotionClip::bind(bytes, *scene.rig).has_value();
+        };
+        if (session.composite_parts.empty()) return fits(session.scene);
+        for (const auto& part : session.composite_parts) {
+            if (part.placement.mode == CompositePlacementMode::HostJointSkeleton) continue;
+            if (fits(part.scene)) return true;
+        }
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 std::span<const Vec3> motion_rest_vertices(const Session* session) noexcept {
     if (!has_motion(session)) return {};
     return session->motion->source_vertices;

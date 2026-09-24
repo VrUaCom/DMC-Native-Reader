@@ -45,4 +45,8 @@ void clear_motion(Session* session) noexcept;
 // used to keep camera framing stable during playback.
 [[nodiscard]] std::span<const Vec3> motion_rest_vertices(const Session* session) noexcept;
 
+// Whether a MOT can drive at least one skinned part of the session (the
+// same binding load_motion uses). Host-joint parts (coats) do not count.
+[[nodiscard]] bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept;
+
 }  // namespace dmcresource::motion

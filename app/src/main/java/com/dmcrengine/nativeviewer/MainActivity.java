@@ -113,6 +113,7 @@ public final class MainActivity extends Activity {
     private int collisionCursor = -2;
     private Button infoButton;
     private HorizontalScrollView motionScroll;
+    private HorizontalScrollView toolScroll;
     private LinearLayout motionBar;
 
     private long session;
@@ -178,15 +179,19 @@ public final class MainActivity extends Activity {
         bar.addView(button, params);
     }
 
+    // Unavailable tools are hidden rather than greyed out; the tool bar
+    // scrolls sideways when the remaining ones do not fit.
     private void setToolAvailable(Button button, boolean available) {
         button.setEnabled(available);
-        button.setAlpha(available ? 1.0f : 0.35f);
+        button.setAlpha(1.0f);
+        button.setVisibility(available ? View.VISIBLE : View.GONE);
     }
 
     private void syncToggleButton(Button button, boolean available, boolean active) {
         button.setEnabled(available);
         button.setActivated(available && active);
-        button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
+        button.setAlpha(active ? 1.0f : 0.78f);
+        button.setVisibility(available ? View.VISIBLE : View.GONE);
     }
 
     private void refreshBlackWidowState() {
@@ -387,10 +392,18 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(TOOL_SIZE_DP + 8)));
 
+        // Tool bar: centred while it fits, scrolls sideways when it does not
+        // (same as the motion strip).
+        toolScroll = new HorizontalScrollView(this);
+        toolScroll.setHorizontalScrollBarEnabled(false);
+        toolScroll.setFillViewport(true);
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER);
         bar.setPadding(dp(8), dp(6), dp(8), dp(8));
+        toolScroll.addView(bar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
 
         Button open = makeSquareButton("↑", "Open resource or combine multiple MOD files", 28f);
         open.setOnClickListener(v -> chooseFile());
@@ -474,7 +487,7 @@ public final class MainActivity extends Activity {
         infoButton.setOnClickListener(v -> showInfoDialog());
         addToolButton(bar, infoButton);
 
-        root.addView(bar, new LinearLayout.LayoutParams(
+        root.addView(toolScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
