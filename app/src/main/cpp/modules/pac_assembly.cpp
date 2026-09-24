@@ -14,6 +14,7 @@
 
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/archive_entry.h"
+#include "dmcresource/collision_debug.h"
 #include "dmcresource/mod_bytes.h"
 #include "dmcresource/shadow_hull.h"
 #include "dmcresource/motion/part_attachment.h"
@@ -700,6 +701,48 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 assembled->shadow_bindings.push_back(std::move(binding));
                 ++report.shadows_bound;
                 report.detail_attachments += " " + entry.name + "->" + model_names[*owner];
+            }
+            // Collision handle (0x14005C260): the shape table of the top-level
+            // archive and the index in the slot before it; attacks use the body
+            // (first top-level MOD) bone matrices.
+            for (std::size_t index = 0U; index < entries.size() && assembled->collision == nullptr; ++index) {
+                const auto& shapes_entry = entries[index];
+                if (shapes_entry.kind.format != Format::CollisionShapes || shapes_entry.archive != 0U ||
+                    !shapes_entry.container.empty() || !shapes_entry.slot) {
+                    continue;
+                }
+                const std::span<const std::uint8_t> shape_bytes{shapes_entry.bytes->data(),
+                                                                shapes_entry.bytes->size()};
+                const auto shapes = collision::parse_shapes(shape_bytes);
+                const Entry* index_entry = nullptr;
+                for (const auto& e : entries) {
+                    if (e.archive != 0U || !e.container.empty() || !e.slot || *e.slot >= *shapes_entry.slot) continue;
+                    if (index_entry == nullptr || *e.slot > *index_entry->slot) index_entry = &e;
+                }
+                if (index_entry == nullptr ||
+                    !collision::looks_like_attack_index(
+                        std::span<const std::uint8_t>{index_entry->bytes->data(), index_entry->bytes->size()},
+                        shapes.size())) {
+                    continue;
+                }
+                std::optional<std::size_t> owner;
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    const auto& model = entries[model_entry[part]];
+                    if (model.archive != 0U || !model.container.empty()) continue;
+                    if (!owner || model_entry[part] < model_entry[*owner]) owner = part;
+                }
+                if (!owner || node_count[*owner] == 0U) continue;
+                auto binding = std::make_shared<collision::CollisionBinding>();
+                binding->name = index_entry->name + "+" + shapes_entry.name;
+                binding->attacks = collision::parse_attack_index(
+                    std::span<const std::uint8_t>{index_entry->bytes->data(), index_entry->bytes->size()});
+                binding->shapes = shapes;
+                binding->node_begin = node_begin[*owner];
+                binding->node_count = node_count[*owner];
+                assembled->collision = std::move(binding);
+                report.detail_attachments += " collision slot" + std::to_string(*index_entry->slot) + "+slot" +
+                    std::to_string(*shapes_entry.slot) + "->" + model_names[*owner] + "(" +
+                    std::to_string(collision::collision_attack_ids(*assembled).size()) + " attacks)";
             }
         }
 

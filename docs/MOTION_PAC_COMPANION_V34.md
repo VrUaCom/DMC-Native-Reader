@@ -284,6 +284,35 @@ as a value grid by offset. Evidence: rengine
 `dmc3-enemy-motion-script-2026-09-24.md` and
 `dmc3-collision-tables-2026-09-24.md`.
 
+**Hitboxes (v53).** The game's collision debug meshes are system resources
+`obj\\debug\\at000–at003.mod` (list `0x1405B0860`). The viewer does not ship
+them; `collision_debug.cpp` generates the same shapes with the measured
+dimensions:
+
+| Mesh | Shape |
+| --- | --- |
+| at000 | unit sphere |
+| at001 | cube ±1, the same corners as the game's box table `0x1405CEC60` |
+| at002 | capsule, radius 1, segment ±0.5 |
+| at003 | octagonal prism ±1 |
+
+An assembled character PAC binds its collision handle:
+- the shape table (`COLSHAPE`) of the top-level archive, with the index in
+  the slot before it;
+- the bones of the body (the first top-level MOD): pl000 slots 6+7 on slot 1
+  (214 attacks), em000 slots 39+40 (20 attacks), em028 slots 11+12 (2
+  attacks).
+
+The ◎ button draws the shapes on the current pose:
+- each sphere scaled by its radius;
+- each box by its half size and Euler degrees;
+- each capsule rebuilt from a, b and its radius.
+
+Tapping ◎ cycles: all attacks → each used attack id (the toast names bone,
+shape and mask) → off. A long press turns the overlay off. Attacks are started
+by game code (`0x14005C740` with constant ids), so the viewer lets you choose
+the id instead of following a timeline.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

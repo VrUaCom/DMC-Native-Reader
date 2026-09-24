@@ -81,4 +81,10 @@ public final class NativeBridge {
 
     // SHW shadow hulls bound to the assembled models (drawn with RENDER_SHADOWS).
     public static native boolean hasShadows(long handle);
+
+    // Attack collision shapes on the body bones (drawn with RENDER_COLLISION):
+    // used attack ids, and the selection (-1 = every attack) with its label.
+    public static native boolean hasCollision(long handle);
+    public static native int[] collisionAttackIds(long handle);
+    public static native String selectCollisionAttack(long handle, int attack);
 }

@@ -152,6 +152,28 @@ void line(RgbaImage& image, P2 a, P2 b, std::uint8_t shade = 235) {
     }
 }
 
+void line_rgba(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std::uint8_t bl) {
+    const float limit = 4.0F * static_cast<float>(std::max(image.width, image.height));
+    if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y) ||
+        std::fabs(a.x) > limit || std::fabs(a.y) > limit || std::fabs(b.x) > limit || std::fabs(b.y) > limit) {
+        return;
+    }
+    int x0 = static_cast<int>(std::lround(a.x));
+    int y0 = static_cast<int>(std::lround(a.y));
+    const int x1 = static_cast<int>(std::lround(b.x));
+    const int y1 = static_cast<int>(std::lround(b.y));
+    const int dx = std::abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    const int dy = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        put_rgba(image, x0, y0, r, g, bl, 255U);
+        if (x0 == x1 && y0 == y1) break;
+        const int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
 void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
     const int x = static_cast<int>(std::lround(point.x));
     const int y = static_cast<int>(std::lround(point.y));
@@ -485,6 +507,10 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             fill(project(view.floor_shadow[t]), project(view.floor_shadow[t + 1U]),
                  project(view.floor_shadow[t + 2U]), shadow_pixel);
         }
+    }
+
+    for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
+        line_rgba(image, project(view.overlay_lines[i]), project(view.overlay_lines[i + 1U]), 255U, 90U, 60U);
     }
 
     if (hierarchy != nullptr && hierarchy->available()) {

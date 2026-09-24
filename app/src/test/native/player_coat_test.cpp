@@ -7,6 +7,7 @@
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/format_views.h"
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/collision_debug.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
@@ -988,6 +989,41 @@ int main() {
         auto shape_view = dmcresource::open_session("shapes.bin", shapes.data(), shapes.size());
         assert(shape_view && shape_view->inspection.format == "COLSHAPE" &&
                shape_view->image_preview.available() && shape_view->inspection.root.children.size() == 3U);
+        // Debug meshes (at000..at003 generated in code) and hitboxes on bones.
+        assert(!collision::debug_sphere().lines.empty() && collision::debug_box().vertices.size() == 8U &&
+               collision::debug_box().lines.size() == 24U && !collision::debug_capsule().lines.empty() &&
+               collision::debug_cylinder().vertices.size() >= 16U);
+        for (const auto& p : collision::debug_sphere().vertices) {
+            assert(std::fabs(std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z) - 1.0F) < 1.0e-4F);
+        }
+        const auto sphere_lines = collision::shape_lines(parsed[0]);
+        assert(!sphere_lines.empty() && sphere_lines.size() % 2U == 0U);
+        float top = -1.0e9F;
+        for (const auto& p : sphere_lines) top = std::max(top, p.y);
+        assert(std::fabs(top - 90.0F) < 1.0F);             // centre 50 + radius 40
+        float box_x = -1.0e9F;
+        for (const auto& p : collision::shape_lines(parsed[2])) box_x = std::max(box_x, p.x);
+        assert(box_x > 41.0F + 58.0F * 0.9F);              // half extents: corners at +-size
+        dmcresource::Session hit;
+        hit.scene.nodes.resize(12U);
+        for (auto& node : hit.scene.nodes) {
+            node.world.values = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        }
+        hit.scene.nodes[9].world.values[12] = 100.0F;     // bone 9 at x = 100
+        auto binding = std::make_shared<collision::CollisionBinding>();
+        binding->attacks = attacks;
+        binding->shapes = parsed;
+        binding->node_count = hit.scene.nodes.size();
+        hit.collision = binding;
+        assert((collision::collision_attack_ids(hit) == std::vector<int>{0, 1, 3}));
+        assert(collision::select_collision_attack(&hit, 3));
+        const auto posed = collision::posed_collision_lines(hit);
+        assert(!posed.empty());
+        for (const auto& p : posed) assert(p.x > 100.0F - 41.0F);  // attack 3: box #2 on bone 9 (x = 100)
+        assert(collision::describe_collision_selection(hit).find("bone 9 box #2") != std::string::npos);
+        assert(collision::select_collision_attack(&hit, -1));
+        assert(collision::posed_collision_lines(hit).size() > posed.size());
+
         auto index_view = dmcresource::open_session("slot_0006.colidx", index.data(), index.size());
         assert(index_view && index_view->inspection.format == "COLINDEX" &&
                index_view->image_preview.available());

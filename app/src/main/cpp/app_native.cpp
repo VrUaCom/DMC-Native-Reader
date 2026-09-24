@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "dmcresource/collision_debug.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
@@ -532,6 +533,39 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
         JNIEnv*, jclass, jlong handle) {
     const auto* session = from_handle(handle);
     return session != nullptr && !session->shadow_bindings.empty() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hasCollision(
+        JNIEnv*, jclass, jlong handle) {
+    const auto* session = from_handle(handle);
+    return session != nullptr && session->collision != nullptr ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_collisionAttackIds(
+        JNIEnv* env, jclass, jlong handle) {
+    try {
+        const auto* session = from_handle(handle);
+        const auto ids = session != nullptr ? dmcresource::collision::collision_attack_ids(*session)
+                                            : std::vector<int>{};
+        auto out = env->NewIntArray(static_cast<jsize>(ids.size()));
+        if (out != nullptr && !ids.empty()) {
+            env->SetIntArrayRegion(out, 0, static_cast<jsize>(ids.size()),
+                                   reinterpret_cast<const jint*>(ids.data()));
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_selectCollisionAttack(
+        JNIEnv* env, jclass, jlong handle, jint attack) {
+    try {
+        auto* session = from_handle(handle);
+        if (!dmcresource::collision::select_collision_attack(session, attack)) return env->NewStringUTF("");
+        return env->NewStringUTF(dmcresource::collision::describe_collision_selection(*session).c_str());
+    } catch (...) { return env->NewStringUTF(""); }
 }
 
 extern "C" JNIEXPORT jfloat JNICALL

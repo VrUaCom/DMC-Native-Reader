@@ -25,6 +25,9 @@ namespace dmcresource {
 namespace motion {
 struct MotionState;
 }
+namespace collision {
+struct CollisionBinding;
+}
 
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
@@ -89,6 +92,10 @@ struct Session {
     // attach record follows it during playback.
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
     std::vector<motion::WeaponBinding> weapon_bindings;
+
+    // Attack collision handle (index + shapes) on the body bones; drawn with
+    // RenderFlag::Collision (collision_debug.h).
+    std::shared_ptr<collision::CollisionBinding> collision;
 
     // TSC texture scroll ranges (CDrawUV), advanced with motion playback.
     std::vector<motion::UvScrollBinding> uv_scrolls;

@@ -108,6 +108,9 @@ public final class MainActivity extends Activity {
     private Button hierarchyButton;
     private Button uvButton;
     private Button shadowButton;
+    private Button collisionButton;
+    // Position in the collision cycle: -1 all attacks, then each used id.
+    private int collisionCursor = -2;
     private Button infoButton;
     private HorizontalScrollView motionScroll;
     private LinearLayout motionBar;
@@ -258,6 +261,10 @@ public final class MainActivity extends Activity {
         syncToggleButton(shadowButton,
                 hasSession && NativeBridge.hasShadows(session) && !renderView.isUvLayoutVisible(),
                 renderView.isShadowVisible());
+
+        syncToggleButton(collisionButton,
+                hasSession && NativeBridge.hasCollision(session) && !renderView.isUvLayoutVisible(),
+                renderView.isCollisionVisible());
 
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
@@ -416,6 +423,37 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, shadowButton);
+
+        // Hitboxes: off -> every attack -> each attack id in turn -> off.
+        collisionButton = makeSquareButton("\u25CE", "Attack collision (hitboxes)", 20f);
+        collisionButton.setOnClickListener(v -> {
+            if (session == 0 || !NativeBridge.hasCollision(session)) return;
+            final int[] ids = NativeBridge.collisionAttackIds(session);
+            if (ids == null) return;
+            if (!renderView.isCollisionVisible()) {
+                collisionCursor = -1;
+            } else {
+                collisionCursor++;
+            }
+            if (collisionCursor >= ids.length) {
+                collisionCursor = -2;
+                renderView.setCollisionVisible(false);
+                Toast.makeText(this, "Hitboxes off", Toast.LENGTH_SHORT).show();
+            } else {
+                final int attack = collisionCursor < 0 ? -1 : ids[collisionCursor];
+                final String label = NativeBridge.selectCollisionAttack(session, attack);
+                renderView.setCollisionVisible(true);
+                Toast.makeText(this, "Hitboxes: " + label, Toast.LENGTH_SHORT).show();
+            }
+            applyResourceUiState();
+        });
+        collisionButton.setOnLongClickListener(v -> {
+            collisionCursor = -2;
+            renderView.setCollisionVisible(false);
+            applyResourceUiState();
+            return true;
+        });
+        addToolButton(bar, collisionButton);
 
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {

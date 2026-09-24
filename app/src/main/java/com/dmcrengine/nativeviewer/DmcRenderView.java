@@ -15,6 +15,7 @@ public final class DmcRenderView extends View {
     private static final int RENDER_HIERARCHY = 1 << 1;
     private static final int RENDER_UV_LAYOUT = 1 << 5;
     private static final int RENDER_SHADOWS = 1 << 6;
+    private static final int RENDER_COLLISION = 1 << 7;
 
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final ScaleGestureDetector scaleDetector;
@@ -230,6 +231,21 @@ public final class DmcRenderView extends View {
         if (staticImagePreview || isUvLayoutVisible()) return;
         renderFlags ^= RENDER_SHADOWS;
         renderNow();
+    }
+
+    public void setCollisionVisible(boolean visible) {
+        if (staticImagePreview || isUvLayoutVisible()) return;
+        if (visible) {
+            renderFlags |= RENDER_COLLISION;
+        } else {
+            renderFlags &= ~RENDER_COLLISION;
+        }
+        renderNow();
+    }
+
+    public boolean isCollisionVisible() {
+        return !staticImagePreview && !isUvLayoutVisible() &&
+                (renderFlags & RENDER_COLLISION) != 0;
     }
 
     public boolean isShadowVisible() {

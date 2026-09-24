@@ -4,6 +4,7 @@
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/texture_companion.h"
+#include "dmcresource/collision_debug.h"
 #include "dmcresource/format_views.h"
 #include "dmcresource/raster_card.h"
 
@@ -714,6 +715,13 @@ RgbaImage render_session(const Session* session, int requested_width,
             view.floor_y = floor_y;
             view.floor_shadow = floor_shadow;
         }
+    }
+    // Attack collision shapes on the current pose (debug meshes at000-at003).
+    std::vector<dmcresource::Vec3> collision_lines;
+    if (!view.uv_layout && session->collision != nullptr &&
+        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Collision)) {
+        collision_lines = dmcresource::collision::posed_collision_lines(*session);
+        view.overlay_lines = collision_lines;
     }
     return dmcresource::render_view(
         session->render_mesh, width, height, view,

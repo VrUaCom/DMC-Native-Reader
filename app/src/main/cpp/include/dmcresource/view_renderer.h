@@ -18,6 +18,7 @@ enum class RenderFlag : std::uint32_t {
     Normals = 1U << 4U,
     UvLayout = 1U << 5U,
     Shadows = 1U << 6U,
+    Collision = 1U << 7U,
 };
 
 using RenderFlags = std::uint32_t;
@@ -46,6 +47,8 @@ struct ViewState {
     bool floor{false};
     float floor_y{0.0F};
     std::span<const Vec3> floor_shadow{};
+    // Optional coloured line pairs drawn over the model (collision debug).
+    std::span<const Vec3> overlay_lines{};
 };
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
