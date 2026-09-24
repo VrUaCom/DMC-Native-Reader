@@ -43,6 +43,16 @@ struct Mesh {
     [[nodiscard]] bool has_blend0() const noexcept {
         return !blend0.empty() && blend0.size() == vertices.size();
     }
+
+    // Optional source vertex normals (MOD / SCM normal stream, rest pose).
+    // The renderer uses them to decide which coincident vertices share a
+    // smooth normal (same position and same source normal); the lit normal
+    // itself is rebuilt from the current (posed) positions. {0,0,0} = none.
+    std::vector<Vec3> normal0;
+
+    [[nodiscard]] bool has_normal0() const noexcept {
+        return !normal0.empty() && normal0.size() == vertices.size();
+    }
 };
 
 struct RgbaImage {

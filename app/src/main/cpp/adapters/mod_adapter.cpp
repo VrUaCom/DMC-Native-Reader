@@ -64,6 +64,8 @@ using namespace dmcresource::vector_math;
     for (const auto& p : source.positions) {
         out->vertices.push_back({p.x, p.y, p.z});
     }
+    out->normal0.reserve(base + vc);
+    for (const auto& n : source.normals) out->normal0.push_back({n.x, n.y, n.z});
     if (!uv_projection::append_uv0(source.uvs, &out->uv0)) return false;
 
     if (vc < 3U) return true;

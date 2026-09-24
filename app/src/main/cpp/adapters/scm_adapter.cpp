@@ -102,6 +102,8 @@ InspectionNode make_diagnostic_node(
     for (const auto& position : source.positions) {
         output->vertices.push_back({position.x, position.y, position.z});
     }
+    output->normal0.reserve(base_vertex + vertex_count);
+    for (const auto& n : source.normals) output->normal0.push_back({n.x, n.y, n.z});
     if (!uv_projection::append_uv0(source.uvs, &output->uv0)) return false;
 
     if (vertex_count < 3U) return true;

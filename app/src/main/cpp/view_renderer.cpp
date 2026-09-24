@@ -1,6 +1,7 @@
 #include "dmcresource/view_renderer.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -295,6 +296,75 @@ RgbaImage make_canvas(int width, int height) {
     return image;
 }
 
+// Smooth per-vertex light for the current (posed) positions. Face normals are
+// accumulated per vertex (area weighted, oriented by the source normals when
+// the mesh has them) and shared between coincident vertices whose source
+// normals agree, so strip seams are smooth and authored hard edges stay hard.
+// Light: two-sided, from the camera, up-left.
+[[nodiscard]] std::vector<float> vertex_light(const Mesh& mesh, float yaw, float pitch, float radius) {
+    const std::size_t n = mesh.vertices.size();
+    std::vector<Vec3> acc(n);
+    const bool source = mesh.has_normal0();
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t], ib = mesh.indices[t + 1U], ic = mesh.indices[t + 2U];
+        if (ia >= n || ib >= n || ic >= n) continue;
+        const auto& a = mesh.vertices[ia];
+        const auto& b = mesh.vertices[ib];
+        const auto& c = mesh.vertices[ic];
+        const Vec3 e1{b.x - a.x, b.y - a.y, b.z - a.z};
+        const Vec3 e2{c.x - a.x, c.y - a.y, c.z - a.z};
+        Vec3 f{e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
+        if (source) {
+            const auto& na = mesh.normal0[ia];
+            const auto& nb = mesh.normal0[ib];
+            const auto& nc = mesh.normal0[ic];
+            const float d = f.x * (na.x + nb.x + nc.x) + f.y * (na.y + nb.y + nc.y) + f.z * (na.z + nb.z + nc.z);
+            if (d < 0.0F) f = {-f.x, -f.y, -f.z};
+        }
+        for (const auto v : {ia, ib, ic}) {
+            acc[v].x += f.x;
+            acc[v].y += f.y;
+            acc[v].z += f.z;
+        }
+    }
+    std::vector<std::uint32_t> group(n);
+    for (std::size_t v = 0U; v < n; ++v) group[v] = static_cast<std::uint32_t>(v);
+    if (source && radius > 0.0F) {
+        const float pq = 1.0e4F / radius;
+        std::unordered_map<std::uint64_t, std::uint32_t> first;
+        first.reserve(n);
+        const auto q = [](float x, float s) {
+            return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::lround(x * s)) & 0xFFFFF);
+        };
+        for (std::size_t v = 0U; v < n; ++v) {
+            const auto& nm = mesh.normal0[v];
+            if (nm.x == 0.0F && nm.y == 0.0F && nm.z == 0.0F) continue;
+            const auto& p = mesh.vertices[v];
+            std::uint64_t key = q(p.x, pq) | (q(p.y, pq) << 20U) | (q(p.z, pq) << 40U);
+            key ^= (q(nm.x, 16.0F) * 0x9E3779B97F4A7C15ULL) ^ (q(nm.y, 16.0F) * 0xC2B2AE3D27D4EB4FULL) ^
+                   (q(nm.z, 16.0F) * 0x165667B19E3779F9ULL);
+            const auto [it, inserted] = first.try_emplace(key, static_cast<std::uint32_t>(v));
+            if (!inserted) {
+                const auto g = it->second;
+                group[v] = g;
+                acc[g].x += acc[v].x;
+                acc[g].y += acc[v].y;
+                acc[g].z += acc[v].z;
+            }
+        }
+    }
+    std::vector<float> out(n, 0.9F);
+    constexpr float lx = -0.30F, ly = 0.45F, lz = -0.84F;
+    for (std::size_t v = 0U; v < n; ++v) {
+        const auto& a = acc[group[v]];
+        const float len = std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+        if (!(len > 1.0e-20F)) continue;
+        const auto r = rotate({a.x / len, a.y / len, a.z / len}, yaw, pitch);
+        out[v] = std::fabs(r.x * lx + r.y * ly + r.z * lz);
+    }
+    return out;
+}
+
 }  // namespace
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
@@ -396,6 +466,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         fill(q[0], q[2], q[3], floor_pixel);
     }
 
+    const auto lights = view.wireframe ? std::vector<float>{}
+                                       : vertex_light(mesh, view.yaw_radians, view.pitch_radians, radius);
     for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
         const auto ia = mesh.indices[t + 0U];
         const auto ib = mesh.indices[t + 1U];
@@ -419,25 +491,18 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 texture = &(*textures)[slot];
             }
         }
-        // No texture of its own: the neutral texture, lit by a camera light
-        // (two-sided, face normal in camera space).
-        float light = 1.0F;
+        // No texture of its own: the neutral texture (neutral_texture.h).
+        bool neutral = false;
         if (texture == nullptr && view.fallback_texture != nullptr && view.fallback_texture->available()) {
             texture = view.fallback_texture;
-            const auto& va = mesh.vertices[ia];
-            const auto& vb = mesh.vertices[ib];
-            const auto& vc = mesh.vertices[ic];
-            const Vec3 e1{vb.x - va.x, vb.y - va.y, vb.z - va.z};
-            const Vec3 e2{vc.x - va.x, vc.y - va.y, vc.z - va.z};
-            const Vec3 n{e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
-            const float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
-            if (len > 1.0e-12F) {
-                const auto r = rotate({n.x / len, n.y / len, n.z / len}, view.yaw_radians,
-                                      view.pitch_radians);
-                constexpr float lx = -0.30F, ly = 0.45F, lz = -0.84F;  // from the camera, up-left
-                light = 0.45F + 0.85F * std::fabs(r.x * lx + r.y * ly + r.z * lz);
-            }
+            neutral = true;
         }
+        // Gouraud light: full range on the neutral texture, milder on real
+        // textures (their shading is painted in); none on prelit COLOR0 or
+        // additive / subtractive effects.
+        const bool lit = !lights.empty() && (neutral || (!colored && blend_mode != 2U && blend_mode != 3U));
+        const float lbase = neutral ? 0.45F : 0.72F;
+        const float lgain = neutral ? 0.85F : 0.42F;
 
         const float area = edge(a, b, c.x, c.y);
         if (std::fabs(area) < 1.0e-6F) continue;
@@ -490,14 +555,16 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                             tb = mod(tb, 2U);
                             ta = mod(ta, 3U);
                         }
-                        if (light != 1.0F) {
-                            const auto lit = [light](std::uint8_t c) {
+                        if (lit) {
+                            const float light =
+                                lbase + lgain * (w0 * lights[ia] + w1 * lights[ib] + w2 * lights[ic]);
+                            const auto shade = [light](std::uint8_t c) {
                                 return static_cast<std::uint8_t>(
                                     std::clamp(static_cast<int>(static_cast<float>(c) * light), 0, 255));
                             };
-                            tr = lit(tr);
-                            tg = lit(tg);
-                            tb = lit(tb);
+                            tr = shade(tr);
+                            tg = shade(tg);
+                            tb = shade(tb);
                         }
                         if (ta == 0U) continue;
                         if (blend_mode == 2U || blend_mode == 3U) {

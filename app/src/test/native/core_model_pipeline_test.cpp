@@ -321,6 +321,8 @@ int main() {
             if (r == g && g == b && r >= 0x38U && r <= 0xB0U) ++grey;
         }
         assert(grey > 0U);
+        // Source normals ride along (smooth-group key for the lit render).
+        assert(session->render_mesh.has_normal0());
         assert(!dmcresource::describe_session(session.get()).empty());
         const auto mesh_info = dmcresource::inspect_session(session.get(), dmcresource::InspectionTopic::Meshes);
         assert(dmcresource::count_inspection_nodes(mesh_info.root, dmcresource::InspectionKind::Object) == 1);
