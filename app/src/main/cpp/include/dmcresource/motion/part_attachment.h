@@ -193,6 +193,9 @@ struct EnemyVariant final {
     std::array<float, 3> weapon_rotation_zyx;
     // PTX slot of the body when it is not the nearest preceding one.
     std::uint32_t texture_slot{kNoEnemySlot};
+    // Motion PACs the class init reads (slot 35 body motions, 36 / 37 extra;
+    // 0 = unused). Empty: every MOT of the archive is offered.
+    std::array<std::uint32_t, 3> motion_slots{};
 };
 
 inline constexpr std::array<float, 3> kEm000WeaponT{-15.0F, -61.39939880371094F,
@@ -202,19 +205,32 @@ inline constexpr std::array<float, 3> kEm000WeaponR{0.20725786685943604F, 0.0F, 
 // CEm005Shl01 (init 0x1400AD620, vtable 0x1404CB3D8): the EFM in slot 23 is
 // loaded as a model with PTX slot 32, motions from slot 37, .clt slot 22
 // (em005_02) and .tsc slot 24.
-inline constexpr std::array<EnemyVariant, 6> kEm000Variants{{
+//
+// Class inits (vtable slot 53) and the PAC slots they read, in order:
+//   CEm000 0x140097B40  41 fx | body 1 tex 0 mot 35 | cloth 3 tex 2 | 29 26 25 | 39 40 col | 38 script
+//   CEm001 0x14009CF70  body 5  | cloth 7 (6)            | 31 28 25
+//   CEm002 0x1400A1D80  body 8  | cloth 10 (9), 12 (11)  | 29 26 25
+//   CEm003 0x1400A6BD0  body 13 | cloth 15 (14), 17 (16) | 30 27 25
+//   CEm004 0x1400A85E0  body 18 mot 35 | part 34 tex 32 mot 36
+//   CEm005 0x1400AABD0  body 19 tex 0 mot 35 + 37 | cloth 3 (2) | 33 32
+//   CEm005Shl00 0x1400AC6B0  model 33 tex 32 mot 37 | 39 40 col | 38 script
+inline constexpr std::array<EnemyVariant, 8> kEm000Variants{{
     {"em000", "CEm000", 1U, {{{3U, 14U}, {0U, 0U}}}, 1U, 26U, 29U, true, 9U, kEm000WeaponT,
-     kEm000WeaponR},
+     kEm000WeaponR, kNoEnemySlot, {35U, 0U, 0U}},
     {"em000", "CEm001", 5U, {{{7U, 14U}, {0U, 0U}}}, 1U, 28U, 31U, false, 9U, kEm000WeaponT,
-     kEm000WeaponR},
+     kEm000WeaponR, kNoEnemySlot, {35U, 0U, 0U}},
     {"em000", "CEm002", 8U, {{{10U, 8U}, {12U, 12U}}}, 2U, 26U, 29U, false, 9U, kEm000WeaponT,
-     kEm000WeaponR},
+     kEm000WeaponR, kNoEnemySlot, {35U, 0U, 0U}},
     {"em000", "CEm003", 13U, {{{15U, 14U}, {17U, 14U}}}, 2U, 27U, 30U, false, 9U, kEm000WeaponT,
-     kEm000WeaponR},
+     kEm000WeaponR, kNoEnemySlot, {35U, 0U, 0U}},
     {"em000", "CEm004", 18U, {{{0U, 0U}, {0U, 0U}}}, 0U, 34U, 34U, false, 9U, {2.0F, 20.0F, -72.0F},
-     {-0.03490658476948738F, 0.10471975803375244F, 1.6580626964569092F}},
+     {-0.03490658476948738F, 0.10471975803375244F, 1.6580626964569092F}, kNoEnemySlot, {35U, 36U, 0U}},
+    {"em000", "CEm005", 19U, {{{3U, 14U}, {0U, 0U}}}, 1U, kNoEnemySlot, kNoEnemySlot, false, 9U,
+     {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 0U, {35U, 37U, 0U}},
+    {"em000", "CEm005Shl00", 33U, {{{0U, 0U}, {0U, 0U}}}, 0U, kNoEnemySlot, kNoEnemySlot, false, 0U,
+     {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U, {37U, 0U, 0U}},
     {"em000", "CEm005Shl01", 23U, {{{0U, 0U}, {0U, 0U}}}, 0U, kNoEnemySlot, kNoEnemySlot, false,
-     0U, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U},
+     0U, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U, {37U, 0U, 0U}},
 }};
 
 // Variants for an archive name ("em000.pac", any directory, any case).

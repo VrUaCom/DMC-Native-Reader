@@ -23,6 +23,7 @@ struct AssemblyReport final {
     std::size_t attached_parts{};
     std::size_t effect_models_skipped{};
     std::size_t variant_models_skipped{};
+    std::size_t variant_motions_skipped{};
     std::string enemy_class;
     std::string detail_attachments;
     std::string detail;

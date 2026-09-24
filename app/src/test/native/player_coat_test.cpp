@@ -572,7 +572,15 @@ int main() {
     // weapon slots; the weapon hangs from body joint 9 at the ZYX offset.
     {
         const auto variants = motion::enemy_variants_for("st\\EM000.PAC");
-        assert(variants.size() == 6U && variants[5].class_name == "CEm005Shl01");
+        assert(variants.size() == 8U && variants[7].class_name == "CEm005Shl01");
+        // Motion PACs per class init (CEm004 0x1400A85E0 reads 35 + 36,
+        // CEm005 0x1400AABD0 35 + 37, CEm005Shl00 0x1400AC6B0 37 only).
+        assert(variants[0].motion_slots[0] == 35U && variants[0].motion_slots[1] == 0U);
+        assert(variants[4].motion_slots[1] == 36U);
+        assert(variants[5].class_name == "CEm005" && variants[5].body_slot == 19U &&
+               variants[5].motion_slots[1] == 37U);
+        assert(variants[6].class_name == "CEm005Shl00" && variants[6].body_slot == 33U &&
+               variants[6].texture_slot == 32U && variants[6].motion_slots[0] == 37U);
         assert(variants[2].class_name == "CEm002" && variants[2].cloth_count == 2U);
         assert(variants[4].weapon_slot == 34U && variants[4].cloth_count == 0U);
         assert(motion::enemy_variants_for("em001.pac").empty());
@@ -628,7 +636,8 @@ int main() {
         auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 2U);
         assert(lust != nullptr && em_report.enemy_class == "CEm001 A");
         const auto positions = motion::archive_variants("em000.pac");
-        assert(positions.size() == 10U && positions[8].label == "CEm004");
+        assert(positions.size() == 12U && positions[8].label == "CEm004" &&
+               positions[9].label == "CEm005" && positions[10].label == "CEm005Shl00");
         assert(positions.back().label == "CEm005Shl01" && positions.back().enemy->body_slot == 23U &&
                positions.back().enemy->texture_slot == 32U);
         assert(motion::tsc_slot_for("em000.pac", 23U) == 24U);

@@ -389,6 +389,21 @@ pointer id:
 Before, the finger that stayed after a pinch was measured from the point
 where the gesture started, so the camera jumped.
 
+**em000 classes (v59).** The class inits (vtable slot 53) name each class's
+slots. The position bar now holds eight classes: CEm000–CEm004, **CEm005**
+(body 19, cloth 3) and **CEm005Shl00** (model 33, PTX 32), besides
+CEm005Shl01. Each class only offers MOTs from the motion PACs its init reads:
+
+| Classes | Motion PACs | MOTs offered |
+| --- | --- | --- |
+| CEm000–CEm004 | 35 | 71 |
+| CEm005 | 35 + 37 | 77 |
+| CEm005Shl00 | 37 | 4 |
+
+CEm004's slot 36 belongs to its part in slot 34, and that part does not play
+its own MOT yet. em000.pac has no SHW; the floor shadow is the mesh fallback.
+Evidence: rengine `dmc3-em000-class-slots-2026-09-24.md`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

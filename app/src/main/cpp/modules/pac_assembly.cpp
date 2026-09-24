@@ -316,6 +316,21 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 }
                 texture_for_model.push_back(texture);
             } else if (entry.kind.format == Format::Mot) {
+                // Shared enemy archive: only the motion PACs this class reads.
+                if (variant != nullptr && variant->motion_slots[0] != 0U && entry.archive == 0U &&
+                    entry.depth == 1U && entry.container.rfind("slot_", 0) == 0U) {
+                    std::uint32_t pack = 0U;
+                    try {
+                        pack = static_cast<std::uint32_t>(std::stoul(entry.container.substr(5U, 4U)));
+                    } catch (...) {
+                        pack = 0U;
+                    }
+                    const auto& wanted = variant->motion_slots;
+                    if (std::find(wanted.begin(), wanted.end(), pack) == wanted.end()) {
+                        ++report.variant_motions_skipped;
+                        continue;
+                    }
+                }
                 // Weapon banks (pl000_00_N.pac) are labelled with their weapon.
                 const auto bank = entry.archive < archive_names.size()
                     ? motion::weapon_motion_bank(archive_names[entry.archive])
