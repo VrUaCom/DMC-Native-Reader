@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -47,12 +48,41 @@ struct ClothParams final {
 // Every block of a .clt text; empty when the text is not a cloth file.
 [[nodiscard]] std::vector<ClothParams> parse_clt(std::string_view text);
 
+// Collision capsule on a host (body) joint: segment a-b in joint space and
+// radius. Set by 0x1402CA2F0 (chain +0x30 joints, +0x58 entries {flags 8,
+// joint, shape}, +0x60 shapes of 0x50 bytes, +0x50 count).
+struct ClothCapsule final {
+    std::uint32_t host_joint{};
+    std::array<float, 3> a{};
+    std::array<float, 3> b{};
+    float radius{};
+};
+
+// IPlayer coat capsules: entry table 0x14058B380 (6 entries) with shapes
+// written from .rdata 0x14058B260 (0x140214E17): chest, spine, both legs.
+inline constexpr std::array<ClothCapsule, 6> kPlayerCoatCapsules{{
+    {3U, {0.0F, 20.0F, 10.0F}, {0.0F, -40.0F, 10.0F}, 15.0F},
+    {2U, {0.0F, -5.0F, 0.0F}, {0.0F, -15.0F, 0.0F}, 18.0F},
+    {15U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
+    {16U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
+    {19U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
+    {20U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
+}};
+
+// A capsule already placed in world space for this frame.
+struct WorldCapsule final {
+    std::array<float, 3> a{};
+    std::array<float, 3> b{};
+    float radius{};
+};
+
 // Per-part solver state (simulated world and velocity of each listed node).
 struct ClothState final {
     ClothParams params;
     std::vector<std::array<float, 16>> sim;
     std::vector<std::array<float, 3>> velocity;
     std::vector<std::int8_t> axis_by_node;  // -1: not simulated
+    std::vector<ClothCapsule> capsules;     // on the host part's joints
     bool initialized{false};
 };
 
@@ -65,6 +95,7 @@ struct ClothState final {
                                                     const std::array<float, 16>& parent,
                                                     const std::array<float, 16>& wind_parent_world,
                                                     float rest_length,
-                                                    float dt);
+                                                    float dt,
+                                                    std::span<const WorldCapsule> capsules = {});
 
 }  // namespace dmcresource::motion

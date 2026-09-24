@@ -141,6 +141,22 @@ struct Range final {
         const auto binding = animation::project_animation_binding(domain);
         if (!binding || binding->by_node_index.size() != count) return false;
         current.emplace(count, root_base);
+        // Collision capsules ride the host joints' current worlds.
+        std::vector<WorldCapsule> capsules;
+        if (cloth != nullptr) {
+            for (const auto& capsule : cloth->capsules) {
+                if (capsule.host_joint >= host_nodes->count) continue;
+                const auto& m =
+                    session->scene.nodes[host_nodes->begin + capsule.host_joint].world.values;
+                const auto place = [&m](const std::array<float, 3>& p) {
+                    return std::array<float, 3>{
+                        p[0] * m[0] + p[1] * m[4] + p[2] * m[8] + m[12],
+                        p[0] * m[1] + p[1] * m[5] + p[2] * m[9] + m[13],
+                        p[0] * m[2] + p[1] * m[6] + p[2] * m[10] + m[14]};
+                };
+                capsules.push_back({place(capsule.a), place(capsule.b), capsule.radius});
+            }
+        }
         const bool step = cloth != nullptr && (cloth_steps > 0U || !cloth->initialized);
         const std::uint32_t passes = step ? std::max<std::uint32_t>(cloth_steps, 1U) : 1U;
         for (std::uint32_t pass = 0U; pass < passes; ++pass) {
@@ -192,7 +208,7 @@ struct Range final {
                 const float rest = std::sqrt(t[12] * t[12] + t[13] * t[13] + t[14] * t[14]);
                 (*current)[node].values = step_cloth_node(
                     *cloth, static_cast<std::uint32_t>(node), target.values,
-                    parent_world->values, wind_world.values, rest, 1.0F);
+                    parent_world->values, wind_world.values, rest, 1.0F, capsules);
                 if (!finite((*current)[node].values)) {
                     // Diverged: restart this node from its rest target.
                     cloth->sim[node] = target.values;
@@ -428,7 +444,8 @@ void reset_part_cloth(Session* session) noexcept {
 std::size_t attach_part_cloth(Session* session,
                               std::size_t part_index,
                               std::string_view clt_text,
-                              std::uint32_t settle_steps) noexcept {
+                              std::uint32_t settle_steps,
+                              std::span<const ClothCapsule> capsules) noexcept {
     if (session == nullptr || part_index >= session->composite_parts.size()) return 0U;
     try {
         auto& part = session->composite_parts[part_index];
@@ -451,6 +468,7 @@ std::size_t attach_part_cloth(Session* session,
             state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
         }
         if (simulated == 0U) return 0U;
+        state->capsules.assign(capsules.begin(), capsules.end());
         const auto previous = part.placement.cloth;
         part.placement.cloth = state;
         if (!pose_part(session, part_index, std::max<std::uint32_t>(settle_steps, 1U))) {

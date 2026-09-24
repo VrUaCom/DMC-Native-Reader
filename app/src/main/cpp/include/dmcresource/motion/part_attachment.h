@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "dmcresource/composite_model.h"
+#include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/render_scene.h"
 
 namespace dmcresource {
@@ -295,7 +296,8 @@ void reset_part_cloth(Session* session) noexcept;
 [[nodiscard]] std::size_t attach_part_cloth(Session* session,
                                             std::size_t part,
                                             std::string_view clt_text,
-                                            std::uint32_t settle_steps = 60U) noexcept;
+                                            std::uint32_t settle_steps = 60U,
+                                            std::span<const ClothCapsule> capsules = {}) noexcept;
 
 [[nodiscard]] bool is_attached_part(const Session* session, std::size_t part) noexcept;
 

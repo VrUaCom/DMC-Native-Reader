@@ -407,7 +407,11 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     if (!clt_slot) continue;
                     const auto text = clt_text(*clt_slot);
                     if (text.empty()) continue;
-                    const auto nodes = motion::attach_part_cloth(assembled.get(), part, text);
+                    // IPlayer coats collide with the body capsules (0x1402CA2F0).
+                    const auto nodes = motion::attach_part_cloth(
+                        assembled.get(), part, text, 60U,
+                        player ? std::span<const motion::ClothCapsule>{motion::kPlayerCoatCapsules}
+                               : std::span<const motion::ClothCapsule>{});
                     if (nodes > 0U) {
                         ++report.cloth_parts;
                         report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +

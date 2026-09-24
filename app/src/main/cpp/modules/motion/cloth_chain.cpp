@@ -158,7 +158,8 @@ std::array<float, 16> step_cloth_node(ClothState& state,
                                       const std::array<float, 16>& parent,
                                       const std::array<float, 16>& wind_parent_world,
                                       float rest_length,
-                                      float dt) {
+                                      float dt,
+                                      std::span<const WorldCapsule> capsules) {
     const auto& p = state.params;
     if (node >= state.sim.size() || node >= state.axis_by_node.size() ||
         state.axis_by_node[node] < 0) {
@@ -190,6 +191,29 @@ std::array<float, 16> step_cloth_node(ClothState& state,
     align_axis(world, 2U, z, y);
     const Vec t = add(scale(row(target, 3U), a), scale(row(sim, 3U), b));
 
+    // Collision (0x1402C9714..0x1402C98F4): push the node out of every
+    // capsule it is inside (0x1402D0630: closest point on a-b, then onto the
+    // surface at the radius); any hit zeroes the x and z velocity.
+    Vec t_hit = t;
+    bool hit = false;
+    for (const auto& capsule : capsules) {
+        const Vec ab = sub(capsule.b, capsule.a);
+        const float len2 = dot(ab, ab);
+        float k = len2 > 0.0F ? dot(sub(t_hit, capsule.a), ab) / len2 : 0.0F;
+        k = std::clamp(k, 0.0F, 1.0F);
+        const Vec closest = add(capsule.a, scale(ab, k));
+        const Vec out = sub(t_hit, closest);
+        const float dist = length(out);
+        if (!(capsule.radius > dist)) continue;
+        const Vec dir = dist > 0.0F ? scale(out, 1.0F / dist) : Vec{0.0F, 0.0F, 1.0F};
+        t_hit = add(closest, scale(dir, capsule.radius));
+        hit = true;
+    }
+    if (hit) {
+        velocity[0] = 0.0F;
+        velocity[2] = 0.0F;
+    }
+
     // Wind: parent-joint space when WindLocal, scaled by 10 * (1 - |cos|).
     Vec wind = p.wind;
     if (p.wind_local) {
@@ -206,7 +230,7 @@ std::array<float, 16> step_cloth_node(ClothState& state,
     Vec v = add(add(velocity, scale(wind, dt)), scale(p.gravity, dt));
 
     // Rest bone length and spring (0x1402C9A8C...0x1402C9C63).
-    Vec e = sub(t, row(parent, 3U));
+    Vec e = sub(t_hit, row(parent, 3U));
     float le = dot(e, e);
     float lr = rest_length * rest_length;
     if (p.limit_length) {

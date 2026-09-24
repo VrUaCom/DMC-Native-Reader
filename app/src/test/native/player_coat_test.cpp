@@ -717,6 +717,25 @@ int main() {
         const float up = (0.0F - world[12]) * world[4] + (0.0F - world[13]) * world[5] -
                          world[14] * world[6];
         assert(near(up, 10.0F));            // Y axis still points at the parent
+        // Capsule push-out (0x1402D0630): a node inside a capsule lands on its
+        // surface and loses its x/z velocity.
+        {
+            motion::ClothState hit_state = state;
+            hit_state.axis_by_node[1] = 1;
+            hit_state.sim[1] = target;
+            hit_state.velocity[1] = {1.0F, 0.0F, 1.0F};
+            const std::array<motion::WorldCapsule, 1> capsule{{
+                {{3.0F, -20.0F, 0.0F}, {3.0F, 0.0F, 0.0F}, 5.0F}}};
+            const auto pushed = motion::step_cloth_node(hit_state, 1U, target, parent, parent,
+                                                        10.0F, 1.0F, capsule);
+            const float dx = pushed[12] - 3.0F;
+            const float dz = pushed[14];
+            assert(std::sqrt(dx * dx + dz * dz) > 4.0F);   // outside the core
+            assert(std::fabs(hit_state.velocity[1][2]) < 1.0F);
+            assert(motion::kPlayerCoatCapsules.size() == 6U &&
+                   motion::kPlayerCoatCapsules[0].host_joint == 3U &&
+                   near(motion::kPlayerCoatCapsules[1].radius, 18.0F));
+        }
         state.axis_by_node[1] = -1;
         const auto kept = motion::step_cloth_node(state, 1U, target, parent, parent, 10.0F, 1.0F);
         assert(near(kept[13], -10.0F));     // not simulated: rest target unchanged

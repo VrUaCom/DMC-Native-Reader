@@ -171,8 +171,11 @@ length with a SpringForce pull-back, speed is clamped to MaxSpeed and damped by
 em028 hair 4 <- 7 and dress 5 <- 8, em000 cloth slot N <- N-1. The solver runs
 once per elapsed motion frame (dt 1, at most 6 per update); a new motion
 restarts the chains from its first frame and settles them for 30 frames, and a
-fresh assembly settles them for 60. Capsule collisions (`c+0x48`/`c+0x58`) are
-not ported, so a coat can pass through legs. Evidence: rengine
+fresh assembly settles them for 60. Since v46 the player coat collides with
+the body the way `0x1402CA2F0` sets it up: six capsules on body joints 3
+(chest), 2, 15, 16, 19 and 20 (legs) from `.rdata 0x14058B260`. A node inside
+a capsule is pushed onto its surface (`0x1402D0630`) and loses its x/z
+velocity. The enemy capsule tables and the `+0x48` object list are not ported. Evidence: rengine
 `docs/research/dmc3-cloth-chain-solver-2026-09-23.md`.
 
 **Texture scroll (v45).** `.tsc` texts are parsed like CDrawUV does
@@ -283,5 +286,6 @@ NBZ, EFM, MRP adapters). PNST is read by `formats.pnst.archive-reader`
 2. Parent-scale compensation from `0x14030E9B0`.
 3. Model Set pairing (`0x1402D83E0`) instead of slot adjacency.
 4. Stage light for SHW (`[shw+0x60]`) and the culling tests `0x140320950`/`0x1403206F0`.
-5. Chain capsule collisions (`c+0x48`/`c+0x58`), WindType, and C1D files.
+5. Enemy chain capsules (other `0x1402CA2F0` callers), `c+0x48` objects,
+   WindType, and C1D files.
 6. Node constraints of other enemy classes (only CEm028 is tabled).
