@@ -564,7 +564,7 @@ int main() {
     // weapon slots; the weapon hangs from body joint 9 at the ZYX offset.
     {
         const auto variants = motion::enemy_variants_for("st\\EM000.PAC");
-        assert(variants.size() == 5U);
+        assert(variants.size() == 6U && variants[5].class_name == "CEm005Shl01");
         assert(variants[2].class_name == "CEm002" && variants[2].cloth_count == 2U);
         assert(variants[4].weapon_slot == 34U && variants[4].cloth_count == 0U);
         assert(motion::enemy_variants_for("em001.pac").empty());
@@ -620,7 +620,10 @@ int main() {
         auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 2U);
         assert(lust != nullptr && em_report.enemy_class == "CEm001 A");
         const auto positions = motion::archive_variants("em000.pac");
-        assert(positions.size() == 9U && positions.back().label == "CEm004");
+        assert(positions.size() == 10U && positions[8].label == "CEm004");
+        assert(positions.back().label == "CEm005Shl01" && positions.back().enemy->body_slot == 23U &&
+               positions.back().enemy->texture_slot == 32U);
+        assert(motion::tsc_slot_for("em000.pac", 23U) == 24U);
         const auto nevan_positions = motion::archive_variants("EM028.pac");
         assert(nevan_positions.size() == 2U && nevan_positions[0].hide_slot == 5U);
         assert(nevan_positions[0].hide_count == 2U && nevan_positions[1].hide_count == 0U);

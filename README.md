@@ -6,7 +6,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 
 **Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
 **Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
-**Active candidate:** **v46 / versionName 1.0.19 / versionCode 46** (MOT playback, PAC/PNST, player coat, weapon PACs incl. Agni & Rudra, enemy node constraints (Nevan), SHW shadow hulls and floor shadows, community-made PTX with orange non-canonical marker, weapon motion banks labelled, position buttons for enemy classes / weapons / Nevan's dress, .clt chain/cloth simulation of Dante's coat, Nevan's hair and dress and the em000 cloaks, .tsc texture scroll on Nevan's dress and sleeves, .tsc/.clt readers, Dante's coat colliding with his body capsules; previous v45 / 1.0.18)  
+**Active candidate:** **v47 / versionName 1.0.20 / versionCode 47** (MOT playback, PAC/PNST, player coat, weapon PACs incl. Agni & Rudra, enemy node constraints (Nevan), SHW shadow hulls and floor shadows, community-made PTX with orange non-canonical marker, weapon motion banks labelled, position buttons for enemy classes / weapons / Nevan's dress, .clt chain/cloth simulation of Dante's coat, Nevan's hair and dress and the em000 cloaks, .tsc texture scroll on Nevan's dress and sleeves, .tsc/.clt readers, Dante's coat colliding with his body capsules, EFM effect models (em000 CEm005Shl01 shell position); previous v46 / 1.0.19)  
 **Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  

@@ -64,8 +64,9 @@ struct TscSource final {
     std::uint32_t model_count;
 };
 
-inline constexpr std::array<TscSource, 1> kTscSources{{
+inline constexpr std::array<TscSource, 2> kTscSources{{
     {"em028", 13U, {5U, 6U}, 2U},
+    {"em000", 24U, {23U, 0U}, 1U},  // CEm005Shl01 (0x1400AD757)
 }};
 
 // The .tsc slot driving `model_slot` of archive `archive_name`, if any.
@@ -176,6 +177,8 @@ struct EnemyClothPart final {
     std::uint32_t host_joint;
 };
 
+inline constexpr std::uint32_t kNoEnemySlot = 0xFFFFFFFFU;
+
 struct EnemyVariant final {
     std::string_view pac_stem;
     std::string_view class_name;
@@ -188,13 +191,18 @@ struct EnemyVariant final {
     std::uint32_t weapon_joint;
     std::array<float, 3> weapon_translation;
     std::array<float, 3> weapon_rotation_zyx;
+    // PTX slot of the body when it is not the nearest preceding one.
+    std::uint32_t texture_slot{kNoEnemySlot};
 };
 
 inline constexpr std::array<float, 3> kEm000WeaponT{-15.0F, -61.39939880371094F,
                                                    -18.93269920349121F};
 inline constexpr std::array<float, 3> kEm000WeaponR{0.20725786685943604F, 0.0F, 0.0F};
 
-inline constexpr std::array<EnemyVariant, 5> kEm000Variants{{
+// CEm005Shl01 (init 0x1400AD620, vtable 0x1404CB3D8): the EFM in slot 23 is
+// loaded as a model with PTX slot 32, motions from slot 37, .clt slot 22
+// (em005_02) and .tsc slot 24.
+inline constexpr std::array<EnemyVariant, 6> kEm000Variants{{
     {"em000", "CEm000", 1U, {{{3U, 14U}, {0U, 0U}}}, 1U, 26U, 29U, true, 9U, kEm000WeaponT,
      kEm000WeaponR},
     {"em000", "CEm001", 5U, {{{7U, 14U}, {0U, 0U}}}, 1U, 28U, 31U, false, 9U, kEm000WeaponT,
@@ -205,6 +213,8 @@ inline constexpr std::array<EnemyVariant, 5> kEm000Variants{{
      kEm000WeaponR},
     {"em000", "CEm004", 18U, {{{0U, 0U}, {0U, 0U}}}, 0U, 34U, 34U, false, 9U, {2.0F, 20.0F, -72.0F},
      {-0.03490658476948738F, 0.10471975803375244F, 1.6580626964569092F}},
+    {"em000", "CEm005Shl01", 23U, {{{0U, 0U}, {0U, 0U}}}, 0U, kNoEnemySlot, kNoEnemySlot, false,
+     0U, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U},
 }};
 
 // Variants for an archive name ("em000.pac", any directory, any case).

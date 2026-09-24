@@ -37,6 +37,7 @@ namespace {
 
 EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept {
     if (magic_at(bytes, size, 0U, "MOD ")) return {Format::Mod, "MOD", "mod"};
+    if (magic_at(bytes, size, 0U, "EFM ")) return {Format::Mod, "EFM", "efm"};
     if (magic_at(bytes, size, 0U, "SCM ")) return {Format::Scm, "SCM", "scm"};
     if (magic_at(bytes, size, 0U, "DDS ")) return {Format::Dds, "DDS", "dds"};
     if (magic_at(bytes, size, 0U, "PAC\0")) return {Format::Pac, "PAC", "pac"};

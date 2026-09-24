@@ -193,6 +193,17 @@ Standalone `.tsc` and `.clt` files open in `formats.tsc.scroll-reader` and
 their slots are now named `slot_NNNN.tsc` / `.clt`. Evidence: rengine
 `docs/research/dmc3-tsc-uv-scroll-2026-09-23.md`.
 
+**EFM effect models (v47).** EFM files use the MOD document layout (post-load
+`0x1402F7A90` relocates the same header/object/mesh fields as MOD plus mesh
+`+0x38`, the COLOR0 stream). They open in `formats.efm.model-reader`, which
+routes through the MOD adapter on a copy whose magic reads `MOD `
+(`mod_bytes.h`); vertex colours are listed but not yet applied. em000.pac gets
+a tenth position, `CEm005Shl01`: the projectile model in slot 23 with PTX 32
+(init `0x1400AD620`) and its texture scroll from slot 24. Its tail chain (slot
+22, `em005_02.clt`) needs flight to move and is not attached. Effect-bank EFMs
+(em028 slot 9) stay out of assemblies but open standalone. Evidence: rengine
+`docs/research/dmc3-efm-effect-model-2026-09-24.md`.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through
@@ -275,9 +286,10 @@ JNI (thin): `assemblePac`, `assemblePacs`, `hasShadows`, `motionLibraryCount/Nam
 
 MOT and PAC are no longer listed as banned legacy modules in CI; the remaining
 list covers only families that are still unpromoted (HITS, TXT, DCA, LIG2,
-NBZ, EFM, MRP adapters). PNST is read by `formats.pnst.archive-reader`
+NBZ, MRP adapters). PNST is read by `formats.pnst.archive-reader`
 (v39), SHW by `formats.shw.hull-reader` (v40), TSC and CLT by
-`formats.tsc.scroll-reader` / `formats.clt.cloth-reader` (v45).
+`formats.tsc.scroll-reader` / `formats.clt.cloth-reader` (v45), EFM by
+`formats.efm.model-reader` (v47).
 
 ## 7. Next
 

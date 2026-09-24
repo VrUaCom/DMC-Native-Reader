@@ -55,6 +55,11 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Mod, true, "MOD", "geometry", "render-scene",
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mod");
     }
+    // EFM effect models: MOD document layout plus COLOR0 (0x1402F7A90).
+    if (magic4(bytes, size, 'E', 'F', 'M', ' ')) {
+        return result(Format::Mod, true, "EFM", "geometry", "render-scene",
+                      "EXE_CONFIRMED", "application/vnd.dmc.efm");
+    }
     if (magic4(bytes, size, 'D', 'D', 'S', ' ')) {
         return result(Format::Dds, true, "DDS", "texture", "image-preview",
                       "DATA_CONFIRMED", "image/vnd-ms.dds");

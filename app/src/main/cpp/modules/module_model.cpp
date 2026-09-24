@@ -10,6 +10,7 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/adapters/mod_adapter.h"
 #include "dmcresource/adapters/scm_adapter.h"
+#include "dmcresource/mod_bytes.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/spider/crusader.h"
 
@@ -42,9 +43,8 @@ void publish_mod_attachment_selector(ModelExecutionState* state) noexcept {
     // It can be folded into the adapter return object later without changing
     // the public composition contract.
     try {
-        const auto bytes = std::span<const std::byte>{
-            reinterpret_cast<const std::byte*>(state->bytes), state->size};
-        const auto parsed = canonical_mod::Parser::parse(bytes);
+        const ModBytes view{state->bytes, state->size};
+        const auto parsed = canonical_mod::Parser::parse(view.span());
         if (!parsed.ok()) return;
         state->result.scene.default_attachment_selector =
             static_cast<std::uint32_t>(parsed.document.header.default_joint_index());
@@ -149,6 +149,21 @@ NativeModule scm_module() noexcept {
         ResourceCapability::TextureBinding |
         ResourceCapability::UvCoordinates;
     return {"formats.scm.mesh-reader", "SCM", Format::Scm,
+            ModuleKind::Mesh, true, run_model_module, caps};
+}
+
+NativeModule efm_module() noexcept {
+    const auto caps = capability(ResourceCapability::Inspection) |
+        ResourceCapability::Geometry |
+        ResourceCapability::Wireframe |
+        ResourceCapability::NodeHierarchy |
+        ResourceCapability::SkeletalSkinning |
+        ResourceCapability::SkinWeights |
+        ResourceCapability::TextureBinding |
+        ResourceCapability::UvCoordinates;
+    // Same model route as MOD (Format::Mod keeps composition, textures and
+    // motion); the adapter reads the bytes through ModBytes.
+    return {"formats.efm.model-reader", "EFM", Format::Mod,
             ModuleKind::Mesh, true, run_model_module, caps};
 }
 

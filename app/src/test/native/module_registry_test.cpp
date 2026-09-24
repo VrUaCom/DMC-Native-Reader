@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 11U);
+    assert(modules.size() == 12U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -63,10 +63,17 @@ int main() {
     assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(clt_text.data()),
                  clt_text.size()).format == Format::Clt);
 
+    // EFM effect models: own family, MOD document route (0x1402F7A90).
+    const auto* efm = NativeModuleRegistry::find("EFM");
+    assert(efm != nullptr && efm->format == Format::Mod && efm->renderable);
+    const std::array<std::uint8_t, 4> efm_magic{'E', 'F', 'M', ' '};
+    const auto efm_probe = probe("renamed.bin", efm_magic.data(), efm_magic.size());
+    assert(efm_probe.format == Format::Mod && std::string_view{efm_probe.family} == "EFM");
+
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
              "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
-             "NBZ", "EFM", "MRP"}) {
+             "NBZ", "MRP"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 

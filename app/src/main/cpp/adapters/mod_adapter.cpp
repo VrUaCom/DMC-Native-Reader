@@ -16,6 +16,7 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmc_rengine/formats/mod_skin.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmcresource/mod_bytes.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/motion/skeleton_rig.h"
 #include "dmcresource/uv_projection.h"
@@ -442,8 +443,8 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
     }
 
     try {
-        const auto byte_span = std::span<const std::byte>{
-            reinterpret_cast<const std::byte*>(bytes), size};
+        const ModBytes view{bytes, size};
+        const auto byte_span = view.span();
         const auto parsed = dmc::rengine::formats::mod::Parser::parse(byte_span);
         if (!parsed.ok()) {
             return module_support::reject(
@@ -461,9 +462,14 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
         out.modules.push_back({"canonical.mod.texture-state", true});
         out.modules.push_back({module_id, true});
 
-        out.inspection.format = "MOD";
-        out.inspection.root.id = "mod";
-        out.inspection.root.title = "MOD";
+        out.inspection.format = view.efm() ? "EFM" : "MOD";
+        out.inspection.root.id = view.efm() ? "efm" : "mod";
+        out.inspection.root.title = view.efm() ? "EFM effect model" : "MOD";
+        if (view.efm()) {
+            out.inspection.root.properties.push_back({
+                "Layout", "MOD document (post-load 0x1402F7A90); mesh +0x38 = COLOR0 RGBA8",
+                EvidenceLevel::ExeConfirmed});
+        }
         out.inspection.root.kind = InspectionKind::Document;
         out.inspection.root.source_span = SourceSpan{0U, size};
         out.inspection.root.properties.push_back({
@@ -587,7 +593,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
 
         out.renderable = out.scene.has_geometry();
         std::ostringstream detail;
-        detail << "MOD canonical C++20 reader"
+        detail << (view.efm() ? "EFM (MOD layout) canonical C++20 reader" : "MOD canonical C++20 reader")
                << " | objects=" << parsed.document.outer_models.size()
                << " meshes=" << total_meshes
                << " vertices=" << total_vertices
