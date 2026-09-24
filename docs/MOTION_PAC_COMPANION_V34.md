@@ -380,6 +380,15 @@ playback uses; host-joint parts such as coats do not count). Examples:
   dismiss) instead of Android toasts, so they no longer cover the motion
   strip or the tool bar.
 
+**Pinch without a jump (v58).** The 3D view follows one active finger by
+pointer id:
+- while two fingers are down, it only zooms;
+- when one of them lifts, the one that stays becomes the turning finger,
+  measured from where it is now.
+
+Before, the finger that stayed after a pinch was measured from the point
+where the gesture started, so the camera jumped.
+
 ### 3.2 MOT playback
 
 Per frame: evaluate the nine channels of every joint (compression 3 through

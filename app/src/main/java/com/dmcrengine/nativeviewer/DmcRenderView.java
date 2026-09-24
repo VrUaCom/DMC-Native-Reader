@@ -32,6 +32,8 @@ public final class DmcRenderView extends View {
     private boolean staticImagePreview;
     private float lastX;
     private float lastY;
+    // Finger that turns the camera; others only pinch.
+    private int activePointerId = MotionEvent.INVALID_POINTER_ID;
     private long lastRenderMs;
 
     // MOT playback: frames are MOT timeline units, 60 per second in DMC3.
@@ -342,29 +344,58 @@ public final class DmcRenderView extends View {
         scaleDetector.onTouchEvent(event);
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                lastX = event.getX();
-                lastY = event.getY();
+                activePointerId = event.getPointerId(0);
+                lastX = event.getX(0);
+                lastY = event.getY(0);
                 return true;
-            case MotionEvent.ACTION_MOVE:
+            case MotionEvent.ACTION_POINTER_DOWN:
+                // A second finger: pinch zoom only, no turning.
+                rebaseToPointer(event, activePointerId);
+                return true;
+            case MotionEvent.ACTION_POINTER_UP: {
+                // The finger that stays becomes the turning finger, measured
+                // from where it is now (no jump after a pinch).
+                final int up = event.getActionIndex();
+                if (event.getPointerId(up) == activePointerId) {
+                    final int keep = up == 0 ? 1 : 0;
+                    activePointerId = event.getPointerId(keep);
+                }
+                rebaseToPointer(event, activePointerId);
+                return true;
+            }
+            case MotionEvent.ACTION_MOVE: {
                 if (isUvLayoutVisible()) return true;
-                if (!scaleDetector.isInProgress()) {
-                    float dx = event.getX() - lastX;
-                    float dy = event.getY() - lastY;
+                final int index = event.findPointerIndex(activePointerId);
+                if (index < 0) return true;
+                final float x = event.getX(index);
+                final float y = event.getY(index);
+                if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
+                    float dx = x - lastX;
+                    float dy = y - lastY;
                     // Grab-and-turn: the surface under the finger follows it.
                     yaw -= dx * 0.008f;
                     pitch -= dy * 0.008f;
                     pitch = Math.max(-1.55f, Math.min(1.55f, pitch));
-                    lastX = event.getX();
-                    lastY = event.getY();
                     renderThrottled(false);
                 }
+                lastX = x;
+                lastY = y;
                 return true;
+            }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                activePointerId = MotionEvent.INVALID_POINTER_ID;
                 renderThrottled(true);
                 return true;
             default:
                 return true;
         }
+    }
+
+    private void rebaseToPointer(MotionEvent event, int pointerId) {
+        final int index = event.findPointerIndex(pointerId);
+        if (index < 0) return;
+        lastX = event.getX(index);
+        lastY = event.getY(index);
     }
 }
