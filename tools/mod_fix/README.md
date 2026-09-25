@@ -87,9 +87,11 @@ recomputes the PE checksum.
    - Retail coats have 0 there, so they stay on the chest.
 2. **Coat node constraints.** A new section `.dmcx` (VA `0x140DAC000`)
    holds `coat_constraints.s`.
-   - It is called at `0x140215373`, in CPlDante's coat load. That is after
-     `0x14030F850` has bound the coat joints (which clears every joint
-     `+0x100`) and after the cloth parse.
+   - Both coat setups of CPlDante's load call it: `0x1402151C3` for most
+     costumes, and `0x140215373` when costume byte `+0x3E9E` is 1 or 4.
+   - Each call comes after `0x14030F850` has bound the coat joints (which
+     clears every joint `+0x100`), after the capsule shapes are written to
+     `player+0xB630` and after the cloth parse.
    - It reads PAC slot 15 (`'CCNS'`). The retail game never reads that slot,
      so PACs without it behave as before.
    - For each listed coat node it builds a mode-1 constraint, the same
@@ -97,11 +99,20 @@ recomputes the PE checksum.
      `0x1402CBBE0`). The node's world is then offset × body joint world.
    - The constraints live in the section, in pools of 16 per player (4
      pools).
+   - Slot 15 can also replace the six collision capsule shapes for this
+     costume. The step `0x1402C97F0` reads them every frame.
 
 Slot 15 layout:
-- `+0` `'CCNS'`, `+4` version 1, `+8` count;
+- `+0` `'CCNS'`, `+4` version 1, `+8` node count (at most 16), `+0x0C`
+  capsule count (at most 6);
 - from `+0x10`, one 0x50-byte record per node: u32 coat node, u32 body
-  joint, u64 0, then `f32[16]` offset in row-vector layout.
+  joint, u64 0, then `f32[16]` offset in row-vector layout;
+- then one 0x40-byte record per capsule: u32 shape index, 12 reserved
+  bytes, then A, B and radius as `f32[4]` each. Each record is written over
+  `player+0xB630 + index·0x50 + 0x10`.
+
+Capsule shape: A at `+0x10` and B at `+0x20`, both in host-joint space,
+radius at `+0x30`. The six shapes sit on joints 3, 2, 15, 16, 19 and 20.
 
 Limits from the EXE:
 - 0x1401DE820 allocates 39 coat joints, so a coat can have at most 39
@@ -131,8 +142,16 @@ Checked by emulating the patched image with unicorn:
   - **Sleeve cloth:** a 3-link chain runs from the elbow anchor along the
     bottom of the bell. It takes the lower half of the bell, more toward
     the cuff.
-- **CLT.** One block with 16 bones. The three front skirt chains stay rigid,
-  because the joint-3 capsule (z +10, r 15) sits in front of the hips.
+- **CLT.** One block with 22 bones: every skirt chain simulates.
+- **Capsules.** Slot 15 replaces the six shapes with ones that fit this body:
+  - the torso stops above the waist: joint 3, from (0, 20, 1) to
+    (0, −12, 1), r 11;
+  - hips: r 12;
+  - legs: r 9.
+
+  Dante's chest capsule runs 40 units down in front of the hips and would
+  push the front of a short skirt forward. With these shapes, a raised
+  thigh lifts the front of the skirt instead of passing through it.
 - **Shadows.** SHW slot 8 is rebuilt without the costume. SHW slot 14 holds
   hulls per skirt chain and per sleeve part.
 

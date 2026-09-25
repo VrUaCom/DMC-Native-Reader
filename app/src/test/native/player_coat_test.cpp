@@ -411,8 +411,31 @@ void test_coat_constraints() {
     assert(parse_coat_constraints(b).empty());
 }
 
+void test_coat_capsules() {
+    using namespace dmcresource::motion;
+    // One node record, then two capsule records (index 0 and an ignored 9).
+    std::vector<std::uint8_t> b(0x10U + 0x50U + 2U * 0x40U, 0U);
+    b[0] = 'C'; b[1] = 'C'; b[2] = 'N'; b[3] = 'S';
+    put_u32(b, 4U, 1U);
+    put_u32(b, 8U, 1U);
+    put_u32(b, 12U, 2U);
+    const auto put_f = [&b](std::size_t o, float v) { put_u32(b, o, std::bit_cast<std::uint32_t>(v)); };
+    std::size_t o = 0x60U;
+    put_u32(b, o, 0U);
+    put_f(o + 0x14U, 20.0F); put_f(o + 0x18U, 1.0F);
+    put_f(o + 0x24U, -12.0F); put_f(o + 0x28U, 1.0F);
+    put_f(o + 0x30U, 11.0F);
+    put_u32(b, o + 0x40U, 9U);
+    const auto caps = player_coat_capsules(b);
+    assert(caps[0].host_joint == 3U && caps[0].radius == 11.0F);
+    assert(caps[0].a[1] == 20.0F && caps[0].b[1] == -12.0F && caps[0].b[2] == 1.0F);
+    assert(caps[1].radius == kPlayerCoatCapsules[1].radius);
+    assert(player_coat_capsules({})[0].radius == 15.0F);
+}
+
 int main() {
     test_coat_host_joint();
+    test_coat_capsules();
     test_coat_constraints();
     namespace motion = dmcresource::motion;
     const auto ptx = make_one_slot_ptx();

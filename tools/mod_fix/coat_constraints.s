@@ -1,15 +1,23 @@
 # Dante coat node constraints (new section .dmcx, VA 0x140DAC000).
 #
-# Called from CPlDante's coat load at 0x140215373, after the coat joint table
-# is bound (vtbl+0x150 -> 0x14030F850, which clears every joint +0x100) and
-# after the cloth chain parse. It replaces `lea rdx, [r14+0x1880]` there.
+# Called from both coat setups of CPlDante's load (costume byte +0x3E9E: 1
+# and 4 take 0x14021526F, the others 0x140214F74), at 0x1402151C3 and
+# 0x140215373, after the coat joint table is bound (vtbl+0x150 ->
+# 0x14030F850, which clears every joint +0x100), the capsule shapes are
+# written to player +0xB630 and the cloth chain is parsed, just before the
+# capsule setter 0x1402CA2F0. It replaces `lea rdx, [r14+0x1880]` there.
 # r14 = player. Every volatile register is dead at the site except rdx, which
 # is rebuilt before returning.
 #
 # Player PAC slot 15 (optional; the retail game never reads it):
-#   +0x00 'CCNS'  +0x04 version 1  +0x08 count  +0x0C reserved
-#   +0x10 count x 0x50: u32 coat node, u32 body joint, u64 reserved,
-#                       f32[16] offset matrix (row-vector, DMC3 layout)
+#   +0x00 'CCNS'  +0x04 version 1  +0x08 node count (<= 16)
+#   +0x0C capsule count (<= 6)
+#   +0x10 node count x 0x50: u32 coat node, u32 body joint, u64 reserved,
+#                            f32[16] offset matrix (row-vector, DMC3 layout)
+#   then capsule count x 0x40: u32 shape index (0..5), 12 reserved bytes,
+#        f32[4] A, f32[4] B, f32[4] radius -> player +0xB630 + index*0x50
+#        + 0x10 (shape: A +0x10, B +0x20 in host-joint space, radius +0x30;
+#        0x1402C97F0 reads them per frame)
 # Each entry gets a constraint in mode 1 (0x1402CBBE0: world = offset x
 # *host), as CEm028 init 0x140130480 builds for Nevan's sleeves:
 #   +0x00 vtable 0x1404CC1F8, +0x20 enabled, +0x28 mode 1,
@@ -35,7 +43,8 @@ _start:
         push    rbx
         push    rsi
         push    rdi
-        sub     rsp, 0x20
+        push    r12
+        sub     rsp, 0x28
         lea     rcx, [rip + PACTABLE]
         xor     edx, edx
         movzx   r8d, word ptr [r14 + 0x78]
@@ -49,9 +58,8 @@ _start:
         jne     .Ldone
         mov     esi, dword ptr [rax + 8]
         cmp     esi, 16
-        jbe     .Lcount_ok
-        mov     esi, 16
-.Lcount_ok:
+        ja      .Ldone
+        mov     r12, rax
         lea     rbx, [rax + 0x10]
 
         # Pool: the one this player already owns, else a free one, else the
@@ -84,7 +92,7 @@ _start:
 
 .Lentry:
         test    esi, esi
-        jz      .Ldone
+        jz      .Lcapsules
         mov     eax, dword ptr [rbx]
         cmp     eax, 39
         jae     .Lnext
@@ -129,8 +137,33 @@ _start:
         dec     esi
         jmp     .Lentry
 
+.Lcapsules:
+        # rbx now points past the node records.
+        mov     esi, dword ptr [r12 + 0xC]
+        cmp     esi, 6
+        ja      .Ldone
+.Lcapsule:
+        test    esi, esi
+        jz      .Ldone
+        mov     eax, dword ptr [rbx]
+        cmp     eax, 6
+        jae     .Lnext_capsule
+        imul    rax, rax, 0x50
+        lea     rax, [r14 + rax + 0xB630]
+        movups  xmm0, xmmword ptr [rbx + 0x10]
+        movups  xmmword ptr [rax + 0x10], xmm0
+        movups  xmm0, xmmword ptr [rbx + 0x20]
+        movups  xmmword ptr [rax + 0x20], xmm0
+        movups  xmm0, xmmword ptr [rbx + 0x30]
+        movups  xmmword ptr [rax + 0x30], xmm0
+.Lnext_capsule:
+        add     rbx, 0x40
+        dec     esi
+        jmp     .Lcapsule
+
 .Ldone:
-        add     rsp, 0x20
+        add     rsp, 0x28
+        pop     r12
         pop     rdi
         pop     rsi
         pop     rbx

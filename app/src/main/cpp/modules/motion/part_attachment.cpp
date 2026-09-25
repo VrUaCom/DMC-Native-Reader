@@ -329,10 +329,10 @@ std::vector<CompositeNodeConstraint> parse_coat_constraints(std::span<const std:
                (static_cast<std::uint32_t>(bytes[o + 3U]) << 24U);
     };
     if (bytes.size() < 0x10U || bytes[0] != 'C' || bytes[1] != 'C' || bytes[2] != 'N' ||
-        bytes[3] != 'S' || u32(4U) != 1U) {
+        bytes[3] != 'S' || u32(4U) != 1U || u32(8U) > 16U) {
         return out;
     }
-    const std::size_t count = std::min<std::size_t>(u32(8U), 16U);
+    const std::size_t count = u32(8U);
     for (std::size_t i = 0U; i < count; ++i) {
         const std::size_t o = 0x10U + i * 0x50U;
         if (o + 0x50U > bytes.size()) break;
@@ -346,6 +346,31 @@ std::vector<CompositeNodeConstraint> parse_coat_constraints(std::span<const std:
             c.offset.values[k] = std::bit_cast<float>(u32(o + 0x10U + k * 4U));
         }
         out.push_back(c);
+    }
+    return out;
+}
+
+std::array<ClothCapsule, 6> player_coat_capsules(std::span<const std::uint8_t> bytes) {
+    std::array<ClothCapsule, 6> out{};
+    std::copy(kPlayerCoatCapsules.begin(), kPlayerCoatCapsules.end(), out.begin());
+    const auto u32 = [&bytes](std::size_t o) {
+        return static_cast<std::uint32_t>(bytes[o]) |
+               (static_cast<std::uint32_t>(bytes[o + 1U]) << 8U) |
+               (static_cast<std::uint32_t>(bytes[o + 2U]) << 16U) |
+               (static_cast<std::uint32_t>(bytes[o + 3U]) << 24U);
+    };
+    const auto f32 = [&](std::size_t o) { return std::bit_cast<float>(u32(o)); };
+    if (bytes.size() < 0x10U || bytes[0] != 'C' || bytes[1] != 'C' || bytes[2] != 'N' ||
+        bytes[3] != 'S' || u32(4U) != 1U || u32(8U) > 16U || u32(12U) > 6U) {
+        return out;
+    }
+    std::size_t o = 0x10U + static_cast<std::size_t>(u32(8U)) * 0x50U;
+    for (std::uint32_t i = 0U; i < u32(12U) && o + 0x40U <= bytes.size(); ++i, o += 0x40U) {
+        const auto index = u32(o);
+        if (index >= out.size()) continue;
+        out[index].a = {f32(o + 0x10U), f32(o + 0x14U), f32(o + 0x18U)};
+        out[index].b = {f32(o + 0x20U), f32(o + 0x24U), f32(o + 0x28U)};
+        out[index].radius = f32(o + 0x30U);
     }
     return out;
 }

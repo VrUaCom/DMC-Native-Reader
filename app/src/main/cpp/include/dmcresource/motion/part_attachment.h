@@ -154,6 +154,13 @@ inline constexpr std::uint32_t kPlayerCoatJointCapacity = 39U;
 [[nodiscard]] std::vector<CompositeNodeConstraint> parse_coat_constraints(
     std::span<const std::uint8_t> bytes);
 
+// The six coat collision capsules for a player PAC: kPlayerCoatCapsules with
+// the shape replacements of slot 15 applied. After the node records, slot 15
+// holds `+0x0C` count (<= 6) records of 0x40 bytes: u32 shape index,
+// 12 reserved bytes, f32[4] A, f32[4] B, f32[4] radius. The patch writes
+// them over player +0xB630 + index*0x50 + 0x10 before the capsule setter.
+[[nodiscard]] std::array<ClothCapsule, 6> player_coat_capsules(std::span<const std::uint8_t> slot15);
+
 // Replaces a part's node constraints and re-poses it.
 [[nodiscard]] bool set_part_node_constraints(Session* session,
                                              std::size_t part,

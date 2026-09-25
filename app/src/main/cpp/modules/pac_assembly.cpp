@@ -548,8 +548,18 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     // Chains with collision (0x1402CA2F0): IPlayer coats on the
                     // body capsules, CEm028 hair on the neck/head capsules.
                     std::span<const motion::ClothCapsule> capsules;
+                    std::array<motion::ClothCapsule, 6> coat_capsules{};
                     if (player) {
-                        capsules = motion::kPlayerCoatCapsules;
+                        // Slot 15 may replace the shapes (coat patch).
+                        std::span<const std::uint8_t> slot15;
+                        for (const auto& e : entries) {
+                            if (e.archive == 0U && e.container.empty() &&
+                                e.slot == motion::kPlayerCoatConstraintSlot) {
+                                slot15 = *e.bytes;
+                            }
+                        }
+                        coat_capsules = motion::player_coat_capsules(slot15);
+                        capsules = coat_capsules;
                     } else if (*entry.slot == 4U && *clt_slot == 7U &&
                                motion::enemy_constraints_for(archive_name, 4U).has_value()) {
                         capsules = motion::kEm028HairCapsules;

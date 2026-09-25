@@ -14,14 +14,14 @@ Needs dmc3.exe patched with coat_patch.py:
     of the bell toward the cuff.
 
 CPlDante has room for one cloth chain (+0xA210; +0xA300 holds the next joint
-table, 0x1401DE820), so the CLT has one block. That block collides with the
-six player coat capsules (0x1402151E7). The joint-3 capsule (z +10, r 15,
-40 units down) sits in front of the hips, so the three front skirt chains
-stay rigid on the pelvis.
+table, 0x1401DE820), so the CLT has one block. It collides with the six
+player coat capsules (0x1402151E7), whose shapes slot 15 replaces with ones
+that fit this body (CAPSULES), so every skirt chain simulates and the
+thighs push the front of the skirt out of the way.
 
-Coat nodes: 0 root, 1..24 skirt (8 chains x anchor + 2 links),
-25..36 sleeves (per arm a6/a7/a8 + 3 links). 0x1401DE820 allocates 39 coat
-joints.
+Coat nodes: 0 root, 1..24 skirt (8 chains x anchor + 2 links), 25..36
+sleeves (per arm a6/a7/a8 + 3 links).
+0x1401DE820 allocates 39 coat joints.
 
 Usage: python3 costume.py mod_fixed.pac pl000.pac mod_costume.pac
 """
@@ -36,8 +36,20 @@ from modwriter import Mesh, Mod, Obj, read_mod, transform_record, write_mod
 ROOT_JOINT = 14
 SKIRT_CHAINS, SKIRT_LINKS = 8, 2
 SLEEVE_LINKS = 3
-FRONT_RIGID = {0, 1, SKIRT_CHAINS - 1}       # inside the joint-3 capsule
 STIFFNESS = 0.35
+# Coat collision capsules for this body (slot 15 replaces the six shapes the
+# game writes at player +0xB630; index, host joint, A, B, radius). Dante's
+# chest capsule runs 40 units down in front of the hips (z +10, r 15) and
+# would shove the front of a short skirt forward; here it is a torso that
+# stops above the waist, and the hips and legs fit the girl's body.
+CAPSULES = [
+    (0, 3, (0.0, 20.0, 1.0), (0.0, -12.0, 1.0), 11.0),
+    (1, 2, (0.0, -4.0, 0.0), (0.0, -14.0, 0.0), 12.0),
+    (2, 15, (0.0, 0.0, 0.0), (0.0, -50.0, 0.0), 9.0),
+    (3, 16, (0.0, 0.0, 0.0), (0.0, -50.0, 0.0), 9.0),
+    (4, 19, (0.0, 0.0, 0.0), (0.0, -50.0, 0.0), 9.0),
+    (5, 20, (0.0, 0.0, 0.0), (0.0, -50.0, 0.0), 9.0),
+]
 ARMS = {'right': (6, 7, 8, 9), 'left': (10, 11, 12, 13)}   # clavicle, shoulder, elbow, wrist
 COAT_JOINT_CAPACITY = 39
 
@@ -188,10 +200,10 @@ def main():
         nodes = [anchor]
         for _ in range(SKIRT_LINKS): nodes.append(add(nodes[-1], (0.0, -L, 0.0)))
         skirt_chains.append((top, D, L, nodes))
+    constraints = []
 
     # Sleeves: anchors on body joints 6/7/8 (10/11/12) + a chain from the
     # elbow anchor along the bottom of the bell to the cuff.
-    constraints = []
     sleeve_rigs = {}
     for side, (j6, j7, j8, j9) in ARMS.items():
         anchors = {}
@@ -281,8 +293,7 @@ def main():
     coat_bytes = write_mod(coat)
 
     # ---- CLT: one block (CPlDante has one chain) ------------------------------
-    simulated = [n for c, (_, _, _, nodes) in enumerate(skirt_chains) if c not in FRONT_RIGID
-                 for n in nodes[1:]]
+    simulated = [n for _, _, _, nodes in skirt_chains for n in nodes[1:]]
     simulated += [n for rig in sleeve_rigs.values() for n in rig['links']]
     clt = (';pl011_02.clt\r\n\r\nClothNum\t1\r\n\r\n\r\n\r\n'
            'ClothNo     0\r\nClothId     0\r\n'
@@ -297,9 +308,11 @@ def main():
     clt_bytes += bytes((-len(clt_bytes)) % 16 + 16)
 
     # ---- slot 15: coat node constraints ('CCNS') ------------------------------
-    ccns = b'CCNS' + struct.pack('<III', 1, len(constraints), 0)
+    ccns = b'CCNS' + struct.pack('<III', 1, len(constraints), len(CAPSULES))
     for node, joint in constraints:
         ccns += struct.pack('<IIQ', node, joint, 0) + np.eye(4, dtype='<f4').tobytes()
+    for index, _, a, b, r in CAPSULES:
+        ccns += struct.pack('<I12x4f4f4f', index, *a, 1.0, *b, 1.0, r, 0.0, 0.0, 0.0)
     ccns += bytes((-len(ccns)) % 16)
     print(f'coat nodes {nodes_total}, cloth bones {len(simulated)}, constraints {constraints}')
 

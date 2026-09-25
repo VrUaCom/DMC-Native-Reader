@@ -11,10 +11,12 @@
    + header +0x13 copy (+0xFA, 0x1402F960E).
 2. Coat node constraints: coat nodes can follow body joints (sleeves on the
    arms, a hem on the chest) like Nevan's sleeves (CEm028 init 0x140130480).
-   A new section .dmcx (VA 0x140DAC000) holds coat_constraints.s; CPlDante's
-   coat load calls it at 0x140215373, after the joint table binding and the
-   cloth parse. It reads optional player PAC slot 15 ('CCNS'), which the
-   retail game never reads, so PACs without it behave as before.
+   A new section .dmcx (VA 0x140DAC000) holds coat_constraints.s; both coat
+   setups of CPlDante's load call it (0x1402151C3 and 0x140215373), after
+   the joint table binding, the capsule shapes and the cloth parse. It reads
+   optional player PAC slot 15 ('CCNS'), which the retail game never reads,
+   so PACs without it behave as before. Slot 15 can also replace the six
+   coat collision capsule shapes (player +0xB630) for that costume.
 
 The certificate table (Authenticode) is dropped: the signature cannot stay
 valid after any change. The PE checksum is recomputed.
@@ -48,23 +50,28 @@ JOINT_SITES = {
 SECTION_VA = 0x140DAC000
 SECTION_VSIZE = 0x4000            # code 0x000, owners 0x400, pools 0x1000..0x3FFF
 SECTION_RAWSIZE = 0x200
-HOOK_SITE = 0x140215373           # lea rdx, [r14+0x1880]
+# Both coat setups of CPlDante's load end in `lea rdx, [r14+0x1880]` before
+# the capsule setter: 0x1402151C3 (most costumes) and 0x140215373 (costume
+# byte +0x3E9E = 1 or 4).
+HOOK_SITES = (0x1402151C3, 0x140215373)
 HOOK_ORIGINAL = bytes.fromhex('498d9680180000')
 # coat_constraints.s linked at 0x140DAC000 with GETTER=0x1401B82C0,
 # PACTABLE=0x140C99D30, CVTABLE=0x1404CC1F8, OWNERS=0x140DAC400,
 # RRIDX=0x140DAC420, POOL=0x140DAD000 (see --verify-asm).
 CODE = bytes.fromhex(
-    '5356574883ec20488d0d22ddeeff31d2450fb7467841b90f000000e8a0c240ff4885c0'
-    '0f8442010000813843434e530f8536010000837804010f852c0100008b700883fe1076'
-    '05be10000000488d58104c8d15a903000031c94d3934ca742affc183f90472f331c949'
-    '833cca00741affc183f90472f24c8d1da3030000418b0b8d510183e2034189134d8934'
-    'ca4869f9000c00004c8d1d650f00004c01df85f60f84c50000008b0383f8270f83af00'
-    '00008b530483fa600f83a30000004d8b84c6d0a000004d85c00f84920000004d8b8cd6'
-    '801800004d85c90f84810000004d8b89100100004d85c974750f57c00f29070f294710'
-    '0f2947200f2947300f2947400f2947500f2947600f2947704c8d1de40072ff4c891fc6'
-    '472001c74728010000004c894f300f1043100f2987800000000f1043200f2987900000'
-    '000f1043300f2987a00000000f1043400f2987b00000004989b8000100004881c7c000'
-    '00004883c350ffcee933ffffff4883c4205f5e5b498d9680180000c3')
+    '53565741544883ec28488d0d20ddeeff31d2450fb7467841b90f000000e89ec240ff48'
+    '85c00f8485010000813843434e530f8579010000837804010f856f0100008b700883fe'
+    '100f87630100004989c4488d58104c8d15a503000031c94d3934ca742affc183f90472'
+    'f331c949833cca00741affc183f90472f24c8d1d9f030000418b0b8d510183e2034189'
+    '134d8934ca4869f9000c00004c8d1d610f00004c01df85f60f84c50000008b0383f827'
+    '0f83af0000008b530483fa600f83a30000004d8b84c6d0a000004d85c00f8492000000'
+    '4d8b8cd6801800004d85c90f84810000004d8b89100100004d85c974750f57c00f2907'
+    '0f2947100f2947200f2947300f2947400f2947500f2947600f2947704c8d1de00072ff'
+    '4c891fc6472001c74728010000004c894f300f1043100f2987800000000f1043200f29'
+    '87900000000f1043300f2987a00000000f1043400f2987b00000004989b80001000048'
+    '81c7c00000004883c350ffcee933ffffff418b74240c83fe06773785f674338b0383f8'
+    '067324486bc050498d840630b600000f1043100f1140100f1043200f1140200f104330'
+    '0f1140304883c340ffceebc94883c428415c5f5e5b498d9680180000c3')
 
 def call_rel(site, target):
     return b'\xe8' + struct.pack('<i', target - (site + 5))
@@ -96,10 +103,11 @@ def patch(exe):
         o = text_off(va)
         assert exe[o:o + 7] == orig, hex(va)
         exe[o:o + 7] = call_rel(va, cave) + b'\x90\x90'
-    # 2. hook
-    o = text_off(HOOK_SITE)
-    assert exe[o:o + 7] == HOOK_ORIGINAL
-    exe[o:o + 7] = call_rel(HOOK_SITE, SECTION_VA) + b'\x90\x90'
+    # 2. hooks
+    for site in HOOK_SITES:
+        o = text_off(site)
+        assert exe[o:o + 7] == HOOK_ORIGINAL, hex(site)
+        exe[o:o + 7] = call_rel(site, SECTION_VA) + b'\x90\x90'
 
     pe = struct.unpack_from('<I', exe, 0x3C)[0]
     nsec = struct.unpack_from('<H', exe, pe + 6)[0]
