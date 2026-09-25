@@ -45,7 +45,7 @@ At the snapshot:
 | `ChildResourceBrowserView.java` | 4,845 | GridView gallery/presentation/accessibility captions | replace with native presentation; preserve accessibility baseline |
 | `BlackWidowState.java` | 4,670 | passive bitmask projection only | delete once native presentation consumes Black Widow state directly |
 | `NativeBridge.java` | 2,932 | `System.loadLibrary` + 23 JNI declarations | retire; Path B keeps only exact platform callback JNI allowlist |
-| `DmcOpenActivity.java` | 1,164 | OEM/Samsung external-open bridge, including `onNewIntent` | fold required behavior into minimal `ReaderPlatformActivity extends NativeActivity` |
+| `DmcOpenActivity.java` | 1,164 | OEM external-open bridge, including `onNewIntent` | fold required behavior into minimal `ReaderPlatformActivity extends NativeActivity` |
 
 Total authored Java snapshot: **78,169 bytes source text**.
 
@@ -61,7 +61,7 @@ Current manifest uses:
 - generic provider fallback;
 - SEND intent routing.
 
-The current `DmcOpenActivity` exists for OEM/Samsung compatibility and explicitly forwards:
+The current `DmcOpenActivity` exists for OEM compatibility and explicitly forwards:
 - initial `getIntent()` in `onCreate`;
 - repeated intents in `onNewIntent`;
 - action/type/data/categories/flags/ClipData/URI grants.
@@ -257,7 +257,7 @@ Initial intent:
 Repeated delivery:
 - minimal subclass forwards `onNewIntent` to native.
 
-This separation must be device-tested with Samsung My Files/provider behavior.
+This separation must be device-tested with OEM file manager/provider behavior.
 
 ## 10. Path A optimization gate
 
@@ -371,7 +371,7 @@ Confirmed from public Android/NDK contracts:
 
 Still evidence-gated:
 - exact final Path-B shim method count/signatures;
-- Samsung behavior after merging DmcOpenActivity responsibilities into a NativeActivity subclass;
+- Android device behavior after merging DmcOpenActivity responsibilities into a NativeActivity subclass;
 - whether a supported zero-DEX route can close both callback gaps;
 - final accessibility implementation;
 - final package/DEX/installed-size deltas.

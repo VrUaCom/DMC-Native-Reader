@@ -37,7 +37,7 @@
                 <data android:mimeType="application/vnd.dmc.eventtbl" />
             </intent-filter>
 
-            <!-- Samsung/OEM extension routing for the five promoted families.
+            <!-- OEM extension routing for the five promoted families.
                  EventTbl keeps its stock EventTblNN.bin naming. We deliberately
                  do not claim generic .bin files; native probing still requires
                  the confirmed EVT\0 content identity before accepting them. -->

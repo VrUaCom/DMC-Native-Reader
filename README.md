@@ -11,9 +11,9 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 **Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
 **Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  
 **Production registry:** **MOD / SCM / DDS / PTX / EventTbl**  
-**Weight contract:** **APK <= 4 MiB; installed package/code <= 4 MiB on the acceptance Samsung**
+**Weight contract:** **APK <= 4 MiB; installed package/code <= 4 MiB on the acceptance Android device**
 
-The accepted v26 line was physically tested on Samsung and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Samsung acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
+The accepted v26 line was physically tested on Android device and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Android device acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
 
 ## v33 capabilities
 
@@ -121,7 +121,7 @@ The canonical APK contains exactly one native runtime DSO:
 
 `DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates target-scoped C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, absolute package-size/dedup rules and the exact Rengine gitlink.
 
-Package pre-gates are **APK <= 4 MiB, DSO <= 4 MiB and Dex <= 1 MiB**. Duplicate ZIP/runtime payloads and unexplained large duplicate payload waste are not accepted. Physical Samsung acceptance separately requires **installed package/code footprint <= 4 MiB**, excluding mutable user data/cache, tied to the exact reviewed APK SHA-256. `tools/measure_installed_footprint.py` owns only this downstream device measurement.
+Package pre-gates are **APK <= 4 MiB, DSO <= 4 MiB and Dex <= 1 MiB**. Duplicate ZIP/runtime payloads and unexplained large duplicate payload waste are not accepted. Physical Android device acceptance separately requires **installed package/code footprint <= 4 MiB**, excluding mutable user data/cache, tied to the exact reviewed APK SHA-256. `tools/measure_installed_footprint.py` owns only this downstream device measurement.
 
 ## Product boundary
 

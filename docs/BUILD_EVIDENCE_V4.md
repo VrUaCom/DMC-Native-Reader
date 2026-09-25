@@ -8,7 +8,7 @@ This document records the last fully verified v4 APK build produced during migra
 
 - applicationId: `com.dmcrengine.nativeviewer`
 - versionCode: `4`
-- versionName: `0.4.0-samsung-routing`
+- versionName: `historical-v4-oem-routing`
 - compileSdk: `36`
 - targetSdk: `36`
 - minSdk: `26`
@@ -18,7 +18,7 @@ The current accepted package is `com.dmcrengine.nativereader`; the old v4 identi
 
 ## Verified v4 APK
 
-- filename: `DMC-Native-Reader-v4-Samsung-routing.apk`
+- filename: `historical v4 OEM-routing APK (original artifact name omitted)`
 - size: 1,892,507 bytes
 - SHA-256: `2f92dc8e8d11774735609aad4964e674dd598ef4b6b464bd2dfb1dea4114f17d`
 - ZIP integrity: PASS
@@ -48,6 +48,6 @@ The verified v4 binary was built before standalone repository migration using a 
 
 ## Historical runtime boundary
 
-At v4, package-side registration was proven but the next required evidence was still a physical Samsung route from file manager to Native Reader and native render.
+At v4, package-side registration was proven but the next required evidence was still a physical Android device route from file manager to Native Reader and native render.
 
-That unresolved statement is **historical**. Later device testing progressed beyond it; accepted v24 confirms that MOD, SCM, DDS and PTX open successfully on the tested Samsung device and PTX model texture application works.
+That unresolved statement is **historical**. Later device testing progressed beyond it; accepted v24 confirms that MOD, SCM, DDS and PTX open successfully on the tested Android device and PTX model texture application works.

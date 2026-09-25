@@ -15,7 +15,7 @@ labels: bug
 
 - Device model:
 - Android version:
-- File manager / opening path (Samsung My Files, system Files/SAF, other):
+- File manager / opening path (OEM file manager, system Files/SAF, other):
 
 ## Resource
 

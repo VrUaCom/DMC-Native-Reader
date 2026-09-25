@@ -120,7 +120,7 @@ Each review gate must inspect exact HEAD/evidence, classify blockers/corrections
 3. **Bounded modernization** — adopt C++23 features only where they materially improve safety or clarity.
 4. **Spider C++** — evolve the embedded C++23 language/profile layer above Crusader without changing the Rengine executor.
 5. **Dependency graph** — move resource bindings onto stable native IDs instead of Java URI/vector-position semantics.
-6. **Verification** — exact-head host CTest, clean APK build, package verifier, review gate and physical Samsung acceptance before merge/release.
+6. **Verification** — exact-head host CTest, clean APK build, package verifier, review gate and physical Android device acceptance before merge/release.
 
 ## Exact-head evidence contract
 
@@ -135,7 +135,7 @@ The same evidence contract now includes product weight integrity:
 - duplicate ZIP names/runtime payloads/large duplicate payload waste must be zero;
 - verifier reports absolute current sizes and largest package entries;
 - historical v26 package/native values are not growth authority without proven comparable provenance;
-- downstream Samsung acceptance requires installed package/code allocation **<= 4 MiB**, excluding mutable user data/cache, measured by `tools/measure_installed_footprint.py` and tied to exact APK SHA-256/device identity.
+- downstream Android device acceptance requires installed package/code allocation **<= 4 MiB**, excluding mutable user data/cache, measured by `tools/measure_installed_footprint.py` and tied to exact APK SHA-256/device identity.
 
 `APK <= 4 MiB` is a necessary precondition for the installed gate, not a replacement for physical-device measurement.
 

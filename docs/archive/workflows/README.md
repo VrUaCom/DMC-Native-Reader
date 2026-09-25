@@ -27,6 +27,6 @@ During the v33 C++23 migration, active workflows are limited to:
 
 There is intentionally **no active production release workflow** until Phase 7 (#40) after Review Gate E (#55).
 
-Phase 7 must create the single current Android signing/publication authority from the actual #55-reviewed Path A/Path B architecture, exact post-signing verifier contract, expected production certificate, exact APK SHA, Samsung acceptance and explicit Viktor approval.
+Phase 7 must create the single current Android signing/publication authority from the actual #55-reviewed Path A/Path B architecture, exact post-signing verifier contract, expected production certificate, exact APK SHA, Android device acceptance and explicit VrUaCom approval.
 
 Historical workflows remain available here and in Git history for audit/reference only.

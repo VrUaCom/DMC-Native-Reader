@@ -14,7 +14,7 @@ This checklist separates the **current private development repository**, a futur
 - [x] MOD/SCM use canonical DMC Rengine read-side authority through the pinned ReaderCore boundary.
 - [x] DDS/PTX use reusable native codec/framing/preview/TextureSet paths.
 - [x] Android is a thin shell; DMC format parsing and application decisions remain native/typed.
-- [x] Physical Samsung acceptance confirmed the then-supported families opened and PTX model texture application worked.
+- [x] Physical Android device acceptance confirmed the then-supported families opened and PTX model texture application worked.
 - [x] v24 installed-size report was 2.32 MB, down from 6.27 MB before the size/module cleanup.
 - [x] Pre-cleanup wide-format work is preserved on `main.2` as backlog/reference rather than advertised as production support.
 - [x] The then-current v26 UV/focused-inspection work was marked candidate/draft until device acceptance.

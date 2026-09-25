@@ -15,7 +15,7 @@ When a statement conflicts with an old version-specific evidence file, the curre
 
 ## Accepted release evidence
 
-- `SIZE_AND_MODULES_V24.md` — accepted v24 footprint/module/JNI evidence and Samsung acceptance.
+- `SIZE_AND_MODULES_V24.md` — accepted v24 footprint/module/JNI evidence and Android device acceptance.
 - `PTX_MODEL_V23_EVIDENCE.md` — v23 PTX/model-texture milestone evidence that fed the accepted v24 line.
 
 These documents record exact historical artifacts; do not rewrite their hashes/sizes to match a later release.
@@ -23,7 +23,7 @@ These documents record exact historical artifacts; do not rewrite their hashes/s
 ## Historical development evidence
 
 - `BUILD_EVIDENCE_V4.md` — standalone-repository migration-era v4 APK evidence; not current identity/support state.
-- `SAMSUNG_MY_FILES_BOUNDARY.md` — v6/v7 OEM routing investigation, now prefaced with the resolved v24 product status.
+- `ANDROID_FILE_MANAGER_BOUNDARY.md` — v6/v7 OEM routing investigation, now prefaced with the resolved v24 product status.
 - `CI_PROBE.md` — hosted-runner/probe history and the current rule for classifying no-step Actions failures.
 
 Historical version names/module counts/routing blockers must not be copied into current README/status/support claims without revalidation.

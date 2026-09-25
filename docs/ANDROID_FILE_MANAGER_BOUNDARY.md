@@ -1,16 +1,16 @@
-# Samsung / Android file-opening boundary
+# Android / OEM file-opening boundary
 
 Last updated: 2026-09-10.
 
 ## Current resolved product status
 
-This document began as a v6/v7 investigation of Samsung My Files behavior. Those sections are preserved below as **historical routing evidence**; they are no longer the current unresolved product status.
+This document began as a v6/v7 investigation of OEM file manager behavior. Those sections are preserved below as **historical routing evidence**; they are no longer the current unresolved product status.
 
-By the accepted Native Reader v24 baseline, physical Samsung testing confirms that the supported production families **MOD, SCM, DDS and PTX open successfully in Native Reader**, and PTX model texture application works. The owner accepted v24 on 2026-09-10 and Android reported 2.32 MB installed size.
+By the accepted Native Reader v24 baseline, physical Android device testing confirms that the supported production families **MOD, SCM, DDS and PTX open successfully in Native Reader**, and PTX model texture application works. The owner accepted v24 on 2026-09-10 and Android reported 2.32 MB installed size.
 
 Therefore:
 
-- do not describe Samsung routing for supported v24 files as generally unresolved;
+- do not describe OEM routing for supported v24 files as generally unresolved;
 - keep the earlier v6/v7 evidence because it documents an OEM/file-manager boundary encountered during development;
 - treat any new routing regression as device/Android/file-manager specific and reproduce it against the current build before changing manifest policy.
 
@@ -18,12 +18,12 @@ The current production package remains `com.dmcrengine.nativereader`.
 
 ## Historical evidence — v6 routing investigation
 
-Physical Samsung testing established the following sequence at that stage:
+Physical Android device testing established the following sequence at that stage:
 
 1. v6 installed successfully under `com.dmcrengine.nativereader`.
 2. Direct app launch succeeded.
 3. Runtime `PackageManager` probes resolved constructed VIEW intents for several fallback MIME/URI combinations.
-4. Tapping the real `.mod` or `.scm` in that Samsung My Files build did not launch the app or show the normal chooser; My Files displayed its own unsupported-file/Play Store path.
+4. Tapping the real `.mod` or `.scm` in that OEM file manager build did not launch the app or show the normal chooser; My Files displayed its own unsupported-file/Play Store path.
 5. `MainActivity` remained at `ACTION_MAIN`, so there was no evidence that a VIEW intent reached Native Reader.
 
 At that time this correctly classified the failure above the native decoder and above ordinary package resolution: the OEM file manager appeared to make its own unsupported-file decision.

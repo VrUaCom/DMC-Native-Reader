@@ -71,7 +71,7 @@ Kotlin runtime passed `tools/verify_device_apk.py`.
 
 ## Device acceptance pending
 
-On Samsung, test MOD and SCM with corresponding PTX (especially em000/pl000):
+On Android device, test MOD and SCM with corresponding PTX (especially em000/pl000):
 open model, attach PTX, open UV gallery, select several different slots, pinch
 zoom/reset, return to gallery and model, confirm textures remain correct.
 Also open PTX directly and scroll/select/back through its shared gallery.

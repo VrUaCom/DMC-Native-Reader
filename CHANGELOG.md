@@ -89,7 +89,7 @@ This changelog distinguishes accepted `main` history from development candidates
 
 No v33 APK is accepted yet. Both `ubuntu-latest` and a bounded `macos-15` probe have been observed failing before runner assignment with `runner_id=0` and no executed steps. Checkout, CMake, Gradle and tests therefore did not run in those jobs; these failures are infrastructure evidence, not green or red source evidence. The temporary macOS probe workflow was removed after confirming the account-level behavior.
 
-PR #33 remains draft until a real exact-head clean C++23 build runs the full native suite, produces a verifier-clean ARM64 APK, and the Samsung device checklist is completed.
+PR #33 remains draft until a real exact-head clean C++23 build runs the full native suite, produces a verifier-clean ARM64 APK, and the Android device checklist is completed.
 
 ## Native Reader 1.0 v26 — accepted `main`
 
@@ -118,7 +118,7 @@ PR #33 remains draft until a real exact-head clean C++23 build runs the full nat
 
 ### Acceptance
 
-- the owner confirmed the required Samsung/device tests on 2026-09-10 and explicitly approved PR #32 for merge;
+- the owner confirmed the required Android device/device tests on 2026-09-10 and explicitly approved PR #32 for merge;
 - the bounded v25/v26 regression and APK evidence was accepted with that physical-device confirmation;
 - GitHub-hosted jobs on the accepted line can fail before running any step, so hosted CI is not claimed green.
 
@@ -134,7 +134,7 @@ See `docs/UV_GALLERY_V25.md` and `docs/TOOL_INSPECTION_V26.md`.
 
 - removed the unintended Kotlin runtime dependency from the Java-only Android shell;
 - reduced the APK from 1,488,118 bytes (v23) to 560,703 bytes (v24), approximately 62.3%;
-- physical Samsung installed-size report dropped from 6.27 MB to 2.32 MB;
+- physical Android device installed-size report dropped from 6.27 MB to 2.32 MB;
 - reduced the public native dynamic-symbol surface from 2,951 symbols to the 18 declared JNI entry points;
 - moved portable session ownership out of JNI into `resource_session`;
 - moved scene materialization out of rasterization into `scene_projection`;
@@ -145,7 +145,7 @@ See `docs/UV_GALLERY_V25.md` and `docs/TOOL_INSPECTION_V26.md`.
 
 - seven local/native regressions passed;
 - arm64 APK identity, ZIP, signing, module markers and JNI export gates passed;
-- owner confirmed on Samsung that all four supported file families open and PTX model texture application works;
+- owner confirmed on Android device that all four supported file families open and PTX model texture application works;
 - GitHub-hosted jobs on the tested revision failed before executing any steps and produced no useful job logs, so CI is not claimed green.
 
 See `docs/SIZE_AND_MODULES_V24.md`.

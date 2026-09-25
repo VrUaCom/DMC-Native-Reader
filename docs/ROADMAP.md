@@ -32,7 +32,7 @@ The pre-cleanup multi-format implementation remains on `main.2` as backlog/refer
 
 **Status: COMPLETE / accepted 2026-09-10.**
 
-Confirmed on Samsung:
+Confirmed on Android device:
 
 - MOD opens/renders;
 - SCM opens/renders;
@@ -60,7 +60,7 @@ Implemented candidate capability:
 - hierarchy-information availability independent from spatial transform availability;
 - short taps preserve normal UV/wireframe/hierarchy actions.
 
-Promotion gate: Samsung MOD/SCM + PTX validation, short-vs-long press behavior, navigation/return state, relationship/count correctness, and installed-size check.
+Promotion gate: Android device MOD/SCM + PTX validation, short-vs-long press behavior, navigation/return state, relationship/count correctness, and installed-size check.
 
 ## Phase 4 — Model Inspector and visual debugging depth
 

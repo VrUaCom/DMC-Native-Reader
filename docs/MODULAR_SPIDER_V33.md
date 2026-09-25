@@ -336,7 +336,7 @@ The v33 verifier requires:
 - native `WorkspaceGraph` compiled into the portable core;
 - split Spider compose/texture action sources compiled instead of the old monolith.
 
-The physical Samsung acceptance additionally requires installed package/code
+The physical Android device acceptance additionally requires installed package/code
 allocation **<= 4 MiB (4,194,304 bytes)**, measured from the installed package code
 directory and excluding mutable user data/cache. `tools/measure_installed_footprint.py`
 records the device/build identity and reviewed APK SHA-256 and fails closed on
@@ -370,4 +370,4 @@ At minimum the complete host CTest suite must run. Critical v33 regressions incl
 A GitHub job that fails before runner assignment (`runner_id=0`, no steps) is neither
 green evidence nor a source regression. A canonical APK is accepted only after a
 real exact-head clean build, verifier pass, required review gates and physical
-Samsung device test including the installed 4 MiB gate.
+Android device test including the installed 4 MiB gate.

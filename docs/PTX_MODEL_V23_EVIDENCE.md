@@ -70,7 +70,7 @@ This is local build evidence, not a claim that GitHub Actions passed.
 ## Device acceptance — user confirmed, 2026-09-10
 
 After receiving the v23 APK and the MOD/SCM + whole PTX test instructions,
-Victor reported: «Все чітко працює, можна виносити в мейн».
+VrUaCom reported: «Все чітко працює, можна виносити в мейн».
 This records user-reported v23 device acceptance and explicit authorization to
 merge into main. No per-file test log was supplied; individual em000/pl000
 results are not independently asserted here.

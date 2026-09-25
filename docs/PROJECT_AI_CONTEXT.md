@@ -55,7 +55,7 @@ They may be candidate evidence only.
 Rengine remains canonical authority for reverse-engineered format/runtime semantics consumed by Native Reader.
 
 #### Narrow PTX-only copy exception
-Viktor explicitly authorized one bounded exception to the normal “consume, do not copy canonical runtime implementation” rule:
+VrUaCom explicitly authorized one bounded exception to the normal “consume, do not copy canonical runtime implementation” rule:
 
 Native Reader may read the PTX reverse source/evidence at read-only Rengine commit `50d070e158e484937238d9cb02b2bc6affb2f502`, copy only the PTX runtime slice approved by Project Review #50 into `VrUaCom/DMC-Native-Reader`, port/adapt it to ISO C++23, and maintain that Reader-owned compatibility projection locally.
 
@@ -292,7 +292,7 @@ Unsigned release APK must independently prove the same package/ABI/JNI/layout/si
 A broken/invalid signature is not accepted as “unsigned”. The runner independently validates critical signing fields from verifier JSON before writing the Phase-2 manifest.
 
 ### Installed-size hard gate, package identity and Android user scope
-Android `StorageStats.getAppBytes()` on the acceptance Samsung must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed installable APK. Mutable data/cache are reported separately and are not part of this code-size gate.
+Android `StorageStats.getAppBytes()` on the acceptance Android device must be **<= 4 MiB (4,194,304 bytes)** for the exact reviewed installable APK. Mutable data/cache are reported separately and are not part of this code-size gate.
 
 `tools/measure_installed_footprint.py` uses schema `dmc-native-reader.installed-footprint.v3` and must:
 - use authoritative package StorageStats `code:` bytes;
@@ -313,7 +313,7 @@ Android `StorageStats.getAppBytes()` on the acceptance Samsung must be **<= 4 Mi
 A single immediate post-install StorageStats snapshot can understate a **DEX-bearing** app because ART may create/replace optimized compiler artifacts later. The supported `speed` compiler filter is therefore used as a conservative package-scoped full-AOT stress state for DEX-bearing release candidates.
 
 **Path B / any DEX present**
-- final Samsung measurement uses `--art-compile-mode speed`;
+- final device measurement uses `--art-compile-mode speed`;
 - record baseline StorageStats first;
 - run package-scoped `cmd package compile -m speed -f <package>`;
 - record stress StorageStats after successful compile;
@@ -325,13 +325,13 @@ The ART stress exemption is valid only when package verification on the exact pr
 - `android:hasCode=false`.
 
 Then:
-- final Samsung measurement uses `--art-compile-mode none`;
+- final device measurement uses `--art-compile-mode none`;
 - authoritative baseline StorageStats must be <=4,194,304;
 - ART stress is recorded as `NOT_APPLICABLE_ZERO_DEX` because there is no app DEX to dexopt.
 
 A minimal shim or any non-zero DEX remains Path B and must use `speed` stress. `speed` is a supported conservative stress state, not a claim of a mathematical upper bound over every future ART implementation.
 
-For **both** paths, final #40/#45 Samsung acceptance must pass `--expected-apk-sha256` for the exact **post-signing production APK**. If the target Samsung build does not expose authoritative package-storage `code:` bytes, including AOSP/OEM feature-flag disablement, the device-size gate is NO-GO until an equally authoritative separately reviewed path exists.
+For **both** paths, final #40/#45 Android device acceptance must pass `--expected-apk-sha256` for the exact **post-signing production APK**. If the target Android device build does not expose authoritative package-storage `code:` bytes, including AOSP/OEM feature-flag disablement, the device-size gate is NO-GO until an equally authoritative separately reviewed path exists.
 
 ## 8. Repository hygiene
 
@@ -383,7 +383,7 @@ Important v33/C++23 gates include:
 - module/Spider/texture/PNG/render/inspection regressions;
 - `tools/test_verify_device_apk.py` for package/signing/dedup/4 MiB/frozen-user/stable-installed-identity/ART-stress policy;
 - exact APK verifier for **both** Phase-2 APKs;
-- physical Samsung acceptance for the final production-signed release candidate.
+- physical Android device acceptance for the final production-signed release candidate.
 
 PTX #52 architecture acceptance does **not** mean the new runtime regression has executed. Until the final exact-head CMake/CTest checkpoint runs, its execution status remains pending.
 
@@ -402,14 +402,14 @@ Never promote based on stale SHA or an unexecuted workflow.
 Keep three artifact identities separate:
 1. **debug/device-test APK** — test-signed diagnostic/installable artifact;
 2. **unsigned release APK** — pre-signing structural/package evidence;
-3. **production-signed release APK** — final installable Samsung/promotion artifact.
+3. **production-signed release APK** — final installable Android device/promotion artifact.
 
 Production signing changes APK bytes and SHA-256. Therefore:
-- never use the unsigned release SHA as final Samsung/promotion identity;
+- never use the unsigned release SHA as final Android device/promotion identity;
 - after production signing, rerun the full applicable package/ABI/JNI/ZIP/ELF/16 KiB/dedup/size verifier on the signed APK;
 - verify the expected production certificate SHA-256, not merely “not the debug signer”;
 - record the exact post-signing APK SHA-256;
-- #45 and Samsung acceptance must use that same signed artifact/hash;
+- #45 and Android device acceptance must use that same signed artifact/hash;
 - publication must consume that exact verified signed artifact rather than rebuild/re-sign a lookalike.
 
 Final device measurement must call `tools/measure_installed_footprint.py` with explicit `--expected-apk-sha256 <post-signing-sha256>` and explicit/frozen Android user scope.
@@ -430,10 +430,10 @@ Required promotion evidence eventually includes:
 2. clean Android debug + unsigned release structural evidence;
 3. production-signed post-signing verifier evidence;
 4. exact package/hash/size/dedup metrics;
-5. physical Samsung scenarios + **path-correct** `StorageStats.getAppBytes()` <=4 MiB on the exact signed artifact;
+5. physical Android device scenarios + **path-correct** `StorageStats.getAppBytes()` <=4 MiB on the exact signed artifact;
 6. NativeActivity/managed-shim thread/lifetime and accessibility dispositions remain satisfied;
 7. publication consumes the exact reviewed signed artifact/hash through the single active release authority;
-8. Viktor explicitly approves merge/release.
+8. VrUaCom explicitly approves merge/release.
 
 ## 11. Mandatory Project task format
 

@@ -63,7 +63,7 @@ Bounded texture-bundle framing -> generic DDS children and preview/gallery sessi
 
 ## Accepted v24 behavior
 
-The 2026-09-10 Samsung acceptance confirms the production baseline at the device level:
+The 2026-09-10 Android device acceptance confirms the production baseline at the device level:
 
 - MOD opens/renders;
 - SCM opens/renders;

@@ -72,7 +72,7 @@ parser, texture-binding algorithm or Java DMC logic was introduced.
 
 ## User-confirmed v24 acceptance
 
-On 2026-09-10, after receiving the v24 APK and test instructions, Victor
+On 2026-09-10, after receiving the v24 APK and test instructions, VrUaCom
 reported: «Є все працює і вага 2.32», then explicitly requested that the latest
 version be merged into main. Record this as user-confirmed device acceptance
 and 2.32 MB installed size; no individual per-file test log was supplied.

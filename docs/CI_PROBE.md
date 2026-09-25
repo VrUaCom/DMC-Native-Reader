@@ -26,7 +26,7 @@ For accepted v24, the actual executed evidence was:
 - clean Android arm64 build;
 - APK package/version/ABI verification;
 - ZIP/signature/module/JNI boundary checks;
-- physical Samsung acceptance of all four supported families and PTX texture application.
+- physical Android device acceptance of all four supported families and PTX texture application.
 
 For candidate v26, nine portable/native regressions and clean APK verification pass, while physical-device acceptance is still pending.
 

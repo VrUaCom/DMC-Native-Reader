@@ -7,7 +7,7 @@ Source evidence snapshot: read-only `VrUaCom/dmc-rengine-cpp` commit `50d070e158
 
 `VrUaCom/dmc-rengine-cpp` is absolute READ-ONLY for this work. Native Reader may inspect/read source and evidence from commit `50d070e...`, but must not write, commit, branch, comment, create issues/PRs, change CMake, tests, docs, APIs, targets or any other resource in Rengine.
 
-Viktor has explicitly authorized one narrow exception to the normal no-copy rule: PTX runtime behavior recovered in `50d070e...` may be copied into **DMC Native Reader** and adapted/ported to ISO C++23. This authorization applies only to the bounded PTX runtime slice required for Native Reader and does not grant general permission to copy other Rengine subsystems.
+VrUaCom has explicitly authorized one narrow exception to the normal no-copy rule: PTX runtime behavior recovered in `50d070e...` may be copied into **DMC Native Reader** and adapted/ported to ISO C++23. This authorization applies only to the bounded PTX runtime slice required for Native Reader and does not grant general permission to copy other Rengine subsystems.
 
 ## 2. One PTX module, two internal layers
 
