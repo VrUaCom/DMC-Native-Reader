@@ -1,4 +1,4 @@
-# Security Policy
+chrome://flags/#reduced-referrer-granularity
 
 Last updated: 2026-09-10.
 
@@ -71,3 +71,4 @@ Out of scope unless they directly affect Native Reader interoperability/security
 - vulnerabilities in Capcom software;
 - vulnerabilities in the original game executable;
 - unrelated third-party modding tools.
+chrome://flags/#reduced-referrer-granularity
