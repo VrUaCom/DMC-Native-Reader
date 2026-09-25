@@ -1,5 +1,6 @@
 """pl011: move the skirt (and its side ribbon) out of the body MOD into the
-slot-12 coat MOD as cloth. The coat root follows body joint 3 (0x1402120A7);
+slot-12 coat MOD as cloth. The coat root follows body joint 3 (0x1402120A7),
+or 3 + header +0x13 with coatjoint_patch.py;
 eight waist chains (anchor + 3 links, local -Y toward the hem, Y toward the
 parent as the CLT 'Y' axis expects) carry the skirt; the thigh capsules of
 the player coat (joints 15/16/19/20) push block 0 out of the legs."""
@@ -25,6 +26,10 @@ def weights(ctl):
 FIXED, DANTE, OUT = sys.argv[1:4]
 
 CHAINS, LINKS = 8, 3
+# Coat root joint. The retail EXE always uses 3 (chest); with
+# coatjoint_patch.py it uses 3 + coat header +0x13, so 14 (pelvis) keeps the
+# skirt on the hips in every motion.
+ROOT_JOINT = int(sys.argv[4]) if len(sys.argv) > 4 else 14
 STIFFNESS = 0.35
 
 slots = pac_slots(open(FIXED, 'rb').read())
@@ -79,8 +84,8 @@ for i, n in enumerate(body.order):
     p = body.parent[i]
     base = world[p] if p != 255 else np.zeros(3, np.float32)
     world[n] = (base + np.array(T[n][:3], np.float32)).astype(np.float32)
-J3 = world[3].astype(np.float64)
-print('joint 3 rest', J3)
+JR = world[ROOT_JOINT].astype(np.float64)
+print(f'root joint {ROOT_JOINT} rest', JR)
 
 # ---- chain layout from the skirt shape ----------------------------------
 sk = sorted({i for k in skirt for i in tris[k]})
@@ -106,7 +111,7 @@ for c in range(CHAINS):
 nodes = 1 + CHAINS * (1 + LINKS)
 parent = [255]; transforms = [transform_record(0, 0, 0)]
 for c, (th, top, D, L) in enumerate(chains):
-    a = top - J3
+    a = top - JR
     u = -D                                  # local +Y (toward the parent)
     sx = math.hypot(u[0], u[2])
     rx = math.atan2(sx, u[1]); ry = math.atan2(u[0], u[2])
@@ -157,15 +162,17 @@ for i in range(n):
     w = pairs[0][1] | (pairs[1][1] << 5) | (pairs[2][1] << 10)
     if i % 3 != 2: w |= 0x8000
     ctlw += struct.pack('<H', w)
-    newpos += struct.pack('<3f', *(cpos[i] - J3))
+    newpos += struct.pack('<3f', *(cpos[i] - JR))
 coat_mesh.pos = bytes(newpos); coat_mesh.blend = bytes(blend); coat_mesh.ctl = bytes(ctlw)
 
 coat = Mod()
 dcoat = read_mod(dante[12])
-coat.header = dcoat.header
+coat.header = bytearray(dcoat.header)
+coat.header[0x13] = ROOT_JOINT - 3      # read by the patched coat update
+coat.header = bytes(coat.header)
 obj = Obj()
 rec = bytearray(body.objects[2].record)
-local = cpos - J3
+local = cpos - JR
 centre = (local.min(0) + local.max(0)) / 2
 radius = float(np.linalg.norm(local - centre, axis=1).max())
 struct.pack_into('<4f', rec, 0x30, *centre, radius)

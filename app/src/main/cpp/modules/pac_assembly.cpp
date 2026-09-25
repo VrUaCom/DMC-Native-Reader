@@ -437,12 +437,20 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 if (*entry.slot == motion::kPlayerBodySlot) body = part;
                 if (*entry.slot == motion::kPlayerCoatSlot) coat = part;
             }
-            // IPlayer coat: top-level slot 12 hangs from body joint 3.
-            if (body && coat &&
-                motion::attach_part_skeleton(assembled.get(), *body, *coat,
-                                             motion::kPlayerCoatHostJoint, true)) {
-                ++report.attached_parts;
-                report.detail_attachments += " coat=slot12->bodyJoint3";
+            // IPlayer coat: top-level slot 12 hangs from body joint 3 (or
+            // 3 + coat header +0x13 under the coat-joint EXE patch).
+            if (body && coat) {
+                const auto& coat_bytes = *entries[model_entry[*coat]].bytes;
+                const auto body_joints =
+                    assembled->composite_parts[*body].scene.nodes.size();
+                const auto host = motion::player_coat_host_joint(coat_bytes, body_joints);
+                if (motion::attach_part_skeleton(assembled.get(), *body, *coat, host, true)) {
+                    ++report.attached_parts;
+                    report.detail_attachments += " coat=slot12->bodyJoint" + std::to_string(host);
+                    if (host != motion::kPlayerCoatHostJoint) {
+                        report.detail_attachments += "(coat+0x13 patch)";
+                    }
+                }
             }
             // Enemy node constraints (CEm028 init 0x140130480): top-level part
             // slots follow body joints node by node.

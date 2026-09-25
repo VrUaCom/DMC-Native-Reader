@@ -618,6 +618,16 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     return out;
 }
 
+std::uint32_t player_coat_host_joint(std::span<const std::uint8_t> coat_mod,
+                                    std::size_t body_joint_count) noexcept {
+    if (coat_mod.size() < 0x40U || coat_mod[0] != 'M' || coat_mod[1] != 'O' ||
+        coat_mod[2] != 'D') {
+        return kPlayerCoatHostJoint;
+    }
+    const std::uint32_t joint = kPlayerCoatHostJoint + coat_mod[0x13];
+    return joint < body_joint_count ? joint : kPlayerCoatHostJoint;
+}
+
 Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,
                                 const std::array<float, 3>& rotation_xyz_radians) noexcept {
     // Row-vector rotations as 0x140030F10 / 0x140030FC0 / 0x140031080 build them.

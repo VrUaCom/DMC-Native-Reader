@@ -91,9 +91,44 @@ python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt.pac
 - **SHW:** slot 8 is rebuilt without the skirt. Slot 14 has one hull per
   chain.
 
-Limit: the root follows the chest (joint 3), not the pelvis (joint 14). At
-the waistline, the gap between the two carriers is 2 to 5 units in idle and
-run motions, 8 to 12 in many attacks, and up to 25 in flips
-(`slot_0003.pac/slot_0009.mot`). In those poses the skirt visibly leaves the
-hips. Sleeves and the shirt cannot move into the coat at all, because no coat
-node follows the arms.
+### Hanging the coat from the pelvis (`coatjoint_patch.py`)
+
+The retail EXE hangs the coat from the chest (joint 3). At the waistline, the
+gap between the chest and the pelvis is 2 to 5 units in idle and run motions,
+8 to 12 in many attacks, and up to 25 in flips, so a skirt carried by the
+chest leaves the hips.
+
+`coatjoint_patch.py` writes a patched copy of the canonical `dmc3.exe`. In
+the patched copy, CPlDante hangs the coat from joint `3 + coat header
++0x13`. Retail coats (pl000, pl001) have 0 there, so they stay on the chest.
+`skirtcoat.py` writes 11 there by default, which gives joint 14 (the pelvis).
+It also stores the vertices relative to the pelvis.
+
+```sh
+python3 coatjoint_patch.py dmc3.exe dmc3_coatjoint.exe
+python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt.pac      # pelvis (default)
+python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt3.pac 3   # retail EXE: chest
+```
+
+What the patch changes:
+
+- The three places that load the joint-3 pointer become `call cave; nop; nop`:
+  - `0x1402120C4` in the coat update, which then calls `vtbl+0x190`;
+  - `0x140218EFD` and `0x140218F67` in CPlDante virtual `0x140218960`, which
+    then call `vtbl+0x198`.
+- Each cave does
+  `movzx eax, byte [player+0x76BA]; mov rdx, [player+rax*8+0x1898]; ret`.
+  - `player+0x76BA` holds the coat's header byte `+0x13`. The coat object is
+    at `player+0x7540` (vtable `0x1404C9010`), and its MOD manager is at
+    `+0x80`. `0x1402F960E` copies header `+0x13` into manager `+0xFA`.
+  - Joint pointers are at `+0x1880 + 8·j`.
+  - The caves sit in `int3` padding between functions (`0x140346CF2`, 20
+    bytes, and `0x1403455D5`, 17 bytes).
+- The script refuses any input other than the canonical executable, and
+  checks every original byte before patching it.
+
+Native Reader follows the same rule: `player_coat_host_joint()` returns
+`3 + coat +0x13`.
+
+Sleeves and the shirt cannot move into the coat, because the coat has a
+single root and no coat node follows the arms or the chest.

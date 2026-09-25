@@ -27,6 +27,13 @@ namespace dmcresource::motion {
 //    (CPlVergil 0x140225A16, CPlDante 0x1402120A7, CPlNewVergil 0x1402204E9);
 //  * weapons: root = local(T, R) x player.joint(j) (0x1401FD8F0, 0x140231505).
 inline constexpr std::uint32_t kPlayerCoatHostJoint = 3U;
+// Coat host joint for a coat MOD. The retail EXE always uses joint 3; with
+// Native Reader tools/mod_fix/coatjoint_patch.py, CPlDante reads the coat
+// manager's copy of header +0x13 (player +0x76BA) and uses joint 3 + that
+// byte. Retail coats carry 0 (pl000, pl001), so they stay on joint 3. Out of
+// range values fall back to joint 3.
+[[nodiscard]] std::uint32_t player_coat_host_joint(std::span<const std::uint8_t> coat_mod,
+                                                   std::size_t body_joint_count) noexcept;
 inline constexpr std::uint32_t kPlayerBodySlot = 1U;
 inline constexpr std::uint32_t kPlayerCoatSlot = 12U;
 inline constexpr std::uint32_t kPlayerTextureSlot = 0U;

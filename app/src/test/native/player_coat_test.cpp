@@ -373,7 +373,21 @@ std::vector<std::uint8_t> make_body_mot() {
 
 }  // namespace
 
+void test_coat_host_joint() {
+    using dmcresource::motion::player_coat_host_joint;
+    std::vector<std::uint8_t> mod(0x40U, 0U);
+    mod[0] = 'M'; mod[1] = 'O'; mod[2] = 'D'; mod[3] = ' ';
+    assert(player_coat_host_joint(mod, 24U) == 3U);      // retail coats: +0x13 = 0
+    mod[0x13] = 11U;
+    assert(player_coat_host_joint(mod, 24U) == 14U);     // pelvis under the patch
+    mod[0x13] = 40U;
+    assert(player_coat_host_joint(mod, 24U) == 3U);      // out of range -> joint 3
+    mod[0] = 'X';
+    assert(player_coat_host_joint(mod, 24U) == 3U);
+}
+
 int main() {
+    test_coat_host_joint();
     namespace motion = dmcresource::motion;
     const auto ptx = make_one_slot_ptx();
     const auto body = make_body_mod();
