@@ -13,7 +13,7 @@ Native Android reader for Devil May Cry 3 HD Collection resources, built around 
 **Production registry:** **MOD / SCM / DDS / PTX / EventTbl**  
 **Weight contract:** **APK <= 4 MiB; installed package/code <= 4 MiB on the acceptance Android device**
 
-The accepted v26 line was physically tested on Android device and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Android device acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
+The accepted v26 line was physically tested on an Android device and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Android device acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
 
 ## v33 capabilities
 

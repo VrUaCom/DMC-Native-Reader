@@ -118,7 +118,7 @@ PR #33 remains draft until a real exact-head clean C++23 build runs the full nat
 
 ### Acceptance
 
-- the owner confirmed the required Android device/device tests on 2026-09-10 and explicitly approved PR #32 for merge;
+- the owner confirmed the required Android device tests on 2026-09-10 and explicitly approved PR #32 for merge;
 - the bounded v25/v26 regression and APK evidence was accepted with that physical-device confirmation;
 - GitHub-hosted jobs on the accepted line can fail before running any step, so hosted CI is not claimed green.
 
@@ -145,7 +145,7 @@ See `docs/UV_GALLERY_V25.md` and `docs/TOOL_INSPECTION_V26.md`.
 
 - seven local/native regressions passed;
 - arm64 APK identity, ZIP, signing, module markers and JNI export gates passed;
-- owner confirmed on Android device that all four supported file families open and PTX model texture application works;
+- owner confirmed on the acceptance Android device that all four supported file families open and PTX model texture application works;
 - GitHub-hosted jobs on the tested revision failed before executing any steps and produced no useful job logs, so CI is not claimed green.
 
 See `docs/SIZE_AND_MODULES_V24.md`.

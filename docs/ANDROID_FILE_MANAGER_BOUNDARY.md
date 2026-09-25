@@ -23,7 +23,7 @@ Physical Android device testing established the following sequence at that stage
 1. v6 installed successfully under `com.dmcrengine.nativereader`.
 2. Direct app launch succeeded.
 3. Runtime `PackageManager` probes resolved constructed VIEW intents for several fallback MIME/URI combinations.
-4. Tapping the real `.mod` or `.scm` in that OEM file manager build did not launch the app or show the normal chooser; My Files displayed its own unsupported-file/Play Store path.
+4. Tapping the real `.mod` or `.scm` in that OEM file manager build did not launch the app or show the normal chooser; the OEM file manager displayed its own unsupported-file/Play Store path.
 5. `MainActivity` remained at `ACTION_MAIN`, so there was no evidence that a VIEW intent reached Native Reader.
 
 At that time this correctly classified the failure above the native decoder and above ordinary package resolution: the OEM file manager appeared to make its own unsupported-file decision.
