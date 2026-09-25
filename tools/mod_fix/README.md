@@ -56,3 +56,44 @@ is 1,178,816 bytes with 15 slots, SHA-256
 - Native Reader reports no non-canonical note.
 - Both SHW slots parse with no diagnostics.
 - The floor shadow is the girl's own silhouette.
+
+## Skirt as the coat (`skirtcoat.py`)
+
+`skirtcoat.py` builds a second variant from the repaired PAC. It moves the
+skirt and its side ribbon out of the body MOD into the slot 12 coat MOD, so
+the game runs cloth physics on them.
+
+```sh
+python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt.pac
+```
+
+- **Cut:** body mesh 2 is a plain triangle list, with break bits `1,1,0` on
+  every vertex triple. The skirt is the welded shell whose UVs lie in the
+  pleat block of texture 2 (96 triangles). The ribbon is the small shell on
+  the +X side (18 triangles). The body keeps everything else.
+- **Coat MOD:**
+  - Written with `modwriter.py`, the canonical MOD writer. It round-trips
+    retail MODs byte for byte.
+  - One object, one mesh, texture 2.
+  - Vertices are in coat-root space, which is body rest minus joint 3 (the
+    game sets the coat root to body joint 3 every frame).
+  - The skeleton is 33 nodes: the root, then 8 waist chains of an anchor and
+    3 links. Each anchor's local −Y points down the skirt, and each link is
+    `(0, −L, 0)`, so every node's Y axis points at its parent, as the CLT `Y`
+    axis expects.
+  - Skin weights interpolate between the two nearest chains and along the
+    chain, using up to 3 influences quantized to 31.
+- **CLT:** `ClothNum 2`, following `pl001_02.clt`. Only block 0 gets the six
+  player-coat capsules. The joint-3 capsule sits in front of the hips (z
+  +10, r 15, extending 40 units down) and would push a short skirt forward.
+  So the front chains go to block 1, and the side and back chains (block 0)
+  collide with the waist and thighs.
+- **SHW:** slot 8 is rebuilt without the skirt. Slot 14 has one hull per
+  chain.
+
+Limit: the root follows the chest (joint 3), not the pelvis (joint 14). At
+the waistline, the gap between the two carriers is 2 to 5 units in idle and
+run motions, 8 to 12 in many attacks, and up to 25 in flips
+(`slot_0003.pac/slot_0009.mot`). In those poses the skirt visibly leaves the
+hips. Sleeves and the shirt cannot move into the coat at all, because no coat
+node follows the arms.
