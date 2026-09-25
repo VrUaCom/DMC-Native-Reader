@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <new>
@@ -312,6 +313,58 @@ bool attach_part_skeleton(Session* session,
         HierarchyOverlay overlay;
         if (materialize_hierarchy_overlay(session->scene, &overlay)) {
             session->hierarchy_overlay = std::move(overlay);
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<CompositeNodeConstraint> parse_coat_constraints(std::span<const std::uint8_t> bytes) {
+    std::vector<CompositeNodeConstraint> out;
+    const auto u32 = [&bytes](std::size_t o) {
+        return static_cast<std::uint32_t>(bytes[o]) |
+               (static_cast<std::uint32_t>(bytes[o + 1U]) << 8U) |
+               (static_cast<std::uint32_t>(bytes[o + 2U]) << 16U) |
+               (static_cast<std::uint32_t>(bytes[o + 3U]) << 24U);
+    };
+    if (bytes.size() < 0x10U || bytes[0] != 'C' || bytes[1] != 'C' || bytes[2] != 'N' ||
+        bytes[3] != 'S' || u32(4U) != 1U) {
+        return out;
+    }
+    const std::size_t count = std::min<std::size_t>(u32(8U), 16U);
+    for (std::size_t i = 0U; i < count; ++i) {
+        const std::size_t o = 0x10U + i * 0x50U;
+        if (o + 0x50U > bytes.size()) break;
+        const auto node = u32(o);
+        const auto joint = u32(o + 4U);
+        if (node >= kPlayerCoatJointCapacity || joint >= 96U) continue;
+        CompositeNodeConstraint c;
+        c.child_node = node;
+        c.host_node = joint;
+        for (std::size_t k = 0U; k < 16U; ++k) {
+            c.offset.values[k] = std::bit_cast<float>(u32(o + 0x10U + k * 4U));
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+bool set_part_node_constraints(Session* session,
+                               std::size_t part_index,
+                               std::span<const CompositeNodeConstraint> constraints) noexcept {
+    if (session == nullptr || part_index >= session->composite_parts.size()) return false;
+    try {
+        auto& part = session->composite_parts[part_index];
+        if (!part.placement.resolved) return false;
+        for (const auto& c : constraints) {
+            if (c.child_node >= part.scene.nodes.size()) return false;
+        }
+        const auto previous = part.placement.node_constraints;
+        part.placement.node_constraints.assign(constraints.begin(), constraints.end());
+        if (!pose_part(session, part_index)) {
+            part.placement.node_constraints = previous;
+            return false;
         }
         return true;
     } catch (...) {

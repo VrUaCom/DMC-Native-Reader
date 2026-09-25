@@ -57,78 +57,84 @@ is 1,178,816 bytes with 15 slots, SHA-256
 - Both SHW slots parse with no diagnostics.
 - The floor shadow is the girl's own silhouette.
 
-## Skirt as the coat (`skirtcoat.py`)
+## Costume as cloth (`coat_patch.py` + `costume.py`)
 
-`skirtcoat.py` builds a second variant from the repaired PAC. It moves the
-skirt and its side ribbon out of the body MOD into the slot 12 coat MOD, so
-the game runs cloth physics on them.
-
-```sh
-python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt.pac
-```
-
-- **Cut:** body mesh 2 is a plain triangle list, with break bits `1,1,0` on
-  every vertex triple. The skirt is the welded shell whose UVs lie in the
-  pleat block of texture 2 (96 triangles). The ribbon is the small shell on
-  the +X side (18 triangles). The body keeps everything else.
-- **Coat MOD:**
-  - Written with `modwriter.py`, the canonical MOD writer. It round-trips
-    retail MODs byte for byte.
-  - One object, one mesh, texture 2.
-  - Vertices are in coat-root space, which is body rest minus joint 3 (the
-    game sets the coat root to body joint 3 every frame).
-  - The skeleton is 33 nodes: the root, then 8 waist chains of an anchor and
-    3 links. Each anchor's local −Y points down the skirt, and each link is
-    `(0, −L, 0)`, so every node's Y axis points at its parent, as the CLT `Y`
-    axis expects.
-  - Skin weights interpolate between the two nearest chains and along the
-    chain, using up to 3 influences quantized to 31.
-- **CLT:** `ClothNum 2`, following `pl001_02.clt`. Only block 0 gets the six
-  player-coat capsules. The joint-3 capsule sits in front of the hips (z
-  +10, r 15, extending 40 units down) and would push a short skirt forward.
-  So the front chains go to block 1, and the side and back chains (block 0)
-  collide with the waist and thighs.
-- **SHW:** slot 8 is rebuilt without the skirt. Slot 14 has one hull per
-  chain.
-
-### Hanging the coat from the pelvis (`coatjoint_patch.py`)
-
-The retail EXE hangs the coat from the chest (joint 3). At the waistline, the
-gap between the chest and the pelvis is 2 to 5 units in idle and run motions,
-8 to 12 in many attacks, and up to 25 in flips, so a skirt carried by the
-chest leaves the hips.
-
-`coatjoint_patch.py` writes a patched copy of the canonical `dmc3.exe`. In
-the patched copy, CPlDante hangs the coat from joint `3 + coat header
-+0x13`. Retail coats (pl000, pl001) have 0 there, so they stay on the chest.
-`skirtcoat.py` writes 11 there by default, which gives joint 14 (the pelvis).
-It also stores the vertices relative to the pelvis.
+These two tools turn the costume (skirt, side ribbon and both sleeves) into
+cloth that hangs from the right bones.
 
 ```sh
-python3 coatjoint_patch.py dmc3.exe dmc3_coatjoint.exe
-python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt.pac      # pelvis (default)
-python3 skirtcoat.py mod_fixed.pac pl000.pac mod_skirt3.pac 3   # retail EXE: chest
+python3 coat_patch.py dmc3.exe dmc3_coat.exe             # canonical EXE only
+python3 costume.py mod_fixed.pac pl000.pac mod_costume.pac
+python3 coat_patch.py --verify-asm coat_constraints.s     # needs binutils
 ```
 
-What the patch changes:
+### EXE patch (`coat_patch.py`)
 
-- The three places that load the joint-3 pointer become `call cave; nop; nop`:
-  - `0x1402120C4` in the coat update, which then calls `vtbl+0x190`;
-  - `0x140218EFD` and `0x140218F67` in CPlDante virtual `0x140218960`, which
-    then call `vtbl+0x198`.
-- Each cave does
-  `movzx eax, byte [player+0x76BA]; mov rdx, [player+rax*8+0x1898]; ret`.
-  - `player+0x76BA` holds the coat's header byte `+0x13`. The coat object is
-    at `player+0x7540` (vtable `0x1404C9010`), and its MOD manager is at
-    `+0x80`. `0x1402F960E` copies header `+0x13` into manager `+0xFA`.
-  - Joint pointers are at `+0x1880 + 8·j`.
-  - The caves sit in `int3` padding between functions (`0x140346CF2`, 20
-    bytes, and `0x1403455D5`, 17 bytes).
-- The script refuses any input other than the canonical executable, and
-  checks every original byte before patching it.
+The script refuses any file other than the canonical `dmc3.exe` and checks
+every original byte before changing it. It drops the Authenticode
+certificate, because a patched file cannot keep a valid signature. It also
+recomputes the PE checksum.
 
-Native Reader follows the same rule: `player_coat_host_joint()` returns
-`3 + coat +0x13`.
+1. **Coat root joint.** CPlDante always hung the coat from joint 3.
+   - Three places load that joint pointer: `0x1402120C4`, `0x140218EFD` and
+     `0x140218F67`.
+   - They now call a 16-byte routine placed in `int3` padding. The routine
+     reads byte `+0x13` of the coat MOD header, then takes joint `3 + that
+     byte`.
+   - The byte comes from `player+0x76BA`, which is the coat object
+     (`+0x7540`, class CDraw), then its MOD manager (`+0x80`), then the
+     manager's copy of header `+0x13` (`+0xFA`).
+   - Retail coats have 0 there, so they stay on the chest.
+2. **Coat node constraints.** A new section `.dmcx` (VA `0x140DAC000`)
+   holds `coat_constraints.s`.
+   - It is called at `0x140215373`, in CPlDante's coat load. That is after
+     `0x14030F850` has bound the coat joints (which clears every joint
+     `+0x100`) and after the cloth parse.
+   - It reads PAC slot 15 (`'CCNS'`). The retail game never reads that slot,
+     so PACs without it behave as before.
+   - For each listed coat node it builds a mode-1 constraint, the same
+     object CEm028 uses for Nevan's sleeves (vtable `0x1404CC1F8`,
+     `0x1402CBBE0`). The node's world is then offset × body joint world.
+   - The constraints live in the section, in pools of 16 per player (4
+     pools).
 
-Sleeves and the shirt cannot move into the coat, because the coat has a
-single root and no coat node follows the arms or the chest.
+Slot 15 layout:
+- `+0` `'CCNS'`, `+4` version 1, `+8` count;
+- from `+0x10`, one 0x50-byte record per node: u32 coat node, u32 body
+  joint, u64 0, then `f32[16]` offset in row-vector layout.
+
+Limits from the EXE:
+- 0x1401DE820 allocates 39 coat joints, so a coat can have at most 39
+  nodes.
+- CPlDante has room for one cloth chain: it sits at `+0xA210`, and
+  `+0xA300` is the next joint table. A Dante CLT must therefore use
+  `ClothNum 1`. Vergil has room for two (`+0xA230`, `+0xA410`).
+- Only that chain collides with the six player coat capsules.
+
+Checked by emulating the patched image with unicorn:
+- the hook installs the constraints from slot 15 of the real costume PAC;
+- the game's own `0x1402CBBE0` yields offset × host;
+- PACs without slot 15 (retail pl000, the original pl011) install nothing.
+
+### Costume builder (`costume.py`)
+
+- **Cut.** The script takes the skirt, the ribbon and the fabric of both
+  sleeves out of body mesh 2:
+  - the skirt is picked by the pleat UV block of texture 2;
+  - the sleeves are the triangles on bones 7/8 and 11/12, keeping only
+    fabric, told apart from skin by texel colour.
+- **Coat (37 nodes).** The root hangs from the pelvis (header `+0x13 = 11`).
+  - **Skirt:** 8 waist chains, each an anchor and 2 links.
+  - **Sleeves:** each arm has three anchors on body joints 6/7/8 (10/11/12)
+    with identity offsets, placed at the joints' rest positions. The
+    sleeve's own weights on those joints carry over one to one.
+  - **Sleeve cloth:** a 3-link chain runs from the elbow anchor along the
+    bottom of the bell. It takes the lower half of the bell, more toward
+    the cuff.
+- **CLT.** One block with 16 bones. The three front skirt chains stay rigid,
+  because the joint-3 capsule (z +10, r 15) sits in front of the hips.
+- **Shadows.** SHW slot 8 is rebuilt without the costume. SHW slot 14 holds
+  hulls per skirt chain and per sleeve part.
+
+Native Reader follows the same rules: the coat hangs from joint `3 + coat
++0x13`, and slot 15 gives the node constraints.

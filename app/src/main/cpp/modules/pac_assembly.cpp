@@ -450,6 +450,20 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     if (host != motion::kPlayerCoatHostJoint) {
                         report.detail_attachments += "(coat+0x13 patch)";
                     }
+                    // Slot 15 node constraints (coat patch, hook 0x140215373).
+                    for (const auto& e : entries) {
+                        if (e.archive != 0U || !e.container.empty() ||
+                            e.slot != motion::kPlayerCoatConstraintSlot) {
+                            continue;
+                        }
+                        const auto constraints = motion::parse_coat_constraints(*e.bytes);
+                        if (!constraints.empty() &&
+                            motion::set_part_node_constraints(assembled.get(), *coat, constraints)) {
+                            report.detail_attachments += " coatConstraints=" +
+                                std::to_string(constraints.size()) + "(slot15)";
+                        }
+                        break;
+                    }
                 }
             }
             // Enemy node constraints (CEm028 init 0x140130480): top-level part

@@ -140,6 +140,25 @@ inline constexpr std::array<EnemyPartConstraints, 3> kEnemyPartConstraints{{
     std::string_view archive_name, std::uint32_t part_slot) noexcept;
 
 // Hang `child_part` from `host_part` through per-node constraints.
+// Coat node constraints: optional player PAC slot 15 ('CCNS', version 1),
+// which the retail game never reads. With Native Reader
+// tools/mod_fix/coat_patch.py, CPlDante's coat load (hook at 0x140215373)
+// gives each listed coat node a mode-1 constraint (0x1402CBBE0: world =
+// offset x body joint world), as CEm028 init 0x140130480 does for Nevan.
+// Layout: +0 'CCNS', +4 version 1, +8 count, +0x10 count x 0x50 records
+// {u32 coat node, u32 body joint, u64 0, f32[16] offset}. The patch takes at
+// most 16 records, coat nodes < 39 (0x1401DE820 allocates 39 coat joints)
+// and body joints < 96; this parser applies the same limits.
+inline constexpr std::uint32_t kPlayerCoatConstraintSlot = 15U;
+inline constexpr std::uint32_t kPlayerCoatJointCapacity = 39U;
+[[nodiscard]] std::vector<CompositeNodeConstraint> parse_coat_constraints(
+    std::span<const std::uint8_t> bytes);
+
+// Replaces a part's node constraints and re-poses it.
+[[nodiscard]] bool set_part_node_constraints(Session* session,
+                                             std::size_t part,
+                                             std::span<const CompositeNodeConstraint> constraints) noexcept;
+
 [[nodiscard]] bool attach_part_nodes(Session* session,
                                      std::size_t host_part,
                                      std::size_t child_part,

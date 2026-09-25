@@ -386,8 +386,34 @@ void test_coat_host_joint() {
     assert(player_coat_host_joint(mod, 24U) == 3U);
 }
 
+void test_coat_constraints() {
+    using namespace dmcresource::motion;
+    std::vector<std::uint8_t> b(0x10U + 3U * 0x50U, 0U);
+    b[0] = 'C'; b[1] = 'C'; b[2] = 'N'; b[3] = 'S';
+    put_u32(b, 4U, 1U);
+    put_u32(b, 8U, 3U);
+    const std::uint32_t records[3][2] = {{25U, 8U}, {39U, 8U}, {30U, 12U}};
+    for (std::size_t i = 0U; i < 3U; ++i) {
+        const std::size_t o = 0x10U + i * 0x50U;
+        put_u32(b, o, records[i][0]);
+        put_u32(b, o + 4U, records[i][1]);
+        for (std::size_t k = 0U; k < 16U; ++k) {
+            const float v = (k % 5U == 0U) ? 1.0F : (k == 13U ? -2.0F : 0.0F);
+            put_u32(b, o + 0x10U + k * 4U, std::bit_cast<std::uint32_t>(v));
+        }
+    }
+    const auto c = parse_coat_constraints(b);
+    assert(c.size() == 2U);                       // node 39 is past the 39 coat joints
+    assert(c[0].child_node == 25U && c[0].host_node == 8U);
+    assert(c[1].child_node == 30U && c[1].host_node == 12U);
+    assert(c[0].offset.values[0] == 1.0F && c[0].offset.values[13] == -2.0F);
+    b[0] = 'X';
+    assert(parse_coat_constraints(b).empty());
+}
+
 int main() {
     test_coat_host_joint();
+    test_coat_constraints();
     namespace motion = dmcresource::motion;
     const auto ptx = make_one_slot_ptx();
     const auto body = make_body_mod();
