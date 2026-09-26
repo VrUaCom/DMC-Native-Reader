@@ -23,3 +23,5 @@ This release carries the v60–v68 development line, including:
 - DDS/PTX/TM2 texture-resource paths and PTX compatibility work already present in the v68 line.
 
 The Android release workflow builds the APK from the exact tagged commit, runs the repository package-policy tests and APK verifier, then publishes the APK and SHA-256 alongside this release.
+
+Release verifier identity is pinned to versionCode 68 / versionName 1.0.41 for this publication.
