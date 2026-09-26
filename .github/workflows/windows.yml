@@ -1,0 +1,64 @@
+name: Windows x64 parity
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "app/src/main/cpp/**"
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "app/src/main/cpp/**"
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-x64-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Pin VS2022 because the project deliberately uses the VS17 generator.
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: recursive
+
+      - name: Configure Windows x64
+        shell: pwsh
+        run: cmake -S app/src/main/cpp -B build/windows -G "Visual Studio 17 2022" -A x64 -DDMC_NATIVE_READER_BUILD_TESTS=OFF
+
+      - name: Build GUI and CLI
+        shell: pwsh
+        run: cmake --build build/windows --config Release --target dmc_native_reader_win dmc_native_reader_cli --parallel
+
+      - name: Package portable Windows build
+        shell: pwsh
+        run: |
+          $dist = "dist/DMC-Native-Reader-Windows-v68-1.0.41"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item "build/windows/Release/dmc_native_reader_win.exe" "$dist/DMC-Native-Reader.exe"
+          Copy-Item "build/windows/Release/dmc_native_reader_cli.exe" "$dist/DMC-Native-Reader-CLI.exe"
+          Copy-Item "windows/Register-OpenWith.ps1" $dist
+          Copy-Item "windows/Unregister-OpenWith.ps1" $dist
+          Copy-Item "README.md" "$dist/README.md"
+          Compress-Archive -Path "$dist/*" -DestinationPath "dist/DMC-Native-Reader-Windows-v68-1.0.41.zip"
+          Get-FileHash "dist/DMC-Native-Reader-Windows-v68-1.0.41.zip" -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  DMC-Native-Reader-Windows-v68-1.0.41.zip" } | Set-Content "dist/DMC-Native-Reader-Windows-v68-1.0.41.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DMC-Native-Reader-Windows-v68-1.0.41
+          path: |
+            dist/DMC-Native-Reader-Windows-v68-1.0.41.zip
+            dist/DMC-Native-Reader-Windows-v68-1.0.41.zip.sha256
+          if-no-files-found: error

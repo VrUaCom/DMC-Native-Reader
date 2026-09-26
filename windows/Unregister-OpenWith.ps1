@@ -6,9 +6,9 @@
   Reverses every key Register-OpenWith.ps1 wrote under HKEY_CURRENT_USER.
   .scm and .ptx return to "no association" (their state before registration)
   rather than being pointed at some other default -- this script only ever
-  owned that specific assignment, never a prior one. .dds and .mod keep
-  whatever default they already had; only the "Open with" list entry this
-  reader added is removed.
+  owned that specific assignment, never a prior one. Every other supported
+  extension keeps whatever default it already had; only the "Open with" list
+  entry this reader added is removed.
 #>
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -21,7 +21,11 @@ foreach ($ext in ".scm", ".ptx") {
   }
 }
 
-foreach ($ext in ".dds", ".mod", ".scm", ".ptx") {
+$openWithExtensions = @(
+  ".dds", ".mod", ".scm", ".ptx", ".tm2", ".pac", ".mot", ".efm",
+  ".shw", ".tsc", ".clt", ".fxbank", ".pnst", ".msc", ".colshape", ".colidx"
+)
+foreach ($ext in $openWithExtensions) {
   Remove-Item -Path "HKCU:\Software\Classes\$ext\OpenWithList\DMCNativeReader.exe" -Force -Recurse
 }
 
