@@ -8,16 +8,18 @@ labels: format,evidence
 ## Resource family
 
 - Family / extension:
-- Is this currently a production Native Reader module? (MOD / SCM / DDS / PTX / no):
 - Native Reader version/commit tested:
+- Platform:
 - Current Native Reader result:
 - Expected result/status:
 
+Current `main` native registry includes SCM, MOD, DDS, PTX, EventTbl, PAC, MOT, PNST, SHW, TSC, CLT, EFM, motion scripts, collision shape/index data and effect banks.
+
 ## Report type
 
-- [ ] bug/mismatch in promoted MOD/SCM/DDS/PTX behavior
-- [ ] new canonical evidence for an existing promoted family
-- [ ] candidate family for future Architecture v2 promotion
+- [ ] bug/mismatch in an existing native module
+- [ ] new canonical evidence for an existing family
+- [ ] candidate family for future promotion
 - [ ] documentation/evidence correction only
 
 Historical recognition-only code or a filename extension alone is not sufficient for production-module promotion.
@@ -54,16 +56,16 @@ Describe only offsets, counts, records, streams, relationships or invariants act
 - Evidence status / confidence boundary:
 - Does Native Reader need a new parser, or only projection/presentation of already-canonical data?
 
-Prefer the latter whenever canonical authority already exists.
+Prefer projection/presentation when canonical authority already exists.
 
 ## Proposed product change
 
 - [ ] no product change — evidence/documentation only
-- [ ] fix existing production module
+- [ ] fix existing native module
 - [ ] expand typed inspection/presentation capability
-- [ ] promote a new bounded Architecture v2 module
+- [ ] promote a new bounded native module
 
-If proposing a new module, describe its fail-closed behavior, malformed-input tests, typed projection contract and unresolved semantics. Do not propose restoring the pre-cleanup wide registry wholesale.
+If proposing a new module, describe its fail-closed behavior, malformed-input tests, typed projection contract and unresolved semantics.
 
 ## Reproduction / supporting material
 

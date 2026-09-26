@@ -1,57 +1,63 @@
 # DMC Native Reader documentation
 
-This directory mixes **current product specifications**, **accepted release evidence**, and **historical development evidence**. Read them according to the categories below rather than assuming every versioned document describes the current application.
+This directory contains current product documentation, release notes, architecture specifications, reverse-engineering evidence and historical development records.
+
+Do not assume that every version-numbered document describes the current public application.
 
 ## Current source of truth
 
-1. `../README.md` — product overview and accepted/candidate split.
-2. `STATUS.md` — exact accepted `main` baseline and active development candidate.
-3. `ARCHITECTURE_V2.md` — current portable core/module/session architecture.
-4. `ROADMAP.md` — completed phases and next work.
-5. `RELEASE_GATES_V1.md` — promotion/acceptance rules for the v1 line.
-6. `SPIDER_FAMILY.md` — Black Widow / Crusader / Tarantula responsibility contract.
+For current product state, read in this order:
 
-When a statement conflicts with an old version-specific evidence file, the current accepted code/build configuration plus `STATUS.md` take precedence for **current product state**. Historical evidence still remains authoritative for what happened in that historical build.
+1. [`../README.md`](../README.md) — public product overview, platform status and naming policy.
+2. [`STATUS.md`](STATUS.md) — accepted `main` baseline and current platform state.
+3. [`ROADMAP.md`](ROADMAP.md) — active work and next milestones.
+4. [`ARCHITECTURE_V2.md`](ARCHITECTURE_V2.md) — portable native architecture.
+5. [`RELEASE_GATES_V1.md`](RELEASE_GATES_V1.md) — release/promotion rules.
+6. [`SPIDER_FAMILY.md`](SPIDER_FAMILY.md) — Spider/Black Widow/Crusader responsibility boundaries.
 
-## Accepted release evidence
+When an older evidence document conflicts with current code or `STATUS.md`, the current accepted code and current status document take precedence for present-day product claims.
 
-- `SIZE_AND_MODULES_V24.md` — accepted v24 footprint/module/JNI evidence and Android device acceptance.
-- `PTX_MODEL_V23_EVIDENCE.md` — v23 PTX/model-texture milestone evidence that fed the accepted v24 line.
+Historical evidence remains authoritative for the build/revision it originally documented.
 
-These documents record exact historical artifacts; do not rewrite their hashes/sizes to match a later release.
+## Current releases
 
-## Historical development evidence
+### Android
 
-- `BUILD_EVIDENCE_V4.md` — standalone-repository migration-era v4 APK evidence; not current identity/support state.
-- `ANDROID_FILE_MANAGER_BOUNDARY.md` — v6/v7 OEM routing investigation, now prefaced with the resolved v24 product status.
-- `CI_PROBE.md` — hosted-runner/probe history and the current rule for classifying no-step Actions failures.
+- **v68 / 1.0.41**
+- promoted to `main` on 2026-09-26
+- release notes: [`releases/android-v68-1.0.41.md`](releases/android-v68-1.0.41.md)
 
-Historical version names/module counts/routing blockers must not be copied into current README/status/support claims without revalidation.
+### Windows
+
+- **v1.0.0 Preview**
+- public technical preview
+- older capability baseline than Android v68
+- Windows parity work must not be represented as released until a newer Windows artifact is published
+
+## Naming policy
+
+Use:
+
+- **Devil May Cry HD Collection** for the collection;
+- **Devil May Cry 3: Special Edition** for the game;
+- **DMC3** as shorthand after the full name is established.
+
+Do not use “Devil May Cry 3 HD Collection” as a product title.
+
+## Historical evidence
+
+Files with old version numbers, branch names, hashes, package sizes or acceptance states are preserved as historical evidence. Do not rewrite those values merely to make them match a newer release.
+
+Instead:
+
+- classify the old document as historical;
+- add a new release/evidence document for the new artifact;
+- update `README.md`, `STATUS.md`, `ROADMAP.md` and `CHANGELOG.md` when the current product state changes.
 
 ## Public/release administration
 
-- `PUBLIC_RELEASE_CHECKLIST.md` — current private-to-public/source/distribution checklist.
+- [`PUBLIC_RELEASE_CHECKLIST.md`](PUBLIC_RELEASE_CHECKLIST.md) — repository/public-release administration.
+- [`../SECURITY.md`](../SECURITY.md) — security reporting.
+- [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — contribution rules.
 
-Repository administration, licensing, visibility and production signing are separate from parser/reader acceptance.
-
-## Active candidate documentation
-
-The active `feature/dds-ptx-v1-acceptance` branch / draft PR #32 additionally contains:
-
-- `UV_GALLERY_V25.md` — per-texture-slot UV gallery implementation/evidence;
-- `TOOL_INSPECTION_V26.md` — long-press UV/object/mesh/hierarchy information implementation/evidence.
-
-These files describe a development candidate and are intentionally not treated as accepted `main` behavior until physical-device acceptance and merge.
-
-## Documentation maintenance rule
-
-When a change is promoted to accepted `main`, update in the same bounded slice:
-
-- root `README.md`;
-- `STATUS.md`;
-- `ROADMAP.md`;
-- root `CHANGELOG.md`;
-- architecture/release-gate docs when contracts change;
-- exact evidence files only when a new artifact/evidence milestone exists.
-
-Never replace historical evidence with current numbers; instead classify it clearly and add a new evidence document for the new build.
+Repository administration, licensing, platform distribution and parser acceptance are separate concerns.

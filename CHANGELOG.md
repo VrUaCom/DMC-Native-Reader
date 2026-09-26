@@ -2,7 +2,28 @@
 
 This changelog distinguishes accepted `main` history from development candidates. Historical build/evidence documents remain useful provenance but are not current support claims.
 
-## Unreleased — Native Reader 1.0.6 / v33 candidate
+## Android v68 / 1.0.41 — accepted `main`
+
+**Released:** 2026-09-26  
+**Release tag:** `android-v68-1.0.41`  
+**Accepted main:** `f4548b2475f74e438dfade4d2e3653674fc81a36`
+
+- promoted the v60–v68 line to `main`;
+- current Android versionCode / versionName is `68 / 1.0.41`;
+- native product language remains target-scoped C++23;
+- expanded current native registry includes model/scene, texture, archive/motion, shadow/cloth, collision and effect inspection paths;
+- current release notes live in `docs/releases/android-v68-1.0.41.md`.
+
+## Windows v1.0.0 Preview — public technical preview
+
+**Released:** 2026-09-20  
+**Release tag:** `windows-v1.0.0-preview`
+
+- portable Windows x64 read-only preview;
+- public preview supports MOD / SCM / DDS / PTX viewing;
+- the public Windows artifact predates Android v68 and must not be described as feature-parity with the current Android release.
+
+## Historical development record — Native Reader 1.0.6 / v33 candidate
 
 **Status:** draft PR #33 on `feature/png-export-multi-mod-v27`; exact-head build/device acceptance pending; not yet part of accepted `main`.
 
