@@ -1,8 +1,6 @@
 # DMC Native Reader
 
-**DMC Native Reader** is a read-only resource viewer and inspection tool for **Devil May Cry 3: Special Edition** as distributed in **Devil May Cry HD Collection**.
-
-The project uses a reusable native **C++23** core shared by platform shells. The current public platforms are Android and Windows.
+Native Android and Windows reader for Devil May Cry 3: Special Edition resources from Devil May Cry HD Collection, built around a reusable **C++23** core and canonical DMC Rengine read-side architecture.
 
 ## Releases
 
