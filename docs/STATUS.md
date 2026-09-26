@@ -170,13 +170,13 @@ Hard maximum: **4,194,304 bytes** from Android `StorageStats.getAppBytes()` exac
 
 ### ART policy is conditional on final #55 artifact
 
-**Path B / any DEX present:** final device run uses `--art-compile-mode speed`; record baseline StorageStats, run package-scoped full-AOT `cmd package compile -m speed -f <package>`, record stress StorageStats, and gate on `max(baseline, stress) <=4 MiB`.
+**Path B / any DEX present:** final Android device run uses `--art-compile-mode speed`; record baseline StorageStats, run package-scoped full-AOT `cmd package compile -m speed -f <package>`, record stress StorageStats, and gate on `max(baseline, stress) <=4 MiB`.
 
 **Path A / exact zero DEX:** exemption is allowed only when post-signing package verification proves zero DEX entries + `android:hasCode=false`. Then use `--art-compile-mode none`, authoritative baseline StorageStats <=4 MiB, and record ART stress as `NOT_APPLICABLE_ZERO_DEX`.
 
 A minimal shim or any DEX is Path B and must receive speed stress. For both paths final #40/#45 requires explicit `--expected-apk-sha256` of the exact post-signing production APK.
 
-If Android/AOSP does not expose authoritative package-storage `code:` bytes, final device gate is NO-GO until an equally authoritative separately reviewed path exists.
+If Android device/AOSP does not expose authoritative package-storage `code:` bytes, final device gate is NO-GO until an equally authoritative separately reviewed path exists.
 
 ## Current Android architecture
 
@@ -211,7 +211,7 @@ Never conflate:
 
 Production signing changes APK bytes and SHA.
 
-#40/#45 therefore require production signing, expected production certificate SHA, full post-signing verifier, exact post-signing APK SHA, #45 review of that exact artifact, and device measurement on that same artifact.
+#40/#45 therefore require production signing, expected production certificate SHA, full post-signing verifier, exact post-signing APK SHA, #45 review of that exact artifact, and Android device measurement on that same artifact.
 
 Final footprint always uses `--expected-apk-sha256 <post-signing-sha>`. ART mode is selected from exact signed package evidence: any DEX -> `speed`; zero DEX + `hasCode=false` -> `none`.
 

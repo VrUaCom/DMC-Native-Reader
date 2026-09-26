@@ -14,7 +14,13 @@ struct BuildOptions final {
     // infer host ownership from filenames. Current Android composition maps the
     // already-open model to part 0 and appended MODs to later parts.
     std::size_t primary_host_index{0U};
-    bool resolve_default_joint_attachments{true};
+    // Opt-in only. The canonical executable reads MOD header +0x13
+    // (manager +0xFA) solely as a translation probe (0x14031FA80, 0x1402FD040):
+    // it never supplies the full root matrix of a companion model's geometry.
+    // Companion MODs (hair, coat, accessories) are authored in the character's
+    // model space, so the product default keeps source coordinates and reports
+    // the selector as a diagnostic instead of moving geometry onto a host joint.
+    bool resolve_default_joint_attachments{false};
 };
 
 struct BuildStats final {

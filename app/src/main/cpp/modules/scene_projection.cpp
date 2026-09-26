@@ -45,6 +45,34 @@ using namespace dmcresource::resource_limits;
 
 }  // namespace
 
+void append_vertex_channels(const Mesh& source, bool color0, bool blend0, Mesh* out,
+                            bool normal0) {
+    if (out == nullptr) return;
+    const auto count = source.vertices.size();
+    if (normal0) {
+        if (source.has_normal0()) {
+            out->normal0.insert(out->normal0.end(), source.normal0.begin(), source.normal0.end());
+        } else {
+            out->normal0.insert(out->normal0.end(), count, Vec3{});
+        }
+    }
+    if (color0) {
+        if (source.has_color0()) {
+            out->color0.insert(out->color0.end(), source.color0.begin(), source.color0.end());
+        } else {
+            out->color0.insert(out->color0.end(), count,
+                               std::array<std::uint8_t, 4>{0x80U, 0x80U, 0x80U, 0x80U});
+        }
+    }
+    if (blend0) {
+        if (source.has_blend0()) {
+            out->blend0.insert(out->blend0.end(), source.blend0.begin(), source.blend0.end());
+        } else {
+            out->blend0.insert(out->blend0.end(), count, std::uint8_t{0U});
+        }
+    }
+}
+
 bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
     if (out == nullptr) return false;
     try {
@@ -64,6 +92,14 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         materialized.vertices.reserve(total_vertices);
         materialized.indices.reserve(total_indices);
         if (complete_uv0) materialized.uv0.reserve(total_vertices);
+        bool any_color0 = false;
+        bool any_blend0 = false;
+        bool any_normal0 = false;
+        for (const auto& primitive : scene.meshes) {
+            any_normal0 = any_normal0 || primitive.mesh.has_normal0();
+            any_color0 = any_color0 || primitive.mesh.has_color0();
+            any_blend0 = any_blend0 || primitive.mesh.has_blend0();
+        }
 
         for (const auto& primitive : scene.meshes) {
             const Matrix4* world = nullptr;
@@ -88,6 +124,7 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
                     primitive.mesh.uv0.begin(),
                     primitive.mesh.uv0.end());
             }
+            append_vertex_channels(primitive.mesh, any_color0, any_blend0, &materialized, any_normal0);
 
             if (base > static_cast<std::size_t>(
                            std::numeric_limits<std::uint32_t>::max())) {

@@ -81,6 +81,9 @@ jobs:
           gradle-version: "9.5.0"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The default "tools" package is gone from the SDK repository.
+          packages: platform-tools
 
       - name: Install Android SDK, NDK and CMake
         run: |
@@ -100,6 +103,8 @@ jobs:
           grep -Fq 'CXX_STANDARD 23' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_STANDARD_REQUIRED ON' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_EXTENSIONS OFF' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'dmc_native_reader_require_cpp23(dmc_rengine_reader_core' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'dmc_native_reader_require_cpp23(dmc_native_reader_rengine_viewer' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
@@ -173,6 +178,18 @@ jobs:
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
           grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.pac.archive-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.pnst.archive-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.shw.hull-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.tsc.scroll-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.clt.cloth-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.efm.model-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.motion-script.reader' /tmp/native-markers.txt
+          grep -Fq 'formats.collision.shape-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.collision.index-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.effect-bank.reader' /tmp/native-markers.txt
+          grep -Fq 'formats.mot.motion-reader' /tmp/native-markers.txt
+          grep -Fq 'native.motion.skeleton-rig' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
           grep -Fq 'spider.cpp23' /tmp/native-markers.txt
           grep -Fq 'canonical.mod.topology-break' /tmp/native-markers.txt
@@ -188,13 +205,10 @@ jobs:
             'formats.stage-txt.lexer' \
             'formats.dca.record-reader' \
             'formats.lig2.record-reader' \
-            'formats.pac.relative-slot-reader' \
-            'formats.pnst.relative-slot-reader' \
             'formats.nbz.container-reader' \
             'formats.efm.family-adapter' \
             'formats.mrp.family-adapter' \
-            'formats.shw.family-adapter' \
-            'formats.mot.recognition'; do
+            'formats.shw.family-adapter'; do
             if grep -Fq "$legacy" /tmp/native-markers.txt; then
               echo "legacy module leaked into core APK: $legacy"
               exit 1
@@ -204,7 +218,7 @@ jobs:
           AAPT2="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
           "$AAPT2" dump badging "$APK" > /tmp/core-badging.txt
           grep -Fq "package: name='com.dmcrengine.nativereader'" /tmp/core-badging.txt
-          grep -Fq "versionCode='33' versionName='1.0.6'" /tmp/core-badging.txt
+          grep -Fq "versionCode='65' versionName='1.0.38'" /tmp/core-badging.txt
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml | tee /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.scm' /tmp/manifest.txt
           grep -Fq 'application/vnd.dmc.mod' /tmp/manifest.txt
@@ -217,13 +231,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-modular-debug
+          name: dmc-native-reader-v65-modular-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-modular-release-unsigned
+          name: dmc-native-reader-v65-modular-release-unsigned
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 7
 
@@ -231,7 +245,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-phase2-failure-evidence
+          name: dmc-native-reader-v65-phase2-failure-evidence
           path: |
             build/phase2-evidence/
             app/build/outputs/apk/debug/app-debug.apk
@@ -241,7 +255,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-phase2-evidence
+          name: dmc-native-reader-v65-phase2-evidence
           path: build/phase2-evidence/
           if-no-files-found: error
           retention-days: 7

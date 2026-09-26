@@ -39,13 +39,13 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 33
-        versionName = "1.0.6"
+        versionCode = 68
+        versionName = "1.0.41"
 
         // Do not set -std= or other semantic C++ flags here. Gradle's CMake
-        // cppFlags are global to the external native build and would also alter
-        // vendored dependency targets. Native Reader language mode is owned by
-        // its CMake targets so the Rengine dependency keeps its own contract.
+        // cppFlags are global to the external native build. Language mode is
+        // owned by CMake targets: every target Native Reader compiles, the
+        // vendored Rengine ReaderCore included, is set to C++23 there.
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

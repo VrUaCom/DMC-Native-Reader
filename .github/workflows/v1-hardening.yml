@@ -39,6 +39,9 @@ jobs:
           gradle-version: "9.5.0"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The default "tools" package is gone from the SDK repository.
+          packages: platform-tools
 
       - name: Install Android SDK, NDK and CMake
         run: |
@@ -58,6 +61,8 @@ jobs:
           grep -Fq 'CXX_STANDARD 23' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_STANDARD_REQUIRED ON' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'CXX_EXTENSIONS OFF' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'dmc_native_reader_require_cpp23(dmc_rengine_reader_core' app/src/main/cpp/CMakeLists.txt
+          grep -Fq 'dmc_native_reader_require_cpp23(dmc_native_reader_rengine_viewer' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'Duplicate source entry in DMC_NATIVE_READER_CORE_SOURCES' app/src/main/cpp/CMakeLists.txt
           grep -Fq 'DMC_NATIVE_READER_TESTS' app/src/main/cpp/CMakeLists.txt
@@ -100,7 +105,7 @@ jobs:
             --gradle gradle \
             --expected-head "$EXPECTED_SOURCE_SHA"
 
-      - name: Verify v33 / 1.0.6 artifacts
+      - name: Verify v65 / 1.0.38 artifacts
         run: |
           set -euxo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -122,8 +127,8 @@ jobs:
           "$AAPT2" dump badging "$RELEASE_APK" | tee /tmp/release-badging.txt
           for BADGING in /tmp/debug-badging.txt /tmp/release-badging.txt; do
             grep -q "package: name='com.dmcrengine.nativereader'" "$BADGING"
-            grep -q "versionCode='33'" "$BADGING"
-            grep -q "versionName='1.0.6'" "$BADGING"
+            grep -q "versionCode='65'" "$BADGING"
+            grep -q "versionName='1.0.38'" "$BADGING"
             grep -q "application-label:'DMC Native Reader'" "$BADGING"
           done
 
@@ -143,6 +148,10 @@ jobs:
           grep -Fq 'formats.scm.mesh-reader' /tmp/native-markers.txt
           grep -Fq 'formats.texture.spider-reader' /tmp/native-markers.txt
           grep -Fq 'formats.evt.structural-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.pac.archive-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.pnst.archive-reader' /tmp/native-markers.txt
+          grep -Fq 'formats.mot.motion-reader' /tmp/native-markers.txt
+          grep -Fq 'native.motion.skeleton-rig' /tmp/native-markers.txt
           grep -Fq 'spider.crusader' /tmp/native-markers.txt
           grep -Fq 'spider.cpp23' /tmp/native-markers.txt
           grep -Fq 'native.texture-set' /tmp/native-markers.txt
@@ -163,21 +172,21 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-debug
+          name: dmc-native-reader-v65-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-unsigned-release
+          name: dmc-native-reader-v65-unsigned-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
           retention-days: 7
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dmc-native-reader-v33-hardening-evidence
+          name: dmc-native-reader-v65-hardening-evidence
           path: |
             build/phase2-evidence/
             /tmp/debug-badging.txt

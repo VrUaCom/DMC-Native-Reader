@@ -13,6 +13,7 @@ namespace dmc3 = dmc::rengine::profiles::dmc3;
 // Native Reader owns no descriptor constants or legacy framing grammar here.
 [[nodiscard]] dmc3::TextureSlotFramingResult parse_texture_bundle(
     std::span<const std::byte> source,
-    bool* compatibility_used = nullptr);
+    bool* compatibility_used = nullptr,
+    bool* community_descriptors_used = nullptr);
 
 }  // namespace dmcresource::ptx_compat

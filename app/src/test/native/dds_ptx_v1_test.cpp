@@ -8,6 +8,8 @@
 #include "dmcresource/spider/session_actions.h"
 
 #include <cassert>
+#include "dmcresource/ptx_framing_compat.h"
+#include "dmc_rengine/profiles/dmc3/texture_slot_framing_compat.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -320,6 +322,48 @@ int main() {
     nonzero_padding.back() = 1U;
     assert(!run_decode_pipeline("padding.ptx", nonzero_padding.data(),
                                 nonzero_padding.size()).accepted);
+
+    // Community-tool descriptors: format word, secondary dimensions and
+    // reciprocal floats zeroed or copied. The strict reader rejects them as a
+    // descriptor mismatch; the viewer reads header, sector span and DDS only.
+    {
+        auto community = make_ptx_sector_bounded();
+        for (const std::size_t field : {0x08U, 0x0CU, 0x38U, 0x3CU, 0x40U, 0x44U}) {
+            put_u32(community, 0x800U + field, 0U);
+        }
+        put_u32(community, 0x800U + 0x48U, 0x3B800000U);
+        put_u32(community, 0x800U + 0x4CU, 0x3C000000U);
+        const auto strict = dmc::rengine::profiles::dmc3::TextureSlotFramingReader::parse(
+            as_bytes(community));
+        assert(!strict.ok());
+        bool aux = true;
+        bool lenient = false;
+        const auto read = dmcresource::ptx_compat::parse_texture_bundle(
+            as_bytes(community), &aux, &lenient);
+        assert(read.ok() && lenient && !aux);
+        assert(read.document.textures.size() == 1U);
+        const auto session = run_decode_pipeline("community.ptx", community.data(),
+                                                 community.size());
+        assert(session.accepted);
+        assert(session.detail.find("community tool") != std::string::npos);
+
+        // The viewer shows it, but the session carries the orange
+        // non-canonical note; the canonical bundle carries none.
+        auto shown = dmcresource::open_session("community.ptx", community.data(),
+                                               community.size());
+        assert(shown && shown->non_canonical_notes.size() == 1U);
+        assert(shown->non_canonical_notes.front().find("community tool") != std::string::npos);
+        const auto canonical = make_ptx_sector_bounded();
+        auto clean = dmcresource::open_session("canonical.ptx", canonical.data(),
+                                               canonical.size());
+        assert(clean && clean->non_canonical_notes.empty());
+
+        // Structural faults stay rejected even with community descriptors.
+        auto broken = community;
+        broken.back() = 1U;
+        assert(!run_decode_pipeline("community_padding.ptx", broken.data(),
+                                    broken.size()).accepted);
+    }
 
     // Whole PTX -> required nonzero slots -> renderer, without gallery previews.
     // Four physical slots have independent DDS colours; slot 0 is unused.

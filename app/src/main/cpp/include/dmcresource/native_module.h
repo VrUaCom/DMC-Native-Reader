@@ -60,5 +60,16 @@ public:
 [[nodiscard]] NativeModule mod_module() noexcept;
 [[nodiscard]] NativeModule texture_module(Format format) noexcept;
 [[nodiscard]] NativeModule evt_module() noexcept;
+[[nodiscard]] NativeModule pac_module() noexcept;
+[[nodiscard]] NativeModule mot_module() noexcept;
+[[nodiscard]] NativeModule pnst_module() noexcept;
+[[nodiscard]] NativeModule shw_module() noexcept;
+[[nodiscard]] NativeModule tsc_module() noexcept;
+[[nodiscard]] NativeModule clt_module() noexcept;
+[[nodiscard]] NativeModule efm_module() noexcept;
+[[nodiscard]] NativeModule motion_script_module() noexcept;
+[[nodiscard]] NativeModule colshape_module() noexcept;
+[[nodiscard]] NativeModule colindex_module() noexcept;
+[[nodiscard]] NativeModule effect_bank_module() noexcept;
 
 }  // namespace dmcresource

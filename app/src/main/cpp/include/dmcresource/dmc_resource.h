@@ -16,6 +16,16 @@ enum class Format : std::uint8_t {
     Dds,
     Ptx,
     Evt,
+    Pac,
+    Mot,
+    Pnst,
+    Shw,
+    Tsc,
+    Clt,
+    MotionScript,
+    CollisionShapes,
+    AttackIndex,
+    EffectBank,
 };
 
 struct ProbeResult {

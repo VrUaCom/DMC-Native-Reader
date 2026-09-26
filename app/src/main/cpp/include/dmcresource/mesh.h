@@ -29,6 +29,30 @@ struct Mesh {
     [[nodiscard]] bool has_uv0() const noexcept {
         return !uv0.empty() && uv0.size() == vertices.size();
     }
+
+    // Optional COLOR0 (EFM mesh +0x38, RGBA8 with 0x80 = 1.0, PS2 modulate)
+    // and per-vertex blend mode of the owning object (source flags & 0xF:
+    // 0 opaque, 1/4 alpha, 2 additive, 3 subtractive -- GS ALPHA table
+    // 0x1405D0550 via 0x1402F17C0).
+    std::vector<std::array<std::uint8_t, 4>> color0;
+    std::vector<std::uint8_t> blend0;
+
+    [[nodiscard]] bool has_color0() const noexcept {
+        return !color0.empty() && color0.size() == vertices.size();
+    }
+    [[nodiscard]] bool has_blend0() const noexcept {
+        return !blend0.empty() && blend0.size() == vertices.size();
+    }
+
+    // Optional source vertex normals (MOD / SCM normal stream, rest pose).
+    // The renderer uses them to decide which coincident vertices share a
+    // smooth normal (same position and same source normal); the lit normal
+    // itself is rebuilt from the current (posed) positions. {0,0,0} = none.
+    std::vector<Vec3> normal0;
+
+    [[nodiscard]] bool has_normal0() const noexcept {
+        return !normal0.empty() && normal0.size() == vertices.size();
+    }
 };
 
 struct RgbaImage {

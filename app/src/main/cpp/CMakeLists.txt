@@ -1,12 +1,37 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(dmcviewer LANGUAGES CXX)
 
+# The debug APK is the one people install and try: the software renderer
+# needs optimised native code in every configuration (-O0 runs it 5-10x
+# slower). Later compile options win over the configuration's -O0.
+if(ANDROID AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O2)
+endif()
+# The renderer rasterises row bands on several cores.
+find_package(Threads REQUIRED)
+
 set(DMC_RENGINE_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/dmc-rengine-cpp)
 
 # Canonical portable read-only dependency slice owned by DMC Rengine.
 # Its own language/toolchain contract is external to this repository; Native
 # Reader consumes it without modifying the submodule during the C++23 migration.
 include(${DMC_RENGINE_VENDOR}/cmake/reader_core.cmake)
+
+# Read-only MOT/PAC slice of the pinned Rengine checkout, rebuilt by Native
+# Reader as C++23 (the target is defined after
+# dmc_native_reader_require_cpp23 below). ReaderCore does not list these
+# canonical sources yet; the submodule itself is never edited. Every file here
+# is a parser/evaluator; nothing in this slice writes or repacks resources.
+set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
+    ${DMC_RENGINE_VENDOR}/src/formats/mot/parser.cpp
+    ${DMC_RENGINE_VENDOR}/src/analysis/mod/motion_group.cpp
+    ${DMC_RENGINE_VENDOR}/src/analysis/mod/animation_binding.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/container.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/relative_slot_container.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/pnst.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/shw.cpp
+)
 
 # Native Reader language authority is centralized here and remains target-scoped.
 # Do not use repository-global CMAKE_CXX_STANDARD or Gradle -std= flags because
@@ -20,6 +45,33 @@ function(dmc_native_reader_require_cpp23 target visibility)
         CXX_EXTENSIONS OFF
     )
 endfunction()
+
+# Everything compiled into Native Reader is C++23, including the vendored
+# Rengine ReaderCore. Its reader_core.cmake keeps declaring the older standard as a
+# minimum feature; the target-scoped CXX_STANDARD 23 set here decides the
+# actual language mode. The submodule itself is not edited.
+dmc_native_reader_require_cpp23(dmc_rengine_reader_core PRIVATE)
+
+# The pinned ReaderCore still expands the MOD local rotation as Rz*Ry*Rx; the
+# executable builds Rx*Ry*Rz (dmc-rengine-cpp b403108). Swap in the Native
+# Reader port of that one translation unit until the pin moves.
+get_target_property(_dmc_reader_core_sources dmc_rengine_reader_core SOURCES)
+list(FILTER _dmc_reader_core_sources EXCLUDE REGEX "/src/formats/mod/world_transform\\.cpp$")
+list(APPEND _dmc_reader_core_sources
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/rengine_port/world_transform.cpp)
+set_property(TARGET dmc_rengine_reader_core PROPERTY SOURCES ${_dmc_reader_core_sources})
+unset(_dmc_reader_core_sources)
+
+add_library(dmc_native_reader_rengine_viewer STATIC
+    ${DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES})
+target_link_libraries(dmc_native_reader_rengine_viewer PUBLIC DMCRengine::ReaderCore)
+dmc_native_reader_require_cpp23(dmc_native_reader_rengine_viewer PRIVATE)
+set_target_properties(dmc_native_reader_rengine_viewer PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
+if(ANDROID)
+    target_compile_options(dmc_native_reader_rengine_viewer PRIVATE
+        -ffunction-sections -fdata-sections)
+endif()
 
 # Native Reader product core: platform-neutral C++23 modules only. Android JNI,
 # Swift/ObjC++, Win32 and Web/WASM shells must link this target rather than
@@ -48,6 +100,28 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/texture_companion.cpp
     modules/texture_set.cpp
     modules/workspace_graph.cpp
+    modules/motion/skeleton_rig.cpp
+    modules/motion/animated_local.cpp
+    modules/motion/motion_clip.cpp
+    modules/motion/motion_player.cpp
+    modules/motion/part_attachment.cpp
+    modules/motion/cloth_chain.cpp
+    modules/motion/uv_scroll.cpp
+    modules/motion/motion_script.cpp
+    modules/motion/motion_chart.cpp
+    modules/raster_card.cpp
+    modules/format_views.cpp
+    modules/collision_shapes.cpp
+    modules/collision_debug.cpp
+    modules/neutral_texture.cpp
+    modules/stage_room.cpp
+    modules/effect_bank.cpp
+    modules/module_effects.cpp
+    modules/module_archive.cpp
+    modules/module_shadow.cpp
+    modules/module_scripts.cpp
+    modules/shadow_hull.cpp
+    modules/pac_assembly.cpp
     spider/crusader.cpp
     spider/black_widow.cpp
     spider/model_placement_actions.cpp
@@ -85,6 +159,8 @@ target_include_directories(dmc_native_reader_core
 target_link_libraries(dmc_native_reader_core
     PUBLIC
         DMCRengine::ReaderCore
+        dmc_native_reader_rengine_viewer
+        Threads::Threads
 )
 
 target_compile_definitions(dmc_native_reader_core PUBLIC
@@ -202,6 +278,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
+        motion_playback pac_assembly player_coat
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

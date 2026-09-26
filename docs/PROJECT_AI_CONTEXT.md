@@ -313,7 +313,7 @@ Android `StorageStats.getAppBytes()` on the acceptance Android device must be **
 A single immediate post-install StorageStats snapshot can understate a **DEX-bearing** app because ART may create/replace optimized compiler artifacts later. The supported `speed` compiler filter is therefore used as a conservative package-scoped full-AOT stress state for DEX-bearing release candidates.
 
 **Path B / any DEX present**
-- final device measurement uses `--art-compile-mode speed`;
+- final Android device measurement uses `--art-compile-mode speed`;
 - record baseline StorageStats first;
 - run package-scoped `cmd package compile -m speed -f <package>`;
 - record stress StorageStats after successful compile;
@@ -325,7 +325,7 @@ The ART stress exemption is valid only when package verification on the exact pr
 - `android:hasCode=false`.
 
 Then:
-- final device measurement uses `--art-compile-mode none`;
+- final Android device measurement uses `--art-compile-mode none`;
 - authoritative baseline StorageStats must be <=4,194,304;
 - ART stress is recorded as `NOT_APPLICABLE_ZERO_DEX` because there is no app DEX to dexopt.
 

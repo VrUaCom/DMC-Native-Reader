@@ -12,11 +12,22 @@
 #include "dmcresource/composite_model.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/motion/motion_script.h"
+#include "dmcresource/motion/part_attachment.h"
+#include "dmcresource/motion/uv_scroll.h"
+#include "dmcresource/shadow_hull.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/workspace_graph.h"
 
 namespace dmcresource {
+
+namespace motion {
+struct MotionState;
+}
+namespace collision {
+struct CollisionBinding;
+}
 
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
@@ -54,6 +65,44 @@ struct Session {
     std::string trace;
     bool renderable{};
 
+    // Motions discovered while assembling a PAC (read-only copies of the
+    // retained payloads). Played through motion::load_motion.
+    struct MotionPayload final {
+        std::string name;
+        std::vector<std::uint8_t> bytes;
+        // Motion script address (pl000_00_<bank>.pac, MOT index); -1 unknown.
+        int bank{-1};
+        int index{-1};
+        // Motion PAC this MOT sits in (archive slot) and its slot there;
+        // -1 when the MOT is not inside a nested motion PAC.
+        int pack_slot{-1};
+        int mot_slot{-1};
+        // Script actions that play it ("act 3,7 loop"), empty when unknown.
+        std::string actions;
+    };
+    std::vector<MotionPayload> motion_library;
+
+    // Non-canonical reads the viewer still shows (orange warning in the UI).
+    std::vector<std::string> non_canonical_notes;
+
+    // SHW shadow hulls placed on this session's models (PAC assembly).
+    std::vector<shadow::ShadowBinding> shadow_bindings;
+
+    // Player motion script (pl000.pac slot 5) and the weapon parts whose
+    // attach record follows it during playback.
+    std::shared_ptr<const motion::MotionScriptFile> motion_script;
+    std::vector<motion::WeaponBinding> weapon_bindings;
+
+    // Attack collision handle (index + shapes) on the body bones; drawn with
+    // RenderFlag::Collision (collision_debug.h).
+    std::shared_ptr<collision::CollisionBinding> collision;
+
+    // TSC texture scroll ranges (CDrawUV), advanced with motion playback.
+    std::vector<motion::UvScrollBinding> uv_scrolls;
+
+    // Bound MOT playback state (read-only preview; see motion/motion_player.h).
+    std::shared_ptr<motion::MotionState> motion;
+
     std::shared_ptr<const UvGallery> uv_gallery;
     std::optional<std::size_t> uv_map_index;
 };
@@ -87,5 +136,32 @@ struct Session {
 // desktop shells and future platforms cannot bypass the Spider execution layer.
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags);
+
+// Camera and room controls from the viewer's gestures.
+struct ViewControls final {
+    float pan_x{};     // camera-plane shift, in framing radii
+    float pan_y{};
+    float room_yaw{};  // room turned about the model's spot (radians)
+    bool follow{};     // camera follows the model as its motion moves it
+};
+
+[[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls);
+
+// What lies under image pixel (x, y) of that same view: the model, the room
+// (with the room point) and the nearest drawn joint ("joint 9 · name (part)").
+struct SessionPick final {
+    bool model{};
+    bool room{};
+    bool room_floor{};
+    Vec3 room_point{};
+    int joint{-1};
+    std::string joint_name;
+};
+
+[[nodiscard]] SessionPick pick_session(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls, float x, float y);
 
 }  // namespace dmcresource

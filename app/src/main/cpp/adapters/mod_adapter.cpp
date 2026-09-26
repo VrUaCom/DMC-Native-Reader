@@ -16,7 +16,9 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmc_rengine/formats/mod_skin.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmcresource/mod_bytes.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/motion/skeleton_rig.h"
 #include "dmcresource/uv_projection.h"
 
 namespace dmcresource::adapters {
@@ -62,6 +64,8 @@ using namespace dmcresource::vector_math;
     for (const auto& p : source.positions) {
         out->vertices.push_back({p.x, p.y, p.z});
     }
+    out->normal0.reserve(base + vc);
+    for (const auto& n : source.normals) out->normal0.push_back({n.x, n.y, n.z});
     if (!uv_projection::append_uv0(source.uvs, &out->uv0)) return false;
 
     if (vc < 3U) return true;
@@ -441,8 +445,8 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
     }
 
     try {
-        const auto byte_span = std::span<const std::byte>{
-            reinterpret_cast<const std::byte*>(bytes), size};
+        const ModBytes view{bytes, size};
+        const auto byte_span = view.span();
         const auto parsed = dmc::rengine::formats::mod::Parser::parse(byte_span);
         if (!parsed.ok()) {
             return module_support::reject(
@@ -460,9 +464,14 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
         out.modules.push_back({"canonical.mod.texture-state", true});
         out.modules.push_back({module_id, true});
 
-        out.inspection.format = "MOD";
-        out.inspection.root.id = "mod";
-        out.inspection.root.title = "MOD";
+        out.inspection.format = view.efm() ? "EFM" : "MOD";
+        out.inspection.root.id = view.efm() ? "efm" : "mod";
+        out.inspection.root.title = view.efm() ? "EFM effect model" : "MOD";
+        if (view.efm()) {
+            out.inspection.root.properties.push_back({
+                "Layout", "MOD document (post-load 0x1402F7A90); mesh +0x38 = COLOR0 RGBA8",
+                EvidenceLevel::ExeConfirmed});
+        }
         out.inspection.root.kind = InspectionKind::Document;
         out.inspection.root.source_span = SourceSpan{0U, size};
         out.inspection.root.properties.push_back({
@@ -521,6 +530,24 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                         "MOD canonical projection rejected mesh topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
+                // Object blend mode (source flags & 0xF, 0x140302640) and, for
+                // EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
+                                             static_cast<std::uint8_t>(object.source_flags & 0xFU));
+                if (view.efm() && source.reserved38 != 0U) {
+                    const auto count = primitive.mesh.vertices.size();
+                    const auto bytes_span = view.span();
+                    const auto start = source.reserved38;
+                    if (start < bytes_span.size() && count * 4U <= bytes_span.size() - start) {
+                        primitive.mesh.color0.resize(count);
+                        for (std::size_t v = 0U; v < count; ++v) {
+                            for (std::size_t k = 0U; k < 4U; ++k) {
+                                primitive.mesh.color0[v][k] = static_cast<std::uint8_t>(
+                                    bytes_span[start + v * 4U + k]);
+                            }
+                        }
+                    }
+                }
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());
@@ -566,6 +593,10 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
             project_hierarchy(parsed.document, &out.scene, &out.inspection.root);
         if (spatial_hierarchy) {
             out.modules.push_back({"canonical.mod.spatial-hierarchy", true});
+            out.scene.rig = motion::make_skeleton_rig(parsed.document.transform_domain);
+            if (out.scene.rig != nullptr) {
+                out.modules.push_back({"native.motion.skeleton-rig", true});
+            }
         }
 
         if (!parsed.diagnostics.empty()) {
@@ -582,7 +613,7 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
 
         out.renderable = out.scene.has_geometry();
         std::ostringstream detail;
-        detail << "MOD canonical C++20 reader"
+        detail << (view.efm() ? "EFM (MOD layout) canonical C++20 reader" : "MOD canonical C++20 reader")
                << " | objects=" << parsed.document.outer_models.size()
                << " meshes=" << total_meshes
                << " vertices=" << total_vertices

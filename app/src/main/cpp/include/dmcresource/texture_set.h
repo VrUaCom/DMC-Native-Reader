@@ -33,6 +33,8 @@ struct ParseResult final {
     Kind kind{Kind::invalid};
     std::vector<Slot> slots;
     bool ptx_aux_compat_used{};
+    // Bundle accepted through the lenient community-tool descriptor path.
+    bool ptx_community_descriptors{};
     std::string detail;
 
     [[nodiscard]] bool ok() const noexcept {

@@ -65,6 +65,9 @@ EXPECTED_CTESTS = (
     "session_inspection",
     "tm2_legacy",
     "workspace_graph",
+    "motion_playback",
+    "pac_assembly",
+    "player_coat",
 )
 
 
@@ -435,10 +438,15 @@ def require_static_contract() -> None:
     if "installed_apk_sha256" not in measure_tool or "artifact_sha256_match" not in measure_tool:
         fail("installed-size tool must bind device evidence to the reviewed APK hash")
 
+    # ReaderCore declares cxx_std_20 only as a minimum feature and sets no
+    # global standard; Native Reader compiles it (and everything else) as C++23.
     if "target_compile_features(dmc_rengine_reader_core PUBLIC cxx_std_20)" not in rengine_reader_cmake:
-        fail("pinned Rengine ReaderCore no longer exposes its C++20 target-scoped contract")
+        fail("pinned Rengine ReaderCore no longer exposes its target-scoped minimum feature")
     if "CMAKE_CXX_STANDARD" in rengine_reader_cmake:
         fail("pinned Rengine ReaderCore must not impose a global C++ standard")
+    for target in ("dmc_rengine_reader_core", "dmc_native_reader_rengine_viewer"):
+        if f"dmc_native_reader_require_cpp23({target}" not in cmake:
+            fail(f"{target} must be compiled as C++23 by Native Reader")
 
 
 def parse_args() -> argparse.Namespace:

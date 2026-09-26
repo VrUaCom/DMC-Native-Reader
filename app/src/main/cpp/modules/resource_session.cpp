@@ -1,9 +1,17 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/motion/motion_player.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
+#include "dmcresource/stage_room.h"
 #include "dmcresource/texture_companion.h"
+#include "dmcresource/collision_debug.h"
+#include "dmcresource/format_views.h"
+#include "dmcresource/neutral_texture.h"
+#include "dmcresource/raster_card.h"
 
+#include <span>
+#include <cmath>
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -180,6 +188,8 @@ void retain_lazy_child_sources(Session* session,
         merged->render_mesh.vertices.insert(
             merged->render_mesh.vertices.end(),
             source_mesh.vertices.begin(), source_mesh.vertices.end());
+        // COLOR0 / blend channels ride along (neutral when a part has none).
+        append_vertex_channels(source_mesh, true, true, &merged->render_mesh, true);
 
         if (*uv_complete) {
             if (!source_mesh.has_uv0()) {
@@ -367,6 +377,32 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
             return materialized;
         }
     }
+    // Container payloads (PAC slots) retain their bytes. Any recognized payload
+    // is opened through the full registry so each file gets its own viewer.
+    if (!child.source_bytes.empty() && child.probe.recognized) {
+        const std::string filename = child.suggested_filename.empty()
+            ? child.title
+            : child.suggested_filename;
+        auto materialized = open_session(
+            filename, child.source_bytes.data(), child.source_bytes.size());
+        if (materialized) {
+            if (!materialized->detail.empty()) materialized->detail += "\n";
+            materialized->detail += "Opened from container slot " + child.id;
+            return materialized;
+        }
+    }
+    // Unknown bytes open as the raw binary view, unless the container already
+    // drew a view for them (e.g. an effect sprite over its bank texture).
+    if (!child.source_bytes.empty() && !child.probe.recognized && !child.image_preview.available()) {
+        const std::string filename = child.suggested_filename.empty()
+            ? child.title
+            : child.suggested_filename;
+        auto raw = open_session(filename, child.source_bytes.data(), child.source_bytes.size());
+        if (raw) {
+            raw->detail += "\nOpened from container slot " + child.id;
+            return raw;
+        }
+    }
     return make_session(child, child.trace);
 }
 
@@ -393,14 +429,91 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
     });
 }
 
+namespace {
+
+// Every opened file gets a picture: a session with no mesh, no pixels, no
+// child list and no UV map draws its inspection card (title, properties,
+// tree) over a hex dump of its bytes.
+void attach_standalone_view(Session* session, std::span<const std::uint8_t> bytes) {
+    if (session == nullptr || session->renderable || session->image_preview.available() ||
+        !session->children.empty() || session->uv_gallery) {
+        return;
+    }
+    try {
+        session->image_preview =
+            raster::render_info_card(session->inspection, session->detail, bytes);
+        session->capabilities = session->capabilities | ResourceCapability::ImagePreview;
+    } catch (...) {
+        session->image_preview = {};
+    }
+}
+
+// Files outside the registry (or rejected by their module) still open as raw
+// binary: byte profile, strings, offset-table hint and hex dump. Read-only;
+// nothing here claims a format.
+std::unique_ptr<Session> open_binary_session(std::string_view name,
+                                             std::span<const std::uint8_t> bytes,
+                                             const PipelineResult& rejected) {
+    if (bytes.empty()) return nullptr;
+    try {
+        auto session = std::make_unique<Session>();
+        session->probe = rejected.probe;
+        session->capabilities = capability(ResourceCapability::Inspection) |
+                                ResourceCapability::ImagePreview;
+        session->inspection.format = "BIN";
+        session->inspection.root.id = "binary";
+        session->inspection.root.title = std::string{name.substr(name.find_last_of("/\\") + 1U)};
+        session->inspection.root.kind = InspectionKind::Document;
+        session->inspection.root.source_span = SourceSpan{0U, bytes.size()};
+        const bool recognized = rejected.probe.recognized;
+        session->inspection.root.properties.push_back(
+            {"Status",
+             recognized ? std::string{rejected.probe.family} + " identity, module rejected the bytes"
+                        : std::string{"no known format identity"},
+             EvidenceLevel::Recognized});
+        if (!rejected.detail.empty()) {
+            session->inspection.root.properties.push_back(
+                {"Reason", rejected.detail, EvidenceLevel::Recognized});
+        }
+        const auto profile = views::profile_binary(bytes);
+        views::append_binary_inspection(session->inspection, profile);
+        session->detail = "Raw binary view | bytes=" + std::to_string(bytes.size());
+        session->trace = "modules:\n  [OK] native.binary-profile";
+        session->image_preview =
+            views::render_binary_view(session->inspection, session->detail, profile, bytes);
+        return session;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+}  // namespace
+
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
     auto pipeline = dmcresource::run_decode_pipeline(name, bytes, size);
-    if (!pipeline.accepted) return nullptr;
+    if (!pipeline.accepted) {
+        if (bytes == nullptr) return nullptr;
+        return open_binary_session(name, std::span<const std::uint8_t>{bytes, size}, pipeline);
+    }
 
+    bool community_ptx = false;
+    for (const auto& module : pipeline.modules) {
+        if (module.name != nullptr &&
+            std::string_view{module.name} == "native.ptx-community-descriptors") {
+            community_ptx = true;
+        }
+    }
     auto trace = pipeline_trace(pipeline);
     auto session = make_session(std::move(pipeline), std::move(trace));
+    if (session && community_ptx) {
+        session->non_canonical_notes.push_back(
+            std::string{name} +
+            ": texture descriptors were written by a community tool; the canonical "
+            "validator rejects them, the viewer reads header, sector spans and DDS only");
+    }
     retain_lazy_child_sources(session.get(), bytes, size);
+    attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     return session;
 }
 
@@ -552,8 +665,125 @@ std::string describe_session(const Session* session) {
     return out.str();
 }
 
+namespace {
+
+// Everything a view of a session needs; spans in `view` point into the
+// vectors here, so a PreparedView is filled in place and never moved.
+struct PreparedView final {
+    ViewState view;
+    int width{};
+    int height{};
+    const HierarchyOverlay* hierarchy{};
+    const std::vector<std::uint32_t>* texture_slots{};
+    const std::vector<ImagePreview>* textures{};
+    std::vector<Vec3> floor_shadow;
+    std::vector<Vec3> collision_lines;
+    std::shared_ptr<const stage_room::Room> room;
+};
+
+void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
+                  float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                  PreparedView* out) {
+    const auto flags = static_cast<RenderFlags>(render_flags);
+    auto& view = out->view;
+    view.yaw_radians = yaw;
+    view.pitch_radians = std::clamp(pitch, -1.55f, 1.55f);
+    view.zoom = std::clamp(zoom, 0.15f, 8.0f);
+    view.wireframe = has_render_flag(flags, RenderFlag::Wireframe);
+    view.uv_layout = has_render_flag(flags, RenderFlag::UvLayout);
+    view.framing_vertices = motion::motion_rest_vertices(&session);
+    view.fallback_texture = &neutral_texture();
+    view.smooth_textures = has_render_flag(flags, RenderFlag::SmoothTextures);
+    view.unlit = has_render_flag(flags, RenderFlag::Unlit);
+    view.fast_preview = has_render_flag(flags, RenderFlag::Preview);
+    view.background = static_cast<std::uint8_t>((flags >> kRenderBackgroundShift) & 3U);
+    view.pan_x = std::isfinite(controls.pan_x) ? std::clamp(controls.pan_x, -20.0F, 20.0F) : 0.0F;
+    view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;
+
+    out->width = std::clamp(requested_width, 64, 1024);
+    out->height = std::clamp(requested_height, 64, 1024);
+    out->hierarchy = !view.uv_layout && has_render_flag(flags, RenderFlag::Hierarchy) &&
+            session.hierarchy_overlay.available()
+        ? &session.hierarchy_overlay
+        : nullptr;
+    out->texture_slots = session.render_triangle_texture_slots.empty() ? nullptr : &session.render_triangle_texture_slots;
+    out->textures = session.attached_textures.empty() ? nullptr : &session.attached_textures;
+
+    const auto& rest = view.framing_vertices.empty() ? std::span<const Vec3>{session.render_mesh.vertices}
+                                                     : view.framing_vertices;
+    // Camera follow: frame the model where its motion has taken it (x/z of
+    // the vertex centre against the rest pose; height stays put).
+    if (controls.follow && !view.framing_vertices.empty() && !session.render_mesh.vertices.empty()) {
+        double rx = 0.0, rz = 0.0, cx = 0.0, cz = 0.0;
+        for (const auto& v : view.framing_vertices) {
+            rx += v.x;
+            rz += v.z;
+        }
+        for (const auto& v : session.render_mesh.vertices) {
+            cx += v.x;
+            cz += v.z;
+        }
+        const auto rn = static_cast<double>(view.framing_vertices.size());
+        const auto cn = static_cast<double>(session.render_mesh.vertices.size());
+        view.frame_shift = {static_cast<float>(cx / cn - rx / rn), 0.0F, static_cast<float>(cz / cn - rz / rn)};
+    }
+
+    // SHW footprint on a floor under the feet (lowest rest vertex).
+    if (!view.uv_layout && has_render_flag(flags, RenderFlag::Shadows)) {
+        float floor_y = std::numeric_limits<float>::infinity();
+        for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
+        if (std::isfinite(floor_y)) {
+            // SHW hulls when the archive has them, else the mesh itself.
+            out->floor_shadow = session.shadow_bindings.empty()
+                ? shadow::mesh_floor_shadow(session.render_mesh, shadow::kViewerLightDirection, floor_y)
+                : shadow::floor_shadow_triangles(session, shadow::kViewerLightDirection, floor_y);
+            view.floor = true;
+            view.floor_y = floor_y;
+            view.floor_shadow = out->floor_shadow;
+        }
+    }
+    // Room (stage_room.h): the chosen stage around the model, its floor spot
+    // (or the point placed by a double tap) under the model's feet, turned
+    // about that spot by the twist gesture; a stage itself has no room.
+    if (!view.uv_layout && !view.wireframe && has_render_flag(flags, RenderFlag::Room) &&
+        !stage_room::is_stage_session(session)) {
+        out->room = stage_room::current();
+    }
+    if (out->room && !rest.empty()) {
+        double sx = 0.0, sz = 0.0;
+        float low = std::numeric_limits<float>::infinity();
+        for (const auto& v : rest) {
+            sx += v.x;
+            sz += v.z;
+            low = std::min(low, v.y);
+        }
+        const auto n = static_cast<double>(rest.size());
+        const Vec3 spot = stage_room::spot_position();
+        view.room_mesh = &out->room->mesh;
+        view.room_texture_slots = &out->room->triangle_texture_slots;
+        view.room_textures = &out->room->textures;
+        view.room_translucent_triangles = &out->room->translucent_triangles;
+        view.room_pivot = spot;
+        view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
+        view.room_offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+    }
+    // Attack collision shapes on the current pose (debug meshes at000-at003).
+    if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
+        out->collision_lines = collision::posed_collision_lines(session);
+        view.overlay_lines = out->collision_lines;
+    }
+}
+
+}  // namespace
+
 RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags) {
+    return render_session(session, requested_width, requested_height, yaw, pitch, zoom, render_flags,
+                          ViewControls{});
+}
+
+RgbaImage render_session(const Session* session, int requested_width, int requested_height, float yaw,
+                         float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls) {
     if (session == nullptr) return {};
     if (session->uv_gallery && session->uv_map_index &&
         *session->uv_map_index < session->uv_gallery->maps.size()) {
@@ -563,34 +793,45 @@ RgbaImage render_session(const Session* session, int requested_width,
             std::clamp(requested_height, 64, 1024), zoom);
     }
     if (!session->renderable) return {};
-    const auto flags = static_cast<dmcresource::RenderFlags>(
-        static_cast<std::uint32_t>(render_flags));
+    PreparedView prepared;
+    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    return render_view(session->render_mesh, prepared.width, prepared.height, prepared.view,
+                       prepared.hierarchy, prepared.texture_slots, prepared.textures);
+}
 
-    dmcresource::ViewState view;
-    view.yaw_radians = static_cast<float>(yaw);
-    view.pitch_radians = std::clamp(static_cast<float>(pitch), -1.55f, 1.55f);
-    view.zoom = std::clamp(static_cast<float>(zoom), 0.15f, 8.0f);
-    view.wireframe = dmcresource::has_render_flag(
-        flags, dmcresource::RenderFlag::Wireframe);
-    view.uv_layout = dmcresource::has_render_flag(
-        flags, dmcresource::RenderFlag::UvLayout);
-
-    const int width = std::clamp(static_cast<int>(requested_width), 64, 1024);
-    const int height = std::clamp(static_cast<int>(requested_height), 64, 1024);
-    const auto* hierarchy =
-        !view.uv_layout &&
-        dmcresource::has_render_flag(flags, dmcresource::RenderFlag::Hierarchy) &&
-        session->hierarchy_overlay.available()
-            ? &session->hierarchy_overlay
-            : nullptr;
-    const auto* texture_slots = session->render_triangle_texture_slots.empty()
-        ? nullptr
-        : &session->render_triangle_texture_slots;
-    const auto* textures = session->attached_textures.empty()
-        ? nullptr
-        : &session->attached_textures;
-    return dmcresource::render_view(
-        session->render_mesh, width, height, view,
-        hierarchy, texture_slots, textures);
+SessionPick pick_session(const Session* session, int requested_width, int requested_height, float yaw,
+                         float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                         float x, float y) {
+    SessionPick out;
+    if (session == nullptr || !session->renderable || session->uv_gallery) return out;
+    PreparedView prepared;
+    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    if (prepared.view.uv_layout) return out;
+    const auto* bones = session->hierarchy_overlay.available() ? &session->hierarchy_overlay : nullptr;
+    const auto pick = pick_view(session->render_mesh, prepared.width, prepared.height, prepared.view, x, y, bones);
+    out.model = pick.model;
+    out.room = pick.room;
+    out.room_floor = pick.room_floor;
+    out.room_point = pick.room_point;
+    out.joint = pick.joint;
+    if (pick.joint >= 0 && static_cast<std::size_t>(pick.joint) < session->scene.nodes.size()) {
+        // Composite scenes list their parts' nodes one part after another.
+        std::string part;
+        std::size_t local = static_cast<std::size_t>(pick.joint);
+        std::size_t begin = 0U;
+        for (const auto& p : session->composite_parts) {
+            const auto count = p.scene.nodes.size();
+            if (local >= begin && local < begin + count) {
+                part = p.name;
+                local -= begin;
+                break;
+            }
+            begin += count;
+        }
+        const auto& name = session->scene.nodes[static_cast<std::size_t>(pick.joint)].name;
+        out.joint_name = "joint " + std::to_string(local) + (name.empty() ? "" : " · " + name) +
+                         (part.empty() ? "" : " (" + part + ")");
+    }
+    return out;
 }
 }  // namespace dmcresource

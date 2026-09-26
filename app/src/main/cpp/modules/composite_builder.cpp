@@ -45,6 +45,23 @@ BuildResult build_mod_composite(
         }
 
         if (!options.resolve_default_joint_attachments) {
+            // Report each companion's EXE-confirmed default-joint selector
+            // without applying it: +0x13 is a translation probe, not a
+            // geometry root (see docs/MOTION_PAC_COMPANION_V34.md).
+            std::string selectors;
+            for (std::size_t index = 0U;
+                 index < out.session->composite_parts.size();
+                 ++index) {
+                const auto& selector =
+                    out.session->composite_parts[index].scene.default_attachment_selector;
+                if (!selectors.empty()) selectors += ",";
+                selectors += selector.has_value() ? std::to_string(*selector) : "-";
+            }
+            if (!out.session->detail.empty()) out.session->detail += "\n";
+            out.session->detail +=
+                "CompositeBuilder: placement=source-coordinates (character model space)"
+                " defaultJointSelectors=[" + selectors + "]"
+                " selectorRole=translation-probe-only language=C++23";
             if (!out.session->trace.empty()) out.session->trace += "\n";
             out.session->trace +=
                 "[OK] composite.builder placement=source-only stable-ids=1 cpp23=1";

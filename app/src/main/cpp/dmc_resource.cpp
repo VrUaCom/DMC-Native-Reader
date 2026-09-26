@@ -2,9 +2,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
+
+#include "dmcresource/collision_shapes.h"
+#include "dmcresource/effect_bank.h"
+#include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/motion_script.h"
+#include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/motion/uv_scroll.h"
 
 namespace dmcresource {
 namespace {
@@ -52,6 +60,11 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Mod, true, "MOD", "geometry", "render-scene",
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mod");
     }
+    // EFM effect models: MOD document layout plus COLOR0 (0x1402F7A90).
+    if (magic4(bytes, size, 'E', 'F', 'M', ' ')) {
+        return result(Format::Mod, true, "EFM", "geometry", "render-scene",
+                      "EXE_CONFIRMED", "application/vnd.dmc.efm");
+    }
     if (magic4(bytes, size, 'D', 'D', 'S', ' ')) {
         return result(Format::Dds, true, "DDS", "texture", "image-preview",
                       "DATA_CONFIRMED", "image/vnd-ms.dds");
@@ -61,6 +74,46 @@ ProbeResult probe(std::string_view filename,
         // magic/family tag, not evidence for a stock .evt filename extension.
         return result(Format::Evt, true, "EventTbl", "event-script", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.eventtbl");
+    }
+
+    if (magic4(bytes, size, 'P', 'A', 'C', '\0')) {
+        return result(Format::Pac, true, "PAC", "archive", "child-resources",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.pac");
+    }
+    // PNST: same relative-slot layout as PAC (weapon archives obj\\plwp_*.pac
+    // use it despite the .pac name).
+    // Effect bank (loader 0x1402C04C0): a PNST whose slot 0 is the manifest.
+    if (magic4(bytes, size, 'P', 'N', 'S', 'T') &&
+        effect_bank::looks_like_bank(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::EffectBank, true, "FXBANK", "effect", "child-resources",
+                      "EXE_CONFIRMED", "application/vnd.dmc.fxbank");
+    }
+    if (magic4(bytes, size, 'P', 'N', 'S', 'T')) {
+        return result(Format::Pnst, true, "PNST", "archive", "child-resources",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.pac");
+    }
+    // SHW shadow hulls (runtime builder 0x14031FD30, per-frame 0x1403200D0).
+    if (magic4(bytes, size, 'S', 'H', 'W', ' ')) {
+        return result(Format::Shw, true, "SHW", "shadow", "render-scene",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.shw");
+    }
+    // Text scripts: .tsc texture scroll (".TSC" first token, 0x14030A9B0) and
+    // .clt chain parameters (";name.clt" + ClothNo, 0x1402CA345).
+    if (bytes != nullptr && size > 0U) {
+        const std::string_view text{reinterpret_cast<const char*>(bytes), size};
+        if (motion::looks_like_tsc(text)) {
+            return result(Format::Tsc, true, "TSC", "texture-scroll", "inspection",
+                          "EXE_CONFIRMED", "text/vnd.dmc.tsc");
+        }
+        if (motion::looks_like_clt(text)) {
+            return result(Format::Clt, true, "CLT", "cloth", "inspection",
+                          "EXE_CONFIRMED", "text/vnd.dmc.clt");
+        }
+    }
+    // MOT keeps its identity at +0x04 after the u32 header size.
+    if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'M', 'O', 'T', '\0')) {
+        return result(Format::Mot, true, "MOT", "animation", "inspection",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mot");
     }
 
     // PTX and descriptor-wrapped textures have no standalone four-byte identity
@@ -84,9 +137,39 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Dds, false, "DDS", "texture", "image-preview",
                       "STRUCTURAL_CONFIRMED", "image/vnd-ms.dds");
     }
+    // Attack index tables have no content identity of their own (4-byte
+    // entries); a PAC names them .colidx when the next slot is their shape
+    // table, and the module validates the entries.
+    if (extension == "colidx") {
+        return result(Format::AttackIndex, false, "COLINDEX", "collision", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.colidx");
+    }
     if (extension == "ptx") {
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
+    }
+    // Collision shape tables (ICollisionHandle, 0x14005C260): 80-byte records.
+    if (bytes != nullptr &&
+        collision::looks_like_shape_table(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::CollisionShapes, true, "COLSHAPE", "collision", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.colshape");
+    }
+    // Player motion script (pl000.pac slot 5, loader 0x1400594B0): no magic,
+    // identified by its bank tables (last, after every magic and extension).
+    if (bytes != nullptr &&
+        motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::MotionScript, true, "MotionScript", "motion-script", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.motion-script");
+    }
+    // Descriptor texture bundles saved under another name (a PAC slot dumped
+    // as .bin): the same byte validation the PAC classifier uses.
+    if (bytes != nullptr && size != 0U) {
+        const auto parsed = ptx_compat::parse_texture_bundle(
+            std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
+        if (parsed.ok()) {
+            return result(Format::Ptx, true, "PTX", "texture", "child-resources",
+                          "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
+        }
     }
     return {};
 }
@@ -111,6 +194,16 @@ const char* format_name(Format format) noexcept {
     case Format::Dds: return "DDS";
     case Format::Ptx: return "PTX";
     case Format::Evt: return "EventTbl";
+    case Format::Pac: return "PAC";
+    case Format::Mot: return "MOT";
+    case Format::Pnst: return "PNST";
+    case Format::Shw: return "SHW";
+    case Format::Tsc: return "TSC";
+    case Format::Clt: return "CLT";
+    case Format::MotionScript: return "MotionScript";
+    case Format::CollisionShapes: return "COLSHAPE";
+    case Format::AttackIndex: return "COLINDEX";
+    case Format::EffectBank: return "FXBANK";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

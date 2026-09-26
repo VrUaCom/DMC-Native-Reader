@@ -27,7 +27,6 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -45,20 +44,18 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_EXPORT_SINGLE_PNG = 1003;
     private static final int REQUEST_EXPORT_GALLERY_TREE = 1004;
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
+    private static final int REQUEST_ADD_PAC = 1011;
+    private static final int REQUEST_ROOM = 1012;
+    private static final String PREFS = "viewer";
+    private static final String PREF_ROOM_NAME = "room.name";
+    private static final String PREF_ROOM_SHOWN = "room.shown";
+    private static final String ROOM_FILE = "room.bin";
     private static final int REQUEST_STAGE_MOTION = 1006;
     private static final int REQUEST_STAGE_TEXTURE = 1007;
     private static final int REQUEST_STAGE_PHYSICS = 1008;
     private static final int REQUEST_STAGE_CLOTH = 1009;
     private static final int REQUEST_STAGE_OTHER = 1010;
 
-    private static final int MENU_OPEN = 1;
-    private static final int MENU_ADD_MOD = 2;
-    private static final int MENU_ATTACH_PTX = 3;
-    private static final int MENU_ADD_MOTION = 4;
-    private static final int MENU_ADD_TEXTURE = 5;
-    private static final int MENU_ADD_PHYSICS = 6;
-    private static final int MENU_ADD_CLOTH = 7;
-    private static final int MENU_ADD_OTHER = 8;
 
     private static final String ROLE_MOTION = "motion";
     private static final String ROLE_TEXTURE = "texture";
@@ -97,18 +94,47 @@ public final class MainActivity extends Activity {
     private TextView titleView;
     private Button parentButton;
     private Button moreButton;
+    // Orange warning: something on screen was read through a non-canonical path.
+    private Button nonCanonicalBadge;
+    private static final int NON_CANONICAL_ORANGE = 0xffff9800;
     private Button resetButton;
     private Button wireButton;
     private Button hierarchyButton;
     private Button uvButton;
+    private Button shadowButton;
+    private Button collisionButton;
+    // Position in the collision cycle: -1 all attacks, then each used id.
+    private int collisionCursor = -2;
     private Button infoButton;
     private HorizontalScrollView motionScroll;
+    private HorizontalScrollView toolScroll;
+    // In-viewport notice (replaces Toasts so messages never cover the motion
+    // strip or the tool bar).
+    private TextView noticeView;
+    private final Runnable hideNotice = () -> {
+        if (noticeView != null) noticeView.animate().alpha(0f).setDuration(250)
+                .withEndAction(() -> noticeView.setVisibility(View.GONE)).start();
+    };
     private LinearLayout motionBar;
 
     private long session;
     private long pendingExportSession;
     private int pendingPtxPart = -1;
     private int selectedMotionIndex = -1;
+    private LinearLayout headerBar;
+    // Hidden by the top-edge swipe: bars and the visibility each had.
+    private boolean uiHidden;
+    private final int[] barVisibility = new int[4];
+    // Archive the root scene was assembled from (re-opened on demand so the
+    // per-file browser owns an independent read-only handle).
+    private Uri assembledPacUri;
+    // Selected class inside a shared enemy archive (em000.pac); 0 = first.
+    private int enemyVariant;
+    // Position buttons under the title (one per enemy class / weapon / dress state).
+    private HorizontalScrollView variantScroll;
+    private LinearLayout variantBar;
+    // Extra archives (weapons, props) assembled onto the character, in order.
+    private final ArrayList<Uri> addedPacUris = new ArrayList<>();
 
     private final ArrayDeque<NavigationEntry> navigation = new ArrayDeque<>();
     private final ArrayList<Uri> modelPartUris = new ArrayList<>();
@@ -122,6 +148,9 @@ public final class MainActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
+        applyViewerSettings();
+        renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
+        restoreRoom();
         handleIncomingIntent(getIntent());
     }
 
@@ -158,15 +187,29 @@ public final class MainActivity extends Activity {
         bar.addView(button, params);
     }
 
+    // Unavailable tools are hidden rather than greyed out; the tool bar
+    // scrolls sideways when the remaining ones do not fit.
+    private void notice(CharSequence text, int length) {
+        if (noticeView == null) return;
+        noticeView.removeCallbacks(hideNotice);
+        noticeView.animate().cancel();
+        noticeView.setText(text);
+        noticeView.setAlpha(1f);
+        noticeView.setVisibility(View.VISIBLE);
+        noticeView.postDelayed(hideNotice, length == Toast.LENGTH_LONG ? 3500 : 2000);
+    }
+
     private void setToolAvailable(Button button, boolean available) {
         button.setEnabled(available);
-        button.setAlpha(available ? 1.0f : 0.35f);
+        button.setAlpha(1.0f);
+        button.setVisibility(available ? View.VISIBLE : View.GONE);
     }
 
     private void syncToggleButton(Button button, boolean available, boolean active) {
         button.setEnabled(available);
         button.setActivated(available && active);
-        button.setAlpha(!available ? 0.35f : (active ? 1.0f : 0.78f));
+        button.setAlpha(active ? 1.0f : 0.78f);
+        button.setVisibility(available ? View.VISIBLE : View.GONE);
     }
 
     private void refreshBlackWidowState() {
@@ -188,7 +231,9 @@ public final class MainActivity extends Activity {
     }
 
     private boolean hasModCompositionContext() {
-        return isRootScene() && blackWidowState.canAddModelPart;
+        // An assembled PAC already owns its part list; re-composing it from
+        // user-picked URIs would drop the archive's own MODs.
+        return isRootScene() && blackWidowState.canAddModelPart && assembledPacUri == null;
     }
 
     private void applyPrimaryPresentation() {
@@ -236,6 +281,14 @@ public final class MainActivity extends Activity {
                 hierarchyAvailable || blackWidowState.canInspectHierarchy,
                 renderView.isHierarchyVisible());
 
+        syncToggleButton(shadowButton,
+                hasSession && NativeBridge.hasShadows(session) && !renderView.isUvLayoutVisible(),
+                renderView.isShadowVisible());
+
+        syncToggleButton(collisionButton,
+                hasSession && NativeBridge.hasCollision(session) && !renderView.isUvLayoutVisible(),
+                renderView.isCollisionVisible());
+
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
                 renderView.isUvLayoutVisible());
@@ -243,6 +296,7 @@ public final class MainActivity extends Activity {
         setToolAvailable(infoButton,
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
         refreshMotionStrip();
+        refreshVariantBar();
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -277,6 +331,7 @@ public final class MainActivity extends Activity {
         applySystemBarInsets(root);
 
         LinearLayout header = new LinearLayout(this);
+        headerBar = header;
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
@@ -295,6 +350,13 @@ public final class MainActivity extends Activity {
         header.addView(titleView, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
+        nonCanonicalBadge = makeSquareButton("▲", "Shown, but not read canonically", 22f);
+        nonCanonicalBadge.setTextColor(NON_CANONICAL_ORANGE);
+        nonCanonicalBadge.setVisibility(View.GONE);
+        nonCanonicalBadge.setOnClickListener(v -> showNonCanonicalNotes());
+        header.addView(nonCanonicalBadge, new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+
         moreButton = makeSquareButton("⋮", "Add or attach DMC resource", 28f);
         moreButton.setOnClickListener(this::showCompanionMenu);
         header.addView(moreButton, new LinearLayout.LayoutParams(
@@ -304,8 +366,23 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        variantScroll = new HorizontalScrollView(this);
+        variantScroll.setHorizontalScrollBarEnabled(false);
+        variantScroll.setVisibility(View.GONE);
+        variantBar = new LinearLayout(this);
+        variantBar.setOrientation(LinearLayout.HORIZONTAL);
+        variantBar.setGravity(Gravity.CENTER_VERTICAL);
+        variantBar.setPadding(dp(8), dp(2), dp(8), dp(2));
+        variantScroll.addView(variantBar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        root.addView(variantScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
         FrameLayout viewport = new FrameLayout(this);
         renderView = new DmcRenderView(this);
+        renderView.setGestureListener(gestureListener);
         viewport.addView(renderView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
@@ -316,6 +393,23 @@ public final class MainActivity extends Activity {
         viewport.addView(childBrowser, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
+
+        noticeView = new TextView(this);
+        noticeView.setTextColor(Color.WHITE);
+        noticeView.setTextSize(14f);
+        noticeView.setMaxLines(3);
+        noticeView.setEllipsize(TextUtils.TruncateAt.END);
+        noticeView.setPadding(dp(14), dp(8), dp(14), dp(8));
+        noticeView.setBackgroundColor(Color.argb(210, 32, 34, 44));
+        noticeView.setVisibility(View.GONE);
+        noticeView.setOnClickListener(v -> hideNotice.run());
+        FrameLayout.LayoutParams noticeParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        noticeParams.topMargin = dp(10);
+        noticeParams.leftMargin = dp(12);
+        noticeParams.rightMargin = dp(12);
+        viewport.addView(noticeView, noticeParams);
 
         root.addView(viewport, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -335,10 +429,18 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(TOOL_SIZE_DP + 8)));
 
+        // Tool bar: centred while it fits, scrolls sideways when it does not
+        // (same as the motion strip).
+        toolScroll = new HorizontalScrollView(this);
+        toolScroll.setHorizontalScrollBarEnabled(false);
+        toolScroll.setFillViewport(true);
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER);
         bar.setPadding(dp(8), dp(6), dp(8), dp(8));
+        toolScroll.addView(bar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
 
         Button open = makeSquareButton("↑", "Open resource or combine multiple MOD files", 28f);
         open.setOnClickListener(v -> chooseFile());
@@ -364,12 +466,51 @@ public final class MainActivity extends Activity {
         });
         addToolButton(bar, hierarchyButton);
 
+        shadowButton = makeSquareButton("\u25D0", "Shadows (SHW)", 20f);
+        shadowButton.setOnClickListener(v -> {
+            if (session == 0 || !NativeBridge.hasShadows(session)) return;
+            renderView.toggleShadows();
+            applyResourceUiState();
+        });
+        addToolButton(bar, shadowButton);
+
+        // Hitboxes: off -> every attack -> each attack id in turn -> off.
+        collisionButton = makeSquareButton("\u25CE", "Attack collision (hitboxes)", 20f);
+        collisionButton.setOnClickListener(v -> {
+            if (session == 0 || !NativeBridge.hasCollision(session)) return;
+            final int[] ids = NativeBridge.collisionAttackIds(session);
+            if (ids == null) return;
+            if (!renderView.isCollisionVisible()) {
+                collisionCursor = -1;
+            } else {
+                collisionCursor++;
+            }
+            if (collisionCursor >= ids.length) {
+                collisionCursor = -2;
+                renderView.setCollisionVisible(false);
+                notice("Hitboxes off", Toast.LENGTH_SHORT);
+            } else {
+                final int attack = collisionCursor < 0 ? -1 : ids[collisionCursor];
+                final String label = NativeBridge.selectCollisionAttack(session, attack);
+                renderView.setCollisionVisible(true);
+                notice("Hitboxes: " + label, Toast.LENGTH_SHORT);
+            }
+            applyResourceUiState();
+        });
+        collisionButton.setOnLongClickListener(v -> {
+            collisionCursor = -2;
+            renderView.setCollisionVisible(false);
+            applyResourceUiState();
+            return true;
+        });
+        addToolButton(bar, collisionButton);
+
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {
             if (!blackWidowState.canShowUv) return;
             final long gallery = NativeBridge.openUvGallery(session);
             if (gallery == 0) {
-                Toast.makeText(this, "UV maps unavailable: incomplete bindings", Toast.LENGTH_LONG).show();
+                notice("UV maps unavailable: incomplete bindings", Toast.LENGTH_LONG);
                 return;
             }
             navigateToSession(gallery, titleView.getText() + " · UV");
@@ -383,85 +524,611 @@ public final class MainActivity extends Activity {
         infoButton.setOnClickListener(v -> showInfoDialog());
         addToolButton(bar, infoButton);
 
-        root.addView(bar, new LinearLayout.LayoutParams(
+
+        root.addView(toolScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
         setContentView(root);
         showIdleStatus();
     }
 
-    private void showCompanionMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, MENU_OPEN, 0, "Open / replace resource");
-        if (hasModCompositionContext()) {
-            menu.getMenu().add(0, MENU_ADD_MOD, 1, "Add .MOD part(s)");
+    // ---- Room: a stage archive shown around every model instead of the floor.
+
+    private boolean roomLoaded;
+    private String roomName = "";
+
+    private File roomFile() {
+        return new File(getFilesDir(), ROOM_FILE);
+    }
+
+    private boolean roomShown() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ROOM_SHOWN, true);
+    }
+
+    private String roomDetail = "";
+
+    private android.content.SharedPreferences prefs() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+
+    // ---- Viewer settings (persisted; applied to the render view).
+
+    private static final String SET_MAX_SIDE = "set.maxSide";
+    private static final String SET_FRAME_MS = "set.frameMs";
+    private static final String SET_SMOOTH = "set.smooth";
+    private static final String SET_UNLIT = "set.unlit";
+    private static final String SET_BACKGROUND = "set.background";
+    private static final String SET_SHADOWS = "set.shadows";
+    private static final String SET_SPEED = "set.speed";
+    private static final String SET_FAST_PREVIEW = "set.fastPreview";
+
+    private void applyViewerSettings() {
+        final android.content.SharedPreferences p = prefs();
+        final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
+                | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
+                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11);
+        renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
+                p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
+                p.getBoolean(SET_FAST_PREVIEW, true));
+    }
+
+    private void roomToggle() {
+        final boolean shown = !roomShown();
+        prefs().edit().putBoolean(PREF_ROOM_SHOWN, shown).apply();
+        renderView.setRoomVisible(shown && roomLoaded);
+        notice(shown ? "Room shown: " + roomName : "Room hidden", Toast.LENGTH_SHORT);
+    }
+
+    private void roomNextSpot() {
+        final int spot = NativeBridge.nextRoomSpot();
+        notice("Room: floor spot " + (spot + 1) + " / " + NativeBridge.roomSpotCount(), Toast.LENGTH_SHORT);
+        renderView.refreshRoom();
+    }
+
+    private void roomChoose() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_ROOM);
+    }
+
+    private void roomRemove() {
+        NativeBridge.clearRoom();
+        roomLoaded = false;
+        roomName = "";
+        roomDetail = "";
+        //noinspection ResultOfMethodCallIgnored
+        roomFile().delete();
+        prefs().edit().remove(PREF_ROOM_NAME).apply();
+        renderView.setRoomVisible(false);
+        notice("Room removed: plain floor", Toast.LENGTH_SHORT);
+    }
+
+    /** One setting: a label and a row of choices, the stored one highlighted. */
+    private LinearLayout choiceRow(String label, String[] names, int selected,
+                                   java.util.function.IntConsumer onPick) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(10), 0, dp(4));
+        TextView title = new TextView(this);
+        title.setText(label);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        block.addView(title);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        final TextView[] chips = new TextView[names.length];
+        for (int i = 0; i < names.length; ++i) {
+            final int index = i;
+            TextView chip = new TextView(this);
+            chip.setText(names[i]);
+            chip.setTextSize(14f);
+            chip.setGravity(Gravity.CENTER);
+            chip.setPadding(dp(12), dp(8), dp(12), dp(8));
+            chips[i] = chip;
+            chip.setOnClickListener(v -> {
+                for (int k = 0; k < chips.length; ++k) styleChip(chips[k], k == index);
+                onPick.accept(index);
+            });
+            styleChip(chip, i == selected);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            params.setMarginEnd(dp(6));
+            row.addView(chip, params);
         }
-        if (isRootScene() && canAttachPtx()) {
-            menu.getMenu().add(0, MENU_ATTACH_PTX, 2, "Attach .PTX texture");
+        block.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return block;
+    }
+
+    private void styleChip(TextView chip, boolean selected) {
+        chip.setBackgroundColor(selected ? 0xff8a2432 : 0xff2a2c34);
+        chip.setTextColor(selected ? 0xffffffff : 0xffb8bcc6);
+    }
+
+    private TextView sectionTitle(String text) {
+        TextView title = new TextView(this);
+        title.setText(text);
+        title.setTextColor(0xffffffff);
+        title.setTextSize(18f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(0, dp(18), 0, dp(2));
+        return title;
+    }
+
+    private TextView actionChip(String text, Runnable action) {
+        TextView chip = new TextView(this);
+        chip.setText(text);
+        chip.setTextSize(14f);
+        chip.setGravity(Gravity.CENTER);
+        chip.setPadding(dp(12), dp(10), dp(12), dp(10));
+        styleChip(chip, false);
+        chip.setOnClickListener(v -> action.run());
+        return chip;
+    }
+
+    private static int indexOf(int[] values, int value, int fallback) {
+        for (int i = 0; i < values.length; ++i) if (values[i] == value) return i;
+        return fallback;
+    }
+
+    /** Full-screen settings window: render quality, animation, room. */
+    private void showSettingsDialog() {
+        final android.app.Dialog dialog = new android.app.Dialog(this,
+                android.R.style.Theme_DeviceDefault_NoActionBar);
+        final android.content.SharedPreferences p = prefs();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(24));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Settings");
+        title.setTextSize(22f);
+        title.setTextColor(0xffffffff);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button close = makeSquareButton("✕", "Close settings", 20f);
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+        content.addView(header);
+
+        final Runnable apply = this::applyViewerSettings;
+        content.addView(sectionTitle("Render"));
+        final int[] sides = {360, 540, 720, 1024};
+        content.addView(choiceRow("Resolution (longest side, px)", new String[]{"360", "540", "720", "1024"},
+                indexOf(sides, p.getInt(SET_MAX_SIDE, 720), 2),
+                i -> { p.edit().putInt(SET_MAX_SIDE, sides[i]).apply(); apply.run(); }));
+        final int[] frames = {50, 33, 16};
+        content.addView(choiceRow("While moving (drag, flick, animation)",
+                new String[]{"Fast preview (half size)", "Full quality"},
+                p.getBoolean(SET_FAST_PREVIEW, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_FAST_PREVIEW, i == 0).apply(); apply.run(); }));
+        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
+                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
+                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Model textures", new String[]{"Pixel (original)", "Smooth"},
+                p.getBoolean(SET_SMOOTH, false) ? 1 : 0,
+                i -> { p.edit().putBoolean(SET_SMOOTH, i == 1).apply(); apply.run(); }));
+        content.addView(choiceRow("Model lighting", new String[]{"Camera light", "Off (flat)"},
+                p.getBoolean(SET_UNLIT, false) ? 1 : 0,
+                i -> { p.edit().putBoolean(SET_UNLIT, i == 1).apply(); apply.run(); }));
+        content.addView(choiceRow("Background", new String[]{"Dark", "Grey", "Light", "Black"},
+                p.getInt(SET_BACKGROUND, 0) & 3,
+                i -> { p.edit().putInt(SET_BACKGROUND, i).apply(); apply.run(); }));
+        content.addView(choiceRow("Shadows when a file opens", new String[]{"On", "Off"},
+                p.getBoolean(SET_SHADOWS, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_SHADOWS, i == 0).apply(); apply.run(); }));
+
+        content.addView(sectionTitle("Animation"));
+        final float[] speeds = {0.25f, 0.5f, 1.0f, 2.0f};
+        int speedIndex = 2;
+        for (int i = 0; i < speeds.length; ++i) {
+            if (Math.abs(speeds[i] - p.getFloat(SET_SPEED, 1.0f)) < 0.01f) speedIndex = i;
         }
-        if (isRootScene() && blackWidowState.canStageCompanion) {
-            menu.getMenu().add(0, MENU_ADD_MOTION, 3, "Add animation / motion…");
-            menu.getMenu().add(0, MENU_ADD_TEXTURE, 4, "Add texture asset (.TM2 / .DDS / …)");
-            menu.getMenu().add(0, MENU_ADD_PHYSICS, 5, "Add physics resource…");
-            menu.getMenu().add(0, MENU_ADD_CLOTH, 6, "Add cloth resource…");
-            menu.getMenu().add(0, MENU_ADD_OTHER, 7, "Add other companion…");
-        }
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case MENU_OPEN:
-                    chooseFile();
-                    return true;
-                case MENU_ADD_MOD:
-                    chooseAdditionalMods();
-                    return true;
-                case MENU_ATTACH_PTX:
-                    choosePtxForCurrentSession();
-                    return true;
-                case MENU_ADD_MOTION:
-                    chooseStagedAssets(REQUEST_STAGE_MOTION, true);
-                    return true;
-                case MENU_ADD_TEXTURE:
-                    chooseStagedAssets(REQUEST_STAGE_TEXTURE, true);
-                    return true;
-                case MENU_ADD_PHYSICS:
-                    chooseStagedAssets(REQUEST_STAGE_PHYSICS, true);
-                    return true;
-                case MENU_ADD_CLOTH:
-                    chooseStagedAssets(REQUEST_STAGE_CLOTH, true);
-                    return true;
-                case MENU_ADD_OTHER:
-                    chooseStagedAssets(REQUEST_STAGE_OTHER, true);
-                    return true;
-                default:
-                    return false;
-            }
+        content.addView(choiceRow("Playback speed", new String[]{"¼×", "½×", "1×", "2×"},
+                speedIndex, i -> { p.edit().putFloat(SET_SPEED, speeds[i]).apply(); apply.run(); }));
+
+        content.addView(sectionTitle("Room"));
+        TextView status = new TextView(this);
+        status.setTextColor(0xffc8ccd6);
+        status.setTextSize(14f);
+        status.setPadding(0, dp(6), 0, dp(6));
+        status.setText(roomLoaded
+                ? (roomDetail.isEmpty() ? roomName : roomDetail)
+                : "No room: models stand on the plain floor. Choose a stage (st*.pac or .scm) to show "
+                        + "every model inside it.");
+        content.addView(status);
+        LinearLayout roomActions = new LinearLayout(this);
+        roomActions.setOrientation(LinearLayout.VERTICAL);
+        final java.util.function.BiConsumer<String, Runnable> addAction = (text, action) -> {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.topMargin = dp(6);
+            roomActions.addView(actionChip(text, action), params);
+        };
+        addAction.accept(roomLoaded ? "Replace stage…" : "Choose stage…", () -> {
+            dialog.dismiss();
+            roomChoose();
         });
-        menu.show();
+        if (roomLoaded) {
+            content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
+                    i -> { if ((i == 0) != roomShown()) roomToggle(); }));
+            if (NativeBridge.roomSpotCount() > 1) addAction.accept("Next floor spot", this::roomNextSpot);
+            addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
+        }
+        content.addView(roomActions);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(0xff16171c);
+        applySystemBarInsets(frame);
+        frame.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT));
+        dialog.setContentView(frame);
+        dialog.show();
+    }
+
+    // ---- Gestures (DmcRenderView): the activity side and the Gestures window.
+
+    private static final String PREF_GESTURES = "gestures.mask";
+
+    private final DmcRenderView.GestureListener gestureListener = new DmcRenderView.GestureListener() {
+        @Override public void onStepMotion(int direction) {
+            final ArrayList<MotionEntry> motions = motionEntries();
+            if (session == 0 || motions.isEmpty()) {
+                notice("No animations here", Toast.LENGTH_SHORT);
+                return;
+            }
+            final int n = motions.size();
+            final int next = selectedMotionIndex < 0
+                    ? (direction > 0 ? 0 : n - 1)
+                    : ((selectedMotionIndex + direction) % n + n) % n;
+            selectMotion(next);
+            if (motionBar != null && next < motionBar.getChildCount()) {
+                final View card = motionBar.getChildAt(next);
+                motionScroll.post(() -> motionScroll.smoothScrollTo(
+                        Math.max(0, card.getLeft() - dp(24)), 0));
+            }
+        }
+
+        @Override public void onStepVariant(int direction) {
+            final String[] positions = (isRootScene() && assembledPacUri != null)
+                    ? NativeBridge.archiveVariantNames(displayName(assembledPacUri))
+                    : null;
+            if (positions == null || positions.length < 2) {
+                notice("No other positions here", Toast.LENGTH_SHORT);
+                return;
+            }
+            final int n = positions.length;
+            enemyVariant = ((enemyVariant + direction) % n + n) % n;
+            assembleWithAddedPacs(null);
+            notice(positions[enemyVariant], Toast.LENGTH_SHORT);
+        }
+
+        @Override public void onToggleUi() {
+            final View[] bars = {headerBar, variantScroll, motionScroll, toolScroll};
+            uiHidden = !uiHidden;
+            for (int i = 0; i < bars.length; ++i) {
+                if (bars[i] == null) continue;
+                if (uiHidden) {
+                    barVisibility[i] = bars[i].getVisibility();
+                    bars[i].setVisibility(View.GONE);
+                } else {
+                    bars[i].setVisibility(barVisibility[i]);
+                }
+            }
+            if (!uiHidden) {
+                refreshMotionStrip();
+                refreshVariantBar();
+            }
+            notice(uiHidden ? "Full view — swipe down from the top to bring the bars back" : "Bars shown",
+                    Toast.LENGTH_SHORT);
+        }
+
+        @Override public void onScreenshot(Bitmap image) {
+            saveScreenshot(image);
+        }
+
+        @Override public void onGestureNotice(String text) {
+            notice(text, Toast.LENGTH_SHORT);
+        }
+    };
+
+    /** PNG into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
+    private void saveScreenshot(Bitmap image) {
+        final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                .format(new java.util.Date()) + ".png";
+        new Thread(() -> {
+            String where = null;
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    final android.content.ContentValues values = new android.content.ContentValues();
+                    values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name);
+                    values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png");
+                    values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DMC Native Reader");
+                    final Uri target = getContentResolver().insert(
+                            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                    if (target != null) {
+                        try (OutputStream out = getContentResolver().openOutputStream(target)) {
+                            if (out != null && image.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                                where = "Pictures/DMC Native Reader/" + name;
+                            }
+                        }
+                    }
+                } else {
+                    final File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+                    if (dir != null && (dir.isDirectory() || dir.mkdirs())) {
+                        final File file = new File(dir, name);
+                        try (OutputStream out = new java.io.FileOutputStream(file)) {
+                            if (image.compress(Bitmap.CompressFormat.PNG, 100, out)) where = file.getPath();
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                where = null;
+            }
+            final String saved = where;
+            runOnUiThread(() -> notice(saved != null ? "📸 Saved " + saved : "Screenshot failed",
+                    Toast.LENGTH_LONG));
+        }).start();
+    }
+
+    /** Full-screen list of the gestures, each switchable, plus the camera follow. */
+    private void showGesturesDialog() {
+        final android.app.Dialog dialog = new android.app.Dialog(this,
+                android.R.style.Theme_DeviceDefault_NoActionBar);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(24));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText("Gestures");
+        title.setTextSize(22f);
+        title.setTextColor(0xffffffff);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button close = makeSquareButton("✕", "Close gestures", 20f);
+        close.setOnClickListener(v -> dialog.dismiss());
+        header.addView(close, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+        content.addView(header);
+
+        TextView always = new TextView(this);
+        always.setTextColor(0xffc8ccd6);
+        always.setTextSize(14f);
+        always.setPadding(0, dp(8), 0, dp(4));
+        always.setText("Always on: one finger turns the view, pinch zooms.");
+        content.addView(always);
+
+        content.addView(choiceRow("Camera (a four-finger tap switches it)",
+                new String[]{"Follows the model", "Stays in place"}, renderView.isFollowing() ? 0 : 1,
+                i -> renderView.setFollow(i == 0)));
+
+        final Object[][] list = {
+                {DmcRenderView.G_PAN, "Two fingers drag — pan the camera"},
+                {DmcRenderView.G_TWIST, "Two fingers twist — turn the model in the room (the view when there is no room)"},
+                {DmcRenderView.G_DOUBLE_TAP, "Double tap — reset the view; on the room floor: stand the model there"},
+                {DmcRenderView.G_TAP_PAUSE, "Tap the model — pause / resume the animation"},
+                {DmcRenderView.G_FLING, "Flick — the view keeps turning and slows down"},
+                {DmcRenderView.G_SCRUB, "Long press, then drag sideways — step through animation frames"},
+                {DmcRenderView.G_BONE, "Long press — name and number of the joint under the finger"},
+                {DmcRenderView.G_EDGE_MOTION, "Swipe in from the left / right edge — previous / next animation"},
+                {DmcRenderView.G_THREE_SWIPE, "Three fingers sideways — previous / next position (enemy class, weapon, dress)"},
+                {DmcRenderView.G_TOP_UI, "Swipe down from the top of the view — hide / show the bars"},
+                {DmcRenderView.G_SCREENSHOT, "Three-finger tap — save a PNG of the view"},
+                {DmcRenderView.G_FOLLOW, "Four-finger tap — camera follows the model / stays in place"},
+        };
+        for (Object[] entry : list) {
+            final int bit = (Integer) entry[0];
+            final int mask = prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL);
+            content.addView(choiceRow((String) entry[1], new String[]{"On", "Off"}, (mask & bit) != 0 ? 0 : 1, i -> {
+                int current = prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL);
+                current = i == 0 ? (current | bit) : (current & ~bit);
+                prefs().edit().putInt(PREF_GESTURES, current).apply();
+                renderView.setGestures(current);
+            }));
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(content);
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setBackgroundColor(0xff16171c);
+        applySystemBarInsets(frame);
+        frame.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT));
+        dialog.setContentView(frame);
+        dialog.show();
+    }
+
+    /** The ⋮ menu: a row of square shortcuts (settings first), then actions. */
+    private void showCompanionMenu(View anchor) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(0xff23252c);
+        panel.setPadding(dp(8), dp(8), dp(8), dp(8));
+        final android.widget.PopupWindow popup = new android.widget.PopupWindow(panel,
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true);
+        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff23252c));
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(8));
+
+        LinearLayout icons = new LinearLayout(this);
+        icons.setOrientation(LinearLayout.HORIZONTAL);
+        final java.util.function.BiConsumer<Button, Runnable> addIcon = (button, action) -> {
+            button.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
+            params.setMarginEnd(dp(6));
+            icons.addView(button, params);
+        };
+        addIcon.accept(makeSquareButton("⚙", "Settings", 22f), this::showSettingsDialog);
+        addIcon.accept(makeSquareButton("\u270b", "Gestures", 22f), this::showGesturesDialog);
+        if (roomLoaded) {
+            Button room = makeSquareButton("⌂", roomShown() ? "Hide the room" : "Show the room", 22f);
+            room.setAlpha(roomShown() ? 1f : 0.5f);
+            addIcon.accept(room, this::roomToggle);
+            if (NativeBridge.roomSpotCount() > 1) {
+                addIcon.accept(makeSquareButton("⇄", "Next floor spot", 20f), this::roomNextSpot);
+            }
+        }
+        panel.addView(icons);
+
+        final java.util.function.BiConsumer<String, Runnable> addRow = (text, action) -> {
+            TextView row = new TextView(this);
+            row.setText(text);
+            row.setTextSize(16f);
+            row.setTextColor(0xffe8eaf0);
+            row.setPadding(dp(8), dp(12), dp(16), dp(12));
+            row.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+            panel.addView(row);
+        };
+        addRow.accept("Open / replace resource", this::chooseFile);
+        if (isRootScene() && assembledPacUri != null) {
+            addRow.accept("Add weapon / .PAC…", this::chooseAdditionalPac);
+            addRow.accept("Browse .PAC files…", this::browseAssembledPac);
+        }
+        if (hasModCompositionContext()) addRow.accept("Add .MOD part(s)", this::chooseAdditionalMods);
+        if (isRootScene() && canAttachPtx()) addRow.accept("Attach .PTX texture", this::choosePtxForCurrentSession);
+        if (isRootScene() && blackWidowState.canStageCompanion) {
+            addRow.accept("Add animation / motion…", () -> chooseStagedAssets(REQUEST_STAGE_MOTION, true));
+            addRow.accept("Add texture asset (.TM2 / .DDS / …)", () -> chooseStagedAssets(REQUEST_STAGE_TEXTURE, true));
+            addRow.accept("Add physics resource…", () -> chooseStagedAssets(REQUEST_STAGE_PHYSICS, true));
+            addRow.accept("Add cloth resource…", () -> chooseStagedAssets(REQUEST_STAGE_CLOTH, true));
+            addRow.accept("Add other companion…", () -> chooseStagedAssets(REQUEST_STAGE_OTHER, true));
+        }
+        popup.showAsDropDown(anchor);
+    }
+
+    /** Copies the picked stage into app storage (it is reloaded on start). */
+    private void chooseRoom(Uri uri) {
+        final String name = displayName(uri);
+        notice("Room: loading " + name + "\u2026", Toast.LENGTH_SHORT);
+        new Thread(() -> {
+            final File target = roomFile();
+            final File partial = new File(getFilesDir(), ROOM_FILE + ".part");
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new java.io.FileOutputStream(partial)) {
+                if (in != null) {
+                    byte[] buffer = new byte[1 << 16];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception ignored) {
+                copied = false;
+            }
+            if (!copied) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+                runOnUiThread(() -> notice("Room: could not read " + name, Toast.LENGTH_LONG));
+                return;
+            }
+            final String detail = loadRoomFile(partial, name);
+            if (detail == null) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+                runOnUiThread(() -> notice("Room: nothing to draw in " + name, Toast.LENGTH_LONG));
+                return;
+            }
+            //noinspection ResultOfMethodCallIgnored
+            target.delete();
+            //noinspection ResultOfMethodCallIgnored
+            partial.renameTo(target);
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString(PREF_ROOM_NAME, name).putBoolean(PREF_ROOM_SHOWN, true).apply();
+            runOnUiThread(() -> {
+                roomLoaded = true;
+                roomName = name;
+                roomDetail = detail;
+                renderView.setRoomVisible(true);
+                notice("Room: " + detail, Toast.LENGTH_LONG);
+            });
+        }).start();
+    }
+
+    private void restoreRoom() {
+        final File file = roomFile();
+        final String name = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_ROOM_NAME, null);
+        if (name == null || !file.isFile()) return;
+        new Thread(() -> {
+            final String detail = loadRoomFile(file, name);
+            if (detail == null) return;
+            runOnUiThread(() -> {
+                roomLoaded = true;
+                roomName = name;
+                roomDetail = detail;
+                renderView.setRoomVisible(roomShown());
+            });
+        }).start();
+    }
+
+    /** Native room build (stage_room.h) from a local file; its summary or null. */
+    private static String loadRoomFile(File file, String name) {
+        try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            return NativeBridge.loadRoom(pfd.getFd(), name);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+
+    /** One motion card: a MOT found in the assembled PAC or a staged file. */
+    private static final class MotionEntry {
+        final String name;
+        final int libraryIndex;   // >= 0: native Session::motion_library
+        final Uri uri;            // staged file otherwise
+
+        MotionEntry(String name, int libraryIndex, Uri uri) {
+            this.name = name;
+            this.libraryIndex = libraryIndex;
+            this.uri = uri;
+        }
+    }
+
+    private ArrayList<MotionEntry> motionEntries() {
+        ArrayList<MotionEntry> result = new ArrayList<>();
+        if (session != 0 && isRootScene()) {
+            final int count = NativeBridge.motionLibraryCount(session);
+            for (int index = 0; index < count; ++index) {
+                result.add(new MotionEntry(
+                        NativeBridge.motionLibraryName(session, index), index, null));
+            }
+        }
+        for (StagedAsset asset : motionAssets()) {
+            result.add(new MotionEntry(asset.name, -1, asset.uri));
+        }
+        return result;
     }
 
     private void refreshMotionStrip() {
         if (motionBar == null || motionScroll == null) return;
         motionBar.removeAllViews();
-        ArrayList<StagedAsset> motions = motionAssets();
+        ArrayList<MotionEntry> motions = motionEntries();
         if (motions.isEmpty() || !isRootScene()) {
             motionScroll.setVisibility(View.GONE);
             if (motions.isEmpty()) selectedMotionIndex = -1;
             return;
         }
-        if (selectedMotionIndex < 0 || selectedMotionIndex >= motions.size()) {
-            selectedMotionIndex = 0;
-        }
         for (int index = 0; index < motions.size(); ++index) {
             final int motionIndex = index;
-            StagedAsset asset = motions.get(index);
-            Button button = makeSquareButton("", "Select animation " + asset.name, 11f);
-            button.setText(motionCardLabel(asset.name));
-            button.setActivated(index == selectedMotionIndex);
-            button.setAlpha(index == selectedMotionIndex ? 1.0f : 0.72f);
+            MotionEntry entry = motions.get(index);
+            final boolean active = index == selectedMotionIndex;
+            Button button = makeSquareButton("", "Play animation " + entry.name, 11f);
+            button.setText(motionCardLabel(entry.name));
+            button.setActivated(active);
+            button.setAlpha(active ? 1.0f : 0.72f);
             button.setOnClickListener(v -> selectMotion(motionIndex));
             addToolButton(motionBar, button);
         }
-        motionScroll.setVisibility(View.VISIBLE);
+        motionScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
     }
 
     private CharSequence motionCardLabel(String name) {
@@ -490,14 +1157,161 @@ public final class MainActivity extends Activity {
         return result;
     }
 
+    // Tap a card: bind + play. Tap the playing card again: pause/resume.
     private void selectMotion(int index) {
-        ArrayList<StagedAsset> motions = motionAssets();
-        if (index < 0 || index >= motions.size()) return;
-        selectedMotionIndex = index;
+        ArrayList<MotionEntry> motions = motionEntries();
+        if (session == 0 || index < 0 || index >= motions.size()) return;
+        if (index == selectedMotionIndex && NativeBridge.hasMotion(session)) {
+            if (renderView.isMotionPlaying()) {
+                renderView.pauseMotion();
+            } else {
+                renderView.startMotion();
+            }
+            return;
+        }
+
+        renderView.pauseMotion();
+        final MotionEntry entry = motions.get(index);
+        String report;
+        if (entry.libraryIndex >= 0) {
+            report = NativeBridge.loadLibraryMotion(session, entry.libraryIndex);
+        } else {
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(entry.uri)) {
+                if (pfd == null) throw new FileNotFoundException("No file descriptor");
+                report = NativeBridge.loadMotion(session, pfd.getFd(), entry.name);
+            } catch (Exception error) {
+                report = "Motion: could not read " + entry.name + ": " + error;
+            }
+        }
+
+        final boolean bound = NativeBridge.hasMotion(session);
+        selectedMotionIndex = bound ? index : -1;
         refreshMotionStrip();
-        Toast.makeText(this,
-                motions.get(index).name + " selected · playback runtime is not promoted yet",
-                Toast.LENGTH_LONG).show();
+        if (bound) renderView.startMotion();
+        else renderView.renderNow();
+        notice(bound ? entry.name + " ▶" : (report == null ? "Motion rejected" : report), Toast.LENGTH_LONG);
+        rebuildInfo(titleView.getText().toString());
+        if (report != null && !report.isEmpty()) {
+            setInfo(infoText + "\nMOTION\n" + report + "\n");
+        }
+    }
+
+    // Archives with several in-game looks (em000.pac: enemy classes and their
+    // weapons; em028.pac: Nevan's dress with the bats in or out) get one button
+    // per position under the title; tapping one re-assembles that look.
+    private void refreshVariantBar() {
+        if (variantBar == null || variantScroll == null) return;
+        variantBar.removeAllViews();
+        final String[] positions = (isRootScene() && assembledPacUri != null)
+                ? NativeBridge.archiveVariantNames(displayName(assembledPacUri))
+                : null;
+        if (positions == null || positions.length < 2) {
+            variantScroll.setVisibility(View.GONE);
+            return;
+        }
+        for (int index = 0; index < positions.length; ++index) {
+            final int position = index;
+            final boolean active = index == enemyVariant;
+            Button button = makeSquareButton(positions[index], "Show " + positions[index], 13f);
+            button.setPadding(dp(10), 0, dp(10), 0);
+            button.setActivated(active);
+            button.setAlpha(active ? 1.0f : 0.72f);
+            button.setOnClickListener(v -> {
+                if (position == enemyVariant) return;
+                enemyVariant = position;
+                assembleWithAddedPacs(null);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+            params.setMarginStart(dp(TOOL_GAP_DP));
+            params.setMarginEnd(dp(TOOL_GAP_DP));
+            variantBar.addView(button, params);
+        }
+        variantScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
+    }
+
+    private void chooseAdditionalPac() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {
+                "application/vnd.dmc.pac",
+                "application/octet-stream",
+                "*/*"
+        });
+        startActivityForResult(intent, REQUEST_ADD_PAC);
+    }
+
+    // Re-assemble the character PAC together with every added archive. Weapon
+    // PACs (plwp_*.pac) hang from the body joint recorded by the game.
+    private void assembleWithAddedPacs(Uri added) {
+        if (assembledPacUri == null) return;
+        ArrayList<Uri> uris = new ArrayList<>();
+        uris.add(assembledPacUri);
+        uris.addAll(addedPacUris);
+        if (added != null && !uris.contains(added)) uris.add(added);
+
+        long[] handles = new long[uris.size()];
+        String[] names = new String[uris.size()];
+        long scene = 0;
+        String failure = null;
+        try {
+            for (int index = 0; index < uris.size(); ++index) {
+                names[index] = displayName(uris.get(index));
+                try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uris.get(index))) {
+                    if (pfd == null) throw new FileNotFoundException("No file descriptor");
+                    handles[index] = NativeBridge.open(pfd.getFd(), names[index]);
+                }
+                if (handles[index] == 0) {
+                    failure = names[index] + " is not a readable DMC archive";
+                    break;
+                }
+            }
+            if (failure == null) {
+                scene = NativeBridge.assemblePacs(handles, names, enemyVariant);
+                if (scene == 0) failure = "Archives could not be assembled";
+            }
+        } catch (Exception error) {
+            failure = "Could not read archives: " + error;
+        } finally {
+            for (long handle : handles) if (handle != 0) NativeBridge.close(handle);
+        }
+        if (scene == 0) {
+            notice(failure, Toast.LENGTH_LONG);
+            return;
+        }
+        final Uri character = assembledPacUri;
+        final ArrayList<Uri> extras = new ArrayList<>(uris.subList(1, uris.size()));
+        renderView.pauseMotion();
+        closeAllSessions();
+        resetCompositionState();
+        assembledPacUri = character;
+        addedPacUris.addAll(extras);
+        StringBuilder title = new StringBuilder(displayName(character));
+        final String[] classes = NativeBridge.archiveVariantNames(displayName(character));
+        if (classes != null && enemyVariant < classes.length) {
+            title.append(" · ").append(classes[enemyVariant]);
+        }
+        for (Uri uri : extras) title.append(" + ").append(displayName(uri));
+        activateSession(scene, title.toString());
+        notice(title + " assembled", Toast.LENGTH_LONG);
+    }
+
+    private void browseAssembledPac() {
+        if (assembledPacUri == null) return;
+        final String name = displayName(assembledPacUri);
+        long archive = 0;
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(assembledPacUri)) {
+            if (pfd != null) archive = NativeBridge.open(pfd.getFd(), name);
+        } catch (Exception ignored) {
+            archive = 0;
+        }
+        if (archive == 0) {
+            notice("Could not re-open " + name, Toast.LENGTH_LONG);
+            return;
+        }
+        renderView.pauseMotion();
+        navigateToSession(archive, name + " · files");
     }
 
     private void setInfo(String text) {
@@ -556,7 +1370,7 @@ public final class MainActivity extends Activity {
 
     private void chooseAdditionalMods() {
         if (!hasModCompositionContext()) {
-            Toast.makeText(this, "Open a MOD scene first", Toast.LENGTH_LONG).show();
+            notice("Open a MOD scene first", Toast.LENGTH_LONG);
             return;
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -688,6 +1502,18 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        if (requestCode == REQUEST_ROOM) {
+            if (data != null && data.getData() != null) chooseRoom(data.getData());
+            return;
+        }
+        if (requestCode == REQUEST_ADD_PAC) {
+            Uri uri = data.getData();
+            if (uri == null) return;
+            persistUriPermission(uri, data.getFlags(), false);
+            assembleWithAddedPacs(uri);
+            return;
+        }
+
         if (requestCode == REQUEST_ADD_MOD_PARTS) {
             ArrayList<Uri> added = selectedUris(data);
             if (added.isEmpty()) return;
@@ -759,14 +1585,10 @@ public final class MainActivity extends Activity {
             stagedAssets.add(new StagedAsset(uri, displayName(uri), role));
             ++added;
         }
-        if (ROLE_MOTION.equals(role) && selectedMotionIndex < 0 && !motionAssets().isEmpty()) {
-            selectedMotionIndex = 0;
-        }
+        if (ROLE_MOTION.equals(role)) refreshMotionStrip();
         rebuildInfo(titleView.getText().toString());
         applyResourceUiState();
-        Toast.makeText(this,
-                added + " " + role + " resource(s) staged",
-                Toast.LENGTH_LONG).show();
+        notice(added + " " + role + " resource(s) staged", Toast.LENGTH_LONG);
     }
 
     private ArrayList<Uri> selectedUris(Intent data) {
@@ -838,6 +1660,8 @@ public final class MainActivity extends Activity {
         sharedModelPtxUri = null;
         stagedAssets.clear();
         selectedMotionIndex = -1;
+        assembledPacUri = null;
+        addedPacUris.clear();
     }
 
     private void showIdleStatus() {
@@ -847,7 +1671,7 @@ public final class MainActivity extends Activity {
         pendingExportSession = 0;
         resetCompositionState();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
-                + "Architecture v2 core: MOD / SCM / DDS / PTX.\n"
+                + "Architecture v2 core: MOD / SCM / DDS / PTX / PAC / MOT (read-only).\n"
                 + "Unpromoted DMC families are intentionally excluded from main.\n\n"
                 + "Open a supported resource from My Files or use ↑.\n"
                 + "Select multiple canonical MOD files to compose them in one scene.\n"
@@ -879,11 +1703,34 @@ public final class MainActivity extends Activity {
 
     private void activateSession(long handle, String name) {
         session = handle;
+        selectedMotionIndex = -1;
         titleView.setText(name);
         renderView.setSession(session);
         refreshBlackWidowState();
         rebuildInfo(name);
         applyResourceUiState();
+    }
+
+    private String nonCanonicalNotes() {
+        if (session == 0) return "";
+        final String notes = NativeBridge.nonCanonicalNotes(session);
+        return notes == null ? "" : notes;
+    }
+
+    private void refreshNonCanonicalBadge() {
+        if (nonCanonicalBadge == null) return;
+        nonCanonicalBadge.setVisibility(nonCanonicalNotes().isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private void showNonCanonicalNotes() {
+        final String notes = nonCanonicalNotes();
+        if (notes.isEmpty()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("▲ Shown, not canonical")
+                .setMessage("This view is displayed, but part of it was not read the canonical "
+                        + "way the game data is specified:\n\n" + notes)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
     }
 
     private void rebuildInfo(String name) {
@@ -895,6 +1742,10 @@ public final class MainActivity extends Activity {
         details.append(inspection == null || inspection.isEmpty()
                 ? "No typed inspection document.\n"
                 : inspection);
+        final String nonCanonical = nonCanonicalNotes();
+        if (!nonCanonical.isEmpty()) {
+            details.append("\n▲ NOT CANONICAL (shown anyway)\n").append(nonCanonical).append("\n");
+        }
         details.append("\nSESSION / EVIDENCE\n").append(nativeInfo).append("\n");
         if (!navigation.isEmpty()) {
             details.append("\nNAVIGATION\n")
@@ -907,9 +1758,10 @@ public final class MainActivity extends Activity {
                 details.append("- ").append(asset.role).append(": ")
                         .append(asset.name).append("\n");
             }
-            details.append("Playback / physics application remains disabled until the corresponding native runtime is promoted.\n");
+            details.append("MOT cards play on tap (tap again to pause). Physics/cloth companions stay staged: their native runtime is not promoted yet.\n");
         }
         setInfo(details.toString());
+        refreshNonCanonicalBadge();
     }
 
     private void openUri(Uri uri) {
@@ -925,19 +1777,30 @@ public final class MainActivity extends Activity {
         } catch (Exception error) {
             setInfo(name + "\nOpen failed: " + error);
             applyResourceUiState();
-            Toast.makeText(this, "Could not read file", Toast.LENGTH_LONG).show();
+            notice("Could not read file", Toast.LENGTH_LONG);
             return;
         }
 
         if (opened == 0) {
-            setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX.");
+            setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX / PAC / MOT.");
             applyResourceUiState();
-            Toast.makeText(this, "Unsupported or malformed DMC resource", Toast.LENGTH_LONG).show();
+            notice("Unsupported or malformed DMC resource", Toast.LENGTH_LONG);
             return;
         }
 
+        // A PAC opens as an assembled character/scene when it holds MODs; the
+        // raw archive stays browsable from ⋮ (read-only, nothing is written).
+        enemyVariant = 0;
+        final long assembled = NativeBridge.assemblePac(opened, name);
+        if (assembled != 0) {
+            NativeBridge.close(opened);
+            opened = assembled;
+            assembledPacUri = uri;
+            name = name + " · assembled";
+        }
+
         activateSession(opened, name);
-        if (blackWidowState.canAddModelPart) {
+        if (assembledPacUri == null && blackWidowState.canAddModelPart) {
             modelPartUris.add(uri);
             modelPartPtxUris.add(null);
         }
@@ -959,7 +1822,7 @@ public final class MainActivity extends Activity {
             }
         }
         if (additions.isEmpty()) {
-            Toast.makeText(this, "No new MOD parts selected", Toast.LENGTH_LONG).show();
+            notice("No new MOD parts selected", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1006,9 +1869,7 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
-            Toast.makeText(this,
-                    failure == null ? "MOD composition failed" : failure,
-                    Toast.LENGTH_LONG).show();
+            notice(failure == null ? "MOD composition failed" : failure, Toast.LENGTH_LONG);
             return;
         }
 
@@ -1025,9 +1886,7 @@ public final class MainActivity extends Activity {
 
         activateSession(composite, "MOD scene · " + combinedUris.size() + " parts");
         reattachSavedPtxToComposite();
-        Toast.makeText(this,
-                combinedUris.size() + " MOD parts composed from the live base session",
-                Toast.LENGTH_LONG).show();
+        notice(combinedUris.size() + " MOD parts composed from the live base session", Toast.LENGTH_LONG);
     }
 
     private void openCompositeUris(ArrayList<Uri> uris, boolean preserveAssets) {
@@ -1072,9 +1931,7 @@ public final class MainActivity extends Activity {
         }
 
         if (composite == 0) {
-            Toast.makeText(this,
-                    failure == null ? "MOD composition failed" : failure,
-                    Toast.LENGTH_LONG).show();
+            notice(failure == null ? "MOD composition failed" : failure, Toast.LENGTH_LONG);
             return;
         }
 
@@ -1089,9 +1946,7 @@ public final class MainActivity extends Activity {
 
         activateSession(composite, "MOD scene · " + uris.size() + " parts");
         reattachSavedPtxToComposite();
-        Toast.makeText(this,
-                uris.size() + " MOD parts composed in source coordinates",
-                Toast.LENGTH_LONG).show();
+        notice(uris.size() + " MOD parts composed in source coordinates", Toast.LENGTH_LONG);
     }
 
     private void reattachSavedPtxToComposite() {
@@ -1153,7 +2008,7 @@ public final class MainActivity extends Activity {
                     ? NativeBridge.attachPtxToPart(session, partIndex, pfd.getFd(), ptxName)
                     : NativeBridge.attachPtx(session, pfd.getFd(), ptxName);
         } catch (Exception error) {
-            Toast.makeText(this, "Could not read PTX", Toast.LENGTH_LONG).show();
+            notice("Could not read PTX", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1164,19 +2019,15 @@ public final class MainActivity extends Activity {
             renderView.renderNow();
             rebuildInfo(titleView.getText().toString());
             applyResourceUiState();
-            Toast.makeText(this,
-                    diagnostic == null || diagnostic.isEmpty()
+            notice(diagnostic == null || diagnostic.isEmpty()
                             ? "PTX textures attached"
-                            : diagnostic,
-                    Toast.LENGTH_LONG).show();
+                            : diagnostic, Toast.LENGTH_LONG);
         } else {
             rebuildInfo(titleView.getText().toString());
             applyResourceUiState();
-            Toast.makeText(this,
-                    diagnostic == null || diagnostic.isEmpty()
+            notice(diagnostic == null || diagnostic.isEmpty()
                             ? "PTX could not be matched to this model"
-                            : diagnostic,
-                    Toast.LENGTH_LONG).show();
+                            : diagnostic, Toast.LENGTH_LONG);
         }
     }
 
@@ -1279,9 +2130,7 @@ public final class MainActivity extends Activity {
         Bitmap bitmap = bitmapForSession(handle);
         boolean saved = saveBitmapToUri(bitmap, target);
         if (bitmap != null) bitmap.recycle();
-        Toast.makeText(this,
-                saved ? "PNG saved" : "Could not export PNG",
-                Toast.LENGTH_LONG).show();
+        notice(saved ? "PNG saved" : "Could not export PNG", Toast.LENGTH_LONG);
     }
 
     private void exportGalleryToTree(Uri treeUri) {
@@ -1289,7 +2138,7 @@ public final class MainActivity extends Activity {
         if (handle == 0) return;
         final int count = NativeBridge.childResourceCount(handle);
         if (count <= 0) {
-            Toast.makeText(this, "No gallery images to export", Toast.LENGTH_LONG).show();
+            notice("No gallery images to export", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1298,7 +2147,7 @@ public final class MainActivity extends Activity {
             String documentId = DocumentsContract.getTreeDocumentId(treeUri);
             parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
         } catch (RuntimeException error) {
-            Toast.makeText(this, "Selected folder is not writable", Toast.LENGTH_LONG).show();
+            notice("Selected folder is not writable", Toast.LENGTH_LONG);
             return;
         }
 
@@ -1323,16 +2172,14 @@ public final class MainActivity extends Activity {
             }
         }
 
-        Toast.makeText(this,
-                "PNG export: " + saved + "/" + count,
-                Toast.LENGTH_LONG).show();
+        notice("PNG export: " + saved + "/" + count, Toast.LENGTH_LONG);
     }
 
     private void openChildResource(int index, String childTitle) {
         if (session == 0) return;
         final long child = NativeBridge.openChild(session, index);
         if (child == 0) {
-            Toast.makeText(this, "Could not open child resource", Toast.LENGTH_LONG).show();
+            notice("Could not open child resource", Toast.LENGTH_LONG);
             return;
         }
         navigateToSession(child, childTitle);

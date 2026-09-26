@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 5U);
+    assert(modules.size() == 16U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -24,10 +24,73 @@ int main() {
     assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
            !event_tbl->renderable);
 
+    // v34: PAC (read-only archive browser/assembler) and MOT (motion reader)
+    // are promoted; both are byte-identified, never by extension alone.
+    const auto* pac = NativeModuleRegistry::find("PAC");
+    const auto* mot = NativeModuleRegistry::find("MOT");
+    assert(pac != nullptr && pac->format == Format::Pac && !pac->renderable);
+    assert(mot != nullptr && mot->format == Format::Mot && !mot->renderable);
+    // A lone MOT shows its curves as an image preview.
+    assert(has_capability(mot->capabilities, ResourceCapability::ImagePreview));
+    const std::array<std::uint8_t, 8> pac_magic{'P', 'A', 'C', 0U, 0U, 0U, 0U, 0U};
+    const std::array<std::uint8_t, 8> mot_magic{0x30U, 0U, 0U, 0U, 'M', 'O', 'T', 0U};
+    assert(probe("renamed.bin", pac_magic.data(), pac_magic.size()).format == Format::Pac);
+    assert(probe("renamed.bin", mot_magic.data(), mot_magic.size()).format == Format::Mot);
+    assert(!probe("motion.mot", nullptr, 0U).recognized);
+
+    // PNST (weapon archives obj\\plwp_*.pac) shares the relative-slot layout.
+    const auto* pnst = NativeModuleRegistry::find("PNST");
+    assert(pnst != nullptr && pnst->format == Format::Pnst && !pnst->renderable);
+    assert(pnst->run == pac->run);
+    const std::array<std::uint8_t, 8> pnst_magic{'P', 'N', 'S', 'T', 0U, 0U, 0U, 0U};
+    assert(probe("plwp_sword.pac", pnst_magic.data(), pnst_magic.size()).format ==
+           Format::Pnst);
+
+    // SHW shadow hulls: content-confirmed by magic, rendered as hull geometry.
+    const auto* shw = NativeModuleRegistry::find("SHW");
+    assert(shw != nullptr && shw->format == Format::Shw && shw->renderable);
+    const std::array<std::uint8_t, 4> shw_magic{'S', 'H', 'W', ' '};
+    assert(probe("renamed.bin", shw_magic.data(), shw_magic.size()).format == Format::Shw);
+
+    // TSC / CLT text scripts: identified by content (".TSC" first token,
+    // ";name.clt" + ClothNo), inspection only.
+    const auto* tsc = NativeModuleRegistry::find("TSC");
+    const auto* clt = NativeModuleRegistry::find("CLT");
+    assert(tsc != nullptr && tsc->format == Format::Tsc && !tsc->renderable &&
+           has_capability(tsc->capabilities, ResourceCapability::ImagePreview));
+    assert(clt != nullptr && clt->format == Format::Clt && !clt->renderable &&
+           has_capability(clt->capabilities, ResourceCapability::ImagePreview));
+    const auto* script = NativeModuleRegistry::find("MotionScript");
+    assert(script != nullptr && script->format == Format::MotionScript && !script->renderable &&
+           has_capability(script->capabilities, ResourceCapability::ImagePreview));
+    constexpr std::string_view tsc_text = "\r\n.TSC\t\n\t# RELATIVE\n<Finish>\n$";
+    constexpr std::string_view clt_text = ";a.clt\nClothNum 1\nClothNo 0\nBone 2 Y\nEnd\n$";
+    assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(tsc_text.data()),
+                 tsc_text.size()).format == Format::Tsc);
+    assert(probe("renamed.bin", reinterpret_cast<const std::uint8_t*>(clt_text.data()),
+                 clt_text.size()).format == Format::Clt);
+
+    const auto* colshape = NativeModuleRegistry::find("COLSHAPE");
+    const auto* colindex = NativeModuleRegistry::find("COLINDEX");
+    assert(colshape != nullptr && colshape->format == Format::CollisionShapes && !colshape->renderable);
+    assert(colindex != nullptr && colindex->format == Format::AttackIndex && !colindex->renderable);
+    assert(probe("slot_0006.colidx", nullptr, 0U).format == Format::AttackIndex);
+    assert(!probe("slot_0006.colidx", nullptr, 0U).content_confirmed);
+
+    const auto* fxbank = NativeModuleRegistry::find("FXBANK");
+    assert(fxbank != nullptr && fxbank->format == Format::EffectBank && !fxbank->renderable);
+
+    // EFM effect models: own family, MOD document route (0x1402F7A90).
+    const auto* efm = NativeModuleRegistry::find("EFM");
+    assert(efm != nullptr && efm->format == Format::Mod && efm->renderable);
+    const std::array<std::uint8_t, 4> efm_magic{'E', 'F', 'M', ' '};
+    const auto efm_probe = probe("renamed.bin", efm_magic.data(), efm_magic.size());
+    assert(efm_probe.format == Format::Mod && std::string_view{efm_probe.family} == "EFM");
+
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
              "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
-             "PAC", "PNST", "NBZ", "EFM", "MRP", "SHW"}) {
+             "NBZ", "MRP"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 
@@ -45,7 +108,6 @@ int main() {
     assert(!probe("stage.hits", nullptr, 0U).recognized);
     assert(!probe("stage.dca", nullptr, 0U).recognized);
     assert(!probe("stage.pac", nullptr, 0U).recognized);
-    assert(!probe("stage.pnst", nullptr, 0U).recognized);
     assert(!probe("stage.txt", nullptr, 0U).recognized);
     assert(!probe("model.shw", nullptr, 0U).recognized);
 

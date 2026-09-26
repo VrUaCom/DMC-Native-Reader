@@ -127,6 +127,13 @@ namespace {
         if (set.ptx_aux_compat_used) {
             detail << " | auxCompat=retail-DXT1";
         }
+        if (set.ptx_community_descriptors) {
+            detail << " | descriptors=community-tool(lenient)";
+            out.non_canonical_reason =
+                std::string{filename} +
+                ": texture descriptors were written by a community tool; the canonical "
+                "validator rejects them, the viewer reads header, sector spans and DDS only";
+        }
 
         out.detail = detail.str();
         out.attached = true;

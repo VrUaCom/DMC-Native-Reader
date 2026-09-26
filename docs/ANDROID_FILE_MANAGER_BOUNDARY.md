@@ -1,4 +1,4 @@
-# Android / OEM file-opening boundary
+# Android device / Android file-opening boundary
 
 Last updated: 2026-09-10.
 
@@ -10,7 +10,7 @@ By the accepted Native Reader v24 baseline, physical Android device testing conf
 
 Therefore:
 
-- do not describe OEM routing for supported v24 files as generally unresolved;
+- do not describe Android device routing for supported v24 files as generally unresolved;
 - keep the earlier v6/v7 evidence because it documents an OEM/file-manager boundary encountered during development;
 - treat any new routing regression as device/Android/file-manager specific and reproduce it against the current build before changing manifest policy.
 

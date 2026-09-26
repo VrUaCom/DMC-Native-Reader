@@ -3,8 +3,10 @@
 #include "dmcresource/model_texture_binding.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/neutral_texture.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
+#include "dmcresource/stage_room.h"
 #include "dmcresource/inspection_format.h"
 
 #include <bit>
@@ -293,6 +295,116 @@ int main() {
         assert(widow::has_state(state, widow::StateFlag::TextureCompanionAttachable));
     }
 
+    // Viewer room (stage_room.h): a lone SCM is a room; a stage never gets one;
+    // floor spots stand on the centre of the floor; the room pass paints the
+    // background around a model and hides the wall facing away from the camera.
+    {
+        namespace room = dmcresource::stage_room;
+        const auto built = room::build_room("sample.scm", scm.data(), scm.size());
+        assert(built && built->pieces == 1U && built->mesh.indices.size() == 3U);
+        assert(built->triangle_texture_slots.size() == 1U && !built->spots.empty());
+        const auto stage = dmcresource::open_session("sample.scm", scm.data(), scm.size());
+        const auto model = dmcresource::open_session("sample.mod", mod.data(), mod.size());
+        assert(stage && room::is_stage_session(*stage) && model && !room::is_stage_session(*model));
+        assert(!room::build_room("x.bin", mod.data(), 8U));
+
+        dmcresource::Mesh box;
+        const auto quad = [&box](dmcresource::Vec3 a, dmcresource::Vec3 b, dmcresource::Vec3 c,
+                                 dmcresource::Vec3 d, dmcresource::Vec3 n) {
+            const auto base = static_cast<std::uint32_t>(box.vertices.size());
+            for (const auto& v : {a, b, c, d}) {
+                box.vertices.push_back(v);
+                box.normal0.push_back(n);
+            }
+            for (const auto i : {0U, 1U, 2U, 0U, 2U, 3U}) box.indices.push_back(base + i);
+        };
+        quad({-500, 0, -500}, {500, 0, -500}, {500, 0, 500}, {-500, 0, 500}, {0, 1, 0});   // floor
+        quad({-500, 0, 500}, {500, 0, 500}, {500, 400, 500}, {-500, 400, 500}, {0, 0, -1});  // far wall
+        quad({-500, 0, -500}, {-500, 400, -500}, {500, 400, -500}, {500, 0, -500}, {0, 0, 1});  // near wall
+        const auto spots = room::floor_spots(box);
+        assert(!spots.empty() && std::fabs(spots[0].x) < 1.0F && std::fabs(spots[0].y) < 1.0F &&
+               std::fabs(spots[0].z) < 1.0F);
+        const auto under = room::floor_spots_near(box, {100.0F, 300.0F, 100.0F});
+        assert(under && std::fabs(under->y) < 1.0F);
+        assert(!room::floor_spots_near(box, {0.0F, -10.0F, 0.0F}));  // nothing below
+
+        dmcresource::ViewState view;
+        view.yaw_radians = 0.0F;
+        view.pitch_radians = -0.3F;
+        const auto bare = dmcresource::render_view(model->render_mesh, 128, 128, view);
+        view.room_mesh = &box;
+        view.room_offset = {0.0F, -50.0F, 0.0F};
+        const auto roomed = dmcresource::render_view(model->render_mesh, 128, 128, view);
+        std::size_t changed = 0U;
+        for (std::size_t o = 0U; o < bare.pixels.size(); o += 4U) {
+            if (bare.pixels[o] != roomed.pixels[o]) ++changed;
+        }
+        assert(changed > 128U * 128U / 4U);  // floor and far wall behind the model
+
+        // Gesture picks: the model under the view centre; the room floor under
+        // the bottom of the view (room point on the floor, y = 0 in the room).
+        {
+            dmcresource::Mesh square;
+            square.vertices = {{-20, 0, 0}, {20, 0, 0}, {20, 40, 0}, {-20, 40, 0}};
+            square.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = -0.3F;
+            const auto centre = dmcresource::pick_view(square, 200, 200, look, 100.0F, 100.0F);
+            assert(centre.model && !centre.room);
+            assert(!dmcresource::pick_view(square, 200, 200, look, 2.0F, 2.0F).model);
+            look.room_mesh = &box;
+            look.room_offset = {0.0F, 0.0F, 0.0F};
+            const auto floor = dmcresource::pick_view(square, 200, 200, look, 100.0F, 190.0F);
+            assert(floor.room && floor.room_floor && !floor.model && std::fabs(floor.room_point.y) < 0.5F);
+            const auto wall = dmcresource::pick_view(square, 200, 200, look, 100.0F, 8.0F);
+            assert(!wall.room || !wall.room_floor);  // the far wall is no floor
+            // Pan moves the picture: the centre pixel no longer hits the model.
+            look.pan_x = 3.0F;
+            assert(!dmcresource::pick_view(square, 200, 200, look, 100.0F, 100.0F).model);
+            look.pan_x = 0.0F;
+            // Turning the room about its pivot changes what is drawn.
+            const auto before = dmcresource::render_view(square, 96, 96, look);
+            look.room_yaw = 0.8F;
+            const auto after = dmcresource::render_view(square, 96, 96, look);
+            assert(before.pixels != after.pixels);
+        }
+
+        // Settings bits: background 2 (light) fills the corner.
+        const auto light = dmcresource::render_session(model.get(), 64, 64, 0.0F, 0.0F, 1.0F,
+            2U << dmcresource::kRenderBackgroundShift);
+        assert(light.pixels[0] == 196U && light.pixels[1] == 198U && light.pixels[2] == 204U);
+
+        // Right-handed data: with the camera looking down +Z, a point on +X
+        // shows left of centre (the viewer mirrors X; a sword in the right
+        // hand, body joint 9 on -X, is on the model's right side).
+        dmcresource::Mesh marker;
+        // A square at the origin and a thin marker above it on +X.
+        marker.vertices = {{-10, -10, 0}, {10, -10, 0}, {-10, 10, 0}, {100, 30, 0}, {110, 30, 0}, {100, 32, 0}};
+        marker.indices = {0, 1, 2, 3, 4, 5};
+        dmcresource::ViewState straight;
+        straight.yaw_radians = 0.0F;
+        straight.pitch_radians = 0.0F;
+        const auto seen = dmcresource::render_view(marker, 200, 200, straight);
+        double square_x = 0.0, marker_x = 0.0;
+        std::size_t square_n = 0U, marker_n = 0U;
+        for (int y = 0; y < 200; ++y) {
+            for (int x = 0; x < 200; ++x) {
+                const auto o = static_cast<std::size_t>(y * 200 + x) * 4U;
+                if (seen.pixels[o] == 18U && seen.pixels[o + 2U] == 22U) continue;  // background
+                if (y < 100) {
+                    marker_x += x;
+                    ++marker_n;
+                } else {
+                    square_x += x;
+                    ++square_n;
+                }
+            }
+        }
+        assert(marker_n > 0U && square_n > 0U);
+        assert(marker_x / static_cast<double>(marker_n) < square_x / static_cast<double>(square_n));
+    }
+
     // A known old-family filename must remain outside the clean main surface.
     for (const auto* bytes : {&scm, &mod}) {
         const auto session = dmcresource::open_session(
@@ -302,11 +414,26 @@ int main() {
         assert(widow::has_state(dmcresource::black_widow_state(session.get()),
                                widow::StateFlag::TextureCompanionAttachable));
         assert(session->render_triangle_texture_slots[0] == (bytes == &scm ? 0U : 5U));
-        const dmcresource::ViewState view;
+        // Untextured geometry renders with the generated neutral texture
+        // (at.ptx stand-in: 128x64 flat 0x80), lit by the camera light.
+        dmcresource::ViewState view;
+        view.fallback_texture = &dmcresource::neutral_texture();
         const auto direct = dmcresource::render_view(session->render_mesh, 128, 128, view);
         const auto via_session = dmcresource::render_session(session.get(), 128, 128,
             view.yaw_radians, view.pitch_radians, view.zoom, 0U);
         assert(via_session.pixels == direct.pixels);
+        const auto& neutral = dmcresource::neutral_texture();
+        assert(neutral.width == 128U && neutral.height == 64U && neutral.available());
+        assert(neutral.rgba8[0] == 0x80U && neutral.rgba8[1] == 0x80U && neutral.rgba8[2] == 0x80U &&
+               neutral.rgba8[3] == 0xFFU && neutral.rgba8[neutral.rgba8.size() - 4U] == 0x80U);
+        std::size_t grey = 0U;
+        for (std::size_t o = 0U; o + 3U < via_session.pixels.size(); o += 4U) {
+            const auto r = via_session.pixels[o], g = via_session.pixels[o + 1U], b = via_session.pixels[o + 2U];
+            if (r == g && g == b && r >= 0x38U && r <= 0xB0U) ++grey;
+        }
+        assert(grey > 0U);
+        // Source normals ride along (smooth-group key for the lit render).
+        assert(session->render_mesh.has_normal0());
         assert(!dmcresource::describe_session(session.get()).empty());
         const auto mesh_info = dmcresource::inspect_session(session.get(), dmcresource::InspectionTopic::Meshes);
         assert(dmcresource::count_inspection_nodes(mesh_info.root, dmcresource::InspectionKind::Object) == 1);
