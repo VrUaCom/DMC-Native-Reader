@@ -28,6 +28,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cwctype>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -2295,7 +2297,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 TickMotion(hwnd);
                 return 0;
             }
-            break;
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
         case WM_SIZE:
             LayoutButtons(hwnd);
             RerenderThrottled(hwnd, true);
@@ -2496,8 +2498,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 RegisterFileAssociations();
                 MessageBoxW(hwnd,
                            L"Registered. .scm and .ptx now open with this reader by default; "
-                           L".mod and .dds were added to \"Open with\" without changing your "
-                           L"current default.",
+                           L"the current DMC resource families were added to \"Open with\" "
+                           L"without changing their existing defaults.",
                            L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
             } else if (LOWORD(wparam) == kMenuOpenWorkspace) {
                 const auto folder = PickFolderDialog(hwnd);
