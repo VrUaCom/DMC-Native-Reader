@@ -42,7 +42,7 @@ Please do not:
 
 ## High-value contributions
 
-- reproducible failures using legally obtained user-owned DMC3 HD resources;
+- reproducible failures using legally obtained user-owned resources from Devil May Cry 3: Special Edition in Devil May Cry HD Collection;
 - bounds/memory-safety hardening;
 - MOD/SCM geometry, hierarchy, UV, skin or texture-binding regressions backed by canonical evidence;
 - DDS/PTX decode/framing/gallery/companion fixes;

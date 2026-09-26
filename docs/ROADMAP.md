@@ -1,120 +1,93 @@
 # DMC Native Reader — Roadmap
 
-Last updated: 2026-09-10.
+Last updated: **2026-09-26**.
 
-This roadmap separates **accepted `main` capability** from **candidate work**. A host test or APK build does not by itself promote a visible feature; device/corpus acceptance remains required where behavior depends on real DMC resources or Android interaction.
+This roadmap separates released platform state from ongoing development.
 
-## Phase 1 — Clean Architecture v2 core
+## 1. Shared native reader core
 
-**Status: COMPLETE / accepted in `main`.**
+**Status: ACTIVE / established.**
 
-Production registry is intentionally limited to:
+Maintain one reusable C++23 reader core for platform shells rather than separate format implementations for Android and Windows.
 
-- MOD;
-- SCM;
-- DDS;
-- PTX.
+Core principles:
 
-Completed properties:
+- bounded reads;
+- fail-closed format routing;
+- typed projections;
+- canonical DMC Rengine read-side authority where available;
+- no platform-specific duplication of binary semantics;
+- read-only product boundary.
 
-- exactly four registered production modules;
-- unknown/unpromoted formats fail closed;
-- no wildcard or recognition-only fallback in `main`;
-- no legacy `DecodeResult -> Mesh -> RenderScene` bridge;
-- canonical MOD/SCM adapters;
-- generic `InspectionDocument`, `RenderScene`, `ImagePreview` and child-resource contracts;
-- capability-driven UI;
-- reusable C++20 `DMCNativeReader::Core` separated from the Android JNI shell.
+## 2. Android
 
-The pre-cleanup multi-format implementation remains on `main.2` as backlog/reference, not as a second production architecture.
+**Status: CURRENT PUBLIC RELEASE — v68 / 1.0.41.**
 
-## Phase 2 — v24 device and footprint acceptance
+Continue hardening the v68 line:
 
-**Status: COMPLETE / accepted 2026-09-10.**
+- rendering/performance;
+- model + room presentation;
+- motion and attachment behavior;
+- PAC/PNST resource assembly;
+- cloth, shadow, collision and effect inspection;
+- gesture/settings UX;
+- resource-family regressions.
 
-Confirmed on Android device:
+New Android claims require evidence from the exact release artifact.
 
-- MOD opens/renders;
-- SCM opens/renders;
-- standalone DDS previews;
-- PTX opens as a gallery and child DDS previews work;
-- PTX texture application to supported MOD/SCM models works;
-- installed size is 2.32 MB versus 6.27 MB before the v24 cleanup.
+## 3. Windows parity
 
-v24 also reduced public native exports to the declared JNI boundary and removed the unintended Kotlin runtime dependency from the Java-only shell.
+**Status: NEXT MAJOR PLATFORM TASK.**
 
-## Phase 3 — UV and focused model inspection
+Current public Windows release: **v1.0.0 Preview**.
 
-**Status: IMPLEMENTED IN DRAFT v26 / DEVICE ACCEPTANCE PENDING.**
+Bring Windows forward so it no longer trails the newer shared-core/Android line:
 
-Existing branch: `feature/dds-ptx-v1-acceptance`, draft PR #32. No new branch is required for this line.
+- consume the current shared native core;
+- expose current supported resource families where Windows UI support exists;
+- preserve read-only behavior;
+- keep portable launch/open-with flow;
+- validate 3D, texture, PAC/MOT and inspection paths;
+- publish a new Windows release only after build and smoke-test acceptance.
 
-Implemented candidate capability:
+Do not describe the existing v1.0.0 Preview as equivalent to Android v68.
 
-- UV gallery grouped by canonical texture slot;
-- separate zoomable UV map per slot with triangle counts;
-- shared gallery/session infrastructure for PTX and generated UV children;
-- long-press UV information;
-- long-press object -> mesh structure information;
-- long-press node/bone parent relationship information;
-- hierarchy-information availability independent from spatial transform availability;
-- short taps preserve normal UV/wireframe/hierarchy actions.
+## 4. Resource coverage
 
-Promotion gate: Android device MOD/SCM + PTX validation, short-vs-long press behavior, navigation/return state, relationship/count correctness, and installed-size check.
+**Status: EVIDENCE-GATED.**
 
-## Phase 4 — Model Inspector and visual debugging depth
+Current `main` registry includes MOD, SCM, DDS, PTX, EventTbl, PAC, MOT, PNST, SHW, TSC, CLT, EFM, motion scripts, collision data and effect banks.
 
-**Status: NEXT.**
+Future work should deepen semantics and presentation rather than adding guessed formats.
 
-After v26 acceptance:
+Unknown fields remain preserved/unknown until evidence supports a stronger interpretation.
 
-- turn focused reports into a coherent Model Inspector surface without duplicating parsers;
-- improve object/mesh/material/texture-slot navigation;
-- expose skeletal/skin information at the strongest available evidence level;
-- keep spatial bone overlays disabled when MOD lacks canonical spatial transforms;
-- preserve capability-driven controls rather than format-specific Android screens;
-- add selective visibility/filtering for object and mesh groups where it can be implemented from canonical `RenderScene` / inspection authority.
+## 5. Cross-platform presentation
 
-## Phase 5 — Deeper MOD / SCM semantics
+Keep platform shells thin:
 
-**Status: ACTIVE REVERSE DEPENDENCY.**
+- Android owns Android lifecycle/input/presentation;
+- Windows owns Windows shell/input/presentation;
+- native format semantics remain in the shared core.
 
-Native Reader should consume newly promoted facts from `dmc-rengine-cpp`, not rediscover them in Android code.
+Additional platforms are experimental unless a release artifact is explicitly published and supported.
 
-Targets include:
+## 6. Authoring boundary
 
-- deeper MOD transform/skeleton closure;
-- richer SCM material/scene semantics;
-- stronger model <-> texture companion coherence;
-- material/filter/alpha semantics only when canonical evidence is promoted;
-- preservation of unknown/undecoded fields instead of guessed labels.
+Native Reader remains a reader.
 
-## Phase 6 — One-by-one format promotion
-
-**Status: BACKLOG, evidence-gated.**
-
-Candidate families may include HITS, DCA, LIG2, Stage TXT, PAC/PNST and others, but each must return as an Architecture v2 module with its own evidence and regressions. Do not restore the old wide registry wholesale.
-
-NBZ remains a special source/materialization problem and should follow DMC Rengine's canonical archive/VFS architecture rather than an ad-hoc ordinary file parser.
-
-## Phase 7 — Cross-platform shells
-
-**Status: EXPERIMENTAL / separate PR line.**
-
-iOS and Windows preview work exists in PR #29 over the portable C++20 core. It is not part of accepted Android `main` and must not be described as stable until platform builds and real-device/corpus acceptance succeed.
-
-Longer-term web direction is a C++20/WebAssembly shell over the same portable core, not a duplicate JavaScript parser stack.
-
-## Phase 8 — Authoring boundary
-
-Native Reader remains read-only. Editing/repacking belongs to DMC Rengine / authoring products and must reuse canonical writer contracts rather than introducing Android-only writers.
+Editing, rebuilding, canonical writing and archive reintegration belong to **DMC Rengine** and dedicated authoring tools.
 
 ```text
 canonical evidence
   -> bounded read
-  -> portable typed projection
-  -> device/corpus acceptance
-  -> richer inspection
-  -> format promotion
-  -> authoring in the engine/tooling layer
+  -> typed native projection
+  -> platform presentation
+  -> corpus/device acceptance
+  -> deeper inspection
+  -> authoring in DMC Rengine
 ```
+
+## Naming policy
+
+Use **Devil May Cry 3: Special Edition** for the game and **Devil May Cry HD Collection** for the collection. “DMC3” is shorthand; “Devil May Cry 3 HD Collection” is not used as a product title.

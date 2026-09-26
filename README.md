@@ -1,84 +1,59 @@
 # DMC Native Reader
 
-Native Android reader for Devil May Cry 3 HD Collection resources, built around a reusable **C++23** core and canonical DMC Rengine read-side authority.
+**DMC Native Reader** is a read-only resource viewer and inspection tool for **Devil May Cry 3: Special Edition** as distributed in **Devil May Cry HD Collection**.
 
-## Current state
+The project uses a reusable native **C++23** core shared by platform shells. The current public platforms are Android and Windows.
 
-**Accepted `main`: device-confirmed v26 line plus release-workflow maintenance**  
-**Current `main` commit:** `561385e24e7246da11631e594ad5a86ca619fa74`  
-**Active candidate:** **v65 / versionName 1.0.38 / versionCode 65** (rendering moved off the UI thread: a render thread poses the motion and draws the latest requested frame while touches keep flowing; every JNI entry that touches a session is serialised and only live handles are honoured; the room rasteriser walks each row's covered span with incremental weights (st000 room 20.6 -> 17.8 ms); much faster rendering: native code built at -O2 in the debug APK too (it was -O0), the room prepared once per frame and drawn front to back like the game's depth buckets, integer bilinear texels, rows rasterised on several cores, and a half-size fast preview while the view moves with a full-quality frame when it stops (Settings); st000 room frame 108 ms -> 21 ms on a 4-core host, 7 ms in preview; gestures, each switchable in the ✋ Gestures window next to ⚙ in the ⋮ row: two-finger pan and twist (turns the model in the room), double tap resets the view or stands the model on the tapped room floor, tap the model to pause / resume, flick for an inertia turn, long press shows the joint under the finger and then scrubs frames, edge swipes step animations, three-finger swipe steps positions, three-finger tap saves a PNG, swipe down from the top hides the bars, four-finger tap makes the camera follow the model or stay; models and stages no longer mirrored: DMC3 data are right-handed (right hand = body joint 9 on -X), the renderer now negates X before the camera; the ⋮ menu opens with a row of square shortcuts (⚙ Settings, room on/off, next floor spot) above the actions; a full-screen Settings window: render resolution 360-1024, animation frame rate 20/30/60, pixel or smooth model textures, camera light or flat, background dark/grey/light/black, shadows when a file opens, playback speed ¼×-2×, and the room (choose / show / next spot / remove); room backdrop: Settings ⚙ picks a stage (st*.pac / .scm) that is kept in app storage and drawn around every model instead of the floor, with the stage SCM, the objects placed from its # GAME layout, bilinear textures and blended light shafts, near-plane clipping and back-facing walls skipped; the model stands on a floor spot (next spot from the menu); stages themselves open without a room; every ClothNum block of a .clt simulated with its own parameters: Vergil's back coat panel (pl001_02.clt block 1) now swings instead of staying rigid, body capsules act on the first block only as in the game; em000 classes from their inits: CEm005 and CEm005Shl00 added, each class gets only its own motion PACs (35 / 36 / 37); no camera jump after a pinch: the remaining finger turns from where it is; em000 CEm000-CEm003 animate (MOT binding across motion groups), floor shadow for every model (mesh fallback when there is no SHW), messages in a top overlay instead of toasts; unavailable tool buttons are hidden and the tool bar scrolls sideways; the motion strip only offers MOTs that can drive the assembled model; effect banks (FXBANK, loader 0x1402C04C0): every named record browsable - textures, models, sprite animations over their texture; smooth lighting from the model normals; untextured geometry uses a code-generated neutral texture (the at.ptx stand-in: 128x64 flat 0x80) lit by a camera light; hitboxes: attack collision shapes drawn on the posed body bones with the debug-mesh shapes at000-at003 generated in code, one button cycles all attacks / each attack id / off; enemy motion scripts with action -> MOT table and MOT labels in assembled enemy PACs, player weapon states resolved through the script's motion table, collision shape tables (sphere/box/capsule) and attack index views, float parameter blocks as value grids; every file opens with its own view: .tsc scroll curves, .clt strand diagram, the player motion script (pl000.pac slot 5) as its own format, cards for picture-less files and a raw binary profile for unknown bytes, PTX recognised by content; previous v64 / 1.0.37; MOT playback, PAC/PNST, player coat, weapon PACs incl. Agni & Rudra, enemy node constraints (Nevan), SHW shadow hulls and floor shadows, community-made PTX with orange non-canonical marker, weapon motion banks labelled, position buttons for enemy classes / weapons / Nevan's dress, .clt chain/cloth simulation of Dante's coat, Nevan's hair and dress and the em000 cloaks, .tsc texture scroll on Nevan's dress and sleeves, .tsc/.clt readers, Dante's coat colliding with his body capsules, EFM effect models (em000 CEm005Shl01 shell position), vertex colour + GS blend modes, TSC scroll types 4/5/10, Nevan hair collision, weapons move between back and hands following the motion script, a lone .mot shows its channel curves)  
-**Candidate branch:** `feature/png-export-multi-mod-v27` / draft PR #33  
-**Android:** arm64-v8a, minSdk 26, targetSdk 36, **NDK r30 LTS**  
-**Native product language:** **strict target-scoped C++23 + Spider C++ (`spider.cpp23`)**  
-**Production registry:** **MOD / SCM / DDS / PTX / EventTbl / PAC / MOT**  
-**Weight contract:** **APK <= 4 MiB; installed package/code <= 4 MiB on the acceptance Android device**
+## Releases
 
-The accepted v26 line was physically tested on an Android device and approved for `main`. PR #33 is a larger candidate and remains draft until an exact-head clean host build, APK verifier pass and physical Android device acceptance are all complete. GitHub-hosted jobs are currently observed failing before runner assignment (`runner_id=0`, `steps=[]`), which is neither green evidence nor a source-regression result.
+| Platform | Status | Current public release |
+| --- | --- | --- |
+| Android | Current / promoted to `main` | **v68 / 1.0.41** |
+| Windows x64 | Technical preview | **v1.0.0 Preview** |
 
-## v34 candidate additions (branch `claude/devil-microy3-decompile-port-2v8pne`)
+- Android release notes: [`docs/releases/android-v68-1.0.41.md`](docs/releases/android-v68-1.0.41.md)
+- Windows preview release: [`windows-v1.0.0-preview`](https://github.com/VrUaCom/DMC-Native-Reader/releases/tag/windows-v1.0.0-preview)
 
-Read-only, see [`docs/MOTION_PAC_COMPANION_V34.md`](docs/MOTION_PAC_COMPANION_V34.md):
+The Windows preview is an earlier public snapshot and must not be described as feature-identical to Android v68 until Windows parity work is completed and released.
 
-- **MOT playback**: tap a MOT card to play it on the open MOD / composite (tap again to pause); animated local matrix reconstructed from EXE `0x140310310`, compression 2 and 3 tracks, inverse-rest skinning;
-- **companion MODs** (hair, coat, accessories) stay in character model space; MOD header `+0x13` is reported only (EXE uses it as a translation probe, never as a geometry root);
-- **PAC**: opens as an assembled character/scene (MODs, slot-adjacent PTX, MOT library); every slot is browsable and opens in its own viewer;
-- registry gains `PAC` and `MOT` (byte-identified only).
+## What it does
 
-## v33 capabilities
+DMC Native Reader is designed for fast, safe inspection of game resources without editing the original files.
 
-### MOD
+Core capabilities include:
 
-- canonical DMC Rengine structural parsing;
-- 3D geometry, hierarchy and skin data;
-- rotate / zoom / wireframe;
-- typed inspection and UV projection;
-- PTX companion attachment;
-- multi-MOD composition through a dedicated `composite_builder`;
-- source-local scenes retained as authority;
-- Rengine-backed `default_joint_index` attachment resolution against the explicit primary/base MOD;
-- child placement applied only to the derived composite projection, never to source data.
+- native structural parsing and inspection;
+- interactive 3D viewing for supported model/scene resources;
+- texture preview and texture-slot inspection;
+- animation and motion playback where supported;
+- PAC/PNST resource browsing and assembled-model workflows;
+- UV, hierarchy, collision, shadow and effect inspection where the corresponding native module is available;
+- fail-closed handling for unknown or unsupported data;
+- read-only operation.
 
-### SCM
+## Current native registry
 
-- canonical retail SCM parsing through pinned Rengine ReaderCore;
-- hierarchy/object-binding/world-space geometry projection;
-- rotate / zoom / wireframe;
-- typed inspection, UV and texture-slot state;
-- shared PTX companion path.
+The current Android `main` registry contains bounded native modules for:
 
-### DDS / PTX
+- **MOD**
+- **SCM**
+- **DDS**
+- **PTX**
+- **EventTbl**
+- **PAC**
+- **MOT**
+- **PNST**
+- **SHW**
+- **TSC**
+- **CLT**
+- **EFM**
+- motion scripts
+- collision shape/index data
+- effect banks
 
-- bounded DXT1/DXT5 decoding;
-- native RGBA previews;
-- PTX bundle framing and child resources;
-- native-backed PNG export;
-- shared texture banks without per-part RGBA duplication;
-- transactional per-part PTX replacement: failure preserves the previous live bank and slot projection.
+Legacy `.tm2` logical names that contain the DMC wrapped-DDS form use the validated DDS path; they are not treated as a fabricated standalone TIM2 implementation.
 
-### EventTbl
-
-- promoted fifth production module;
-- canonical native structural inspection through Spider execution.
-
-Unknown and unpromoted resource families fail closed.
-
-## C++23 / Spider C++
-
-C++23 is owned by the Native Reader **CMake targets**, not by a repository-global flag. `DMCNativeReader::Core`, Android JNI and Native Reader regression targets require `cxx_std_23`, `CXX_STANDARD 23`, `CXX_STANDARD_REQUIRED ON`, and `CXX_EXTENSIONS OFF`. Gradle pins Android to NDK r30 LTS `30.0.16248370` but does not pass `-std=c++*`. Everything Native Reader compiles is C++23, including the vendored Rengine ReaderCore and the MOT/PAC slice: their targets get the same target-scoped `CXX_STANDARD 23` in Native Reader's CMake, without editing the submodule. The reverse of the original game itself lives in dmc-rengine-cpp.
-
-`cpp23_profile.h` does not depend on one compiler-specific `__cplusplus == 202302L` value. CMake selects strict ISO C++23; the profile rejects C++20-or-older and proves the required product facilities through SD-6 feature checks for `std::expected`, `std::byteswap`, and `std::to_underlying`. CI/verifier gates reject fallback to the former C++20 contract or reintroduction of Gradle-owned language mode.
-
-**Spider C++** is the embedded C++23 product-language layer for orchestration. It supplies typed result/concept contracts above Spider Crusader while preserving the canonical Rengine native executor underneath. It is not a second runtime or a copy of Rengine format logic.
-
-The first production C++23 upgrades are:
-
-- `WorkspaceGraph` mutation APIs return typed `std::expected` results;
-- stable `AssetId` / `InstanceId` / `BindingId` remain native resource identity;
-- MOD composition executes through the typed `spider.cpp23` wrapper and then the existing Crusader/Rengine executor.
-
-These early C++23 modernization pieces predate the formal phase/review-gate workflow and are therefore subject to explicit disposition at Review Gate #41 rather than being accepted merely because they already exist in the branch.
-
-Migration work is tracked through #34, with #35 review/research completed and #36 C++23 build baseline still active until a real exact-head build executes. #46 is the private Project `READ FIRST` context card. #48 owns package/installed-size evidence and the 4 MiB device limit.
+Platform releases do not necessarily expose every current `main` capability. Check the release notes for the exact platform/version being used.
 
 ## Architecture
 
@@ -86,67 +61,72 @@ Migration work is tracked through #34, with #35 review/research completed and #3
 resource bytes
   -> bounded probe
   -> NativeModuleRegistry
-  -> Spider C++23
-      -> Spider Crusader
-          -> canonical MOD/SCM/texture/EventTbl modules
-          -> pinned Rengine native executor / ReaderCore
-  -> DMCNativeReader::Core
-      -> resource session
-      -> WorkspaceGraph / stable identity
-      -> composite model state
-      -> composite builder
-      -> Rengine-backed MOD attachment resolver
-      -> composite placement
-      -> scene projection
-      -> texture companion binding
-      -> Black Widow capability state
-      -> renderer / inspection / UV / PNG export
-  -> thin Android JNI + Java shell
+  -> canonical DMC Rengine / native format authority
+  -> DMCNativeReader::Core (C++23)
+  -> resource session / typed inspection / renderer
+  -> platform shell
+       -> Android
+       -> Windows
 ```
 
-Multi-MOD product composition uses one explicit primary/base MOD: the model already open before additional MOD parts are appended. The builder may resolve each appended MOD's canonical `default_joint_index` against that primary host. It does not infer a different host from filenames, `runtime_metadata_u32`, visual proximity or arbitrary candidate scanning.
-
-Spider session actions are split by responsibility:
-
-- `spider/session_compose_actions.cpp` — composition;
-- `spider/session_texture_actions.cpp` — PTX attachment;
-- `spider/model_placement_actions.cpp` — explicit placement/reset.
-
-The former monolithic `spider/session_actions.cpp` has been removed from the v33 source tree; its history remains available in Git.
-
-## Canonical Rengine authority
-
-v33 pins `app/src/main/cpp/vendor/dmc-rengine-cpp` to:
-
-`caf445226c7d61841292384a10e93e4f58ae29f9`
-
-That pin contains the canonical read-side MOD cross-model default-joint attachment contract. Native Reader consumes this authority rather than duplicating the selector/index semantics in Android or JNI. The C++23 migration changes only Native Reader; it does not alter the Rengine repository or its language policy.
-
-## Android runtime contract
-
-The canonical APK contains exactly one native runtime DSO:
-
-`lib/arm64-v8a/libdmcviewer.so`
-
-`DMCNativeReader::Core` and `DMCRengine::ReaderCore` link statically into that DSO. Recovery shim/core DSOs, `dlopen` and `dlsym` delegation are rejected. The APK verifier also gates target-scoped C++23, Spider C++, NDK r30, direct Bitmap transport, JNI export parity, 16 KiB ZIP/ELF alignment, absolute package-size/dedup rules and the exact Rengine gitlink.
-
-Package pre-gates are **APK <= 4 MiB, DSO <= 4 MiB and Dex <= 1 MiB**. Duplicate ZIP/runtime payloads and unexplained large duplicate payload waste are not accepted. Physical Android device acceptance separately requires **installed package/code footprint <= 4 MiB**, excluding mutable user data/cache, tied to the exact reviewed APK SHA-256. `tools/measure_installed_footprint.py` owns only this downstream device measurement.
+DMC Native Reader consumes canonical read-side format knowledge from **DMC Rengine** rather than reimplementing format semantics separately in each UI.
 
 ## Product boundary
 
-DMC Native Reader is read-only. Editing, writing and repacking belong to DMC Rengine / future authoring tooling. HITS, TXT/index, DCA, LIG/LIG2, PAC/PNST, NBZ, MOT, EFM/MRP/SHW and other families are not production modules merely because reverse-engineering work exists for them.
+DMC Native Reader is a **reader**, not an editor.
+
+Editing, rebuilding and repacking resources belong to **DMC Rengine** and future authoring tools. Native Reader should not silently become a second writer implementation.
+
+## Naming convention
+
+Use the official product names consistently:
+
+- **Devil May Cry HD Collection** — the collection.
+- **Devil May Cry 3: Special Edition** — the game currently targeted by DMC Native Reader.
+- **DMC3** — acceptable shorthand after the full game name has already been established.
+
+Do **not** use “Devil May Cry 3 HD Collection” as a product title.
+
+## Android
+
+Current promoted release:
+
+- versionCode: **68**
+- versionName: **1.0.41**
+- ABI: **arm64-v8a**
+- minSdk / targetSdk: **26 / 36**
+- package: `com.dmcrengine.nativereader`
+- native language: target-scoped **C++23**
+
+See [Android v68 release notes](docs/releases/android-v68-1.0.41.md).
+
+## Windows
+
+The public Windows build is currently **v1.0.0 Preview**.
+
+It is a portable Windows x64 technical preview with read-only MOD / SCM / DDS / PTX viewing from the shared native architecture. Windows parity with the newer Android line is active work and should be described as such until a newer Windows release is published.
 
 ## Documentation
 
-Start with:
+Start here:
 
-- `docs/PROJECT_AI_CONTEXT.md` — private project/AI architecture, standards, evidence rules and review-gate workflow; Project pointer: #46;
-- `docs/MODULAR_SPIDER_V33.md` — canonical v33 architecture contract;
-- `docs/CXX23_SPIDER_MIGRATION_2026-09-15.md` — C++23 review, research, migration plan and boundaries;
-- `docs/STATUS.md` — accepted baseline, candidate and verification state;
-- `docs/RESOURCE_DEPENDENCY_GRAPH_V33.md` — v33 resource/dependency model;
-- `docs/PUBLIC_RELEASE_CHECKLIST.md` — public-opening/admin history, not v33 release authority;
-- `docs/MODULAR_REVIEW_2026-09-15.md` — historical pre-integration modular review snapshot; useful as decision history, not current architecture authority;
-- `CHANGELOG.md` — history.
+- [Documentation index](docs/README.md)
+- [Current status](docs/STATUS.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Architecture v2](docs/ARCHITECTURE_V2.md)
+- [Release gates](docs/RELEASE_GATES_V1.md)
+- [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
-DMC Native Reader is an independent fan-made interoperability/modding project and is not affiliated with Capcom. See `NOTICE.md`.
+Versioned research/evidence documents are historical records unless explicitly marked as current.
+
+## Legal
+
+DMC Native Reader is an independent fan-made interoperability, reverse-engineering and modding project. It is not affiliated with, endorsed by, sponsored by, or otherwise associated with Capcom Co., Ltd.
+
+**Devil May Cry**, **Devil May Cry 3: Special Edition**, **Devil May Cry HD Collection** and related trademarks, characters, game data and other intellectual property belong to their respective rights holders.
+
+This repository does not distribute Capcom game archives, proprietary game assets, proprietary source code or game executable binaries.
+
+See [NOTICE.md](NOTICE.md).
