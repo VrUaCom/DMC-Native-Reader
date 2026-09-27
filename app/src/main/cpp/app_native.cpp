@@ -631,6 +631,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryName(
     } catch (...) { return env->NewStringUTF(""); }
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryPackSlot(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr || index < 0 ||
+        static_cast<std::size_t>(index) >= session->motion_library.size()) {
+        return -1;
+    }
+    return static_cast<jint>(
+        session->motion_library[static_cast<std::size_t>(index)].pack_slot);
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotion(
         JNIEnv* env, jclass, jlong handle, jint index) {
