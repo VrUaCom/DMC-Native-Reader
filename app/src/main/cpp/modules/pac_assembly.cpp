@@ -916,6 +916,24 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
         }
+        {
+            std::size_t placed = 0U;
+            for (const auto& part : assembled->composite_parts) {
+                if (part.placement.resolved &&
+                    part.placement.mode == CompositePlacementMode::HostJointSkeleton) {
+                    ++placed;
+                }
+            }
+            for (auto& property : assembled->inspection.root.properties) {
+                if (property.key != "placement") continue;
+                property.value =
+                    std::to_string(placed) + " host-joint attached; " +
+                    std::to_string(assembled->composite_parts.size() - placed) +
+                    " source-space";
+                property.evidence = EvidenceLevel::DataConfirmed;
+                break;
+            }
+        }
         if (position != nullptr) {
             assembled->inspection.root.properties.push_back({
                 "PACAppearance", position->label, EvidenceLevel::DataConfirmed});
