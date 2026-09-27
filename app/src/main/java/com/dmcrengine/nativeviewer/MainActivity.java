@@ -34,6 +34,7 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -46,6 +47,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
     private static final int REQUEST_ADD_PAC = 1011;
     private static final int REQUEST_ROOM = 1012;
+    private static final int REQUEST_EXPORT_INFO = 1013;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -144,6 +146,7 @@ public final class MainActivity extends Activity {
 
     private BlackWidowState blackWidowState = BlackWidowState.empty();
     private String infoText = "";
+    private String pendingInfoExportText = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -1331,8 +1334,12 @@ public final class MainActivity extends Activity {
     }
 
     private void showInfoDialog(String text) {
+        final String snapshot = text == null || text.isEmpty()
+                ? "No resource information available."
+                : text;
+
         TextView details = new TextView(this);
-        details.setText(text == null || text.isEmpty() ? "No resource information available." : text);
+        details.setText(snapshot);
         details.setTextColor(Color.WHITE);
         details.setTextSize(13f);
         details.setTypeface(Typeface.MONOSPACE);
@@ -1345,11 +1352,147 @@ public final class MainActivity extends Activity {
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
+        LinearLayout dialogTitle = new LinearLayout(this);
+        dialogTitle.setOrientation(LinearLayout.HORIZONTAL);
+        dialogTitle.setGravity(Gravity.CENTER_VERTICAL);
+        dialogTitle.setPadding(dp(16), dp(6), dp(8), dp(6));
+        dialogTitle.setBackgroundColor(0xff3a3a3e);
+
+        TextView heading = new TextView(this);
+        heading.setText(titleView.getText());
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(18f);
+        heading.setSingleLine(true);
+        heading.setEllipsize(TextUtils.TruncateAt.END);
+        dialogTitle.addView(heading, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button download = makeSquareButton("\u21e9", "Download inspection report", 24f);
+        download.setOnClickListener(v -> chooseInfoExport(snapshot));
+        dialogTitle.addView(download, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
         new AlertDialog.Builder(this)
-                .setTitle(titleView.getText())
+                .setCustomTitle(dialogTitle)
                 .setView(scroll)
                 .setPositiveButton("Close", null)
                 .show();
+    }
+
+    private void chooseInfoExport(String snapshot) {
+        final String[] choices = {
+                "Markdown (.md)",
+                "DMC download snapshot (.download)",
+                "Plain text (.txt)",
+                "JSON (.json)"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Download info")
+                .setItems(choices, (dialog, which) -> launchInfoExport(snapshot, which))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void launchInfoExport(String snapshot, int format) {
+        final String extension;
+        final String mime;
+        switch (format) {
+            case 0:
+                extension = "md";
+                mime = "text/markdown";
+                break;
+            case 1:
+                extension = "download";
+                mime = "application/octet-stream";
+                break;
+            case 2:
+                extension = "txt";
+                mime = "text/plain";
+                break;
+            case 3:
+                extension = "json";
+                mime = "application/json";
+                break;
+            default:
+                return;
+        }
+
+        pendingInfoExportText = formatInfoExport(snapshot, format);
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mime);
+        intent.putExtra(Intent.EXTRA_TITLE, infoExportFileName(extension));
+        startActivityForResult(intent, REQUEST_EXPORT_INFO);
+    }
+
+    private String infoExportFileName(String extension) {
+        String title = sanitizeFileComponent(titleView.getText().toString());
+        if (title.isEmpty()) title = "resource";
+        return title + "_info." + extension;
+    }
+
+    private String formatInfoExport(String snapshot, int format) {
+        final String title = titleView.getText().toString();
+        if (format == 0) {
+            return "# " + title + "\n\n"
+                    + "- DMC Native Reader: " + BuildConfig.VERSION_NAME + "\n"
+                    + "- Export: inspection snapshot\n\n"
+                    + "~~~text\n" + snapshot + "\n~~~\n";
+        }
+        if (format == 1) {
+            return "DMC_NATIVE_READER_DOWNLOAD/1\n"
+                    + "version=" + BuildConfig.VERSION_NAME + "\n"
+                    + "resource=" + title + "\n"
+                    + "encoding=UTF-8\n"
+                    + "payload=inspection-text\n\n"
+                    + snapshot + "\n";
+        }
+        if (format == 3) {
+            return "{\n"
+                    + "  \"schema\": \"dmc-native-reader.inspection.v1\",\n"
+                    + "  \"version\": \"" + jsonEscape(BuildConfig.VERSION_NAME) + "\",\n"
+                    + "  \"resource\": \"" + jsonEscape(title) + "\",\n"
+                    + "  \"report\": \"" + jsonEscape(snapshot) + "\"\n"
+                    + "}\n";
+        }
+        return snapshot + (snapshot.endsWith("\n") ? "" : "\n");
+    }
+
+    private String jsonEscape(String value) {
+        if (value == null) return "";
+        StringBuilder out = new StringBuilder(value.length() + 16);
+        for (int index = 0; index < value.length(); ++index) {
+            char c = value.charAt(index);
+            switch (c) {
+                case '\\': out.append("\\\\"); break;
+                case '\"': out.append("\\\""); break;
+                case '\n': out.append("\\n"); break;
+                case '\r': out.append("\\r"); break;
+                case '\t': out.append("\\t"); break;
+                default:
+                    if (c < 0x20) {
+                        out.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+            }
+        }
+        return out.toString();
+    }
+
+    private void exportInfoToUri(Uri target) {
+        boolean saved = false;
+        if (target != null && !pendingInfoExportText.isEmpty()) {
+            try (OutputStream output = getContentResolver().openOutputStream(target, "w")) {
+                if (output != null) {
+                    output.write(pendingInfoExportText.getBytes(StandardCharsets.UTF_8));
+                    output.flush();
+                    saved = true;
+                }
+            } catch (Exception ignored) {
+                saved = false;
+            }
+        }
+        notice(saved ? "Info saved" : "Could not save info", Toast.LENGTH_LONG);
     }
 
     private void chooseFile() {
@@ -1472,6 +1615,14 @@ public final class MainActivity extends Activity {
                     || requestCode == REQUEST_EXPORT_GALLERY_TREE) {
                 pendingExportSession = 0;
             }
+            if (requestCode == REQUEST_EXPORT_INFO) pendingInfoExportText = "";
+            return;
+        }
+
+        if (requestCode == REQUEST_EXPORT_INFO) {
+            Uri target = data.getData();
+            if (target != null) exportInfoToUri(target);
+            pendingInfoExportText = "";
             return;
         }
 
@@ -1669,6 +1820,7 @@ public final class MainActivity extends Activity {
         blackWidowState = BlackWidowState.empty();
         pendingPtxPart = -1;
         pendingExportSession = 0;
+        pendingInfoExportText = "";
         resetCompositionState();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX / PAC / MOT (read-only).\n"
