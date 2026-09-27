@@ -583,22 +583,32 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                             attach.root_local_identity)) {
                         ++report.attached_parts;
                         report.detail_attachments +=
-                            " structural slot" + std::to_string(attach.child_model_slot) +
+                            (attach.structural_confirmed ? " structural slot" : " candidate slot") +
+                            std::to_string(attach.child_model_slot) +
                             "->slot" + std::to_string(attach.host_model_slot) +
                             "/joint" + std::to_string(attach.host_joint);
                         assembled->inspection.root.properties.push_back({
                             "AppearanceAttachment",
                             "MOD slot" + std::to_string(attach.child_model_slot) +
                                 " -> MOD slot" + std::to_string(attach.host_model_slot) +
-                                " / body joint " + std::to_string(attach.host_joint),
-                            EvidenceLevel::StructuralConfirmed});
+                                " / body joint " + std::to_string(attach.host_joint) +
+                                (attach.structural_confirmed
+                                     ? " [STRUCTURAL_CONFIRMED]"
+                                     : " [SEMANTIC_CANDIDATE]"),
+                            attach.structural_confirmed
+                                ? EvidenceLevel::StructuralConfirmed
+                                : EvidenceLevel::Recognized});
                     }
                 }
                 if (archive_name.find("em034") != std::string_view::npos) {
                     assembled->non_canonical_notes.push_back(
-                        "em034 companion placement is STRUCTURAL_CONFIRMED from the retail "
-                        "PAC/MOD/CLT relationship; exact CEm034 class-init attachment code "
-                        "has not yet been promoted to EXE_CONFIRMED.");
+                        "em034 hair placement (slot 17/34 -> body joint 5) is "
+                        "STRUCTURAL_CONFIRMED from retail UV, MOD bounds and pl002_01.clt; "
+                        "exact CEm034 class-init code is not yet EXE_CONFIRMED.");
+                    assembled->non_canonical_notes.push_back(
+                        "em034 Kalina Ann source-space assembly (slots 20..26/30) is "
+                        "preserved and placed on body joint 9 as a SEMANTIC_CANDIDATE; "
+                        "the exact runtime hand selector/offset still requires CEm034 EXE reverse.");
                 }
             }
             // Chains (.clt text slots): player coat slot 12 <- slot 13, enemy
