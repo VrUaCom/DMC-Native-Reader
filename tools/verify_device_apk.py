@@ -1,4 +1,4 @@
-"""Verify the modular 1.0.43/v70 DMC Native Reader APK."""
+"""Verify the modular 1.0.44-test/v71 DMC Native Reader APK."""
 import argparse
 import hashlib
 import json
@@ -206,7 +206,7 @@ def main():
     badging = run(str(aapt2), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging,
             "Wrong application ID")
-    require("versionCode='70' versionName='1.0.43'" in badging,
+    require("versionCode='71' versionName='1.0.44-test'" in badging,
             "Wrong release identity")
     require("native-code: 'arm64-v8a'" in badging, "Wrong ABI")
 
