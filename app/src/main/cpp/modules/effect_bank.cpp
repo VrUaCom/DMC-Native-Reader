@@ -5,10 +5,37 @@
 namespace dmcresource::effect_bank {
 namespace {
 
+[[nodiscard]] std::uint16_t u16(std::span<const std::uint8_t> b, std::size_t o) noexcept {
+    if (o + 2U > b.size()) return 0U;
+    return static_cast<std::uint16_t>(
+        static_cast<std::uint16_t>(b[o]) |
+        (static_cast<std::uint16_t>(b[o + 1U]) << 8U));
+}
+
 [[nodiscard]] std::uint32_t u32(std::span<const std::uint8_t> b, std::size_t o) noexcept {
     if (o + 4U > b.size()) return 0U;
     return static_cast<std::uint32_t>(b[o]) | (static_cast<std::uint32_t>(b[o + 1U]) << 8U) |
            (static_cast<std::uint32_t>(b[o + 2U]) << 16U) | (static_cast<std::uint32_t>(b[o + 3U]) << 24U);
+}
+
+[[nodiscard]] std::int32_t i32(std::span<const std::uint8_t> b, std::size_t o) noexcept {
+    return static_cast<std::int32_t>(u32(b, o));
+}
+
+[[nodiscard]] float f32(std::span<const std::uint8_t> b, std::size_t o) noexcept {
+    const auto bits = u32(b, o);
+    float value = 0.0F;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+[[nodiscard]] bool add_relative(std::size_t base, std::int32_t relative,
+                                std::size_t size, std::size_t* out) noexcept {
+    if (out == nullptr) return false;
+    const auto absolute = static_cast<std::int64_t>(base) + static_cast<std::int64_t>(relative);
+    if (absolute < 0 || static_cast<std::uint64_t>(absolute) >= size) return false;
+    *out = static_cast<std::size_t>(absolute);
+    return true;
 }
 
 // Relative-slot container (PNST): magic, u32 count, u32 offsets from the
@@ -193,6 +220,118 @@ std::span<const std::uint8_t> texture_dds(const Record& record) noexcept {
     if (record.kind != 'T' || b.size() < kTextureDescriptorSize + 128U) return {};
     if (std::memcmp(b.data() + kTextureDescriptorSize, "DDS ", 4U) != 0) return {};
     return b.subspan(kTextureDescriptorSize);
+}
+
+std::optional<VRuntimeView> v_runtime_view(const Record& record) {
+    if (record.kind != 'V' || record.bytes.size() < 0x30U) return std::nullopt;
+    const auto b = record.bytes;
+    const auto signed_count = static_cast<std::int16_t>(u16(b, 0U));
+    if (signed_count < 0 || signed_count > 64) return std::nullopt;
+
+    VRuntimeView out;
+    out.count = signed_count;
+    out.entries.reserve(static_cast<std::size_t>(signed_count));
+    for (std::int16_t index = 0; index < signed_count; ++index) {
+        const std::size_t base = static_cast<std::size_t>(index) * 0x2CU;
+        if (base + 0x30U > b.size()) return std::nullopt;
+
+        VEntry entry;
+        entry.dispatch = b[base + 0x04U];
+        entry.id = u16(b, base + 0x06U);
+        entry.translation = {
+            f32(b, base + 0x0CU),
+            f32(b, base + 0x10U),
+            f32(b, base + 0x14U),
+        };
+        entry.rotation_degrees = {
+            f32(b, base + 0x18U),
+            f32(b, base + 0x1CU),
+            f32(b, base + 0x20U),
+        };
+        entry.scale = {
+            f32(b, base + 0x24U),
+            f32(b, base + 0x28U),
+            f32(b, base + 0x2CU),
+        };
+        out.entries.push_back(entry);
+    }
+    return out;
+}
+
+std::optional<ERuntimeView> e_runtime_view(const Record& record) {
+    if (record.kind != 'E' || record.bytes.size() < 0x14U) return std::nullopt;
+    const auto b = record.bytes;
+
+    ERuntimeView out;
+    out.mode = b[0x01U];
+    out.texture_id = u16(b, 0x04U);
+    out.uses_animation = b[0x06U] == 1U && u16(b, 0x08U) != 0xFFFFU;
+    out.animation_id = u16(b, 0x08U);
+    out.rectangle = {
+        u16(b, 0x0CU),
+        u16(b, 0x0EU),
+        u16(b, 0x10U),
+        u16(b, 0x12U),
+    };
+    return out;
+}
+
+std::optional<GRuntimeView> g_runtime_view(const Record& record) {
+    if (record.kind != 'G' || record.bytes.size() < 0x5AU) return std::nullopt;
+    const auto b = record.bytes;
+
+    GRuntimeView out;
+    out.mode = b[0x01U];
+    out.c_id = u16(b, 0x02U);
+    out.value_18 = i32(b, 0x18U);
+    out.value_20 = i32(b, 0x20U);
+    out.mode_30 = b[0x30U];
+    out.value_38 = f32(b, 0x38U);
+    out.value_3c = f32(b, 0x3CU);
+    out.steps_40 = u16(b, 0x40U);
+    out.value_50 = f32(b, 0x50U);
+    out.value_54 = f32(b, 0x54U);
+    out.value_59 = b[0x59U];
+    return out;
+}
+
+std::optional<PRuntimeView> p_runtime_view(const Record& record) {
+    if (record.kind != 'P' || record.bytes.size() < 0x20U) return std::nullopt;
+    const auto b = record.bytes;
+    const auto version = u32(b, 0U);
+    if (version != 2U) return std::nullopt;
+
+    constexpr std::size_t kRelativeBase = 0x10U;
+    std::size_t root = 0U;
+    std::size_t list = 0U;
+    if (!add_relative(kRelativeBase, i32(b, 0x10U), b.size(), &root) ||
+        !add_relative(kRelativeBase, i32(b, 0x14U), b.size(), &list) ||
+        root + 0xCAU > b.size()) {
+        return std::nullopt;
+    }
+
+    const auto count = u16(b, root + 0xC0U);
+    // 0x140312DC0 stages the relative target table from raw+0x18 in a
+    // bounded 0xD0-byte local block, leaving at most 50 entries.
+    if (count > 50U || 0x18U + static_cast<std::size_t>(count) * 4U > b.size()) {
+        return std::nullopt;
+    }
+
+    PRuntimeView out;
+    out.version = version;
+    out.subtype = b[root + 0x01U];
+    out.root_offset = static_cast<std::uint32_t>(root);
+    out.list_offset = static_cast<std::uint32_t>(list);
+    out.target_offsets.reserve(count);
+    for (std::uint16_t index = 0U; index < count; ++index) {
+        std::size_t target = 0U;
+        if (!add_relative(kRelativeBase, i32(b, 0x18U + static_cast<std::size_t>(index) * 4U),
+                          b.size(), &target)) {
+            return std::nullopt;
+        }
+        out.target_offsets.push_back(static_cast<std::uint32_t>(target));
+    }
+    return out;
 }
 
 }  // namespace dmcresource::effect_bank
