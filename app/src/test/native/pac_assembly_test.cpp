@@ -292,7 +292,7 @@ int main() {
     assert(lady_first->composite_parts.size() == 2U);
     assert(lady_first->composite_parts[0].name.find("slot_0001.mod") != std::string::npos);
     assert(lady_first->composite_parts[1].name.find("slot_0017.mod") != std::string::npos);
-    assert(lady_first->inspection.root.properties.back().name == "AppearanceTexturePairing");
+    assert(lady_first->inspection.root.properties.back().key == "AppearanceTexturePairing");
 
     auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
     assert(lady_second != nullptr);
