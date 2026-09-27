@@ -19,18 +19,42 @@ namespace {
 // Effect record budget for decoded thumbnails (RGBA pixels).
 constexpr std::uint64_t kMaxThumbnailPixels = 4U * 1024U * 1024U;
 
-[[nodiscard]] std::string record_filename(const effect_bank::Record& r) {
-    char base[32];
-    std::snprintf(base, sizeof(base), "%c%03u", r.kind, r.id);
+// Internal decoder hint only. FXBANK does not store historical child filenames:
+ // the canonical loader addresses records by manifest kind + numeric id and
+ // physical PNST slot. Keep UI labels separate from these neutral probe names.
+[[nodiscard]] std::string record_probe_filename(const effect_bank::Record& r) {
+    char base[48];
+    std::snprintf(base, sizeof(base), "slot_%04u", r.slot);
     std::string name{base};
     if (r.kind == 'T') return name + ".dds";
     if (r.kind == 'M') {
-        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "EFM ", 4U) == 0) return name + ".efm";
-        return name + ".mod";
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "EFM ", 4U) == 0) {
+            return name + ".efm";
+        }
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "MOD", 3U) == 0) {
+            return name + ".mod";
+        }
     }
-    name += ".fx";
-    name.push_back(static_cast<char>(r.kind >= 'A' && r.kind <= 'Z' ? r.kind + 32 : 'x'));
-    return name;
+    return name + ".bin";
+}
+
+[[nodiscard]] std::string record_format_label(const effect_bank::Record& r) {
+    if (r.kind == 'T' && !effect_bank::texture_dds(r).empty()) return "DDS";
+    if (r.kind == 'M') {
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "EFM ", 4U) == 0) return "EFM";
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "MOD", 3U) == 0) return "MOD";
+    }
+    return {};
+}
+
+[[nodiscard]] std::string record_title(const effect_bank::Record& r) {
+    std::string title;
+    title.push_back(r.kind);
+    title += " " + std::to_string(r.id);
+    const auto format = record_format_label(r);
+    if (!format.empty()) title += " · " + format;
+    title += " · " + std::to_string(r.bytes.size()) + " B";
+    return title;
 }
 
 PipelineResult run_effect_bank_module(const NativeModule& module,
@@ -101,14 +125,14 @@ PipelineResult run_effect_bank_module(const NativeModule& module,
             if (r.bytes.empty()) continue;
             ChildResource child;
             child.id = "fx-" + std::to_string(index - 1U);
-            child.suggested_filename = record_filename(r);
+            child.suggested_filename = record_probe_filename(r);
             std::span<const std::uint8_t> payload = r.bytes;
             if (r.kind == 'T') {
                 const auto dds = effect_bank::texture_dds(r);
                 if (!dds.empty()) payload = dds;
             }
             child.source_bytes.assign(payload.begin(), payload.end());
-            child.title = child.suggested_filename + " · " + std::to_string(r.bytes.size()) + " B";
+            child.title = record_title(r);
             child.probe = dmcresource::probe(child.suggested_filename, child.source_bytes.data(),
                                              child.source_bytes.size());
             child.capabilities = capability(ResourceCapability::Inspection);
