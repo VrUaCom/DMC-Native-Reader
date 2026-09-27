@@ -717,6 +717,11 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         first.include_top_level_mod_count = 2U;
         first.texture_overrides = {{{1U, 0U}, {17U, 0U}}};
         first.texture_override_count = 2U;
+        // Structural corpus: slot 17 is a 9-node companion centered at local
+        // origin; slot 1's body domain anchors its pelvis at joint 1. The CLT
+        // in slot 18 drives the companion's nodes 2/4/6/8.
+        first.part_attachments = {{{1U, 17U, 1U, false}}};
+        first.part_attachment_count = 1U;
         out.push_back(first);
 
         ArchiveVariant second;
@@ -725,6 +730,8 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         second.include_top_level_mod_count = 2U;
         second.texture_overrides = {{{32U, 31U}, {34U, 31U}}};
         second.texture_override_count = 2U;
+        second.part_attachments = {{{32U, 34U, 1U, false}}};
+        second.part_attachment_count = 1U;
         out.push_back(second);
     }
     return out;
