@@ -131,16 +131,19 @@ std::uint64_t registrar(char kind) noexcept {
 }
 
 std::string_view kind_name(char kind) noexcept {
+    // Keep the UI neutral: letters are the canonical manifest/runtime kinds.
+    // Do not turn nearby class names or tool-side interpretations into file
+    // format names. Only T/M carry a byte-backed payload description here.
     switch (kind) {
-    case 'T': return "texture (descriptor + DDS)";
-    case 'M': return "model (MOD / EFM) + companion";
-    case 'G': return "generator (registrar near CGenerator)";
-    case 'E': return "effect (registrar near CEffectClip)";
-    case 'P': return "P record (registrar 0x140314B80)";
-    case 'V': return "V record (clip / value registrar)";
-    case 'A': return "A record (clip registrar)";
-    case 'C': return "C record (registrar 0x1402D3BE0)";
-    default: return "not registered by the loader";
+    case 'T': return "T record (descriptor + DDS payload)";
+    case 'M': return "M record (MOD / EFM payload + companion)";
+    case 'V': return "V record (P/E/G/V composite dispatch)";
+    case 'G': return "G record";
+    case 'E': return "E record";
+    case 'P': return "P record";
+    case 'A': return "A record";
+    case 'C': return "C record";
+    default: return "unregistered manifest kind";
     }
 }
 
