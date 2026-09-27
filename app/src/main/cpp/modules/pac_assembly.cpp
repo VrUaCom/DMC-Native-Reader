@@ -284,6 +284,26 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 ++report.effect_models_skipped;
                 continue;
             }
+            if (entry.kind.format == Format::Mod && position != nullptr &&
+                position->include_top_level_mod_count != 0U &&
+                entry.archive == 0U && entry.container.empty()) {
+                bool used = false;
+                if (entry.slot) {
+                    for (std::uint32_t s = 0U;
+                         s < position->include_top_level_mod_count &&
+                         s < position->include_top_level_mod_slots.size();
+                         ++s) {
+                        used = used || *entry.slot == position->include_top_level_mod_slots[s];
+                    }
+                }
+                if (!used) {
+                    // The MOD is still preserved/browsable as a PAC child. It is
+                    // only excluded from this actor appearance because the
+                    // archive contains mutually exclusive looks/equipment.
+                    ++report.variant_models_skipped;
+                    continue;
+                }
+            }
             if (entry.kind.format == Format::Mod && variant != nullptr && entry.archive == 0U &&
                 entry.container.empty()) {
                 // Shared enemy archive: keep only this class's body, cloth and weapon.
@@ -303,6 +323,25 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 model_names.push_back(entry.name);
                 model_entry.push_back(index);
                 std::optional<std::size_t> texture = texture_for(entries, index);
+                if (position != nullptr && entry.archive == 0U &&
+                    entry.container.empty() && entry.slot) {
+                    for (std::uint32_t o = 0U;
+                         o < position->texture_override_count &&
+                         o < position->texture_overrides.size();
+                         ++o) {
+                        const auto& override = position->texture_overrides[o];
+                        if (*entry.slot != override.model_slot) continue;
+                        for (std::size_t t = 0U; t < entries.size(); ++t) {
+                            if (entries[t].archive == 0U && entries[t].container.empty() &&
+                                entries[t].slot == override.texture_slot &&
+                                entries[t].kind.format == Format::Ptx) {
+                                texture = t;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
                 if (variant != nullptr && variant->texture_slot != motion::kNoEnemySlot &&
                     entry.archive == 0U && entry.container.empty() &&
                     entry.slot == variant->body_slot) {
