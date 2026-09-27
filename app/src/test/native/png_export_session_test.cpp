@@ -69,9 +69,30 @@ int main() {
     assert(widow::has_state(gallery_state, widow::StateFlag::CanExportPng));
     assert(session_child_count(&gallery) == 1U);
 
-    // The gallery itself does not keep an RGBA thumbnail resident, but the
-    // retained canonical DDS payload can materialize the child on demand.
+    // Gallery tiles now reuse the ordinary child reader when a parent did not
+    // keep a resident preview. Android only needs one bounded 256x256 bitmap.
     assert(!gallery.children[0].image_preview.available());
+    const auto [thumbnail_width, thumbnail_height] =
+        session_child_preview_size(&gallery, 0);
+    assert(thumbnail_width == 256U);
+    assert(thumbnail_height == 256U);
+
+    ImagePreview thumbnail;
+    const auto* thumbnail_view = session_child_preview(&gallery, 0, &thumbnail);
+    assert(thumbnail_view == &thumbnail);
+    assert(thumbnail.available());
+    assert(thumbnail.width == 256U);
+    assert(thumbnail.height == 256U);
+    // 4x4 DXT1 source fills the square, so the centre must still be red.
+    const std::size_t centre =
+        (static_cast<std::size_t>(128U) * thumbnail.width + 128U) * 4U;
+    assert(thumbnail.rgba8[centre + 0U] == 255U);
+    assert(thumbnail.rgba8[centre + 1U] == 0U);
+    assert(thumbnail.rgba8[centre + 2U] == 0U);
+    assert(thumbnail.rgba8[centre + 3U] == 255U);
+
+    // Selecting the tile still opens the original full-resolution child; the
+    // thumbnail path does not replace or mutate the source view.
     auto child = open_session_child(&gallery, 0);
     assert(child != nullptr);
     assert(child->probe.format == Format::Dds);
