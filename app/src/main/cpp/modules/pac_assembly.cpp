@@ -875,6 +875,44 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
         }
+        if (position != nullptr) {
+            assembled->inspection.root.properties.push_back({
+                "PACAppearance", position->label, EvidenceLevel::DataConfirmed});
+            if (position->include_top_level_mod_count != 0U) {
+                std::string slots;
+                for (std::uint32_t i = 0U;
+                     i < position->include_top_level_mod_count &&
+                     i < position->include_top_level_mod_slots.size();
+                     ++i) {
+                    if (!slots.empty()) slots += ",";
+                    slots += std::to_string(position->include_top_level_mod_slots[i]);
+                }
+                assembled->inspection.root.properties.push_back({
+                    "IncludedTopLevelMODSlots", slots,
+                    EvidenceLevel::StructuralConfirmed});
+                assembled->inspection.root.properties.push_back({
+                    "OtherTopLevelMODs",
+                    std::to_string(report.variant_models_skipped) +
+                        " preserved as PAC children; not overlaid in this appearance",
+                    EvidenceLevel::DataConfirmed});
+            }
+            if (position->texture_override_count != 0U) {
+                std::string overrides;
+                for (std::uint32_t i = 0U;
+                     i < position->texture_override_count &&
+                     i < position->texture_overrides.size();
+                     ++i) {
+                    if (!overrides.empty()) overrides += ", ";
+                    overrides += "MOD slot" +
+                        std::to_string(position->texture_overrides[i].model_slot) +
+                        "->PTX slot" +
+                        std::to_string(position->texture_overrides[i].texture_slot);
+                }
+                assembled->inspection.root.properties.push_back({
+                    "AppearanceTexturePairing", overrides,
+                    EvidenceLevel::DataConfirmed});
+            }
+        }
         report.detail =
             "PAC assembly (read-only): models=" + std::to_string(report.models) +
             " texturesAttached=" + std::to_string(report.textures_attached) +
@@ -888,10 +926,14 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +
             (report.enemy_class.empty() ? std::string{}
-                                        : " enemyClass=" + report.enemy_class +
-                                              " otherClassModelsSkipped=" +
+                                        : " archiveVariant=" + report.enemy_class +
+                                              " variantModelsSkipped=" +
                                               std::to_string(report.variant_models_skipped)) +
-            " ptxPairing=nearest-preceding-in-container" + report.detail_attachments;
+            " ptxPairing=" +
+            (position != nullptr && position->texture_override_count != 0U
+                 ? std::string{"explicit-appearance-override"}
+                 : std::string{"nearest-preceding-in-container"}) +
+            report.detail_attachments;
         if (!assembled->detail.empty()) assembled->detail += "\n";
         assembled->detail += report.detail;
         if (!assembled->trace.empty()) assembled->trace += "\n";
