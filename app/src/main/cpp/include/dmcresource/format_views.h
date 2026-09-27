@@ -45,6 +45,16 @@ inline constexpr int kViewHeight = 1440;
 [[nodiscard]] ImagePreview render_sprite_view(const effect_bank::SpriteAnimation& animation,
                                               std::uint32_t record_id, const ImagePreview* texture);
 
+// FXBANK effect-record views recovered from the runtime consumers. T keeps its
+// decoded DDS view, A keeps render_sprite_view, and M uses the ordinary model
+// renderer. This view covers the remaining registered effect kinds so a PNST
+// gallery never has to represent them as empty black tiles. E may receive its
+// resolved T texture and optional A animation from the owning bank.
+[[nodiscard]] ImagePreview render_effect_record_view(
+    const effect_bank::Record& record,
+    const ImagePreview* texture = nullptr,
+    const effect_bank::SpriteAnimation* animation = nullptr);
+
 // Attack index: every entry (id, target mask, bone, shape).
 [[nodiscard]] ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>& entries);
 
