@@ -363,6 +363,17 @@ InspectionNode make_composite_inspection_part(const Session& source,
 }  // namespace
 
 std::unique_ptr<Session> session_from_child(const ChildResource& child) {
+    // Bank-aware FXBANK children may carry both a visual surface and an
+    // EXE-backed diagnostic surface. Opening them must preserve those parent-
+    // resolved views instead of discarding bank context by reopening only the
+    // isolated raw payload.
+    if (child.info_preview.available()) {
+        auto session = make_session(child, child.trace);
+        session->info_preview = child.info_preview;
+        session->info_preview_active = false;
+        return session;
+    }
+
     if (!child.image_preview.available() &&
         has_capability(child.capabilities, ResourceCapability::ImagePreview) &&
         !child.source_bytes.empty()) {
@@ -415,7 +426,8 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .render_mesh = &session->render_mesh,
         .triangle_texture_slots = session->render_triangle_texture_slots,
         .hierarchy_available = session->hierarchy_overlay.available(),
-        .image_preview_available = session->image_preview.available(),
+        .image_preview_available =
+            session_active_preview(session) != nullptr,
         .child_resource_count = session_child_count(session),
         .texture_companion_attached = session->texture_companion_attached,
         .uv_map_view = session->uv_gallery && session->uv_map_index &&
@@ -427,6 +439,32 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .part_texture_attachment_available = has_attachable_composite_part(session),
         .png_export_available = session_png_export_available(session),
     });
+}
+
+bool session_has_dual_preview(const Session* session) noexcept {
+    return session != nullptr &&
+           session->image_preview.available() &&
+           session->info_preview.available();
+}
+
+bool session_info_preview_active(const Session* session) noexcept {
+    return session_has_dual_preview(session) && session->info_preview_active;
+}
+
+bool session_set_info_preview(Session* session, bool info) noexcept {
+    if (!session_has_dual_preview(session)) return false;
+    session->info_preview_active = info;
+    return true;
+}
+
+const ImagePreview* session_active_preview(const Session* session) noexcept {
+    if (session == nullptr) return nullptr;
+    if (session->info_preview_active && session->info_preview.available()) {
+        return &session->info_preview;
+    }
+    if (session->image_preview.available()) return &session->image_preview;
+    if (session->info_preview.available()) return &session->info_preview;
+    return nullptr;
 }
 
 namespace {
