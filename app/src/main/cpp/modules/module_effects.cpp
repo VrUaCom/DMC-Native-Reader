@@ -158,21 +158,81 @@ PipelineResult run_effect_bank_module(const NativeModule& module,
             }
             out.children.push_back(std::move(child));
         }
-        // Sprite animations: drawn over their texture when the bank holds it.
+        // Bank-local A records are reusable by E records. Keep the parsed
+        // animation keyed by its manifest id; this mirrors the EXE's A manager
+        // lookup rather than deriving identity from a synthetic filename.
+        std::map<std::uint32_t, effect_bank::SpriteAnimation> animations;
+        for (const auto& r : bank->records) {
+            if (r.kind != 'A' || r.bytes.empty()) continue;
+            if (auto sprite = effect_bank::sprite_animation(r)) {
+                animations.emplace(r.id, std::move(*sprite));
+            }
+        }
+
+        // Every registered effect record gets a visual surface. T already owns
+        // decoded pixels; M is deliberately left to the ordinary MOD/EFM
+        // renderer used by the gallery's lazy materializer. A/E/G/P/V are
+        // drawn here from EXE-backed structures so they never degrade to an
+        // empty black tile.
         std::size_t child_index = 0U;
         for (const auto& r : bank->records) {
             if (r.bytes.empty()) continue;
             auto& child = out.children[child_index++];
-            if (r.kind != 'A') continue;
-            const auto sprite = effect_bank::sprite_animation(r);
-            if (!sprite) continue;
-            const auto found = textures.find(sprite->texture);
-            child.image_preview = views::render_sprite_view(
-                *sprite, r.id, found != textures.end() ? &found->second : nullptr);
-            child.capabilities = child.capabilities | ResourceCapability::ImagePreview;
-            child.detail += "\nSprite: texture T" + std::to_string(sprite->texture) + ", " +
-                            std::to_string(sprite->frames.size()) + " frames, frame time " +
-                            std::to_string(sprite->frame_time) + (sprite->loop ? ", loop" : ", once");
+
+            if (r.kind == 'T' || r.kind == 'M') continue;
+
+            if (r.kind == 'A') {
+                const auto animation = animations.find(r.id);
+                if (animation == animations.end()) {
+                    child.image_preview = views::render_effect_record_view(r);
+                } else {
+                    const auto found = textures.find(animation->second.texture);
+                    child.image_preview = views::render_sprite_view(
+                        animation->second, r.id,
+                        found != textures.end() ? &found->second : nullptr);
+                    child.detail += "\nSprite: texture T" +
+                                    std::to_string(animation->second.texture) + ", " +
+                                    std::to_string(animation->second.frames.size()) +
+                                    " frames, frame time " +
+                                    std::to_string(animation->second.frame_time) +
+                                    (animation->second.loop ? ", loop" : ", once");
+                }
+                child.capabilities =
+                    child.capabilities | ResourceCapability::ImagePreview;
+                continue;
+            }
+
+            const ImagePreview* texture = nullptr;
+            const effect_bank::SpriteAnimation* animation = nullptr;
+            if (r.kind == 'E') {
+                if (const auto runtime = effect_bank::e_runtime_view(r)) {
+                    const auto texture_found = textures.find(runtime->texture_id);
+                    if (texture_found != textures.end()) {
+                        texture = &texture_found->second;
+                    }
+                    if (runtime->uses_animation) {
+                        const auto animation_found =
+                            animations.find(runtime->animation_id);
+                        if (animation_found != animations.end()) {
+                            animation = &animation_found->second;
+                        }
+                    }
+                    child.detail += "\nRuntime E: mode " +
+                                    std::to_string(runtime->mode) +
+                                    ", T " + std::to_string(runtime->texture_id);
+                    if (runtime->uses_animation) {
+                        child.detail += ", A " +
+                                        std::to_string(runtime->animation_id);
+                    }
+                }
+            }
+
+            child.image_preview =
+                views::render_effect_record_view(r, texture, animation);
+            if (child.image_preview.available()) {
+                child.capabilities =
+                    child.capabilities | ResourceCapability::ImagePreview;
+            }
         }
         out.detail = detail.str();
         return out;
