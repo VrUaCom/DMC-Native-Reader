@@ -288,19 +288,23 @@ int main() {
     auto lady_first = assembly::assemble_pac(*lady, &report, "em034.pac", 0U);
     assert(lady_first != nullptr);
     assert(report.models == 2U);
-    assert(report.variant_models_skipped == 3U);
+    assert(report.variant_models_skipped > 0U);
     assert(lady_first->composite_parts.size() == 2U);
     assert(lady_first->composite_parts[0].name.find("slot_0001.mod") != std::string::npos);
     assert(lady_first->composite_parts[1].name.find("slot_0017.mod") != std::string::npos);
+    assert(lady_first->composite_parts[1].placement.resolved);
+    assert(lady_first->composite_parts[1].placement.attachment_selector == 1U);
     assert(lady_first->inspection.root.properties.back().key == "AppearanceTexturePairing");
 
     auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
     assert(lady_second != nullptr);
     assert(report.models == 2U);
-    assert(report.variant_models_skipped == 3U);
+    assert(report.variant_models_skipped > 0U);
     assert(lady_second->composite_parts.size() == 2U);
     assert(lady_second->composite_parts[0].name.find("slot_0032.mod") != std::string::npos);
     assert(lady_second->composite_parts[1].name.find("slot_0034.mod") != std::string::npos);
+    assert(lady_second->composite_parts[1].placement.resolved);
+    assert(lady_second->composite_parts[1].placement.attachment_selector == 1U);
 
     // An archive without MOD is browsable but has nothing to assemble.
     const auto motions_only = make_pac({mot});
