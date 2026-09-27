@@ -275,6 +275,11 @@ inline constexpr std::array<EnemyVariant, 8> kEm000Variants{{
 // (em028.pac: the dress strip, objects 2-3 of slot 5, is drawn only while
 // bats are out -- 0x14012F790 sets or clears object bit 0, which the MOD draw
 // loops 0x140303460 / 0x140303DE0 require).
+struct ArchiveTextureOverride final {
+    std::uint32_t model_slot{};
+    std::uint32_t texture_slot{};
+};
+
 struct ArchiveVariant final {
     std::string label;
     const EnemyVariant* enemy{};  // em000 family
@@ -282,6 +287,18 @@ struct ArchiveVariant final {
     std::uint32_t hide_slot{};    // model slot whose objects are hidden
     std::array<std::uint32_t, 2> hide_objects{};
     std::uint32_t hide_count{};
+
+    // Some actor PACs carry several complete appearances and equipment models
+    // in one top-level archive. When non-zero, only these top-level MOD slots
+    // belong to this selectable appearance; every other MOD remains available
+    // as a PAC child instead of being incorrectly overlaid at the actor origin.
+    std::array<std::uint32_t, 8> include_top_level_mod_slots{};
+    std::uint32_t include_top_level_mod_count{};
+
+    // Explicit companion PTX association for appearance parts whose correct
+    // texture bank is not the nearest preceding PTX in physical slot order.
+    std::array<ArchiveTextureOverride, 4> texture_overrides{};
+    std::uint32_t texture_override_count{};
 };
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
