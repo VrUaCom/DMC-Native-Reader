@@ -289,6 +289,10 @@ struct ArchivePartAttachment final {
     std::uint32_t child_model_slot{};
     std::uint32_t host_joint{};
     bool root_local_identity{};
+    // true only when the host joint itself is supported by retained
+    // corpus/geometry evidence; false marks a viewer candidate that remains
+    // orange/non-canonical until the class-init consumer is reversed.
+    bool structural_confirmed{};
 };
 
 struct ArchiveVariant final {
@@ -303,18 +307,18 @@ struct ArchiveVariant final {
     // in one top-level archive. When non-zero, only these top-level MOD slots
     // belong to this selectable appearance; every other MOD remains available
     // as a PAC child instead of being incorrectly overlaid at the actor origin.
-    std::array<std::uint32_t, 8> include_top_level_mod_slots{};
+    std::array<std::uint32_t, 12> include_top_level_mod_slots{};
     std::uint32_t include_top_level_mod_count{};
 
     // Explicit companion PTX association for appearance parts whose correct
     // texture bank is not the nearest preceding PTX in physical slot order.
-    std::array<ArchiveTextureOverride, 4> texture_overrides{};
+    std::array<ArchiveTextureOverride, 12> texture_overrides{};
     std::uint32_t texture_override_count{};
 
     // Corpus/structure-backed companion placement. These records are distinct
     // from EnemyVariant because they may be known from a PAC/CLT relationship
     // before the exact class-init EXE consumer has been recovered.
-    std::array<ArchivePartAttachment, 4> part_attachments{};
+    std::array<ArchivePartAttachment, 12> part_attachments{};
     std::uint32_t part_attachment_count{};
 };
 
