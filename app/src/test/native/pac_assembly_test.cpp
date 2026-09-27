@@ -272,6 +272,13 @@ int main() {
     std::vector<std::vector<std::uint8_t>> lady_payloads(35U);
     lady_payloads[1] = mod;
     lady_payloads[17] = mod;
+    // Keep the v70 weapon slots physically non-empty so this synthetic PAC
+    // does not turn zero-length same-offset entries into aliases of the next
+    // MOD. Opaque payloads are enough here because this test exercises the
+    // appearance-selection contract, not Kalina Ann geometry.
+    for (const std::size_t slot : {20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U}) {
+        lady_payloads[slot] = opaque;
+    }
     lady_payloads[32] = mod;
     lady_payloads[34] = mod;
     const auto lady_pac = make_pac(lady_payloads);
