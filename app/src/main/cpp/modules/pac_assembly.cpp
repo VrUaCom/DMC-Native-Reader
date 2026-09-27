@@ -560,6 +560,47 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                 }
             }
+            // PAC appearance companion attachments that are supported by
+            // structural/corpus evidence but are intentionally kept separate
+            // from EXE-confirmed EnemyVariant bindings.
+            if (position != nullptr && position->part_attachment_count != 0U) {
+                for (std::uint32_t a = 0U;
+                     a < position->part_attachment_count &&
+                     a < position->part_attachments.size();
+                     ++a) {
+                    const auto& attach = position->part_attachments[a];
+                    std::optional<std::size_t> host;
+                    std::optional<std::size_t> child;
+                    for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                        const auto& entry = entries[model_entry[part]];
+                        if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                        if (*entry.slot == attach.host_model_slot) host = part;
+                        if (*entry.slot == attach.child_model_slot) child = part;
+                    }
+                    if (host && child &&
+                        motion::attach_part_skeleton(
+                            assembled.get(), *host, *child, attach.host_joint,
+                            attach.root_local_identity)) {
+                        ++report.attached_parts;
+                        report.detail_attachments +=
+                            " structural slot" + std::to_string(attach.child_model_slot) +
+                            "->slot" + std::to_string(attach.host_model_slot) +
+                            "/joint" + std::to_string(attach.host_joint);
+                        assembled->inspection.root.properties.push_back({
+                            "AppearanceAttachment",
+                            "MOD slot" + std::to_string(attach.child_model_slot) +
+                                " -> MOD slot" + std::to_string(attach.host_model_slot) +
+                                " / body joint " + std::to_string(attach.host_joint),
+                            EvidenceLevel::StructuralConfirmed});
+                    }
+                }
+                if (archive_name.find("em034") != std::string_view::npos) {
+                    assembled->non_canonical_notes.push_back(
+                        "em034 companion placement is STRUCTURAL_CONFIRMED from the retail "
+                        "PAC/MOD/CLT relationship; exact CEm034 class-init attachment code "
+                        "has not yet been promoted to EXE_CONFIRMED.");
+                }
+            }
             // Chains (.clt text slots): player coat slot 12 <- slot 13, enemy
             // model slots per kEnemyClothSources; solver 0x1402C9450.
             {
