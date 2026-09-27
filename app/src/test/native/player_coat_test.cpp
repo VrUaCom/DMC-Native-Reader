@@ -1175,9 +1175,15 @@ int main() {
                dmcresource::Format::EffectBank);
         auto session = dmcresource::open_session("slot_0041.fxbank", bank_bytes.data(), bank_bytes.size());
         assert(session && session->inspection.format == "FXBANK" && session->children.size() == 4U);
-        assert(session->children[0].suggested_filename == "T005.dds" &&
-               session->children[1].suggested_filename == "M007.mod" &&
-               session->children[2].suggested_filename == "A009.fxa" &&
+        // FXBANK runtime identity is kind+id from the manifest, not a claimed
+        // historical child filename. Neutral probe names retain physical slot
+        // identity and only byte-confirmed extensions.
+        assert(session->children[0].suggested_filename == "slot_0000.dds" &&
+               session->children[0].title.find("T 5") != std::string::npos &&
+               session->children[1].suggested_filename == "slot_0001.mod" &&
+               session->children[1].title.find("M 7") != std::string::npos &&
+               session->children[2].suggested_filename == "slot_0003.bin" &&
+               session->children[2].title.find("A 9") != std::string::npos &&
                session->children[2].image_preview.available());      // sprite view
         auto sprite_child = dmcresource::open_session_child(session.get(), 2);
         assert(sprite_child && sprite_child->image_preview.available());
