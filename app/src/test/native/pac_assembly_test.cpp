@@ -267,6 +267,41 @@ int main() {
         nested_motion.bytes.data(), nested_motion.bytes.size());
     assert(both.ok && both.animated_parts == 2U);
 
+    // em034.pac carries two mutually-exclusive Lady appearance sets plus
+    // equipment MODs. The viewer must never overlay all of them at once.
+    std::vector<std::vector<std::uint8_t>> lady_payloads(35U);
+    lady_payloads[1] = mod;
+    lady_payloads[17] = mod;
+    lady_payloads[20] = mod;  // equipment group: preserved as child, not actor body
+    lady_payloads[32] = mod;
+    lady_payloads[34] = mod;
+    const auto lady_pac = make_pac(lady_payloads);
+    auto lady = dmcresource::open_session(
+        "em034.pac", lady_pac.data(), lady_pac.size());
+    assert(lady != nullptr);
+
+    const auto lady_variants = dmcresource::motion::archive_variants("em034.pac");
+    assert(lady_variants.size() == 2U);
+    assert(lady_variants[0].label == "Lady · costume 1");
+    assert(lady_variants[1].label == "Lady · costume 2");
+
+    auto lady_first = assembly::assemble_pac(*lady, &report, "em034.pac", 0U);
+    assert(lady_first != nullptr);
+    assert(report.models == 2U);
+    assert(report.variant_models_skipped == 3U);
+    assert(lady_first->composite_parts.size() == 2U);
+    assert(lady_first->composite_parts[0].name.find("slot_0001.mod") != std::string::npos);
+    assert(lady_first->composite_parts[1].name.find("slot_0017.mod") != std::string::npos);
+    assert(lady_first->inspection.root.properties.back().name == "AppearanceTexturePairing");
+
+    auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
+    assert(lady_second != nullptr);
+    assert(report.models == 2U);
+    assert(report.variant_models_skipped == 3U);
+    assert(lady_second->composite_parts.size() == 2U);
+    assert(lady_second->composite_parts[0].name.find("slot_0032.mod") != std::string::npos);
+    assert(lady_second->composite_parts[1].name.find("slot_0034.mod") != std::string::npos);
+
     // An archive without MOD is browsable but has nothing to assemble.
     const auto motions_only = make_pac({mot});
     auto no_model = dmcresource::open_session("mot.pac", motions_only.data(), motions_only.size());
