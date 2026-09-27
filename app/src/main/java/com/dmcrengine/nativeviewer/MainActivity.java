@@ -118,6 +118,10 @@ public final class MainActivity extends Activity {
                 .withEndAction(() -> noticeView.setVisibility(View.GONE)).start();
     };
     private LinearLayout motionBar;
+    // Visual separators between nested motion PACs are not motion entries.
+    // Keep a direct index -> card map so gesture navigation never mistakes a
+    // separator for an animation button.
+    private final ArrayList<View> motionCards = new ArrayList<>();
 
     private long session;
     private long pendingExportSession;
@@ -792,8 +796,8 @@ public final class MainActivity extends Activity {
                     ? (direction > 0 ? 0 : n - 1)
                     : ((selectedMotionIndex + direction) % n + n) % n;
             selectMotion(next);
-            if (motionBar != null && next < motionBar.getChildCount()) {
-                final View card = motionBar.getChildAt(next);
+            if (motionScroll != null && next < motionCards.size()) {
+                final View card = motionCards.get(next);
                 motionScroll.post(() -> motionScroll.smoothScrollTo(
                         Math.max(0, card.getLeft() - dp(24)), 0));
             }
@@ -1088,11 +1092,13 @@ public final class MainActivity extends Activity {
         final String name;
         final int libraryIndex;   // >= 0: native Session::motion_library
         final Uri uri;            // staged file otherwise
+        final int packSlot;       // top-level nested PAC slot; -1 unknown, -2 staged
 
-        MotionEntry(String name, int libraryIndex, Uri uri) {
+        MotionEntry(String name, int libraryIndex, Uri uri, int packSlot) {
             this.name = name;
             this.libraryIndex = libraryIndex;
             this.uri = uri;
+            this.packSlot = packSlot;
         }
     }
 
@@ -1102,11 +1108,14 @@ public final class MainActivity extends Activity {
             final int count = NativeBridge.motionLibraryCount(session);
             for (int index = 0; index < count; ++index) {
                 result.add(new MotionEntry(
-                        NativeBridge.motionLibraryName(session, index), index, null));
+                        NativeBridge.motionLibraryName(session, index),
+                        index,
+                        null,
+                        NativeBridge.motionLibraryPackSlot(session, index)));
             }
         }
         for (StagedAsset asset : motionAssets()) {
-            result.add(new MotionEntry(asset.name, -1, asset.uri));
+            result.add(new MotionEntry(asset.name, -1, asset.uri, -2));
         }
         return result;
     }
@@ -1114,15 +1123,22 @@ public final class MainActivity extends Activity {
     private void refreshMotionStrip() {
         if (motionBar == null || motionScroll == null) return;
         motionBar.removeAllViews();
+        motionCards.clear();
         ArrayList<MotionEntry> motions = motionEntries();
         if (motions.isEmpty() || !isRootScene()) {
             motionScroll.setVisibility(View.GONE);
             if (motions.isEmpty()) selectedMotionIndex = -1;
             return;
         }
+        int previousPack = Integer.MIN_VALUE;
         for (int index = 0; index < motions.size(); ++index) {
             final int motionIndex = index;
             MotionEntry entry = motions.get(index);
+            if (index > 0 && entry.packSlot != previousPack) {
+                addMotionPackSeparator(entry.packSlot);
+            }
+            previousPack = entry.packSlot;
+
             final boolean active = index == selectedMotionIndex;
             Button button = makeSquareButton("", "Play animation " + entry.name, 11f);
             button.setText(motionCardLabel(entry.name));
@@ -1130,8 +1146,24 @@ public final class MainActivity extends Activity {
             button.setAlpha(active ? 1.0f : 0.72f);
             button.setOnClickListener(v -> selectMotion(motionIndex));
             addToolButton(motionBar, button);
+            motionCards.add(button);
         }
         motionScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
+    }
+
+    private void addMotionPackSeparator(int packSlot) {
+        TextView separator = new TextView(this);
+        separator.setText("\u2502");
+        separator.setTextColor(0x88ffffff);
+        separator.setTextSize(28f);
+        separator.setGravity(Gravity.CENTER);
+        separator.setContentDescription(
+                packSlot >= 0 ? "Animation pack slot " + packSlot : "Animation source boundary");
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dp(18), dp(TOOL_SIZE_DP));
+        params.setMarginStart(dp(2));
+        params.setMarginEnd(dp(2));
+        motionBar.addView(separator, params);
     }
 
     private CharSequence motionCardLabel(String name) {
