@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -54,6 +55,23 @@ inline constexpr int kViewHeight = 1440;
     const effect_bank::Record& record,
     const ImagePreview* texture = nullptr,
     const effect_bank::SpriteAnimation* animation = nullptr);
+
+// Cleaner Visual-mode projection. It intentionally uses only confirmed runtime
+// links/fields; missing linked previews stay explicit instead of being guessed.
+struct EffectLinkedVisual final {
+    char kind{};
+    std::uint32_t id{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_degrees{};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+    const ImagePreview* preview{};
+};
+
+[[nodiscard]] ImagePreview render_effect_visual_view(
+    const effect_bank::Record& record,
+    const ImagePreview* texture = nullptr,
+    const effect_bank::SpriteAnimation* animation = nullptr,
+    std::span<const EffectLinkedVisual> linked = {});
 
 // Attack index: every entry (id, target mask, bone, shape).
 [[nodiscard]] ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>& entries);
