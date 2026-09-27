@@ -677,6 +677,7 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     if (!out.empty()) return out;
     const auto slash = archive_name.find_last_of("/\\");
     if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+
     constexpr std::string_view nevan = "em028.pac";
     bool is_nevan = archive_name.size() == nevan.size();
     for (std::size_t i = 0U; is_nevan && i < nevan.size(); ++i) {
@@ -692,6 +693,39 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         ArchiveVariant swarm;
         swarm.label = "Bats out";
         out.push_back(swarm);
+        return out;
+    }
+
+    // em034.pac (Lady) contains two complete appearance sets plus a separate
+    // group of equipment/weapon MODs. Corpus evidence from the retail PAC:
+    //   slots 1 + 17  -> MOD header +0x14 = 0x00000384
+    //   slots 32 + 34 -> MOD header +0x14 = 0x0000063D
+    //   slots 20..26 + 30 -> +0x14 = 0x000AF258 (equipment group)
+    // Both appearance pairs also share the same transform/texture-domain
+    // shape (23+9 nodes, two texture slots). Keeping all twelve MODs in one
+    // composite is therefore structurally wrong and visibly overlays both
+    // costumes while dropping equipment at source origin.
+    constexpr std::string_view lady = "em034.pac";
+    bool is_lady = archive_name.size() == lady.size();
+    for (std::size_t i = 0U; is_lady && i < lady.size(); ++i) {
+        is_lady = std::tolower(static_cast<unsigned char>(archive_name[i])) == lady[i];
+    }
+    if (is_lady) {
+        ArchiveVariant first;
+        first.label = "Lady · costume 1";
+        first.include_top_level_mod_slots = {1U, 17U};
+        first.include_top_level_mod_count = 2U;
+        first.texture_overrides = {{{1U, 0U}, {17U, 0U}}};
+        first.texture_override_count = 2U;
+        out.push_back(first);
+
+        ArchiveVariant second;
+        second.label = "Lady · costume 2";
+        second.include_top_level_mod_slots = {32U, 34U};
+        second.include_top_level_mod_count = 2U;
+        second.texture_overrides = {{{32U, 31U}, {34U, 31U}}};
+        second.texture_override_count = 2U;
+        out.push_back(second);
     }
     return out;
 }
