@@ -62,6 +62,7 @@ int main() {
     assert(v->entries[0].rotation_degrees[1] == 90.0F);
     assert(v->entries[0].scale[0] == 1.0F);
     assert(views::render_effect_record_view(v_record).available());
+    assert(views::render_effect_visual_view(v_record).available());
 
     std::vector<std::uint8_t> e_bytes(544U, 0U);
     e_bytes[0x01U] = 1U;
@@ -80,6 +81,7 @@ int main() {
     assert(e->rectangle.y == 96U);
     assert(e->rectangle.w == 16U);
     assert(views::render_effect_record_view(e_record).available());
+    assert(views::render_effect_visual_view(e_record).available());
 
     std::vector<std::uint8_t> g_bytes(96U, 0U);
     put_u32(g_bytes, 0x20U, 700U);
@@ -95,6 +97,7 @@ int main() {
     assert(g->steps_40 == 15U);
     assert(g->value_38 == 1.5F);
     assert(views::render_effect_record_view(g_record).available());
+    assert(views::render_effect_visual_view(g_record).available());
 
     std::vector<std::uint8_t> p_bytes(336U, 0U);
     put_u32(p_bytes, 0x00U, 2U);
@@ -112,6 +115,7 @@ int main() {
     assert(p->target_offsets.size() == 1U);
     assert(p->target_offsets[0] == 0x120U);
     assert(views::render_effect_record_view(p_record).available());
+    assert(views::render_effect_visual_view(p_record).available());
 
     // Registered-but-not-yet-typed kinds still receive a concrete byte-map
     // visual rather than an empty tile.
