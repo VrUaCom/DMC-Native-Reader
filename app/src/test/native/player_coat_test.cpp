@@ -1185,8 +1185,22 @@ int main() {
                session->children[2].suggested_filename == "slot_0003.bin" &&
                session->children[2].title.find("A 9") != std::string::npos &&
                session->children[2].image_preview.available());      // sprite view
+        assert(session->children[2].info_preview.available());
+        assert(session->children[3].image_preview.available() &&
+               session->children[3].info_preview.available());
+
         auto sprite_child = dmcresource::open_session_child(session.get(), 2);
         assert(sprite_child && sprite_child->image_preview.available());
+        assert(dmcresource::session_has_dual_preview(sprite_child.get()));
+        const auto* visual = dmcresource::session_active_preview(sprite_child.get());
+        assert(visual == &sprite_child->image_preview);
+        assert(dmcresource::session_set_info_preview(sprite_child.get(), true));
+        assert(dmcresource::session_info_preview_active(sprite_child.get()));
+        assert(dmcresource::session_active_preview(sprite_child.get()) ==
+               &sprite_child->info_preview);
+        assert(dmcresource::session_set_info_preview(sprite_child.get(), false));
+        assert(!dmcresource::session_info_preview_active(sprite_child.get()));
+
         const std::vector<std::uint8_t> plain = pnst({model, model});
         assert(!fx::looks_like_bank(plain));
     }
