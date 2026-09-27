@@ -41,7 +41,8 @@ struct Bank final {
 
 // Registrar address of a kind (0 when the loader ignores it).
 [[nodiscard]] std::uint64_t registrar(char kind) noexcept;
-// Short description of a kind; tentative except T (texture) and M (model).
+// Neutral runtime-kind description. It does not claim an original filename
+// or file extension; T/M mention only byte-confirmed payload families.
 [[nodiscard]] std::string_view kind_name(char kind) noexcept;
 
 // Structural identity: PNST, slot 0 a manifest whose first token is one
