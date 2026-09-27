@@ -163,8 +163,7 @@ std::pair<std::uint32_t, std::uint32_t> session_child_preview_size(
     if (session->uv_gallery) return {kThumbnailSize, kThumbnailSize};
 
     const auto& child = session->children[static_cast<std::size_t>(index)];
-    const auto& preview = child.image_preview;
-    if (preview.available()) return {preview.width, preview.height};
+    if (child.image_preview.available()) return {kThumbnailSize, kThumbnailSize};
 
     // The child has enough retained source bytes for the same native reader
     // that opens it on tap to create a thumbnail lazily. Returning a fixed
@@ -179,7 +178,15 @@ const ImagePreview* session_child_preview(
     if (!valid_child(session, index)) return nullptr;
     if (!session->uv_gallery) {
         const auto& child = session->children[static_cast<std::size_t>(index)];
-        if (child.image_preview.available()) return &child.image_preview;
+        if (child.image_preview.available()) {
+            if (child.image_preview.width == kThumbnailSize &&
+                child.image_preview.height == kThumbnailSize) {
+                return &child.image_preview;
+            }
+            if (scratch == nullptr) return nullptr;
+            *scratch = square_thumbnail(child.image_preview);
+            return scratch->available() ? scratch : nullptr;
+        }
         return materialize_child_thumbnail(child, scratch);
     }
     if (!scratch) return nullptr;
