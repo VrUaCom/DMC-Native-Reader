@@ -24,6 +24,13 @@ public final class NativeBridge {
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
     public static native boolean imagePreview(long handle, Bitmap target);
+
+    // Optional dual preview used by FXBANK and any future resource that has a
+    // visual/playback representation plus a separate evidence/info rendering.
+    public static native boolean hasDualPreview(long handle);
+    public static native boolean infoPreviewActive(long handle);
+    public static native boolean setInfoPreviewActive(long handle, boolean active);
+
     public static native String inspection(long handle);
     public static final int INSPECT_UV = 1;
     public static final int INSPECT_MESHES = 2;
@@ -68,6 +75,9 @@ public final class NativeBridge {
     public static native String[] archiveVariantNames(String archiveName);
     public static native int motionLibraryCount(long handle);
     public static native String motionLibraryName(long handle, int index);
+    // Physical top-level PAC slot containing the nested MOT pack; -1 when the
+    // motion did not come from a nested pack. Used only for UI grouping.
+    public static native int motionLibraryPackSlot(long handle, int index);
 
     // MOT playback. Frames are MOT timeline units (60 per second in DMC3).
     // load* return a human-readable report; hasMotion tells whether it bound.

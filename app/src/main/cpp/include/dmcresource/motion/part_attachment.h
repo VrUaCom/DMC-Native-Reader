@@ -49,7 +49,7 @@ struct EnemyClothSource final {
     std::uint32_t clt_slot;
 };
 
-inline constexpr std::array<EnemyClothSource, 8> kEnemyClothSources{{
+inline constexpr std::array<EnemyClothSource, 10> kEnemyClothSources{{
     {"em028", 4U, 7U},
     {"em028", 5U, 8U},
     {"em000", 3U, 2U},
@@ -58,6 +58,10 @@ inline constexpr std::array<EnemyClothSource, 8> kEnemyClothSources{{
     {"em000", 12U, 11U},
     {"em000", 15U, 14U},
     {"em000", 17U, 16U},
+    // em034_018.clt identifies itself as pl002_01.clt and addresses bones
+    // 2/4/6/8, exactly matching the four chains of both 9-node companion MODs.
+    {"em034", 17U, 18U},
+    {"em034", 34U, 18U},
 }};
 
 // Texture scroll (.tsc) slot and the model slots its CDrawUV objects drive:
@@ -275,6 +279,22 @@ inline constexpr std::array<EnemyVariant, 8> kEm000Variants{{
 // (em028.pac: the dress strip, objects 2-3 of slot 5, is drawn only while
 // bats are out -- 0x14012F790 sets or clears object bit 0, which the MOD draw
 // loops 0x140303460 / 0x140303DE0 require).
+struct ArchiveTextureOverride final {
+    std::uint32_t model_slot{};
+    std::uint32_t texture_slot{};
+};
+
+struct ArchivePartAttachment final {
+    std::uint32_t host_model_slot{};
+    std::uint32_t child_model_slot{};
+    std::uint32_t host_joint{};
+    bool root_local_identity{};
+    // true only when the host joint itself is supported by retained
+    // corpus/geometry evidence; false marks a viewer candidate that remains
+    // orange/non-canonical until the class-init consumer is reversed.
+    bool structural_confirmed{};
+};
+
 struct ArchiveVariant final {
     std::string label;
     const EnemyVariant* enemy{};  // em000 family
@@ -282,6 +302,24 @@ struct ArchiveVariant final {
     std::uint32_t hide_slot{};    // model slot whose objects are hidden
     std::array<std::uint32_t, 2> hide_objects{};
     std::uint32_t hide_count{};
+
+    // Some actor PACs carry several complete appearances and equipment models
+    // in one top-level archive. When non-zero, only these top-level MOD slots
+    // belong to this selectable appearance; every other MOD remains available
+    // as a PAC child instead of being incorrectly overlaid at the actor origin.
+    std::array<std::uint32_t, 12> include_top_level_mod_slots{};
+    std::uint32_t include_top_level_mod_count{};
+
+    // Explicit companion PTX association for appearance parts whose correct
+    // texture bank is not the nearest preceding PTX in physical slot order.
+    std::array<ArchiveTextureOverride, 12> texture_overrides{};
+    std::uint32_t texture_override_count{};
+
+    // Corpus/structure-backed companion placement. These records are distinct
+    // from EnemyVariant because they may be known from a PAC/CLT relationship
+    // before the exact class-init EXE consumer has been recovered.
+    std::array<ArchivePartAttachment, 12> part_attachments{};
+    std::uint32_t part_attachment_count{};
 };
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);

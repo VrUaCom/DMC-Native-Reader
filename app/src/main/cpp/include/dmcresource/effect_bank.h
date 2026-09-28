@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -40,7 +41,8 @@ struct Bank final {
 
 // Registrar address of a kind (0 when the loader ignores it).
 [[nodiscard]] std::uint64_t registrar(char kind) noexcept;
-// Short description of a kind; tentative except T (texture) and M (model).
+// Neutral runtime-kind description. It does not claim an original filename
+// or file extension; T/M mention only byte-confirmed payload families.
 [[nodiscard]] std::string_view kind_name(char kind) noexcept;
 
 // Structural identity: PNST, slot 0 a manifest whose first token is one
@@ -66,5 +68,69 @@ struct SpriteAnimation final {
     std::vector<SpriteFrame> frames;
 };
 [[nodiscard]] std::optional<SpriteAnimation> sprite_animation(const Record& record);
+
+// Runtime-facing views recovered from the canonical dmc3.exe consumers. These
+// structs intentionally expose only fields whose access pattern is proven by
+// the executable; unknown bytes remain outside the typed view.
+
+// V: fixed 0x2C-byte entries. 0x140324680 builds a local transform from
+// translation, degree rotation (converted to radians), and scale, then
+// dispatches the referenced child:
+//   0=P, 1=E, 2=G, 3=V.
+struct VEntry final {
+    std::uint8_t dispatch{};
+    std::uint16_t id{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_degrees{};
+    std::array<float, 3> scale{};
+};
+struct VRuntimeView final {
+    std::int16_t count{};
+    std::vector<VEntry> entries;
+};
+[[nodiscard]] std::optional<VRuntimeView> v_runtime_view(const Record& record);
+
+// E: 0x1402E3AA0 resolves +0x04 through the T texture manager. When +0x06 is
+// one and +0x08 != 0xFFFF, 0x1402E494F binds that id through the A manager.
+// Otherwise +0x0C..+0x12 are copied directly into the runtime rectangle.
+struct ERuntimeView final {
+    std::uint8_t mode{};
+    std::uint16_t texture_id{0xFFFFU};
+    bool uses_animation{};
+    std::uint16_t animation_id{0xFFFFU};
+    SpriteFrame rectangle{};
+};
+[[nodiscard]] std::optional<ERuntimeView> e_runtime_view(const Record& record);
+
+// G: the generator consumer 0x1402EBC10 reads these offsets directly. Exact
+// gameplay labels for several scalar fields are still intentionally withheld;
+// the view keeps their source offsets explicit instead of guessing semantics.
+struct GRuntimeView final {
+    std::uint8_t mode{};
+    std::uint16_t c_id{};
+    std::int32_t value_18{};
+    std::int32_t value_20{};
+    std::uint8_t mode_30{};
+    float value_38{};
+    float value_3c{};
+    std::uint16_t steps_40{};
+    float value_50{};
+    float value_54{};
+    std::uint8_t value_59{};
+};
+[[nodiscard]] std::optional<GRuntimeView> g_runtime_view(const Record& record);
+
+// P: 0x140312DC0 validates version 2, rebases the relative pointers stored
+// from +0x10, and returns the root object. 0x140312840 dispatches on root+1
+// with runtime subtype 0..5. The optional child target list is described by
+// root+0xC0 and the relative offsets beginning at raw+0x18.
+struct PRuntimeView final {
+    std::uint32_t version{};
+    std::uint8_t subtype{};
+    std::uint32_t root_offset{};
+    std::uint32_t list_offset{};
+    std::vector<std::uint32_t> target_offsets;
+};
+[[nodiscard]] std::optional<PRuntimeView> p_runtime_view(const Record& record);
 
 }  // namespace dmcresource::effect_bank

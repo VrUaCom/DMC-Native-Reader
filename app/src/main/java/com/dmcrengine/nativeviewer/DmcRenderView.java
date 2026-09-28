@@ -465,6 +465,13 @@ public final class DmcRenderView extends View {
         invalidate();
     }
 
+    /** Reload the currently selected native static preview without replacing the session. */
+    public void refreshStaticImagePreview() {
+        if (session == 0) return;
+        staticImagePreview = false;
+        loadStaticImagePreview();
+    }
+
     public void resetView() {
         yaw = DEFAULT_YAW;
         pitch = -0.45f;

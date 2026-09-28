@@ -275,7 +275,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
     enable_testing()
     set(DMC_NATIVE_READER_TESTS
         black_widow_state composite_builder composite_mod_scene composite_placement core_model_pipeline cxx23_profile dds_ptx_v1
-        em028_corpus_contract gdata_legacy mod_spatial_adapter module_registry
+        em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
         motion_playback pac_assembly player_coat

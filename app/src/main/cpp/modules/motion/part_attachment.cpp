@@ -677,6 +677,7 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     if (!out.empty()) return out;
     const auto slash = archive_name.find_last_of("/\\");
     if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+
     constexpr std::string_view nevan = "em028.pac";
     bool is_nevan = archive_name.size() == nevan.size();
     for (std::size_t i = 0U; is_nevan && i < nevan.size(); ++i) {
@@ -692,6 +693,81 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         ArchiveVariant swarm;
         swarm.label = "Bats out";
         out.push_back(swarm);
+        return out;
+    }
+
+    // em034.pac (Lady) contains two complete appearance sets plus a separate
+    // group of equipment/weapon MODs. Corpus evidence from the retail PAC:
+    //   slots 1 + 17  -> MOD header +0x14 = 0x00000384
+    //   slots 32 + 34 -> MOD header +0x14 = 0x0000063D
+    //   slots 20..26 + 30 -> +0x14 = 0x000AF258 (equipment group)
+    // Both appearance pairs also share the same transform/texture-domain
+    // shape (23+9 nodes, two texture slots). Keeping all twelve MODs in one
+    // composite is therefore structurally wrong and visibly overlays both
+    // costumes while dropping equipment at source origin.
+    constexpr std::string_view lady = "em034.pac";
+    bool is_lady = archive_name.size() == lady.size();
+    for (std::size_t i = 0U; is_lady && i < lady.size(); ++i) {
+        is_lady = std::tolower(static_cast<unsigned char>(archive_name[i])) == lady[i];
+    }
+    if (is_lady) {
+        // Retail em034 resource groups:
+        //   appearance 1: body slot 1 + hair slot 17 -> PTX slot 0
+        //   appearance 2: body slot 32 + hair slot 34 -> PTX slot 31
+        //   Kalina Ann assembly: slots 20..26 -> PTX 19 (costume 1) or
+        //     PTX 33 (costume 2); slot 30 is the cable/chain part -> PTX 29.
+        //
+        // Hair placement is structurally confirmed without guessing:
+        //   * slot 17/34 UVs sample the hair region of the corresponding body PTX;
+        //   * slot 18 is pl002_01.clt and drives its four hair chains (2/4/6/8);
+        //   * raw hair Y [-3.75,15.94] + body joint 5 Y=148.47 aligns with
+        //     body head object Y [144.46,160.23].
+        //
+        // The Kalina Ann MODs form one coherent source-space assembly around a
+        // common zero root. Attaching all of them through one body hand keeps
+        // their relative layout instead of scattering them at world origin.
+        // The hand selector remains a viewer candidate until the exact CEm034
+        // class-init attachment consumer is recovered from the EXE.
+        constexpr std::array<std::uint32_t, 8> weapon_slots{
+            20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U};
+
+        ArchiveVariant first;
+        first.label = "Lady · costume 1";
+        first.include_top_level_mod_slots =
+            {1U, 17U, 20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U};
+        first.include_top_level_mod_count = 10U;
+        first.texture_overrides = {{
+            {1U, 0U}, {17U, 0U},
+            {20U, 19U}, {21U, 19U}, {22U, 19U}, {23U, 19U},
+            {24U, 19U}, {25U, 19U}, {26U, 19U}, {30U, 29U},
+        }};
+        first.texture_override_count = 10U;
+        first.part_attachments[0] = {1U, 17U, 5U, false, true};
+        for (std::size_t i = 0U; i < weapon_slots.size(); ++i) {
+            first.part_attachments[i + 1U] =
+                {1U, weapon_slots[i], 9U, false, false};
+        }
+        first.part_attachment_count = 9U;
+        out.push_back(first);
+
+        ArchiveVariant second;
+        second.label = "Lady · costume 2";
+        second.include_top_level_mod_slots =
+            {32U, 34U, 20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U};
+        second.include_top_level_mod_count = 10U;
+        second.texture_overrides = {{
+            {32U, 31U}, {34U, 31U},
+            {20U, 33U}, {21U, 33U}, {22U, 33U}, {23U, 33U},
+            {24U, 33U}, {25U, 33U}, {26U, 33U}, {30U, 29U},
+        }};
+        second.texture_override_count = 10U;
+        second.part_attachments[0] = {32U, 34U, 5U, false, true};
+        for (std::size_t i = 0U; i < weapon_slots.size(); ++i) {
+            second.part_attachments[i + 1U] =
+                {32U, weapon_slots[i], 9U, false, false};
+        }
+        second.part_attachment_count = 9U;
+        out.push_back(second);
     }
     return out;
 }

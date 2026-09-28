@@ -34,6 +34,7 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -46,6 +47,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
     private static final int REQUEST_ADD_PAC = 1011;
     private static final int REQUEST_ROOM = 1012;
+    private static final int REQUEST_EXPORT_INFO = 1013;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -106,6 +108,10 @@ public final class MainActivity extends Activity {
     // Position in the collision cycle: -1 all attacks, then each used id.
     private int collisionCursor = -2;
     private Button infoButton;
+    private HorizontalScrollView effectModeScroll;
+    private LinearLayout effectModeBar;
+    private Button effectVisualButton;
+    private Button effectInfoButton;
     private HorizontalScrollView motionScroll;
     private HorizontalScrollView toolScroll;
     // In-viewport notice (replaces Toasts so messages never cover the motion
@@ -116,6 +122,10 @@ public final class MainActivity extends Activity {
                 .withEndAction(() -> noticeView.setVisibility(View.GONE)).start();
     };
     private LinearLayout motionBar;
+    // Visual separators between nested motion PACs are not motion entries.
+    // Keep a direct index -> card map so gesture navigation never mistakes a
+    // separator for an animation button.
+    private final ArrayList<View> motionCards = new ArrayList<>();
 
     private long session;
     private long pendingExportSession;
@@ -124,7 +134,7 @@ public final class MainActivity extends Activity {
     private LinearLayout headerBar;
     // Hidden by the top-edge swipe: bars and the visibility each had.
     private boolean uiHidden;
-    private final int[] barVisibility = new int[4];
+    private final int[] barVisibility = new int[5];
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
@@ -144,6 +154,7 @@ public final class MainActivity extends Activity {
 
     private BlackWidowState blackWidowState = BlackWidowState.empty();
     private String infoText = "";
+    private String pendingInfoExportText = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -297,6 +308,33 @@ public final class MainActivity extends Activity {
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
         refreshMotionStrip();
         refreshVariantBar();
+        refreshEffectModeBar();
+    }
+
+    private void refreshEffectModeBar() {
+        if (effectModeScroll == null || effectVisualButton == null || effectInfoButton == null) {
+            return;
+        }
+        final boolean available = session != 0 && NativeBridge.hasDualPreview(session);
+        if (!available) {
+            effectModeScroll.setVisibility(View.GONE);
+            return;
+        }
+
+        final boolean info = NativeBridge.infoPreviewActive(session);
+        effectVisualButton.setActivated(!info);
+        effectVisualButton.setAlpha(info ? 0.68f : 1.0f);
+        effectInfoButton.setActivated(info);
+        effectInfoButton.setAlpha(info ? 1.0f : 0.68f);
+        effectModeScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
+    }
+
+    private void selectEffectPreviewMode(boolean info) {
+        if (session == 0 || !NativeBridge.hasDualPreview(session)) return;
+        if (!NativeBridge.setInfoPreviewActive(session, info)) return;
+        renderView.refreshStaticImagePreview();
+        refreshEffectModeBar();
+        notice(info ? "Info view" : "Visual view", Toast.LENGTH_SHORT);
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -377,6 +415,40 @@ public final class MainActivity extends Activity {
                 HorizontalScrollView.LayoutParams.WRAP_CONTENT,
                 HorizontalScrollView.LayoutParams.WRAP_CONTENT));
         root.addView(variantScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        effectModeScroll = new HorizontalScrollView(this);
+        effectModeScroll.setHorizontalScrollBarEnabled(false);
+        effectModeScroll.setFillViewport(true);
+        effectModeScroll.setVisibility(View.GONE);
+        effectModeBar = new LinearLayout(this);
+        effectModeBar.setOrientation(LinearLayout.HORIZONTAL);
+        effectModeBar.setGravity(Gravity.CENTER);
+        effectModeBar.setPadding(dp(8), dp(2), dp(8), dp(2));
+
+        effectVisualButton = makeSquareButton("Visual", "Show reconstructed effect view", 13f);
+        effectVisualButton.setPadding(dp(18), 0, dp(18), 0);
+        effectVisualButton.setOnClickListener(v -> selectEffectPreviewMode(false));
+        LinearLayout.LayoutParams visualParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+        visualParams.setMarginStart(dp(TOOL_GAP_DP));
+        visualParams.setMarginEnd(dp(TOOL_GAP_DP));
+        effectModeBar.addView(effectVisualButton, visualParams);
+
+        effectInfoButton = makeSquareButton("Info", "Show EXE-backed effect information", 13f);
+        effectInfoButton.setPadding(dp(18), 0, dp(18), 0);
+        effectInfoButton.setOnClickListener(v -> selectEffectPreviewMode(true));
+        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+        infoParams.setMarginStart(dp(TOOL_GAP_DP));
+        infoParams.setMarginEnd(dp(TOOL_GAP_DP));
+        effectModeBar.addView(effectInfoButton, infoParams);
+
+        effectModeScroll.addView(effectModeBar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        root.addView(effectModeScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -789,8 +861,8 @@ public final class MainActivity extends Activity {
                     ? (direction > 0 ? 0 : n - 1)
                     : ((selectedMotionIndex + direction) % n + n) % n;
             selectMotion(next);
-            if (motionBar != null && next < motionBar.getChildCount()) {
-                final View card = motionBar.getChildAt(next);
+            if (motionScroll != null && next < motionCards.size()) {
+                final View card = motionCards.get(next);
                 motionScroll.post(() -> motionScroll.smoothScrollTo(
                         Math.max(0, card.getLeft() - dp(24)), 0));
             }
@@ -811,7 +883,7 @@ public final class MainActivity extends Activity {
         }
 
         @Override public void onToggleUi() {
-            final View[] bars = {headerBar, variantScroll, motionScroll, toolScroll};
+            final View[] bars = {headerBar, variantScroll, effectModeScroll, motionScroll, toolScroll};
             uiHidden = !uiHidden;
             for (int i = 0; i < bars.length; ++i) {
                 if (bars[i] == null) continue;
@@ -825,6 +897,7 @@ public final class MainActivity extends Activity {
             if (!uiHidden) {
                 refreshMotionStrip();
                 refreshVariantBar();
+                refreshEffectModeBar();
             }
             notice(uiHidden ? "Full view — swipe down from the top to bring the bars back" : "Bars shown",
                     Toast.LENGTH_SHORT);
@@ -1085,11 +1158,13 @@ public final class MainActivity extends Activity {
         final String name;
         final int libraryIndex;   // >= 0: native Session::motion_library
         final Uri uri;            // staged file otherwise
+        final int packSlot;       // top-level nested PAC slot; -1 unknown, -2 staged
 
-        MotionEntry(String name, int libraryIndex, Uri uri) {
+        MotionEntry(String name, int libraryIndex, Uri uri, int packSlot) {
             this.name = name;
             this.libraryIndex = libraryIndex;
             this.uri = uri;
+            this.packSlot = packSlot;
         }
     }
 
@@ -1099,11 +1174,14 @@ public final class MainActivity extends Activity {
             final int count = NativeBridge.motionLibraryCount(session);
             for (int index = 0; index < count; ++index) {
                 result.add(new MotionEntry(
-                        NativeBridge.motionLibraryName(session, index), index, null));
+                        NativeBridge.motionLibraryName(session, index),
+                        index,
+                        null,
+                        NativeBridge.motionLibraryPackSlot(session, index)));
             }
         }
         for (StagedAsset asset : motionAssets()) {
-            result.add(new MotionEntry(asset.name, -1, asset.uri));
+            result.add(new MotionEntry(asset.name, -1, asset.uri, -2));
         }
         return result;
     }
@@ -1111,15 +1189,22 @@ public final class MainActivity extends Activity {
     private void refreshMotionStrip() {
         if (motionBar == null || motionScroll == null) return;
         motionBar.removeAllViews();
+        motionCards.clear();
         ArrayList<MotionEntry> motions = motionEntries();
         if (motions.isEmpty() || !isRootScene()) {
             motionScroll.setVisibility(View.GONE);
             if (motions.isEmpty()) selectedMotionIndex = -1;
             return;
         }
+        int previousPack = Integer.MIN_VALUE;
         for (int index = 0; index < motions.size(); ++index) {
             final int motionIndex = index;
             MotionEntry entry = motions.get(index);
+            if (index > 0 && entry.packSlot != previousPack) {
+                addMotionPackSeparator(entry.packSlot);
+            }
+            previousPack = entry.packSlot;
+
             final boolean active = index == selectedMotionIndex;
             Button button = makeSquareButton("", "Play animation " + entry.name, 11f);
             button.setText(motionCardLabel(entry.name));
@@ -1127,8 +1212,24 @@ public final class MainActivity extends Activity {
             button.setAlpha(active ? 1.0f : 0.72f);
             button.setOnClickListener(v -> selectMotion(motionIndex));
             addToolButton(motionBar, button);
+            motionCards.add(button);
         }
         motionScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
+    }
+
+    private void addMotionPackSeparator(int packSlot) {
+        TextView separator = new TextView(this);
+        separator.setText("\u2502");
+        separator.setTextColor(0x88ffffff);
+        separator.setTextSize(28f);
+        separator.setGravity(Gravity.CENTER);
+        separator.setContentDescription(
+                packSlot >= 0 ? "Animation pack slot " + packSlot : "Animation source boundary");
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dp(18), dp(TOOL_SIZE_DP));
+        params.setMarginStart(dp(2));
+        params.setMarginEnd(dp(2));
+        motionBar.addView(separator, params);
     }
 
     private CharSequence motionCardLabel(String name) {
@@ -1331,8 +1432,12 @@ public final class MainActivity extends Activity {
     }
 
     private void showInfoDialog(String text) {
+        final String snapshot = text == null || text.isEmpty()
+                ? "No resource information available."
+                : text;
+
         TextView details = new TextView(this);
-        details.setText(text == null || text.isEmpty() ? "No resource information available." : text);
+        details.setText(snapshot);
         details.setTextColor(Color.WHITE);
         details.setTextSize(13f);
         details.setTypeface(Typeface.MONOSPACE);
@@ -1345,11 +1450,147 @@ public final class MainActivity extends Activity {
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
+        LinearLayout dialogTitle = new LinearLayout(this);
+        dialogTitle.setOrientation(LinearLayout.HORIZONTAL);
+        dialogTitle.setGravity(Gravity.CENTER_VERTICAL);
+        dialogTitle.setPadding(dp(16), dp(6), dp(8), dp(6));
+        dialogTitle.setBackgroundColor(0xff3a3a3e);
+
+        TextView heading = new TextView(this);
+        heading.setText(titleView.getText());
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(18f);
+        heading.setSingleLine(true);
+        heading.setEllipsize(TextUtils.TruncateAt.END);
+        dialogTitle.addView(heading, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button download = makeSquareButton("\u21e9", "Download inspection report", 24f);
+        download.setOnClickListener(v -> chooseInfoExport(snapshot));
+        dialogTitle.addView(download, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
         new AlertDialog.Builder(this)
-                .setTitle(titleView.getText())
+                .setCustomTitle(dialogTitle)
                 .setView(scroll)
                 .setPositiveButton("Close", null)
                 .show();
+    }
+
+    private void chooseInfoExport(String snapshot) {
+        final String[] choices = {
+                "Markdown (.md)",
+                "DMC download snapshot (.download)",
+                "Plain text (.txt)",
+                "JSON (.json)"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Download info")
+                .setItems(choices, (dialog, which) -> launchInfoExport(snapshot, which))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void launchInfoExport(String snapshot, int format) {
+        final String extension;
+        final String mime;
+        switch (format) {
+            case 0:
+                extension = "md";
+                mime = "text/markdown";
+                break;
+            case 1:
+                extension = "download";
+                mime = "application/octet-stream";
+                break;
+            case 2:
+                extension = "txt";
+                mime = "text/plain";
+                break;
+            case 3:
+                extension = "json";
+                mime = "application/json";
+                break;
+            default:
+                return;
+        }
+
+        pendingInfoExportText = formatInfoExport(snapshot, format);
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mime);
+        intent.putExtra(Intent.EXTRA_TITLE, infoExportFileName(extension));
+        startActivityForResult(intent, REQUEST_EXPORT_INFO);
+    }
+
+    private String infoExportFileName(String extension) {
+        String title = sanitizeFileComponent(titleView.getText().toString());
+        if (title.isEmpty()) title = "resource";
+        return title + "_info." + extension;
+    }
+
+    private String formatInfoExport(String snapshot, int format) {
+        final String title = titleView.getText().toString();
+        if (format == 0) {
+            return "# " + title + "\n\n"
+                    + "- DMC Native Reader: " + BuildConfig.VERSION_NAME + "\n"
+                    + "- Export: inspection snapshot\n\n"
+                    + "~~~text\n" + snapshot + "\n~~~\n";
+        }
+        if (format == 1) {
+            return "DMC_NATIVE_READER_DOWNLOAD/1\n"
+                    + "version=" + BuildConfig.VERSION_NAME + "\n"
+                    + "resource=" + title + "\n"
+                    + "encoding=UTF-8\n"
+                    + "payload=inspection-text\n\n"
+                    + snapshot + "\n";
+        }
+        if (format == 3) {
+            return "{\n"
+                    + "  \"schema\": \"dmc-native-reader.inspection.v1\",\n"
+                    + "  \"version\": \"" + jsonEscape(BuildConfig.VERSION_NAME) + "\",\n"
+                    + "  \"resource\": \"" + jsonEscape(title) + "\",\n"
+                    + "  \"report\": \"" + jsonEscape(snapshot) + "\"\n"
+                    + "}\n";
+        }
+        return snapshot + (snapshot.endsWith("\n") ? "" : "\n");
+    }
+
+    private String jsonEscape(String value) {
+        if (value == null) return "";
+        StringBuilder out = new StringBuilder(value.length() + 16);
+        for (int index = 0; index < value.length(); ++index) {
+            char c = value.charAt(index);
+            switch (c) {
+                case '\\': out.append("\\\\"); break;
+                case '\"': out.append("\\\""); break;
+                case '\n': out.append("\\n"); break;
+                case '\r': out.append("\\r"); break;
+                case '\t': out.append("\\t"); break;
+                default:
+                    if (c < 0x20) {
+                        out.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+            }
+        }
+        return out.toString();
+    }
+
+    private void exportInfoToUri(Uri target) {
+        boolean saved = false;
+        if (target != null && !pendingInfoExportText.isEmpty()) {
+            try (OutputStream output = getContentResolver().openOutputStream(target, "w")) {
+                if (output != null) {
+                    output.write(pendingInfoExportText.getBytes(StandardCharsets.UTF_8));
+                    output.flush();
+                    saved = true;
+                }
+            } catch (Exception ignored) {
+                saved = false;
+            }
+        }
+        notice(saved ? "Info saved" : "Could not save info", Toast.LENGTH_LONG);
     }
 
     private void chooseFile() {
@@ -1472,6 +1713,14 @@ public final class MainActivity extends Activity {
                     || requestCode == REQUEST_EXPORT_GALLERY_TREE) {
                 pendingExportSession = 0;
             }
+            if (requestCode == REQUEST_EXPORT_INFO) pendingInfoExportText = "";
+            return;
+        }
+
+        if (requestCode == REQUEST_EXPORT_INFO) {
+            Uri target = data.getData();
+            if (target != null) exportInfoToUri(target);
+            pendingInfoExportText = "";
             return;
         }
 
@@ -1669,6 +1918,7 @@ public final class MainActivity extends Activity {
         blackWidowState = BlackWidowState.empty();
         pendingPtxPart = -1;
         pendingExportSession = 0;
+        pendingInfoExportText = "";
         resetCompositionState();
         setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
                 + "Architecture v2 core: MOD / SCM / DDS / PTX / PAC / MOT (read-only).\n"

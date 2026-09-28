@@ -284,6 +284,26 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 ++report.effect_models_skipped;
                 continue;
             }
+            if (entry.kind.format == Format::Mod && position != nullptr &&
+                position->include_top_level_mod_count != 0U &&
+                entry.archive == 0U && entry.container.empty()) {
+                bool used = false;
+                if (entry.slot) {
+                    for (std::uint32_t s = 0U;
+                         s < position->include_top_level_mod_count &&
+                         s < position->include_top_level_mod_slots.size();
+                         ++s) {
+                        used = used || *entry.slot == position->include_top_level_mod_slots[s];
+                    }
+                }
+                if (!used) {
+                    // The MOD is still preserved/browsable as a PAC child. It is
+                    // only excluded from this actor appearance because the
+                    // archive contains mutually exclusive looks/equipment.
+                    ++report.variant_models_skipped;
+                    continue;
+                }
+            }
             if (entry.kind.format == Format::Mod && variant != nullptr && entry.archive == 0U &&
                 entry.container.empty()) {
                 // Shared enemy archive: keep only this class's body, cloth and weapon.
@@ -303,6 +323,25 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 model_names.push_back(entry.name);
                 model_entry.push_back(index);
                 std::optional<std::size_t> texture = texture_for(entries, index);
+                if (position != nullptr && entry.archive == 0U &&
+                    entry.container.empty() && entry.slot) {
+                    for (std::uint32_t o = 0U;
+                         o < position->texture_override_count &&
+                         o < position->texture_overrides.size();
+                         ++o) {
+                        const auto& override = position->texture_overrides[o];
+                        if (*entry.slot != override.model_slot) continue;
+                        for (std::size_t t = 0U; t < entries.size(); ++t) {
+                            if (entries[t].archive == 0U && entries[t].container.empty() &&
+                                entries[t].slot == override.texture_slot &&
+                                entries[t].kind.format == Format::Ptx) {
+                                texture = t;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
                 if (variant != nullptr && variant->texture_slot != motion::kNoEnemySlot &&
                     entry.archive == 0U && entry.container.empty() &&
                     entry.slot == variant->body_slot) {
@@ -519,6 +558,57 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
                             "->bodyJoint" + std::to_string(variant->weapon_joint);
                     }
+                }
+            }
+            // PAC appearance companion attachments that are supported by
+            // structural/corpus evidence but are intentionally kept separate
+            // from EXE-confirmed EnemyVariant bindings.
+            if (position != nullptr && position->part_attachment_count != 0U) {
+                for (std::uint32_t a = 0U;
+                     a < position->part_attachment_count &&
+                     a < position->part_attachments.size();
+                     ++a) {
+                    const auto& attach = position->part_attachments[a];
+                    std::optional<std::size_t> host;
+                    std::optional<std::size_t> child;
+                    for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                        const auto& entry = entries[model_entry[part]];
+                        if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                        if (*entry.slot == attach.host_model_slot) host = part;
+                        if (*entry.slot == attach.child_model_slot) child = part;
+                    }
+                    if (host && child &&
+                        motion::attach_part_skeleton(
+                            assembled.get(), *host, *child, attach.host_joint,
+                            attach.root_local_identity)) {
+                        ++report.attached_parts;
+                        report.detail_attachments +=
+                            (attach.structural_confirmed ? " structural slot" : " candidate slot") +
+                            std::to_string(attach.child_model_slot) +
+                            "->slot" + std::to_string(attach.host_model_slot) +
+                            "/joint" + std::to_string(attach.host_joint);
+                        assembled->inspection.root.properties.push_back({
+                            "AppearanceAttachment",
+                            "MOD slot" + std::to_string(attach.child_model_slot) +
+                                " -> MOD slot" + std::to_string(attach.host_model_slot) +
+                                " / body joint " + std::to_string(attach.host_joint) +
+                                (attach.structural_confirmed
+                                     ? " [STRUCTURAL_CONFIRMED]"
+                                     : " [SEMANTIC_CANDIDATE]"),
+                            attach.structural_confirmed
+                                ? EvidenceLevel::StructuralConfirmed
+                                : EvidenceLevel::Recognized});
+                    }
+                }
+                if (archive_name.find("em034") != std::string_view::npos) {
+                    assembled->non_canonical_notes.push_back(
+                        "em034 hair placement (slot 17/34 -> body joint 5) is "
+                        "STRUCTURAL_CONFIRMED from retail UV, MOD bounds and pl002_01.clt; "
+                        "exact CEm034 class-init code is not yet EXE_CONFIRMED.");
+                    assembled->non_canonical_notes.push_back(
+                        "em034 Kalina Ann source-space assembly (slots 20..26/30) is "
+                        "preserved and placed on body joint 9 as a SEMANTIC_CANDIDATE; "
+                        "the exact runtime hand selector/offset still requires CEm034 EXE reverse.");
                 }
             }
             // Chains (.clt text slots): player coat slot 12 <- slot 13, enemy
@@ -836,6 +926,62 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
         }
+        {
+            std::size_t placed = 0U;
+            for (const auto& part : assembled->composite_parts) {
+                if (part.placement.resolved &&
+                    part.placement.mode == CompositePlacementMode::HostJointSkeleton) {
+                    ++placed;
+                }
+            }
+            for (auto& property : assembled->inspection.root.properties) {
+                if (property.key != "placement") continue;
+                property.value =
+                    std::to_string(placed) + " host-joint attached; " +
+                    std::to_string(assembled->composite_parts.size() - placed) +
+                    " source-space";
+                property.evidence = EvidenceLevel::DataConfirmed;
+                break;
+            }
+        }
+        if (position != nullptr) {
+            assembled->inspection.root.properties.push_back({
+                "PACAppearance", position->label, EvidenceLevel::DataConfirmed});
+            if (position->include_top_level_mod_count != 0U) {
+                std::string slots;
+                for (std::uint32_t i = 0U;
+                     i < position->include_top_level_mod_count &&
+                     i < position->include_top_level_mod_slots.size();
+                     ++i) {
+                    if (!slots.empty()) slots += ",";
+                    slots += std::to_string(position->include_top_level_mod_slots[i]);
+                }
+                assembled->inspection.root.properties.push_back({
+                    "IncludedTopLevelMODSlots", slots,
+                    EvidenceLevel::StructuralConfirmed});
+                assembled->inspection.root.properties.push_back({
+                    "OtherTopLevelMODs",
+                    std::to_string(report.variant_models_skipped) +
+                        " preserved as PAC children; not overlaid in this appearance",
+                    EvidenceLevel::DataConfirmed});
+            }
+            if (position->texture_override_count != 0U) {
+                std::string overrides;
+                for (std::uint32_t i = 0U;
+                     i < position->texture_override_count &&
+                     i < position->texture_overrides.size();
+                     ++i) {
+                    if (!overrides.empty()) overrides += ", ";
+                    overrides += "MOD slot" +
+                        std::to_string(position->texture_overrides[i].model_slot) +
+                        "->PTX slot" +
+                        std::to_string(position->texture_overrides[i].texture_slot);
+                }
+                assembled->inspection.root.properties.push_back({
+                    "AppearanceTexturePairing", overrides,
+                    EvidenceLevel::DataConfirmed});
+            }
+        }
         report.detail =
             "PAC assembly (read-only): models=" + std::to_string(report.models) +
             " texturesAttached=" + std::to_string(report.textures_attached) +
@@ -849,10 +995,14 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +
             (report.enemy_class.empty() ? std::string{}
-                                        : " enemyClass=" + report.enemy_class +
-                                              " otherClassModelsSkipped=" +
+                                        : " archiveVariant=" + report.enemy_class +
+                                              " variantModelsSkipped=" +
                                               std::to_string(report.variant_models_skipped)) +
-            " ptxPairing=nearest-preceding-in-container" + report.detail_attachments;
+            " ptxPairing=" +
+            (position != nullptr && position->texture_override_count != 0U
+                 ? std::string{"explicit-appearance-override"}
+                 : std::string{"nearest-preceding-in-container"}) +
+            report.detail_attachments;
         if (!assembled->detail.empty()) assembled->detail += "\n";
         assembled->detail += report.detail;
         if (!assembled->trace.empty()) assembled->trace += "\n";

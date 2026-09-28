@@ -267,6 +267,56 @@ int main() {
         nested_motion.bytes.data(), nested_motion.bytes.size());
     assert(both.ok && both.animated_parts == 2U);
 
+    // em034.pac carries two mutually-exclusive Lady appearance sets plus
+    // equipment MODs. The viewer must never overlay all of them at once.
+    std::vector<std::vector<std::uint8_t>> lady_payloads(35U);
+    lady_payloads[1] = mod;
+    lady_payloads[17] = mod;
+    // Keep the v70 weapon slots physically non-empty so this synthetic PAC
+    // does not turn zero-length same-offset entries into aliases of the next
+    // MOD. Opaque payloads are enough here because this test exercises the
+    // appearance-selection contract, not Kalina Ann geometry.
+    for (const std::size_t slot : {20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U}) {
+        lady_payloads[slot] = opaque;
+    }
+    lady_payloads[32] = mod;
+    lady_payloads[34] = mod;
+    const auto lady_pac = make_pac(lady_payloads);
+    auto lady = dmcresource::open_session(
+        "em034.pac", lady_pac.data(), lady_pac.size());
+    assert(lady != nullptr);
+
+    const auto lady_variants = dmcresource::motion::archive_variants("em034.pac");
+    assert(lady_variants.size() == 2U);
+    assert(lady_variants[0].label == "Lady · costume 1");
+    assert(lady_variants[1].label == "Lady · costume 2");
+    assert(lady_variants[0].include_top_level_mod_count == 10U);
+    assert(lady_variants[0].texture_override_count == 10U);
+    assert(lady_variants[0].part_attachment_count == 9U);
+    assert(lady_variants[0].part_attachments[0].child_model_slot == 17U);
+    assert(lady_variants[0].part_attachments[0].host_joint == 5U);
+    assert(lady_variants[0].part_attachments[0].structural_confirmed);
+    assert(lady_variants[0].part_attachments[1].child_model_slot == 20U);
+    assert(lady_variants[0].part_attachments[1].host_joint == 9U);
+    assert(!lady_variants[0].part_attachments[1].structural_confirmed);
+    assert(lady_variants[1].texture_overrides[2].model_slot == 20U);
+    assert(lady_variants[1].texture_overrides[2].texture_slot == 33U);
+
+    auto lady_first = assembly::assemble_pac(*lady, &report, "em034.pac", 0U);
+    assert(lady_first != nullptr);
+    assert(report.models == 2U);
+    assert(lady_first->composite_parts.size() == 2U);
+    assert(lady_first->composite_parts[0].name.find("slot_0001.mod") != std::string::npos);
+    assert(lady_first->composite_parts[1].name.find("slot_0017.mod") != std::string::npos);
+    assert(lady_first->inspection.root.properties.back().key == "AppearanceTexturePairing");
+
+    auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
+    assert(lady_second != nullptr);
+    assert(report.models == 2U);
+    assert(lady_second->composite_parts.size() == 2U);
+    assert(lady_second->composite_parts[0].name.find("slot_0032.mod") != std::string::npos);
+    assert(lady_second->composite_parts[1].name.find("slot_0034.mod") != std::string::npos);
+
     // An archive without MOD is browsable but has nothing to assemble.
     const auto motions_only = make_pac({mot});
     auto no_model = dmcresource::open_session("mot.pac", motions_only.data(), motions_only.size());
