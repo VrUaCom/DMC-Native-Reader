@@ -156,6 +156,10 @@ std::optional<ScriptSummary> MotionScriptFile::summarize(std::size_t bank,
             break;
         }
         if (op == 3U && p + 6U <= s.size()) {
+            out.signals.push_back({
+                after,
+                {s[p + 1U], s[p + 2U], s[p + 3U], s[p + 4U], s[p + 5U]},
+            });
             const auto state = static_cast<std::uint8_t>(s[p + 2U] & 0x3FU);
             if (state != 0U) out.states.push_back({after, state});
         }
@@ -170,6 +174,12 @@ std::vector<WeaponStateKey> MotionScriptFile::weapon_states(std::size_t bank,
                                                            std::size_t action) const {
     auto summary = summarize(bank, action);
     return summary ? std::move(summary->states) : std::vector<WeaponStateKey>{};
+}
+
+std::vector<ScriptSignalKey> MotionScriptFile::signals(std::size_t bank,
+                                                       std::size_t action) const {
+    auto summary = summarize(bank, action);
+    return summary ? std::move(summary->signals) : std::vector<ScriptSignalKey>{};
 }
 
 std::vector<MotionResource> MotionScriptFile::resources(std::size_t bank,
