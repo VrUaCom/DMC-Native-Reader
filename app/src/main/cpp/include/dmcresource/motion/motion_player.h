@@ -49,4 +49,17 @@ void clear_motion(Session* session) noexcept;
 // same binding load_motion uses). Host-joint parts (coats) do not count.
 [[nodiscard]] bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept;
 
+// MotionScript playback is intentionally separate from raw MOT playback.
+// A PAC may retain multiple independent script controllers; each script button
+// can address only MOTs referenced by that script's resource table.
+[[nodiscard]] std::size_t motion_script_count(const Session* session) noexcept;
+[[nodiscard]] std::uint32_t motion_script_slot(const Session* session,
+                                               std::size_t script_index) noexcept;
+[[nodiscard]] bool motion_script_can_play_motion(const Session* session,
+                                                 std::size_t script_index,
+                                                 std::size_t motion_index) noexcept;
+[[nodiscard]] MotionLoadReport load_scripted_motion(Session* session,
+                                                    std::size_t script_index,
+                                                    std::size_t motion_index) noexcept;
+
 }  // namespace dmcresource::motion
