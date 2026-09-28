@@ -642,6 +642,678 @@ ImagePreview render_sprite_view(const effect_bank::SpriteAnimation& a, std::uint
     return canvas.take();
 }
 
+
+namespace {
+
+struct TextureFit final {
+    int x{};
+    int y{};
+    int width{};
+    int height{};
+    float scale{};
+};
+
+[[nodiscard]] TextureFit draw_texture_fit(Canvas& canvas, const ImagePreview& texture,
+                                          int left, int top, int right, int bottom) {
+    if (!texture.available() || right <= left || bottom <= top) return {};
+    const int box_w = right - left;
+    const int box_h = bottom - top;
+    const float scale = std::min(
+        static_cast<float>(box_w) / static_cast<float>(texture.width),
+        static_cast<float>(box_h) / static_cast<float>(texture.height));
+    const int width = std::max(1, static_cast<int>(texture.width * scale));
+    const int height = std::max(1, static_cast<int>(texture.height * scale));
+    const int x0 = left + (box_w - width) / 2;
+    const int y0 = top + (box_h - height) / 2;
+    canvas.fill(left, top, right, bottom, raster::kPanel);
+    for (int y = 0; y < height; ++y) {
+        const auto sy = std::min<std::uint32_t>(
+            texture.height - 1U,
+            static_cast<std::uint32_t>(
+                static_cast<std::uint64_t>(y) * texture.height /
+                static_cast<std::uint32_t>(height)));
+        for (int x = 0; x < width; ++x) {
+            const auto sx = std::min<std::uint32_t>(
+                texture.width - 1U,
+                static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(x) * texture.width /
+                    static_cast<std::uint32_t>(width)));
+            const auto offset =
+                (static_cast<std::size_t>(sy) * texture.width + sx) * 4U;
+            const auto alpha = texture.rgba8[offset + 3U];
+            const auto mix = [alpha](std::uint8_t value, std::uint8_t bg) {
+                return static_cast<std::uint8_t>(
+                    (static_cast<std::uint32_t>(value) * alpha +
+                     static_cast<std::uint32_t>(bg) * (255U - alpha)) / 255U);
+            };
+            canvas.put(
+                x0 + x, y0 + y,
+                {mix(texture.rgba8[offset + 0U], raster::kPanel.r),
+                 mix(texture.rgba8[offset + 1U], raster::kPanel.g),
+                 mix(texture.rgba8[offset + 2U], raster::kPanel.b)});
+        }
+    }
+    return {x0, y0, width, height, scale};
+}
+
+void outline(Canvas& canvas, int x0, int y0, int x1, int y1, Rgb color) {
+    if (x1 < x0 || y1 < y0) return;
+    canvas.line(x0, y0, x1, y0, color);
+    canvas.line(x1, y0, x1, y1, color);
+    canvas.line(x1, y1, x0, y1, color);
+    canvas.line(x0, y1, x0, y0, color);
+}
+
+void draw_texture_rect(Canvas& canvas, const TextureFit& fit,
+                       const effect_bank::SpriteFrame& frame, Rgb color) {
+    if (fit.width <= 0 || fit.height <= 0 || fit.scale <= 0.0F) return;
+    const int x0 = fit.x + static_cast<int>(frame.x * fit.scale);
+    const int y0 = fit.y + static_cast<int>(frame.y * fit.scale);
+    const int x1 = fit.x + static_cast<int>((frame.x + frame.w) * fit.scale) - 1;
+    const int y1 = fit.y + static_cast<int>((frame.y + frame.h) * fit.scale) - 1;
+    outline(canvas, x0, y0, x1, y1, color);
+}
+
+void draw_texture_crop(Canvas& canvas, const ImagePreview& texture,
+                       const effect_bank::SpriteFrame& frame,
+                       int left, int top, int size) {
+    canvas.fill(left, top, left + size, top + size, raster::kPanel);
+    if (!texture.available() || frame.w == 0U || frame.h == 0U) return;
+    const float scale = std::min(
+        static_cast<float>(size) / static_cast<float>(frame.w),
+        static_cast<float>(size) / static_cast<float>(frame.h));
+    const int width = std::max(1, static_cast<int>(frame.w * scale));
+    const int height = std::max(1, static_cast<int>(frame.h * scale));
+    const int x0 = left + (size - width) / 2;
+    const int y0 = top + (size - height) / 2;
+    for (int y = 0; y < height; ++y) {
+        const auto sy = std::min<std::uint32_t>(
+            texture.height - 1U,
+            static_cast<std::uint32_t>(frame.y) +
+                static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(y) * frame.h /
+                    static_cast<std::uint32_t>(height)));
+        for (int x = 0; x < width; ++x) {
+            const auto sx = std::min<std::uint32_t>(
+                texture.width - 1U,
+                static_cast<std::uint32_t>(frame.x) +
+                    static_cast<std::uint32_t>(
+                        static_cast<std::uint64_t>(x) * frame.w /
+                        static_cast<std::uint32_t>(width)));
+            const auto offset =
+                (static_cast<std::size_t>(sy) * texture.width + sx) * 4U;
+            const auto alpha = texture.rgba8[offset + 3U];
+            if (alpha == 0U) continue;
+            canvas.put(x0 + x, y0 + y,
+                       {texture.rgba8[offset + 0U],
+                        texture.rgba8[offset + 1U],
+                        texture.rgba8[offset + 2U]});
+        }
+    }
+    outline(canvas, left, top, left + size - 1, top + size - 1, raster::kGrid);
+}
+
+[[nodiscard]] const char* v_dispatch_name(std::uint8_t dispatch) noexcept {
+    switch (dispatch) {
+    case 0U: return "P";
+    case 1U: return "E";
+    case 2U: return "G";
+    case 3U: return "V";
+    default: return "?";
+    }
+}
+
+[[nodiscard]] std::string vec3_text(const std::array<float, 3>& value) {
+    char buffer[128];
+    std::snprintf(buffer, sizeof(buffer), "%.3g %.3g %.3g",
+                  static_cast<double>(value[0]),
+                  static_cast<double>(value[1]),
+                  static_cast<double>(value[2]));
+    return buffer;
+}
+
+[[nodiscard]] ImagePreview render_e_record(const effect_bank::Record& record,
+                                           const effect_bank::ERuntimeView& view,
+                                           const ImagePreview* texture,
+                                           const effect_bank::SpriteAnimation* animation) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    std::string header = "E " + std::to_string(record.id) +
+                         "  MODE " + std::to_string(view.mode);
+    if (view.texture_id != 0xFFFFU) header += "  T " + std::to_string(view.texture_id);
+    if (view.uses_animation) header += "  A " + std::to_string(view.animation_id);
+    canvas.text(10, 8, header, raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale,
+                "EXE: T LINK +04; A LINK +08 WHEN +06=1; DIRECT RECT +0C..+12",
+                raster::kDim, small);
+
+    const int top = 8 + 9 * scale + 9 * small + 14;
+    const int atlas_bottom = top + 760;
+    TextureFit fit{};
+    if (texture != nullptr && texture->available()) {
+        fit = draw_texture_fit(canvas, *texture, 20, top, kViewWidth - 20, atlas_bottom);
+        if (animation != nullptr && !animation->frames.empty()) {
+            for (const auto& frame : animation->frames) {
+                draw_texture_rect(canvas, fit, frame, raster::kAccent);
+            }
+        } else {
+            draw_texture_rect(canvas, fit, view.rectangle, kGood);
+        }
+    } else {
+        canvas.fill(20, top, kViewWidth - 20, atlas_bottom, raster::kPanel);
+        canvas.text(40, top + 40, "NO T TEXTURE IN THIS BANK", raster::kDim, scale);
+        if (view.mode == 5U) {
+            canvas.text(40, top + 40 + 12 * scale,
+                        "MODE 5 BYPASSES THE NORMAL TEXTURE PATH",
+                        raster::kLabel, small);
+        }
+    }
+
+    char rect[128];
+    std::snprintf(rect, sizeof(rect), "RECT +0C: X %u  Y %u  W %u  H %u",
+                  view.rectangle.x, view.rectangle.y,
+                  view.rectangle.w, view.rectangle.h);
+    int y = atlas_bottom + 18;
+    canvas.text(20, y, rect, raster::kLabel, small);
+    y += 11 * small;
+
+    if (texture != nullptr && texture->available()) {
+        if (animation != nullptr && !animation->frames.empty()) {
+            const int cell = 150;
+            int x = 20;
+            std::size_t shown = 0U;
+            for (const auto& frame : animation->frames) {
+                if (shown == 6U || y + cell + 20 >= kViewHeight) break;
+                draw_texture_crop(canvas, *texture, frame, x, y + 12, cell);
+                canvas.text(x, y, std::to_string(shown), raster::kLabel, 1);
+                x += cell + 18;
+                ++shown;
+            }
+        } else if (view.rectangle.w != 0U && view.rectangle.h != 0U) {
+            draw_texture_crop(canvas, *texture, view.rectangle, 20, y + 14, 220);
+        }
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_v_record(const effect_bank::Record& record,
+                                           const effect_bank::VRuntimeView& view) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    canvas.text(10, 8,
+                "V " + std::to_string(record.id) + "  COMPOSITE  " +
+                    std::to_string(view.entries.size()) + " ENTRIES",
+                raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale,
+                "0=P  1=E  2=G  3=V   T=TRANSLATION  R=DEGREES  S=SCALE",
+                raster::kDim, small);
+
+    float max_xy = 1.0F;
+    for (const auto& entry : view.entries) {
+        max_xy = std::max(max_xy, std::fabs(entry.translation[0]));
+        max_xy = std::max(max_xy, std::fabs(entry.translation[1]));
+    }
+
+    const int top0 = 8 + 9 * scale + 9 * small + 14;
+    const int count = std::max<int>(1, static_cast<int>(view.entries.size()));
+    const int panel_h = std::min(180, (kViewHeight - top0 - 10) / count - 6);
+    int top = top0;
+    for (std::size_t index = 0U; index < view.entries.size(); ++index) {
+        const auto& entry = view.entries[index];
+        const int bottom = top + std::max(110, panel_h);
+        canvas.fill(10, top, kViewWidth - 10, bottom, raster::kPanel);
+
+        std::string child = std::to_string(index) + "  " +
+                            v_dispatch_name(entry.dispatch) + " " +
+                            std::to_string(entry.id);
+        canvas.text(18, top + 8, child, raster::kAccent, scale);
+
+        const int cx = 110;
+        const int cy = top + (bottom - top) / 2 + 12;
+        const int radius = std::max(25, (bottom - top) / 2 - 24);
+        canvas.line(cx - radius, cy, cx + radius, cy, raster::kGrid);
+        canvas.line(cx, cy - radius, cx, cy + radius, raster::kGrid);
+        const int tx = cx + static_cast<int>(
+            entry.translation[0] / max_xy * static_cast<float>(radius));
+        const int ty = cy - static_cast<int>(
+            entry.translation[1] / max_xy * static_cast<float>(radius));
+        arrow(canvas, cx, cy, tx, ty, kGood);
+
+        canvas.text(210, top + 12,
+                    "T " + vec3_text(entry.translation), kGood, small);
+        canvas.text(210, top + 12 + 10 * small,
+                    "R " + vec3_text(entry.rotation_degrees), kV, small);
+        canvas.text(210, top + 12 + 20 * small,
+                    "S " + vec3_text(entry.scale), kU, small);
+        top = bottom + 6;
+        if (top >= kViewHeight - 20) break;
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_g_record(const effect_bank::Record& record,
+                                           const effect_bank::GRuntimeView& view) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    canvas.text(10, 8,
+                "G " + std::to_string(record.id) + "  RUNTIME GENERATOR VIEW",
+                raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale,
+                "ONLY EXE-READ FIELDS ARE DRAWN; UNKNOWN SEMANTICS KEEP OFFSET LABELS",
+                raster::kDim, small);
+
+    int y = 8 + 9 * scale + 9 * small + 18;
+    canvas.fill(14, y, kViewWidth - 14, y + 150, raster::kPanel);
+    std::string mode = "MODE +01 = " + std::to_string(view.mode);
+    if (view.mode == 1U) mode += "  C " + std::to_string(view.c_id);
+    canvas.text(24, y + 12, mode, raster::kLabel, scale);
+    canvas.text(24, y + 12 + 12 * scale,
+                "+18 " + std::to_string(view.value_18) +
+                    "   +20 " + std::to_string(view.value_20) +
+                    "   +30 " + std::to_string(view.mode_30),
+                raster::kDim, small);
+    y += 170;
+
+    const auto envelope = [&](const char* name, float a, float b,
+                              int top, Rgb color) {
+        const int left = 90;
+        const int right = kViewWidth - 60;
+        const int height = 180;
+        canvas.fill(20, top, kViewWidth - 20, top + height, raster::kPanel);
+        canvas.text(30, top + 10, name, raster::kLabel, small);
+        const float lo = std::min({a, b, 0.0F});
+        const float hi = std::max({a, b, 1.0F});
+        const float span = std::max(1.0e-6F, hi - lo);
+        const auto to_y = [&](float value) {
+            return top + height - 24 -
+                   static_cast<int>((value - lo) / span * (height - 54));
+        };
+        canvas.line(left, top + height - 24, right, top + height - 24, raster::kGrid);
+        canvas.line(left, to_y(a), right, to_y(b), color);
+        canvas.circle(left, to_y(a), 5, color);
+        canvas.circle(right, to_y(b), 5, color);
+        char values[96];
+        std::snprintf(values, sizeof(values), "%.5g -> %.5g",
+                      static_cast<double>(a), static_cast<double>(b));
+        canvas.text(30, top + height - 20, values, color, small);
+    };
+
+    envelope("+38 -> +3C  (INTERPOLATED WHEN +40 != 0)",
+             view.value_38, view.value_3c, y, kGood);
+    y += 200;
+    canvas.text(30, y, "+40 STEPS = " + std::to_string(view.steps_40),
+                raster::kLabel, small);
+    y += 28;
+    envelope("+50 -> +54  (RUNTIME RANGE)", view.value_50, view.value_54, y, kU);
+    y += 210;
+    canvas.text(30, y, "+59 = " + std::to_string(view.value_59),
+                raster::kLabel, small);
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_p_record(const effect_bank::Record& record,
+                                           const effect_bank::PRuntimeView& view) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    canvas.text(10, 8,
+                "P " + std::to_string(record.id) + "  RELATIVE GRAPH",
+                raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale,
+                "0x140312DC0 REBASE; 0x140312840 SUBTYPE DISPATCH 0..5",
+                raster::kDim, small);
+
+    int y = 8 + 9 * scale + 9 * small + 18;
+    canvas.text(18, y,
+                "VERSION " + std::to_string(view.version) +
+                    "  SUBTYPE " + std::to_string(view.subtype) +
+                    "  ROOT +" + std::to_string(view.root_offset) +
+                    "  LIST +" + std::to_string(view.list_offset),
+                raster::kLabel, small);
+    y += 38;
+
+    const int left = 40;
+    const int right = kViewWidth - 40;
+    const int axis_y = y + 120;
+    canvas.fill(20, y, kViewWidth - 20, y + 260, raster::kPanel);
+    canvas.line(left, axis_y, right, axis_y, raster::kGrid);
+    const auto to_x = [&](std::uint32_t offset) {
+        if (record.bytes.size() <= 1U) return left;
+        return left + static_cast<int>(
+            static_cast<std::uint64_t>(offset) * (right - left) /
+            static_cast<std::uint64_t>(record.bytes.size() - 1U));
+    };
+
+    const int root_x = to_x(view.root_offset);
+    const int list_x = to_x(view.list_offset);
+    canvas.line(root_x, axis_y - 55, root_x, axis_y + 55, raster::kAccent);
+    canvas.text(std::max(20, root_x - 30), axis_y - 75, "ROOT", raster::kAccent, 1);
+    canvas.line(list_x, axis_y - 45, list_x, axis_y + 45, kU);
+    canvas.text(std::max(20, list_x - 30), axis_y + 52, "LIST", kU, 1);
+
+    for (std::size_t i = 0U; i < view.target_offsets.size(); ++i) {
+        const int x = to_x(view.target_offsets[i]);
+        canvas.line(list_x, axis_y + 30, x, axis_y - 28, kGood);
+        canvas.circle(x, axis_y - 28, 5, kGood);
+        canvas.text(std::max(20, x - 12), axis_y - 48,
+                    std::to_string(i), kGood, 1);
+    }
+
+    char span[96];
+    std::snprintf(span, sizeof(span), "0                              %zu BYTES",
+                  record.bytes.size());
+    canvas.text(left, y + 225, span, raster::kDim, small);
+    y += 285;
+
+    canvas.text(20, y,
+                "TARGETS " + std::to_string(view.target_offsets.size()),
+                raster::kLabel, scale);
+    y += 12 * scale;
+    for (std::size_t i = 0U; i < view.target_offsets.size(); ++i) {
+        if (y + 10 * small >= kViewHeight) break;
+        char line[96];
+        std::snprintf(line, sizeof(line), "%02zu  -> +0x%04X",
+                      i, view.target_offsets[i]);
+        canvas.text(30, y, line, kGood, small);
+        y += 10 * small;
+    }
+
+    y += 20;
+    canvas.text(20, y, "RUNTIME SUBTYPE SELECTOR", raster::kLabel, small);
+    y += 18;
+    const int cell_w = (kViewWidth - 50) / 6;
+    for (int subtype = 0; subtype < 6; ++subtype) {
+        const int x0 = 20 + subtype * cell_w;
+        const int x1 = x0 + cell_w - 6;
+        canvas.fill(x0, y, x1, y + 80,
+                    subtype == view.subtype ? raster::kGrid : raster::kPanel);
+        outline(canvas, x0, y, x1, y + 80,
+                subtype == view.subtype ? raster::kAccent : raster::kGrid);
+        canvas.text(x0 + cell_w / 2 - 3, y + 28,
+                    std::to_string(subtype),
+                    subtype == view.subtype ? raster::kAccent : raster::kDim,
+                    scale);
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_registered_fallback(const effect_bank::Record& record) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    const int small = std::max(1, scale - 1);
+    std::string header = "FX " + std::string(1U, record.kind) + " " +
+                         std::to_string(record.id) + "  " +
+                         std::to_string(record.bytes.size()) + " B";
+    canvas.text(10, 8, header, raster::kAccent, scale);
+    canvas.text(10, 8 + 9 * scale,
+                "REGISTERED RECORD; SEMANTIC VIEW NOT YET TYPED",
+                raster::kDim, small);
+
+    const int cols = 32;
+    const int cell = std::max(4, (kViewWidth - 40) / cols);
+    int top = 8 + 9 * scale + 9 * small + 24;
+    const std::size_t max_cells =
+        static_cast<std::size_t>((kViewHeight - top - 20) / cell) * cols;
+    const auto count = std::min(max_cells, record.bytes.size());
+    for (std::size_t i = 0U; i < count; ++i) {
+        const int x = 20 + static_cast<int>(i % cols) * cell;
+        const int y = top + static_cast<int>(i / cols) * cell;
+        const auto value = record.bytes[i];
+        const Rgb color{
+            static_cast<std::uint8_t>(40U + value * 3U / 4U),
+            static_cast<std::uint8_t>(50U + value / 2U),
+            static_cast<std::uint8_t>(70U + value * 2U / 3U)};
+        canvas.fill(x, y, x + cell - 1, y + cell - 1, color);
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_e_visual(
+        const effect_bank::Record& record,
+        const effect_bank::ERuntimeView& view,
+        const ImagePreview* texture,
+        const effect_bank::SpriteAnimation* animation) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    canvas.text(18, 14,
+                "E " + std::to_string(record.id) + "  VISUAL",
+                raster::kAccent, scale);
+
+    const int top = 58;
+    const int bottom = kViewHeight - 40;
+    if (texture == nullptr || !texture->available()) {
+        canvas.fill(20, top, kViewWidth - 20, bottom, raster::kPanel);
+        canvas.text(54, top + 54,
+                    view.mode == 5U
+                        ? "NO DIRECT TEXTURE PATH FOR THIS MODE"
+                        : "LINKED T TEXTURE NOT AVAILABLE IN THIS BANK",
+                    raster::kDim, std::max(1, scale - 1));
+        return canvas.take();
+    }
+
+    const auto fit = draw_texture_fit(
+        canvas, *texture, 20, top, kViewWidth - 20, bottom);
+    if (animation != nullptr && !animation->frames.empty()) {
+        for (const auto& frame : animation->frames) {
+            draw_texture_rect(canvas, fit, frame, raster::kAccent);
+        }
+        const auto& frame = animation->frames.front();
+        draw_texture_crop(canvas, *texture, frame,
+                          kViewWidth - 300, bottom - 280, 240);
+    } else {
+        draw_texture_rect(canvas, fit, view.rectangle, kGood);
+        if (view.rectangle.w != 0U && view.rectangle.h != 0U) {
+            draw_texture_crop(canvas, *texture, view.rectangle,
+                              kViewWidth - 300, bottom - 280, 240);
+        }
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_v_visual(
+        const effect_bank::Record& record,
+        const effect_bank::VRuntimeView& view,
+        std::span<const EffectLinkedVisual> linked) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    canvas.text(18, 14,
+                "V " + std::to_string(record.id) + "  COMPOSITE VISUAL",
+                raster::kAccent, scale);
+    canvas.text(18, 14 + 10 * scale,
+                "CONFIRMED XY TRANSLATION / SCALE PROJECTION; CHILD PIXELS WHEN RESOLVED",
+                raster::kDim, std::max(1, scale - 1));
+
+    const int left = 40;
+    const int right = kViewWidth - 40;
+    const int top = 100;
+    const int bottom = kViewHeight - 50;
+    const int cx = (left + right) / 2;
+    const int cy = (top + bottom) / 2;
+    canvas.fill(left, top, right, bottom, raster::kPanel);
+    canvas.line(left, cy, right, cy, raster::kGrid);
+    canvas.line(cx, top, cx, bottom, raster::kGrid);
+
+    float max_xy = 1.0F;
+    for (const auto& entry : view.entries) {
+        max_xy = std::max(max_xy, std::fabs(entry.translation[0]));
+        max_xy = std::max(max_xy, std::fabs(entry.translation[1]));
+    }
+
+    const auto find_link = [&linked](char kind, std::uint32_t id)
+            -> const EffectLinkedVisual* {
+        for (const auto& item : linked) {
+            if (item.kind == kind && item.id == id) return &item;
+        }
+        return nullptr;
+    };
+
+    for (std::size_t i = 0U; i < view.entries.size(); ++i) {
+        const auto& entry = view.entries[i];
+        const char kind = v_dispatch_name(entry.dispatch)[0];
+        const int x = cx + static_cast<int>(
+            entry.translation[0] / max_xy * static_cast<float>((right - left) / 2 - 100));
+        const int y = cy - static_cast<int>(
+            entry.translation[1] / max_xy * static_cast<float>((bottom - top) / 2 - 100));
+        const float raw_scale = (std::fabs(entry.scale[0]) + std::fabs(entry.scale[1])) * 0.5F;
+        const float bounded_scale = std::clamp(raw_scale, 0.5F, 2.0F);
+        const int half = static_cast<int>(70.0F * bounded_scale);
+
+        const auto* linked_item = find_link(kind, entry.id);
+        if (linked_item != nullptr && linked_item->preview != nullptr &&
+            linked_item->preview->available()) {
+            draw_texture_fit(canvas, *linked_item->preview,
+                             x - half, y - half, x + half, y + half);
+            outline(canvas, x - half, y - half, x + half, y + half,
+                    raster::kAccent);
+        } else {
+            canvas.circle(x, y, std::max(8, half / 3), kGood);
+        }
+
+        std::string label;
+        label.push_back(kind);
+        label += " " + std::to_string(entry.id);
+        canvas.text(std::max(left, x - half), std::max(top, y - half - 22),
+                    label, raster::kLabel, 1);
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_g_visual(
+        const effect_bank::Record& record,
+        const effect_bank::GRuntimeView& view) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    canvas.text(18, 14,
+                "G " + std::to_string(record.id) + "  PARAMETER VISUAL",
+                raster::kAccent, scale);
+    canvas.text(18, 14 + 10 * scale,
+                "NOT WORLD-SPACE PARTICLES: ONLY CONFIRMED INTERPOLATION/RANGE FIELDS",
+                raster::kDim, std::max(1, scale - 1));
+
+    const int left = 80;
+    const int right = kViewWidth - 80;
+    const int top = 180;
+    const int bottom = kViewHeight - 180;
+    canvas.fill(30, 120, kViewWidth - 30, kViewHeight - 80, raster::kPanel);
+    canvas.line(left, bottom, right, bottom, raster::kGrid);
+
+    const std::uint32_t steps = std::clamp<std::uint32_t>(
+        view.steps_40 == 0U ? 2U : view.steps_40, 2U, 64U);
+    const float lo = std::min({view.value_38, view.value_3c, 0.0F});
+    const float hi = std::max({view.value_38, view.value_3c, 1.0F});
+    const float span = std::max(1.0e-6F, hi - lo);
+    for (std::uint32_t i = 0U; i < steps; ++i) {
+        const float t = steps <= 1U ? 0.0F :
+            static_cast<float>(i) / static_cast<float>(steps - 1U);
+        const float value = view.value_38 + (view.value_3c - view.value_38) * t;
+        const float radius_value = view.value_50 + (view.value_54 - view.value_50) * t;
+        const int x = left + static_cast<int>(t * static_cast<float>(right - left));
+        const int y = bottom - static_cast<int>((value - lo) / span *
+                                                static_cast<float>(bottom - top));
+        const int radius = std::clamp(
+            static_cast<int>(std::fabs(radius_value) * 7.0F), 4, 22);
+        canvas.circle(x, y, radius, i + 1U == steps ? raster::kAccent : kGood);
+        if (i > 0U) {
+            const float tp = static_cast<float>(i - 1U) /
+                             static_cast<float>(steps - 1U);
+            const float vp = view.value_38 + (view.value_3c - view.value_38) * tp;
+            const int px = left + static_cast<int>(tp * static_cast<float>(right - left));
+            const int py = bottom - static_cast<int>((vp - lo) / span *
+                                                     static_cast<float>(bottom - top));
+            canvas.line(px, py, x, y, kGood);
+        }
+    }
+    return canvas.take();
+}
+
+[[nodiscard]] ImagePreview render_p_visual(
+        const effect_bank::Record& record,
+        const effect_bank::PRuntimeView& view) {
+    Canvas canvas{kViewWidth, kViewHeight};
+    const int scale = raster::card_scale(kViewWidth);
+    canvas.text(18, 14,
+                "P " + std::to_string(record.id) + "  GRAPH VISUAL",
+                raster::kAccent, scale);
+    canvas.text(18, 14 + 10 * scale,
+                "RUNTIME SUBTYPE " + std::to_string(view.subtype) +
+                    " / " + std::to_string(view.target_offsets.size()) + " TARGETS",
+                raster::kDim, std::max(1, scale - 1));
+
+    const int cx = kViewWidth / 2;
+    const int cy = kViewHeight / 2;
+    const int radius = 360;
+    canvas.fill(30, 110, kViewWidth - 30, kViewHeight - 50, raster::kPanel);
+    canvas.circle(cx, cy, 46, raster::kAccent);
+    canvas.text(cx - 22, cy - 5, "ROOT", raster::kLabel, 1);
+
+    const auto count = view.target_offsets.size();
+    for (std::size_t i = 0U; i < count; ++i) {
+        const double angle = count == 0U ? 0.0 :
+            (static_cast<double>(i) / static_cast<double>(count)) *
+            6.283185307179586;
+        const int x = cx + static_cast<int>(std::cos(angle) * radius);
+        const int y = cy + static_cast<int>(std::sin(angle) * radius);
+        canvas.line(cx, cy, x, y, kGood);
+        canvas.circle(x, y, 28, kGood);
+        canvas.text(x - 8, y - 5, std::to_string(i), raster::kLabel, 1);
+    }
+    return canvas.take();
+}
+
+}  // namespace
+
+ImagePreview render_effect_visual_view(
+    const effect_bank::Record& record,
+    const ImagePreview* texture,
+    const effect_bank::SpriteAnimation* animation,
+    std::span<const EffectLinkedVisual> linked) {
+    if (record.kind == 'E') {
+        if (const auto view = effect_bank::e_runtime_view(record)) {
+            return render_e_visual(record, *view, texture, animation);
+        }
+    } else if (record.kind == 'V') {
+        if (const auto view = effect_bank::v_runtime_view(record)) {
+            return render_v_visual(record, *view, linked);
+        }
+    } else if (record.kind == 'G') {
+        if (const auto view = effect_bank::g_runtime_view(record)) {
+            return render_g_visual(record, *view);
+        }
+    } else if (record.kind == 'P') {
+        if (const auto view = effect_bank::p_runtime_view(record)) {
+            return render_p_visual(record, *view);
+        }
+    }
+    return render_registered_fallback(record);
+}
+
+ImagePreview render_effect_record_view(
+    const effect_bank::Record& record,
+    const ImagePreview* texture,
+    const effect_bank::SpriteAnimation* animation) {
+    if (record.kind == 'E') {
+        if (const auto view = effect_bank::e_runtime_view(record)) {
+            return render_e_record(record, *view, texture, animation);
+        }
+    } else if (record.kind == 'V') {
+        if (const auto view = effect_bank::v_runtime_view(record)) {
+            return render_v_record(record, *view);
+        }
+    } else if (record.kind == 'G') {
+        if (const auto view = effect_bank::g_runtime_view(record)) {
+            return render_g_record(record, *view);
+        }
+    } else if (record.kind == 'P') {
+        if (const auto view = effect_bank::p_runtime_view(record)) {
+            return render_p_record(record, *view);
+        }
+    }
+    return render_registered_fallback(record);
+}
+
 BinaryProfile profile_binary(std::span<const std::uint8_t> bytes) {
     BinaryProfile out;
     out.size = bytes.size();
