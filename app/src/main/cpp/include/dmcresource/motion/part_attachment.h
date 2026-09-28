@@ -473,6 +473,16 @@ struct LadyRuntimeApplyResult final {
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
     Session* session, std::uint16_t state) noexcept;
 
+// Canonical CEm034 bank4 mapping recovered from 0x14016A410:
+// action0 -> state83 ... action60 -> state143.
+[[nodiscard]] constexpr std::optional<std::uint16_t> lady_state_for_script_action(
+    std::size_t bank, std::size_t action) noexcept {
+    return bank == 4U && action <= 60U
+        ? std::optional<std::uint16_t>{
+              static_cast<std::uint16_t>(83U + action)}
+        : std::nullopt;
+}
+
 // Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.
 // lane is 0/1 for the two em034_012 controllers; channel is 0..4.
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_signal(
