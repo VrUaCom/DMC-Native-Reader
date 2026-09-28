@@ -284,6 +284,26 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 ++report.effect_models_skipped;
                 continue;
             }
+            if (entry.kind.format == Format::Mod && position != nullptr &&
+                position->include_top_level_mod_count != 0U &&
+                entry.archive == 0U && entry.container.empty()) {
+                bool used = false;
+                if (entry.slot) {
+                    for (std::uint32_t s = 0U;
+                         s < position->include_top_level_mod_count &&
+                         s < position->include_top_level_mod_slots.size();
+                         ++s) {
+                        used = used || *entry.slot == position->include_top_level_mod_slots[s];
+                    }
+                }
+                if (!used) {
+                    // The MOD is still preserved/browsable as a PAC child. It is
+                    // only excluded from this actor appearance because the
+                    // archive contains mutually exclusive looks/equipment.
+                    ++report.variant_models_skipped;
+                    continue;
+                }
+            }
             if (entry.kind.format == Format::Mod && variant != nullptr && entry.archive == 0U &&
                 entry.container.empty()) {
                 // Shared enemy archive: keep only this class's body, cloth and weapon.
@@ -303,6 +323,25 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 model_names.push_back(entry.name);
                 model_entry.push_back(index);
                 std::optional<std::size_t> texture = texture_for(entries, index);
+                if (position != nullptr && entry.archive == 0U &&
+                    entry.container.empty() && entry.slot) {
+                    for (std::uint32_t o = 0U;
+                         o < position->texture_override_count &&
+                         o < position->texture_overrides.size();
+                         ++o) {
+                        const auto& override = position->texture_overrides[o];
+                        if (*entry.slot != override.model_slot) continue;
+                        for (std::size_t t = 0U; t < entries.size(); ++t) {
+                            if (entries[t].archive == 0U && entries[t].container.empty() &&
+                                entries[t].slot == override.texture_slot &&
+                                entries[t].kind.format == Format::Ptx) {
+                                texture = t;
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
                 if (variant != nullptr && variant->texture_slot != motion::kNoEnemySlot &&
                     entry.archive == 0U && entry.container.empty() &&
                     entry.slot == variant->body_slot) {
@@ -519,6 +558,101 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
                             "->bodyJoint" + std::to_string(variant->weapon_joint);
                     }
+                }
+            }
+            // PAC appearance companion attachments. CEm034 core equipment
+            // now carries exact EXE-confirmed host joints and local records;
+            // hair remains structural/corpus-confirmed.
+            if (position != nullptr && position->part_attachment_count != 0U) {
+                for (std::uint32_t a = 0U;
+                     a < position->part_attachment_count &&
+                     a < position->part_attachments.size();
+                     ++a) {
+                    const auto& attach = position->part_attachments[a];
+                    std::optional<std::size_t> host;
+                    std::optional<std::size_t> child;
+                    for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                        const auto& entry = entries[model_entry[part]];
+                        if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                        if (*entry.slot == attach.host_model_slot) host = part;
+                        if (*entry.slot == attach.child_model_slot) child = part;
+                    }
+                    const auto offset = attach.explicit_offset
+                        ? motion::attach_local_matrix(
+                              attach.translation, attach.rotation_xyz_radians)
+                        : Matrix4{};
+                    if (host && child &&
+                        motion::attach_part_skeleton(
+                            assembled.get(), *host, *child, attach.host_joint,
+                            attach.root_local_identity, offset)) {
+                        ++report.attached_parts;
+                        const char* level = attach.exe_confirmed
+                            ? " exe slot"
+                            : (attach.structural_confirmed
+                                   ? " structural slot"
+                                   : " candidate slot");
+                        report.detail_attachments +=
+                            std::string{level} +
+                            std::to_string(attach.child_model_slot) +
+                            "->slot" + std::to_string(attach.host_model_slot) +
+                            "/joint" + std::to_string(attach.host_joint);
+
+                        const auto evidence = attach.exe_confirmed
+                            ? EvidenceLevel::ExeConfirmed
+                            : (attach.structural_confirmed
+                                   ? EvidenceLevel::StructuralConfirmed
+                                   : EvidenceLevel::Recognized);
+                        const char* tag = attach.exe_confirmed
+                            ? " [EXE_CONFIRMED]"
+                            : (attach.structural_confirmed
+                                   ? " [STRUCTURAL_CONFIRMED]"
+                                   : " [SEMANTIC_CANDIDATE]");
+                        assembled->inspection.root.properties.push_back({
+                            "AppearanceAttachment",
+                            "MOD slot" + std::to_string(attach.child_model_slot) +
+                                " -> MOD slot" + std::to_string(attach.host_model_slot) +
+                                " / body joint " + std::to_string(attach.host_joint) +
+                                (attach.explicit_offset ? " / canonical local offset" : "") +
+                                tag,
+                            evidence});
+
+                        if (attach.exe_confirmed) {
+                            if (const auto* contract =
+                                    motion::lady_component_contract_for_slot(
+                                        attach.child_model_slot);
+                                contract != nullptr) {
+                                assembled->lady_component_bindings.push_back({
+                                    *host,
+                                    *child,
+                                    contract->component,
+                                    contract->model_slot,
+                                    motion::LadyPlacementPreset::BodyStowed,
+                                    motion::LadyControlDomain::BodyConstraint,
+                                });
+                            }
+                        }
+                    }
+                }
+                if (archive_name.find("em034") != std::string_view::npos) {
+                    assembled->non_canonical_notes.push_back(
+                        "em034 hair placement (slot 17/34 -> body joint 5) is "
+                        "STRUCTURAL_CONFIRMED from retail UV, MOD bounds and pl002_01.clt; "
+                        "exact CEm034 class-init code is not yet EXE_CONFIRMED.");
+                    assembled->inspection.root.properties.push_back({
+                        "LadyDynamicActors",
+                        "slots25/26/30 remain PAC children: slot25 is CEm034Shl02; "
+                        "slots26+30 are CEm034Shl03. They are spawned runtime actors, "
+                        "not persistent body attachments. Shl03 slot30 uses the "
+                        "EXE-confirmed per-frame five-bone straight tether; Shl02 "
+                        "spawn pose is exact while post-spawn steering requires the "
+                        "live gameplay target manager and is not fabricated standalone.",
+                        EvidenceLevel::ExeAndCorpusConfirmed});
+                    assembled->inspection.root.properties.push_back({
+                        "LadyComponentRuntime",
+                        "slots20..24 default to BodyStowed; preset1 is ActiveDeployed. "
+                        "component3 preset1 uses RuntimeBodyRootScaled "
+                        "(CEm034+0x43C0, scale source +0x4400), not body joint13.",
+                        EvidenceLevel::ExeConfirmed});
                 }
             }
             // Chains (.clt text slots): player coat slot 12 <- slot 13, enemy
@@ -796,25 +930,84 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         }
 
         report.models = models.size();
-        report.motions = motions.size();
-        // Only motions that can drive this scene are offered (e.g. em000's
-        // body motions are hidden on the CEm005Shl01 shell).
-        {
-            std::vector<Session::MotionPayload> drivable;
-            drivable.reserve(motions.size());
-            for (auto& m : motions) {
-                if (motion::motion_can_drive(*assembled, m.bytes)) drivable.push_back(std::move(m));
+
+        // CEm034 dynamic Shl visuals are retained as latent source resources,
+        // never as persistent composite parts. They are materialized only by
+        // Script Play spawn events.
+        if (archive_name.find("em034") != std::string_view::npos &&
+            position != nullptr) {
+            const auto first_slot =
+                position->include_top_level_mod_count != 0U
+                    ? position->include_top_level_mod_slots[0]
+                    : 1U;
+            const std::uint32_t equipment_ptx =
+                first_slot == 32U ? 33U : 19U;
+
+            const auto materialize_dynamic =
+                [&](std::uint8_t actor,
+                    std::uint32_t model_slot,
+                    std::uint32_t ptx_slot,
+                    bool exact_deformation) {
+                    const decltype(entries)::value_type* model_entry_ptr = nullptr;
+                    const decltype(entries)::value_type* ptx_entry_ptr = nullptr;
+                    for (const auto& e : entries) {
+                        if (e.archive != 0U || !e.container.empty() || !e.slot) {
+                            continue;
+                        }
+                        if (*e.slot == model_slot &&
+                            e.kind.format == Format::Mod) {
+                            model_entry_ptr = &e;
+                        }
+                        if (*e.slot == ptx_slot &&
+                            e.kind.format == Format::Ptx) {
+                            ptx_entry_ptr = &e;
+                        }
+                    }
+                    if (model_entry_ptr == nullptr) return;
+                    auto source = open_session(
+                        model_entry_ptr->name,
+                        model_entry_ptr->bytes->data(),
+                        model_entry_ptr->bytes->size());
+                    if (!source || !source->renderable) return;
+                    if (ptx_entry_ptr != nullptr) {
+                        (void)spider::actions::attach_ptx(
+                            source.get(),
+                            ptx_entry_ptr->name,
+                            ptx_entry_ptr->bytes->data(),
+                            ptx_entry_ptr->bytes->size());
+                    }
+
+                    Session::LadyDynamicVisual visual;
+                    visual.actor = actor;
+                    visual.model_slot = model_slot;
+                    visual.source_scene = source->scene;
+                    visual.source_mesh = source->render_mesh;
+                    visual.texture_slots =
+                        source->render_triangle_texture_slots;
+                    visual.textures = source->attached_textures;
+                    visual.exact_deformation = exact_deformation;
+                    assembled->lady_dynamic_visuals.push_back(
+                        std::move(visual));
+                };
+
+            materialize_dynamic(2U, 25U, equipment_ptx, true);
+            materialize_dynamic(3U, 26U, equipment_ptx, true);
+            // slot30 is a five-node skinned tether. Its per-frame straight
+            // chain matrices are EXE-confirmed and materialized by the
+            // presentation layer using the retained canonical source scene.
+            materialize_dynamic(3U, 30U, 29U, true);
+
+            if (!assembled->lady_dynamic_visuals.empty()) {
+                report.detail_attachments +=
+                    " ladyDynamicLatent=" +
+                    std::to_string(assembled->lady_dynamic_visuals.size());
             }
-            if (drivable.size() != motions.size()) {
-                report.detail_attachments += " motionsHidden=" + std::to_string(motions.size() - drivable.size());
-            }
-            motions = std::move(drivable);
-            report.motions = motions.size();
         }
-        assembled->motion_library = std::move(motions);
-        // Motion script: IPlayer pl000.pac slot 5 (0x1401EF461); enemies bind
-        // their own script slot (em028 slot 10 at 0x140131037, em000 slot 38
-        // at 0x1400982D9). Identified by its tables (MotionScriptFile).
+
+        // Parse every top-level MotionScript before filtering the MOT library.
+        // A script may target a component that is host-constrained in the rest
+        // pose (CEm034 slot20); those MOTs still need to remain visible so the
+        // user can launch them through the independent script controller.
         for (const auto& e : entries) {
             if (e.archive != 0U || !e.container.empty() || !e.slot ||
                 e.kind.format != Format::MotionScript) {
@@ -826,15 +1019,222 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             report.detail_attachments += " motionScript=slot" + std::to_string(*e.slot) + "(" +
                 std::to_string(script->bank_count()) + " banks)";
             auto shared = std::make_shared<const motion::MotionScriptFile>(std::move(*script));
-            if (!shared->nested()) label_enemy_motions(*shared, archive_name, assembled->motion_library,
-                                                       &report.detail_attachments);
-            assembled->motion_script = std::move(shared);
-            break;
+
+            Session::MotionScriptRole role = Session::MotionScriptRole::Primary;
+            const bool lady_archive =
+                archive_name.find("em034") != std::string_view::npos;
+            if (lady_archive && *e.slot == 12U) {
+                role = Session::MotionScriptRole::LadyBody;
+            } else if (lady_archive && *e.slot == 13U) {
+                role = Session::MotionScriptRole::LadyComponent0;
+            }
+
+            assembled->motion_scripts.push_back({*e.slot, role, shared});
+
+            // Motion-card action labels belong to the body/primary script.
+            // Component0 has its own script button and must not overwrite the
+            // body card's label.
+            if (!shared->nested() &&
+                role != Session::MotionScriptRole::LadyComponent0) {
+                label_enemy_motions(*shared, archive_name, motions,
+                                    &report.detail_attachments);
+            }
+
+            if (assembled->motion_script == nullptr ||
+                role == Session::MotionScriptRole::LadyBody) {
+                assembled->motion_script = shared;
+            }
         }
+
+        // Build the generic script->motion-pack reachability before pruning.
+        // This preserves component-only MOTs (notably em034 slot11) while
+        // retaining the old rule that unrelated, non-drivable packs stay out
+        // of the motion strip.
+        std::vector<motion::MotionPack> motion_packs;
+        for (const auto& m : motions) {
+            if (m.pack_slot < 0 || m.mot_slot < 0) continue;
+            const auto pack_slot = static_cast<std::uint32_t>(m.pack_slot);
+            auto it = std::find_if(
+                motion_packs.begin(), motion_packs.end(),
+                [pack_slot](const motion::MotionPack& p) {
+                    return p.archive_slot == pack_slot;
+                });
+            if (it == motion_packs.end()) {
+                motion_packs.push_back({pack_slot, {}});
+                it = std::prev(motion_packs.end());
+            }
+            it->slots.push_back(static_cast<std::uint32_t>(m.mot_slot));
+        }
+
+        // Materialize exact per-MOT ScriptLinks once. UI and playback then
+        // consume the same bank/action/state/lane authority instead of
+        // independently re-solving a resource route on every tap.
+        const bool lady_archive =
+            archive_name.find("em034") != std::string_view::npos;
+        for (std::size_t script_index = 0U;
+             script_index < assembled->motion_scripts.size();
+             ++script_index) {
+            const auto& binding = assembled->motion_scripts[script_index];
+            if (binding.script == nullptr) continue;
+
+            auto groups = motion::bind_motion_groups(
+                *binding.script, motion_packs, archive_name);
+
+            // em034_013 has a class-specific resource array independent of the
+            // body script: bank4/group4 -> top-level PAC slot11.
+            if (lady_archive &&
+                binding.role == Session::MotionScriptRole::LadyComponent0) {
+                groups.clear();
+                motion::MotionGroupBinding g;
+                g.group = 4U;
+                g.archive_slot = 11U;
+                g.exe_confirmed = true;
+                for (const auto& m : motions) {
+                    if (m.pack_slot == 11 && m.mot_slot >= 0) {
+                        g.slots.push_back(
+                            static_cast<std::uint32_t>(m.mot_slot));
+                    }
+                }
+                groups.push_back(std::move(g));
+            }
+
+            for (const auto& group : groups) {
+                if (!group.archive_slot) continue;
+                for (auto& m : motions) {
+                    if (m.pack_slot != static_cast<int>(*group.archive_slot) ||
+                        m.mot_slot < 0 || m.mot_slot >= 100) {
+                        continue;
+                    }
+                    const auto id = static_cast<std::uint16_t>(
+                        group.group * 100U +
+                        static_cast<std::uint16_t>(m.mot_slot));
+                    const auto actions = binding.script->actions_for(id);
+                    if (actions.empty()) continue;
+
+                    const motion::ScriptAction* pick = &actions.front();
+                    for (const auto& action : actions) {
+                        if (action.bank == group.group &&
+                            action.action ==
+                                static_cast<std::size_t>(m.mot_slot)) {
+                            pick = &action;
+                            break;
+                        }
+                        if (action.bank == group.group &&
+                            pick->bank != group.group) {
+                            pick = &action;
+                        } else if (action.action ==
+                                       static_cast<std::size_t>(m.mot_slot) &&
+                                   pick->action !=
+                                       static_cast<std::size_t>(m.mot_slot)) {
+                            pick = &action;
+                        }
+                    }
+
+                    Session::MotionPayload::ScriptLink link;
+                    link.script_index = script_index;
+                    link.bank = pick->bank;
+                    link.action = pick->action;
+                    if (binding.role ==
+                            Session::MotionScriptRole::LadyBody) {
+                        if (const auto mapped =
+                                motion::lady_state_for_body_script_action(
+                                    pick->bank, pick->action);
+                            mapped.has_value()) {
+                            link.lady_state = mapped->state;
+                            link.lady_lane_mask = mapped->lane_mask;
+                        }
+                    }
+                    const bool duplicate = std::any_of(
+                        m.script_links.begin(), m.script_links.end(),
+                        [&](const Session::MotionPayload::ScriptLink& existing) {
+                            return existing.script_index == link.script_index &&
+                                   existing.bank == link.bank &&
+                                   existing.action == link.action;
+                        });
+                    if (!duplicate) m.script_links.push_back(link);
+                }
+            }
+        }
+
+        report.motions = motions.size();
+        {
+            std::vector<Session::MotionPayload> drivable;
+            drivable.reserve(motions.size());
+            for (auto& m : motions) {
+                if (!m.script_links.empty() ||
+                    motion::motion_can_drive(*assembled, m.bytes)) {
+                    drivable.push_back(std::move(m));
+                }
+            }
+            if (drivable.size() != motions.size()) {
+                report.detail_attachments +=
+                    " motionsHidden=" +
+                    std::to_string(motions.size() - drivable.size());
+            }
+            motions = std::move(drivable);
+            report.motions = motions.size();
+        }
+        assembled->motion_library = std::move(motions);
+        assembled->archive_name = std::string{archive_name};
         assembled->children = pac.children;
-        (void)archive_name;
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
+        }
+        {
+            std::size_t placed = 0U;
+            for (const auto& part : assembled->composite_parts) {
+                if (part.placement.resolved &&
+                    part.placement.mode == CompositePlacementMode::HostJointSkeleton) {
+                    ++placed;
+                }
+            }
+            for (auto& property : assembled->inspection.root.properties) {
+                if (property.key != "placement") continue;
+                property.value =
+                    std::to_string(placed) + " host-joint attached; " +
+                    std::to_string(assembled->composite_parts.size() - placed) +
+                    " source-space";
+                property.evidence = EvidenceLevel::DataConfirmed;
+                break;
+            }
+        }
+        if (position != nullptr) {
+            assembled->inspection.root.properties.push_back({
+                "PACAppearance", position->label, EvidenceLevel::DataConfirmed});
+            if (position->include_top_level_mod_count != 0U) {
+                std::string slots;
+                for (std::uint32_t i = 0U;
+                     i < position->include_top_level_mod_count &&
+                     i < position->include_top_level_mod_slots.size();
+                     ++i) {
+                    if (!slots.empty()) slots += ",";
+                    slots += std::to_string(position->include_top_level_mod_slots[i]);
+                }
+                assembled->inspection.root.properties.push_back({
+                    "IncludedTopLevelMODSlots", slots,
+                    EvidenceLevel::StructuralConfirmed});
+                assembled->inspection.root.properties.push_back({
+                    "OtherTopLevelMODs",
+                    std::to_string(report.variant_models_skipped) +
+                        " preserved as PAC children; not overlaid in this appearance",
+                    EvidenceLevel::DataConfirmed});
+            }
+            if (position->texture_override_count != 0U) {
+                std::string overrides;
+                for (std::uint32_t i = 0U;
+                     i < position->texture_override_count &&
+                     i < position->texture_overrides.size();
+                     ++i) {
+                    if (!overrides.empty()) overrides += ", ";
+                    overrides += "MOD slot" +
+                        std::to_string(position->texture_overrides[i].model_slot) +
+                        "->PTX slot" +
+                        std::to_string(position->texture_overrides[i].texture_slot);
+                }
+                assembled->inspection.root.properties.push_back({
+                    "AppearanceTexturePairing", overrides,
+                    EvidenceLevel::DataConfirmed});
+            }
         }
         report.detail =
             "PAC assembly (read-only): models=" + std::to_string(report.models) +
@@ -849,10 +1249,14 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             " attachedParts=" + std::to_string(report.attached_parts) +
             " effectModelsSkipped=" + std::to_string(report.effect_models_skipped) +
             (report.enemy_class.empty() ? std::string{}
-                                        : " enemyClass=" + report.enemy_class +
-                                              " otherClassModelsSkipped=" +
+                                        : " archiveVariant=" + report.enemy_class +
+                                              " variantModelsSkipped=" +
                                               std::to_string(report.variant_models_skipped)) +
-            " ptxPairing=nearest-preceding-in-container" + report.detail_attachments;
+            " ptxPairing=" +
+            (position != nullptr && position->texture_override_count != 0U
+                 ? std::string{"explicit-appearance-override"}
+                 : std::string{"nearest-preceding-in-container"}) +
+            report.detail_attachments;
         if (!assembled->detail.empty()) assembled->detail += "\n";
         assembled->detail += report.detail;
         if (!assembled->trace.empty()) assembled->trace += "\n";

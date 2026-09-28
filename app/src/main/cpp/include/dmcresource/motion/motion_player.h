@@ -29,6 +29,12 @@ struct MotionLoadReport final {
                                            const std::uint8_t* bytes,
                                            std::size_t size) noexcept;
 
+// Raw library MOT playback. This remains script-free, but may temporarily
+// release a component from its host constraint when the MOT targets that
+// component's own skeleton (CEm034 slot20 / PAC11).
+[[nodiscard]] MotionLoadReport load_library_motion(Session* session,
+                                                   std::size_t motion_index) noexcept;
+
 // Pose the Session at `frame` (MOT timeline units, 60 per second in DMC3).
 // Skins the render mesh through inverseRest * currentWorld and refreshes the
 // skeleton overlay. Returns false when no motion is bound.
@@ -48,5 +54,18 @@ void clear_motion(Session* session) noexcept;
 // Whether a MOT can drive at least one skinned part of the session (the
 // same binding load_motion uses). Host-joint parts (coats) do not count.
 [[nodiscard]] bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept;
+
+// MotionScript playback is intentionally separate from raw MOT playback.
+// A PAC may retain multiple independent script controllers; each script button
+// can address only MOTs referenced by that script's resource table.
+[[nodiscard]] std::size_t motion_script_count(const Session* session) noexcept;
+[[nodiscard]] std::uint32_t motion_script_slot(const Session* session,
+                                               std::size_t script_index) noexcept;
+[[nodiscard]] bool motion_script_can_play_motion(const Session* session,
+                                                 std::size_t script_index,
+                                                 std::size_t motion_index) noexcept;
+[[nodiscard]] MotionLoadReport load_scripted_motion(Session* session,
+                                                    std::size_t script_index,
+                                                    std::size_t motion_index) noexcept;
 
 }  // namespace dmcresource::motion

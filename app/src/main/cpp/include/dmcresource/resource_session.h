@@ -63,11 +63,27 @@ struct Session {
 
     std::string detail;
     std::string trace;
+    // Canonical source archive name for assembled PAC sessions. Runtime
+    // MotionScript-to-MOT routing uses it to apply EXE-confirmed group maps
+    // where available and deterministic corpus binding otherwise.
+    std::string archive_name;
     bool renderable{};
 
     // Motions discovered while assembling a PAC (read-only copies of the
     // retained payloads). Played through motion::load_motion.
     struct MotionPayload final {
+        struct ScriptLink final {
+            std::size_t script_index{};
+            std::size_t bank{};
+            std::size_t action{};
+            // CEm034 state that starts this action, when recovered. -1 means
+            // the action can still be executed by its script controller but
+            // no actor-state entry is implied by current evidence.
+            int lady_state{-1};
+            // Body lane mask: bit0=lane0, bit1=lane1. 0 for non-body scripts.
+            std::uint8_t lady_lane_mask{};
+        };
+
         std::string name;
         std::vector<std::uint8_t> bytes;
         // Motion script address (pl000_00_<bank>.pac, MOT index); -1 unknown.
@@ -79,6 +95,8 @@ struct Session {
         int mot_slot{-1};
         // Script actions that play it ("act 3,7 loop"), empty when unknown.
         std::string actions;
+        // Every script controller in this PAC that references this MOT.
+        std::vector<ScriptLink> script_links;
     };
     std::vector<MotionPayload> motion_library;
 
@@ -88,10 +106,53 @@ struct Session {
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;
 
-    // Player motion script (pl000.pac slot 5) and the weapon parts whose
-    // attach record follows it during playback.
+    enum class MotionScriptRole : std::uint8_t {
+        Primary,
+        LadyBody,
+        LadyComponent0,
+    };
+    struct MotionScriptBinding final {
+        std::uint32_t archive_slot{};
+        MotionScriptRole role{MotionScriptRole::Primary};
+        std::shared_ptr<const motion::MotionScriptFile> script;
+    };
+
+    // Backward-compatible primary script used by player weapon-state playback.
+    // Enemy/boss archives may retain multiple independent controllers below.
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
+    std::vector<MotionScriptBinding> motion_scripts;
     std::vector<motion::WeaponBinding> weapon_bindings;
+
+    // Boss-Lady CEm034 uses a different runtime: five persistent component
+    // managers with two placement presets, plus separate dynamic CShell actors.
+    // Keep this separate from player WeaponBinding so a single scalar weapon
+    // state cannot silently collapse the recovered multi-channel contract.
+    std::vector<motion::LadyComponentBinding> lady_component_bindings;
+
+    // Dynamic CEm034 CShell visuals stay outside the persistent composite.
+    // Source geometry/textures are retained once; active/world are presentation
+    // state driven only by the recovered Shl actor lifecycle.
+    struct LadyDynamicVisual final {
+        std::uint8_t actor{};   // CEm034Shl00..05 index
+        std::uint32_t model_slot{};
+        // Preserve the canonical MOD scene for dynamic skeletal deformation
+        // (slot30 uses its five-node skin domain). source_mesh is the retained
+        // flattened rest projection consumed by the presentation layer.
+        RenderScene source_scene;
+        Mesh source_mesh;
+        std::vector<std::uint32_t> texture_slots;
+        std::vector<ImagePreview> textures;
+        Matrix4 world{};
+        Vec3 velocity{};
+        float spawn_frame{-1.0F};
+        float last_update_frame{-1.0F};
+        float retire_frame{-1.0F};  // <0 = owner/state controlled
+        bool active{};
+        // slot30 shares Shl03 actor transform but has an additional internal
+        // tether deformation domain that is not yet claimed pixel-exact.
+        bool exact_deformation{true};
+    };
+    std::vector<LadyDynamicVisual> lady_dynamic_visuals;
 
     // Attack collision handle (index + shapes) on the body bones; drawn with
     // RenderFlag::Collision (collision_debug.h).

@@ -156,6 +156,10 @@ std::optional<ScriptSummary> MotionScriptFile::summarize(std::size_t bank,
             break;
         }
         if (op == 3U && p + 6U <= s.size()) {
+            out.signals.push_back({
+                after,
+                {s[p + 1U], s[p + 2U], s[p + 3U], s[p + 4U], s[p + 5U]},
+            });
             const auto state = static_cast<std::uint8_t>(s[p + 2U] & 0x3FU);
             if (state != 0U) out.states.push_back({after, state});
         }
@@ -170,6 +174,12 @@ std::vector<WeaponStateKey> MotionScriptFile::weapon_states(std::size_t bank,
                                                            std::size_t action) const {
     auto summary = summarize(bank, action);
     return summary ? std::move(summary->states) : std::vector<WeaponStateKey>{};
+}
+
+std::vector<ScriptSignalKey> MotionScriptFile::signals(std::size_t bank,
+                                                       std::size_t action) const {
+    auto summary = summarize(bank, action);
+    return summary ? std::move(summary->signals) : std::vector<ScriptSignalKey>{};
 }
 
 std::vector<MotionResource> MotionScriptFile::resources(std::size_t bank,
@@ -270,13 +280,16 @@ namespace {
 
 struct ExeGroups final {
     std::string_view stem;
-    std::array<int, 4> slots;  // -1 = not set by the class
+    std::array<int, 7> slots;  // group -> top-level PAC slot; -1 = not closed
 };
 
-// Motion PAC arrays read from the class inits (see bind_motion_groups).
-constexpr std::array<ExeGroups, 2> kExeGroups{{
-    {"em028", {2, 3, -1, -1}},
-    {"em000", {35, -1, -1, -1}},
+// Motion PAC arrays read from class init/runtime evidence. A single physical
+// pack may serve more than one script resource group (CEm034 slot6 serves
+// groups 4 and 6), so EXE-confirmed bindings are intentionally reusable.
+constexpr std::array<ExeGroups, 3> kExeGroups{{
+    {"em028", {2, 3, -1, -1, -1, -1, -1}},
+    {"em000", {35, -1, -1, -1, -1, -1, -1}},
+    {"em034", {-1, 3, 4, 5, 6, -1, 6}},
 }};
 
 }  // namespace

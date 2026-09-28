@@ -1,5 +1,7 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/skeleton_rig.h"
+#include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
@@ -676,10 +678,454 @@ struct PreparedView final {
     const HierarchyOverlay* hierarchy{};
     const std::vector<std::uint32_t>* texture_slots{};
     const std::vector<ImagePreview>* textures{};
+    // Presentation-only mesh/banks used for dynamic CShell visuals. The
+    // canonical Session render_mesh/composite_parts are never mutated by
+    // Shl spawn/despawn.
+    Mesh presentation_mesh;
+    std::vector<std::uint32_t> presentation_texture_slots;
+    std::vector<ImagePreview> presentation_textures;
+    bool dynamic_presentation{};
     std::vector<Vec3> floor_shadow;
     std::vector<Vec3> collision_lines;
     std::shared_ptr<const stage_room::Room> room;
 };
+
+[[nodiscard]] Vec3 transform_dynamic_vertex(
+    const Vec3& p, const Matrix4& m) noexcept {
+    return {
+        p.x * m.values[0] + p.y * m.values[4] + p.z * m.values[8] + m.values[12],
+        p.x * m.values[1] + p.y * m.values[5] + p.z * m.values[9] + m.values[13],
+        p.x * m.values[2] + p.y * m.values[6] + p.z * m.values[10] + m.values[14],
+    };
+}
+
+[[nodiscard]] Vec3 transform_dynamic_normal(
+    const Vec3& n, const Matrix4& m) noexcept {
+    return {
+        n.x * m.values[0] + n.y * m.values[4] + n.z * m.values[8],
+        n.x * m.values[1] + n.y * m.values[5] + n.z * m.values[9],
+        n.x * m.values[2] + n.y * m.values[6] + n.z * m.values[10],
+    };
+}
+
+namespace mod_world = dmc::rengine::formats::mod::world_transform;
+
+struct DynamicVertexInfluences final {
+    std::array<std::uint32_t, 3> node{};
+    std::array<float, 3> weight{};
+    std::uint8_t count{};
+};
+
+[[nodiscard]] std::size_t dynamic_scene_vertex_count(
+    const RenderScene& scene) noexcept {
+    std::size_t total = 0U;
+    for (const auto& primitive : scene.meshes) {
+        total += primitive.mesh.vertices.size();
+    }
+    return total;
+}
+
+[[nodiscard]] bool flatten_dynamic_influences(
+    const RenderScene& scene,
+    std::size_t node_count,
+    std::vector<DynamicVertexInfluences>* out) {
+    if (out == nullptr) return false;
+    out->clear();
+    out->reserve(dynamic_scene_vertex_count(scene));
+    for (std::size_t primitive = 0U; primitive < scene.meshes.size(); ++primitive) {
+        const auto& source = scene.meshes[primitive].mesh;
+        const SkinBinding* skin = nullptr;
+        for (const auto& candidate : scene.skins) {
+            if (candidate.mesh_primitive == primitive &&
+                candidate.vertices.size() == source.vertices.size()) {
+                skin = &candidate;
+                break;
+            }
+        }
+        for (std::size_t vertex = 0U; vertex < source.vertices.size(); ++vertex) {
+            DynamicVertexInfluences influences;
+            if (skin != nullptr) {
+                for (const auto& joint : skin->vertices[vertex].influences) {
+                    if (influences.count >= influences.node.size()) break;
+                    if (joint.node_index >= node_count ||
+                        !std::isfinite(joint.weight) || joint.weight <= 0.0F) {
+                        continue;
+                    }
+                    influences.node[influences.count] = joint.node_index;
+                    influences.weight[influences.count] = joint.weight;
+                    ++influences.count;
+                }
+            }
+            out->push_back(influences);
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::optional<Matrix4> lady_dynamic_component_node_world(
+    const Session& session,
+    std::uint8_t component,
+    std::size_t local_node) noexcept {
+    const motion::LadyComponentBinding* binding = nullptr;
+    for (const auto& candidate : session.lady_component_bindings) {
+        if (candidate.component == component) {
+            binding = &candidate;
+            break;
+        }
+    }
+    if (binding == nullptr ||
+        binding->part >= session.composite_parts.size() ||
+        local_node >= session.composite_parts[binding->part].scene.nodes.size()) {
+        return std::nullopt;
+    }
+
+    std::size_t node_begin = 0U;
+    for (std::size_t part = 0U; part < binding->part; ++part) {
+        const auto count = session.composite_parts[part].scene.nodes.size();
+        if (count > std::numeric_limits<std::size_t>::max() - node_begin) {
+            return std::nullopt;
+        }
+        node_begin += count;
+    }
+    if (node_begin + local_node >= session.scene.nodes.size()) {
+        return std::nullopt;
+    }
+    return session.scene.nodes[node_begin + local_node].world;
+}
+
+[[nodiscard]] Vec3 dynamic_cross(const Vec3& a, const Vec3& b) noexcept {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    };
+}
+
+[[nodiscard]] float dynamic_length_sq(const Vec3& v) noexcept {
+    return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
+[[nodiscard]] float dynamic_length(const Vec3& v) noexcept {
+    return std::sqrt(std::max(dynamic_length_sq(v), 0.0F));
+}
+
+[[nodiscard]] Vec3 dynamic_normalize(
+    Vec3 v, const Vec3& fallback) noexcept {
+    float length_sq = dynamic_length_sq(v);
+    if (!(length_sq > 1.0e-15F) || !std::isfinite(length_sq)) {
+        v = fallback;
+        length_sq = dynamic_length_sq(v);
+    }
+    if (!(length_sq > 1.0e-15F) || !std::isfinite(length_sq)) {
+        return {1.0F, 0.0F, 0.0F};
+    }
+    const float inv = 1.0F / std::sqrt(length_sq);
+    return {v.x * inv, v.y * inv, v.z * inv};
+}
+
+[[nodiscard]] std::array<mod_world::Matrix4f, 5> lady_slot30_worlds(
+    const Vec3& anchor,
+    const Vec3& endpoint) noexcept {
+    const Vec3 delta{
+        endpoint.x - anchor.x,
+        endpoint.y - anchor.y,
+        endpoint.z - anchor.z,
+    };
+    std::array<Vec3, 5> points{};
+    for (std::size_t i = 0U; i < points.size(); ++i) {
+        const float t = static_cast<float>(i) * 0.25F;
+        points[i] = {
+            anchor.x + delta.x * t,
+            anchor.y + delta.y * t,
+            anchor.z + delta.z * t,
+        };
+    }
+
+    const Vec3 segment{
+        points[1].x - points[0].x,
+        points[1].y - points[0].y,
+        points[1].z - points[0].z,
+    };
+    const float segment_length = dynamic_length(segment);
+    const Vec3 direction = dynamic_normalize(segment, {1.0F, 0.0F, 0.0F});
+
+    // 0x14032EEE0 with reference=(0,1,0,1): row0 follows the segment,
+    // row2 = direction x reference, row1 = row2 x direction. The helper
+    // perturbs the reference by +0.1 X/Y/Z if it is parallel.
+    Vec3 reference{0.0F, 1.0F, 0.0F};
+    Vec3 row2 = dynamic_cross(direction, reference);
+    if (!(dynamic_length_sq(row2) > 1.0e-15F)) {
+        reference.x += 0.1F;
+        row2 = dynamic_cross(direction, reference);
+    }
+    if (!(dynamic_length_sq(row2) > 1.0e-15F)) {
+        reference.y += 0.1F;
+        row2 = dynamic_cross(direction, reference);
+    }
+    if (!(dynamic_length_sq(row2) > 1.0e-15F)) {
+        reference.z += 0.1F;
+        row2 = dynamic_cross(direction, reference);
+    }
+    row2 = dynamic_normalize(row2, {0.0F, 0.0F, 1.0F});
+    const Vec3 row1 =
+        dynamic_normalize(dynamic_cross(row2, direction), {0.0F, 1.0F, 0.0F});
+    const float longitudinal_scale = segment_length / 70.0F;
+
+    std::array<mod_world::Matrix4f, 5> current{};
+    for (std::size_t i = 0U; i < current.size(); ++i) {
+        current[i].values = {
+            direction.x * longitudinal_scale,
+            direction.y * longitudinal_scale,
+            direction.z * longitudinal_scale,
+            0.0F,
+            row1.x, row1.y, row1.z, 0.0F,
+            row2.x, row2.y, row2.z, 0.0F,
+            points[i].x, points[i].y, points[i].z, 1.0F,
+        };
+    }
+    return current;
+}
+
+[[nodiscard]] std::optional<std::vector<Vec3>> skin_lady_slot30(
+    const Session& session,
+    const Session::LadyDynamicVisual& visual) {
+    if (visual.model_slot != 30U ||
+        visual.source_scene.rig == nullptr ||
+        visual.source_scene.rig->node_count() != 5U ||
+        visual.source_mesh.vertices.empty()) {
+        return std::nullopt;
+    }
+
+    const auto anchor_world =
+        lady_dynamic_component_node_world(session, 0U, 2U);
+    if (!anchor_world.has_value()) return std::nullopt;
+
+    const Vec3 anchor{
+        anchor_world->values[12],
+        anchor_world->values[13],
+        anchor_world->values[14],
+    };
+    const Vec3 endpoint{
+        visual.world.values[12],
+        visual.world.values[13],
+        visual.world.values[14],
+    };
+    const auto current = lady_slot30_worlds(anchor, endpoint);
+    const auto palette = mod_world::build_skin_palette(
+        visual.source_scene.rig->domain,
+        std::span<const mod_world::Matrix4f>{current.data(), current.size()});
+    if (!palette.has_value() || palette->size() != current.size()) {
+        return std::nullopt;
+    }
+
+    std::vector<DynamicVertexInfluences> influences;
+    if (!flatten_dynamic_influences(
+            visual.source_scene, current.size(), &influences) ||
+        influences.size() != visual.source_mesh.vertices.size()) {
+        return std::nullopt;
+    }
+
+    std::vector<Vec3> vertices;
+    vertices.reserve(visual.source_mesh.vertices.size());
+    for (std::size_t index = 0U;
+         index < visual.source_mesh.vertices.size();
+         ++index) {
+        const auto& rest = visual.source_mesh.vertices[index];
+        const auto& skin = influences[index];
+        Vec3 moved = rest;
+        float total = 0.0F;
+        for (std::uint8_t k = 0U; k < skin.count; ++k) {
+            total += skin.weight[k];
+        }
+        if (skin.count > 0U && total > 0.0F) {
+            moved = {};
+            for (std::uint8_t k = 0U; k < skin.count; ++k) {
+                const auto& matrix = (*palette)[skin.node[k]].values;
+                const Vec3 point{
+                    rest.x * matrix[0] + rest.y * matrix[4] +
+                        rest.z * matrix[8] + matrix[12],
+                    rest.x * matrix[1] + rest.y * matrix[5] +
+                        rest.z * matrix[9] + matrix[13],
+                    rest.x * matrix[2] + rest.y * matrix[6] +
+                        rest.z * matrix[10] + matrix[14],
+                };
+                const float weight = skin.weight[k] / total;
+                moved.x += point.x * weight;
+                moved.y += point.y * weight;
+                moved.z += point.z * weight;
+            }
+        }
+        if (!std::isfinite(moved.x) || !std::isfinite(moved.y) ||
+            !std::isfinite(moved.z)) {
+            return std::nullopt;
+        }
+        vertices.push_back(moved);
+    }
+    return vertices;
+}
+
+[[nodiscard]] bool build_lady_dynamic_presentation(
+    const Session& session, PreparedView* out) {
+    if (out == nullptr) return false;
+    const bool any = std::any_of(
+        session.lady_dynamic_visuals.begin(),
+        session.lady_dynamic_visuals.end(),
+        [](const Session::LadyDynamicVisual& v) { return v.active; });
+    if (!any) return false;
+
+    auto& mesh = out->presentation_mesh;
+    mesh = session.render_mesh;
+    out->presentation_textures = session.attached_textures;
+
+    const std::size_t base_triangles = mesh.indices.size() / 3U;
+    if (session.render_triangle_texture_slots.size() == base_triangles) {
+        out->presentation_texture_slots =
+            session.render_triangle_texture_slots;
+    } else {
+        out->presentation_texture_slots.assign(
+            base_triangles, kNoTextureSlot);
+    }
+
+    const auto ensure_uv = [&mesh]() {
+        if (mesh.uv0.empty()) mesh.uv0.assign(mesh.vertices.size(), {});
+    };
+    const auto ensure_color = [&mesh]() {
+        if (mesh.color0.empty()) {
+            mesh.color0.assign(mesh.vertices.size(), {128U, 128U, 128U, 128U});
+        }
+    };
+    const auto ensure_blend = [&mesh]() {
+        if (mesh.blend0.empty()) mesh.blend0.assign(mesh.vertices.size(), 0U);
+    };
+    const auto ensure_normal = [&mesh]() {
+        if (mesh.normal0.empty()) mesh.normal0.assign(mesh.vertices.size(), {});
+    };
+
+    for (const auto& visual : session.lady_dynamic_visuals) {
+        if (!visual.active || visual.source_mesh.vertices.empty() ||
+            visual.source_mesh.indices.size() < 3U) {
+            continue;
+        }
+
+        const std::size_t vertex_base = mesh.vertices.size();
+        const std::size_t before = mesh.vertices.size();
+
+        if (!mesh.uv0.empty() || visual.source_mesh.has_uv0()) ensure_uv();
+        if (!mesh.color0.empty() || visual.source_mesh.has_color0()) ensure_color();
+        if (!mesh.blend0.empty() || visual.source_mesh.has_blend0()) ensure_blend();
+        if (!mesh.normal0.empty() || visual.source_mesh.has_normal0()) ensure_normal();
+
+        mesh.vertices.reserve(mesh.vertices.size() + visual.source_mesh.vertices.size());
+        const auto tether_vertices =
+            visual.model_slot == 30U
+                ? skin_lady_slot30(session, visual)
+                : std::nullopt;
+        if (tether_vertices.has_value()) {
+            mesh.vertices.insert(
+                mesh.vertices.end(),
+                tether_vertices->begin(),
+                tether_vertices->end());
+        } else {
+            for (const auto& v : visual.source_mesh.vertices) {
+                mesh.vertices.push_back(
+                    transform_dynamic_vertex(v, visual.world));
+            }
+        }
+
+        if (!mesh.uv0.empty()) {
+            if (visual.source_mesh.has_uv0()) {
+                mesh.uv0.insert(mesh.uv0.end(),
+                                visual.source_mesh.uv0.begin(),
+                                visual.source_mesh.uv0.end());
+            } else {
+                mesh.uv0.resize(mesh.vertices.size());
+            }
+        }
+        if (!mesh.color0.empty()) {
+            if (visual.source_mesh.has_color0()) {
+                mesh.color0.insert(mesh.color0.end(),
+                                   visual.source_mesh.color0.begin(),
+                                   visual.source_mesh.color0.end());
+            } else {
+                mesh.color0.resize(
+                    mesh.vertices.size(), {128U, 128U, 128U, 128U});
+            }
+        }
+        if (!mesh.blend0.empty()) {
+            if (visual.source_mesh.has_blend0()) {
+                mesh.blend0.insert(mesh.blend0.end(),
+                                   visual.source_mesh.blend0.begin(),
+                                   visual.source_mesh.blend0.end());
+            } else {
+                mesh.blend0.resize(mesh.vertices.size(), 0U);
+            }
+        }
+        if (!mesh.normal0.empty()) {
+            if (visual.source_mesh.has_normal0()) {
+                if (tether_vertices.has_value()) {
+                    // The current renderer, like MOT preview, does not rebuild
+                    // skinned normals. Preserve the source normals rather than
+                    // incorrectly applying the Shl03 actor transform to a
+                    // cable whose vertices use five independent bone worlds.
+                    mesh.normal0.insert(
+                        mesh.normal0.end(),
+                        visual.source_mesh.normal0.begin(),
+                        visual.source_mesh.normal0.end());
+                } else {
+                    for (const auto& n : visual.source_mesh.normal0) {
+                        mesh.normal0.push_back(
+                            transform_dynamic_normal(n, visual.world));
+                    }
+                }
+            } else {
+                mesh.normal0.resize(mesh.vertices.size());
+            }
+        }
+
+        mesh.indices.reserve(mesh.indices.size() + visual.source_mesh.indices.size());
+        for (const auto index : visual.source_mesh.indices) {
+            if (index >= visual.source_mesh.vertices.size() ||
+                vertex_base > std::numeric_limits<std::uint32_t>::max() - index) {
+                return false;
+            }
+            mesh.indices.push_back(
+                static_cast<std::uint32_t>(vertex_base + index));
+        }
+
+        const std::uint32_t texture_base =
+            static_cast<std::uint32_t>(out->presentation_textures.size());
+        out->presentation_textures.insert(
+            out->presentation_textures.end(),
+            visual.textures.begin(), visual.textures.end());
+
+        const std::size_t dynamic_triangles =
+            visual.source_mesh.indices.size() / 3U;
+        if (visual.texture_slots.size() == dynamic_triangles) {
+            for (const auto slot : visual.texture_slots) {
+                if (slot == kNoTextureSlot) {
+                    out->presentation_texture_slots.push_back(kNoTextureSlot);
+                } else if (slot < visual.textures.size() &&
+                           texture_base <=
+                               std::numeric_limits<std::uint32_t>::max() - slot) {
+                    out->presentation_texture_slots.push_back(
+                        texture_base + slot);
+                } else {
+                    out->presentation_texture_slots.push_back(kNoTextureSlot);
+                }
+            }
+        } else {
+            out->presentation_texture_slots.insert(
+                out->presentation_texture_slots.end(),
+                dynamic_triangles, kNoTextureSlot);
+        }
+
+        if (mesh.vertices.size() <= before) return false;
+    }
+
+    out->dynamic_presentation =
+        mesh.vertices.size() > session.render_mesh.vertices.size();
+    return out->dynamic_presentation;
+}
 
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
@@ -708,6 +1154,12 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         : nullptr;
     out->texture_slots = session.render_triangle_texture_slots.empty() ? nullptr : &session.render_triangle_texture_slots;
     out->textures = session.attached_textures.empty() ? nullptr : &session.attached_textures;
+    if (build_lady_dynamic_presentation(session, out)) {
+        out->texture_slots = out->presentation_texture_slots.empty()
+            ? nullptr : &out->presentation_texture_slots;
+        out->textures = out->presentation_textures.empty()
+            ? nullptr : &out->presentation_textures;
+    }
 
     const auto& rest = view.framing_vertices.empty() ? std::span<const Vec3>{session.render_mesh.vertices}
                                                      : view.framing_vertices;
@@ -795,7 +1247,11 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
     if (!session->renderable) return {};
     PreparedView prepared;
     prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
-    return render_view(session->render_mesh, prepared.width, prepared.height, prepared.view,
+    const Mesh& presented =
+        prepared.dynamic_presentation
+            ? prepared.presentation_mesh
+            : session->render_mesh;
+    return render_view(presented, prepared.width, prepared.height, prepared.view,
                        prepared.hierarchy, prepared.texture_slots, prepared.textures);
 }
 

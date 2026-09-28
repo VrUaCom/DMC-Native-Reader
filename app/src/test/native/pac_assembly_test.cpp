@@ -1,7 +1,9 @@
+#include <algorithm>
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
 
+#include <array>
 #include <bit>
 #include <cassert>
 #include <cstddef>
@@ -163,6 +165,32 @@ std::vector<std::uint8_t> make_spatial_mod() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_lady_body_mod() {
+    auto bytes = make_spatial_mod();
+    bytes.resize(0x580U, 0U);
+    put_u8(bytes, 0x11U, 23U);
+    put_u64(bytes, 0x20U, 0x200U);
+
+    // 23-node canonical MOD transform-domain shell. A simple chain is enough
+    // for the assembly regression: the test verifies exact CEm034 attachment
+    // selectors/offsets, not the retail Lady rest pose itself.
+    put_u32(bytes, 0x200U, 0x20U);  // parent[23]
+    put_u32(bytes, 0x204U, 0x40U);  // order[23]
+    put_u32(bytes, 0x208U, 0x60U);  // adapter[23]
+    put_u32(bytes, 0x20CU, 0x80U);  // transforms[23]
+
+    for (std::size_t node = 0U; node < 23U; ++node) {
+        put_u8(bytes, 0x220U + node,
+               node == 0U ? 0xFFU : static_cast<std::uint8_t>(node - 1U));
+        put_u8(bytes, 0x240U + node, static_cast<std::uint8_t>(node));
+        put_u8(bytes, 0x260U + node, 0U);
+        put_transform(bytes, 0x280U + node * 0x20U,
+                      0.0F, node == 0U ? 0.0F : 1.0F, 0.0F,
+                      node == 0U ? 0.0F : 1.0F);
+    }
+    return bytes;
+}
+
 // Three-node MOT: node 0 translation-x only, one compression-2 track with
 // keys (frame 0 -> 10.0) and (frame 10 -> 20.0).
 std::vector<std::uint8_t> make_translation_mot() {
@@ -266,6 +294,250 @@ int main() {
         composite.get(), nested_motion.name,
         nested_motion.bytes.data(), nested_motion.bytes.size());
     assert(both.ok && both.animated_parts == 2U);
+
+    // em034.pac: body/hair + five persistent CEm034 components.
+    // Dynamic Shl resources (25/26/30) stay browsable but must not be overlaid.
+    const auto lady_body = make_lady_body_mod();
+    std::vector<std::vector<std::uint8_t>> lady_payloads(35U);
+    lady_payloads[1] = lady_body;
+    lady_payloads[17] = mod;
+    for (const std::size_t slot : {20U, 21U, 22U, 23U, 24U}) {
+        lady_payloads[slot] = mod;
+    }
+    for (const std::size_t slot : {25U, 26U, 30U}) {
+        // Valid MOD payloads so the assembly can retain them as latent Shl
+        // visual sources while keeping them out of the persistent composite.
+        lady_payloads[slot] = mod;
+    }
+    lady_payloads[32] = lady_body;
+    lady_payloads[34] = mod;
+    const auto lady_pac = make_pac(lady_payloads);
+    auto lady = dmcresource::open_session(
+        "em034.pac", lady_pac.data(), lady_pac.size());
+    assert(lady != nullptr);
+
+    const auto lady_variants = dmcresource::motion::archive_variants("em034.pac");
+    assert(lady_variants.size() == 2U);
+    assert(lady_variants[0].label == "Lady · costume 1");
+    assert(lady_variants[1].label == "Lady · costume 2");
+    assert(lady_variants[0].include_top_level_mod_count == 7U);
+    assert(lady_variants[0].texture_override_count == 7U);
+    assert(lady_variants[0].part_attachment_count == 6U);
+
+    // Hair remains structural; persistent equipment is now exact EXE evidence.
+    assert(lady_variants[0].part_attachments[0].child_model_slot == 17U);
+    assert(lady_variants[0].part_attachments[0].host_joint == 5U);
+    assert(lady_variants[0].part_attachments[0].structural_confirmed);
+    assert(!lady_variants[0].part_attachments[0].exe_confirmed);
+
+    const std::array<std::uint32_t, 5> expected_slots{20U, 21U, 22U, 23U, 24U};
+    const std::array<std::uint32_t, 5> expected_stowed_joints{3U, 14U, 16U, 19U, 14U};
+    for (std::size_t i = 0U; i < expected_slots.size(); ++i) {
+        const auto& a = lady_variants[0].part_attachments[i + 1U];
+        assert(a.child_model_slot == expected_slots[i]);
+        assert(a.host_joint == expected_stowed_joints[i]);
+        assert(a.structural_confirmed);
+        assert(a.exe_confirmed);
+        assert(a.explicit_offset);
+    }
+    assert(lady_variants[0].part_attachments[1].translation[0] == -2.0F);
+    assert(lady_variants[0].part_attachments[1].translation[1] == -20.0F);
+    assert(lady_variants[0].part_attachments[1].translation[2] == -17.0F);
+    assert(lady_variants[1].texture_overrides[2].model_slot == 20U);
+    assert(lady_variants[1].texture_overrides[2].texture_slot == 33U);
+
+    auto lady_first = assembly::assemble_pac(*lady, &report, "em034.pac", 0U);
+    assert(lady_first != nullptr);
+    assert(report.models == 7U);
+    assert(lady_first->composite_parts.size() == 7U);
+    assert(lady_first->lady_component_bindings.size() == 5U);
+    assert(lady_first->lady_dynamic_visuals.size() == 3U);
+    assert(lady_first->lady_dynamic_visuals[0].actor == 2U);
+    assert(lady_first->lady_dynamic_visuals[0].model_slot == 25U);
+    assert(lady_first->lady_dynamic_visuals[1].actor == 3U);
+    assert(lady_first->lady_dynamic_visuals[1].model_slot == 26U);
+    assert(lady_first->lady_dynamic_visuals[2].actor == 3U);
+    assert(lady_first->lady_dynamic_visuals[2].model_slot == 30U);
+    assert(!lady_first->lady_dynamic_visuals[0].active);
+    assert(!lady_first->lady_dynamic_visuals[1].active);
+    assert(!lady_first->lady_dynamic_visuals[2].active);
+    assert(lady_first->composite_parts[0].name.find("slot_0001.mod") != std::string::npos);
+    assert(lady_first->composite_parts[1].name.find("slot_0017.mod") != std::string::npos);
+    for (std::size_t i = 0U; i < 5U; ++i) {
+        const auto& binding = lady_first->lady_component_bindings[i];
+        assert(binding.component == i);
+        assert(binding.model_slot == expected_slots[i]);
+        assert(binding.preset == dmcresource::motion::LadyPlacementPreset::BodyStowed);
+        assert(binding.control_domain ==
+               dmcresource::motion::LadyControlDomain::BodyConstraint);
+        assert(lady_first->composite_parts[binding.part].placement.attachment_selector ==
+               expected_stowed_joints[i]);
+    }
+
+    // Dynamic resources are still present in the PAC child graph but absent
+    // from the persistent composite.
+    for (const auto& part : lady_first->composite_parts) {
+        assert(part.name.find("slot_0025.mod") == std::string::npos);
+        assert(part.name.find("slot_0026.mod") == std::string::npos);
+        assert(part.name.find("slot_0030.mod") == std::string::npos);
+    }
+
+    // Exact preset switching works for body-joint components and for
+    // component3's RuntimeBodyRootScaled parent. The latter materializes on
+    // body root node0 and never uses the raw serialized node13 as its parent.
+    assert(dmcresource::motion::set_lady_component_preset(
+        lady_first.get(), lady_first->lady_component_bindings[0],
+        dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
+    assert(lady_first->composite_parts[
+        lady_first->lady_component_bindings[0].part].placement.attachment_selector == 9U);
+    assert(dmcresource::motion::set_lady_component_preset(
+        lady_first.get(), lady_first->lady_component_bindings[3],
+        dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
+    assert(lady_first->lady_component_bindings[3].preset ==
+           dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+    assert(lady_first->composite_parts[
+        lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+    assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
+
+    // State-entry and signal bridge regressions from the canonical CEm034
+    // dispatcher. These specifically guard the old single-joint/single-state
+    // model and the corrected action50 channel trace.
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x7FU);
+        assert(entry.recognized && entry.fully_materialized);
+        assert(lady_first->lady_component_bindings[1].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        assert(lady_first->lady_component_bindings[2].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        assert(lady_first->composite_parts[
+            lady_first->lady_component_bindings[1].part].placement.attachment_selector == 9U);
+        assert(lady_first->composite_parts[
+            lady_first->lady_component_bindings[2].part].placement.attachment_selector == 13U);
+    }
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x81U);
+        assert(entry.recognized && entry.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
+
+        const auto enlarge = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x81U, 1U, 1U, 1U);
+        assert(enlarge.recognized && enlarge.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.5F);
+        assert(lady_first->composite_parts[
+            lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+
+        const auto normalize = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x81U, 1U, 1U, 0U);
+        assert(normalize.recognized && normalize.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
+
+        const auto restore = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x81U, 1U, 2U, 1U);
+        assert(restore.recognized && restore.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].preset ==
+               dmcresource::motion::LadyPlacementPreset::BodyStowed);
+    }
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x85U);
+        assert(entry.recognized);
+        const auto deploy = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x85U, 1U, 1U, 1U);
+        assert(deploy.recognized);
+        assert(lady_first->lady_component_bindings[4].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto flag_off = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x85U, 1U, 0U, 2U);
+        assert(flag_off.recognized && flag_off.runtime_side_effect);
+        // frame39/ch0=2 is NOT the placement restore.
+        assert(lady_first->lady_component_bindings[4].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto stow = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x85U, 1U, 1U, 2U);
+        assert(stow.recognized);
+        assert(lady_first->lady_component_bindings[4].preset ==
+               dmcresource::motion::LadyPlacementPreset::BodyStowed);
+    }
+    {
+        // Full entry-dispatch regression. CEm034 state numbers are integer
+        // values; state 59 decimal == 0x3B and is asymmetric:
+        // lane0 bank0/action1, lane1 bank3/action13.
+        const auto mapped =
+            dmcresource::motion::lady_state_for_body_script_action(3U, 13U);
+        assert(mapped.has_value());
+        assert(mapped->state == 0x3BU);
+        assert(mapped->lane_mask == 0x2U);
+        const auto starts =
+            dmcresource::motion::lady_body_state_scripts(0x3BU);
+        assert(starts.lanes[0].valid);
+        assert(starts.lanes[0].bank == 0U);
+        assert(starts.lanes[0].action == 1U);
+        assert(starts.lanes[1].valid);
+        assert(starts.lanes[1].bank == 3U);
+        assert(starts.lanes[1].action == 13U);
+
+        // State 0x59 is 89 decimal and belongs to bank4/action6 on both lanes.
+        const auto state89 =
+            dmcresource::motion::lady_body_state_scripts(0x59U);
+        assert(state89.lanes[0].valid && state89.lanes[1].valid);
+        assert(state89.lanes[0].bank == 4U && state89.lanes[0].action == 6U);
+        assert(state89.lanes[1].bank == 4U && state89.lanes[1].action == 6U);
+
+        const auto state85 =
+            dmcresource::motion::lady_body_state_scripts(0x85U);
+        assert(state85.lanes[0].valid && state85.lanes[1].valid);
+        assert(state85.lanes[0].bank == 4U && state85.lanes[0].action == 50U);
+        assert(state85.lanes[1].bank == 4U && state85.lanes[1].action == 50U);
+    }
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x59U);
+        assert(entry.recognized);
+        assert(lady_first->lady_component_bindings[0].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto delayed = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x59U, 0U, 0U, 1U);
+        assert(delayed.recognized);
+        assert(lady_first->lady_component_bindings[0].preset ==
+               dmcresource::motion::LadyPlacementPreset::BodyStowed);
+        assert(lady_first->lady_component_bindings[0].control_domain ==
+               dmcresource::motion::LadyControlDomain::IndependentMotionScript);
+    }
+    {
+        const auto rocket = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x56U, 1U, 0U, 1U);
+        assert(rocket.recognized && rocket.dynamic_actor == 2);
+        const auto grapple = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x5EU);
+        assert(grapple.recognized && grapple.dynamic_actor == 3);
+        const auto shl04 = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x8FU, 1U, 0U, 1U);
+        assert(shl04.recognized && shl04.dynamic_actor == 4);
+    }
+
+    auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
+    assert(lady_second != nullptr);
+    assert(report.models == 7U);
+    assert(lady_second->composite_parts.size() == 7U);
+    assert(lady_second->lady_component_bindings.size() == 5U);
+    assert(lady_second->lady_dynamic_visuals.size() == 3U);
+    assert(!lady_second->lady_dynamic_visuals[0].active);
+    assert(!lady_second->lady_dynamic_visuals[1].active);
+    assert(!lady_second->lady_dynamic_visuals[2].active);
+    const auto has_lady_part = [](const dmcresource::Session& session,
+                                  std::string_view token) {
+        return std::any_of(
+            session.composite_parts.begin(), session.composite_parts.end(),
+            [token](const auto& part) {
+                return part.name.find(token) != std::string::npos;
+            });
+    };
+    assert(has_lady_part(*lady_second, "slot_0032.mod"));
+    assert(has_lady_part(*lady_second, "slot_0034.mod"));
 
     // An archive without MOD is browsable but has nothing to assemble.
     const auto motions_only = make_pac({mot});

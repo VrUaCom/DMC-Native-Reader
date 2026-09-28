@@ -113,9 +113,393 @@ struct MotionState final {
     float scroll_clock{};
     // Weapon attach states from the motion script (pl000.pac slot 5).
     std::vector<WeaponStateKey> weapon_keys;
+
+    // Script Play is distinct from raw MOT playback.
+    bool script_driven{};
+    Session::MotionScriptRole script_role{Session::MotionScriptRole::Primary};
+    std::uint32_t script_slot{};
+    std::size_t script_bank{};
+    std::size_t script_action{};
+    std::optional<std::uint16_t> lady_state;
+    std::uint8_t lady_lane_mask{0x3U};
+    std::vector<ScriptSignalKey> script_signals;
+    std::array<std::vector<ScriptSignalKey>, 2> lady_lane_signals;
+    float lady_runtime_frame{-1.0F};
+    bool lady_entry_applied{};
+    std::int8_t last_dynamic_actor{-1};
 };
 
 namespace {
+
+struct ScriptMotionSelection final {
+    std::size_t bank{};
+    std::size_t action{};
+    std::uint16_t resource_id{};
+};
+
+[[nodiscard]] bool is_em034(const Session& session) noexcept {
+    return session.archive_name.find("em034") != std::string::npos;
+}
+
+[[nodiscard]] std::vector<MotionPack> session_motion_packs(const Session& session) {
+    std::vector<MotionPack> packs;
+    for (const auto& motion : session.motion_library) {
+        if (motion.pack_slot < 0 || motion.mot_slot < 0) continue;
+        const auto slot = static_cast<std::uint32_t>(motion.pack_slot);
+        auto it = std::find_if(
+            packs.begin(), packs.end(),
+            [slot](const MotionPack& p) { return p.archive_slot == slot; });
+        if (it == packs.end()) {
+            packs.push_back({slot, {}});
+            it = std::prev(packs.end());
+        }
+        it->slots.push_back(static_cast<std::uint32_t>(motion.mot_slot));
+    }
+    return packs;
+}
+
+[[nodiscard]] std::vector<std::uint16_t> lady_groups_for_pack(
+    const Session& session,
+    const Session::MotionScriptBinding& binding,
+    const Session::MotionPayload& motion) {
+    std::vector<std::uint16_t> groups;
+    if (!is_em034(session) || motion.pack_slot < 0) return groups;
+
+    if (binding.role == Session::MotionScriptRole::LadyComponent0) {
+        // EXE_AND_CORPUS_CONFIRMED:
+        // em034_013 bank4 -> top-level PAC slot11.
+        if (motion.pack_slot == 11) groups.push_back(4U);
+        return groups;
+    }
+
+    if (binding.role == Session::MotionScriptRole::LadyBody) {
+        // EXE-confirmed CEm034 body pack map (shared pack reuse is valid):
+        //   group1 -> slot3
+        //   group2 -> slot4
+        //   group3 -> slot5
+        //   group4 -> slot6
+        //   group6 -> slot6
+        // group0 is intentionally left unbound.
+        switch (motion.pack_slot) {
+        case 3: groups.push_back(1U); break;
+        case 4: groups.push_back(2U); break;
+        case 5: groups.push_back(3U); break;
+        case 6:
+            groups.push_back(4U);
+            groups.push_back(6U);
+            break;
+        default:
+            break;
+        }
+    }
+    return groups;
+}
+
+[[nodiscard]] std::optional<ScriptMotionSelection> pick_script_motion(
+    const Session& session,
+    const Session::MotionScriptBinding& binding,
+    const Session::MotionPayload& motion) {
+    if (binding.script == nullptr || motion.mot_slot < 0) return std::nullopt;
+
+    auto groups = lady_groups_for_pack(session, binding, motion);
+    if (groups.empty() && motion.pack_slot >= 0) {
+        const auto packs = session_motion_packs(session);
+        for (const auto& g : bind_motion_groups(
+                 *binding.script, packs, session.archive_name)) {
+            if (g.archive_slot &&
+                static_cast<int>(*g.archive_slot) == motion.pack_slot) {
+                groups.push_back(g.group);
+            }
+        }
+    }
+
+    for (const auto group : groups) {
+        const auto slot = static_cast<std::uint16_t>(motion.mot_slot);
+        if (group > 655U || slot >= 100U) continue;
+        const auto id = static_cast<std::uint16_t>(group * 100U + slot);
+        const auto actions = binding.script->actions_for(id);
+        if (actions.empty()) continue;
+
+        const ScriptAction* pick = &actions.front();
+        for (const auto& action : actions) {
+            if (action.bank == group && action.action == slot) {
+                pick = &action;
+                break;
+            }
+            if (action.bank == group && pick->bank != group) {
+                pick = &action;
+            } else if (action.action == slot && pick->action != slot) {
+                pick = &action;
+            }
+        }
+        return ScriptMotionSelection{pick->bank, pick->action, id};
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] LadyComponentBinding* component0_binding(Session* session) noexcept {
+    if (session == nullptr) return nullptr;
+    for (auto& binding : session->lady_component_bindings) {
+        if (binding.component == 0U) return &binding;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] LadyComponentBinding* lady_component_binding(
+    Session* session, std::uint8_t component) noexcept {
+    if (session == nullptr) return nullptr;
+    for (auto& binding : session->lady_component_bindings) {
+        if (binding.component == component) return &binding;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<Matrix4> lady_component_node_world(
+    const Session& session, std::uint8_t component, std::size_t local_node) noexcept {
+    const LadyComponentBinding* binding = nullptr;
+    for (const auto& candidate : session.lady_component_bindings) {
+        if (candidate.component == component) {
+            binding = &candidate;
+            break;
+        }
+    }
+    if (binding == nullptr || binding->part >= session.composite_parts.size()) {
+        return std::nullopt;
+    }
+    const auto& part = session.composite_parts[binding->part];
+    if (local_node >= part.scene.nodes.size()) return std::nullopt;
+
+    std::size_t begin = 0U;
+    for (std::size_t i = 0U; i < binding->part; ++i) {
+        if (session.composite_parts[i].scene.nodes.size() >
+            std::numeric_limits<std::size_t>::max() - begin) {
+            return std::nullopt;
+        }
+        begin += session.composite_parts[i].scene.nodes.size();
+    }
+    if (begin + local_node >= session.scene.nodes.size()) return std::nullopt;
+    return session.scene.nodes[begin + local_node].world;
+}
+
+struct Vec4f final {
+    float x{};
+    float y{};
+    float z{};
+    float w{1.0F};
+};
+
+[[nodiscard]] Vec4f transform_row4(
+    const Vec4f& v, const Matrix4& m) noexcept {
+    return {
+        v.x * m.values[0] + v.y * m.values[4] +
+            v.z * m.values[8] + v.w * m.values[12],
+        v.x * m.values[1] + v.y * m.values[5] +
+            v.z * m.values[9] + v.w * m.values[13],
+        v.x * m.values[2] + v.y * m.values[6] +
+            v.z * m.values[10] + v.w * m.values[14],
+        v.x * m.values[3] + v.y * m.values[7] +
+            v.z * m.values[11] + v.w * m.values[15],
+    };
+}
+
+[[nodiscard]] Vec3 cross3(const Vec3& a, const Vec3& b) noexcept {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    };
+}
+
+[[nodiscard]] float length_sq3(const Vec3& v) noexcept {
+    return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
+[[nodiscard]] Vec3 normalize3(Vec3 v, Vec3 fallback) noexcept {
+    float len2 = length_sq3(v);
+    if (!(len2 > 1.0e-15F) || !std::isfinite(len2)) {
+        v = fallback;
+        len2 = length_sq3(v);
+    }
+    if (!(len2 > 1.0e-15F) || !std::isfinite(len2)) return {1.0F, 0.0F, 0.0F};
+    const float inv = 1.0F / std::sqrt(len2);
+    return {v.x * inv, v.y * inv, v.z * inv};
+}
+
+[[nodiscard]] Vec3 robust_cross(
+    Vec3 a, Vec3 b, bool a_cross_b) noexcept {
+    Vec3 out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    if (length_sq3(out) > 1.0e-15F) return normalize3(out, {1.0F, 0.0F, 0.0F});
+    // The EXE perturbs the reference axis in 0.1 steps when the vectors are
+    // nearly parallel. Preserve that behavior instead of choosing a fixed
+    // arbitrary perpendicular axis.
+    b.x += 0.1F;
+    out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    if (length_sq3(out) <= 1.0e-15F) {
+        b.y += 0.1F;
+        out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    }
+    if (length_sq3(out) <= 1.0e-15F) {
+        b.z += 0.1F;
+        out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    }
+    return normalize3(out, {1.0F, 0.0F, 0.0F});
+}
+
+[[nodiscard]] Matrix4 shl02_actor_matrix(
+    const Matrix4& slot20_node0) noexcept {
+    // 0x14016F610: (1,0,0,1) * slot20 node0 current world.
+    const auto d4 = transform_row4({1.0F, 0.0F, 0.0F, 1.0F}, slot20_node0);
+    const Vec3 direction = normalize3({d4.x, d4.y, d4.z}, {1.0F, 0.0F, 0.0F});
+    const Vec3 up = normalize3({0.0F, 1.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    // 0x14032FD90:
+    // row0 = normalize(up x direction)
+    // row1 = normalize(direction x row0)
+    // row2 = normalize(direction)
+    const Vec3 row0 = robust_cross(up, direction, true);
+    const Vec3 row1 = normalize3(cross3(direction, row0), {0.0F, 1.0F, 0.0F});
+
+    Matrix4 out;
+    out.values = {
+        row0.x, row0.y, row0.z, 0.0F,
+        row1.x, row1.y, row1.z, 0.0F,
+        direction.x, direction.y, direction.z, 0.0F,
+        slot20_node0.values[12],
+        slot20_node0.values[13],
+        slot20_node0.values[14],
+        1.0F,
+    };
+    return out;
+}
+
+struct Shl03Spawn final {
+    Matrix4 world{};
+    Vec3 velocity{};
+};
+
+[[nodiscard]] std::optional<Shl03Spawn> shl03_spawn(
+    const Session& session) noexcept {
+    const auto node0 = lady_component_node_world(session, 0U, 0U);
+    const auto node1 = lady_component_node_world(session, 0U, 1U);
+    if (!node0.has_value() || !node1.has_value()) return std::nullopt;
+
+    // 0x14016CBB0..0x14016CC41:
+    // spawn = (87.8,0,4.28,1) * node0World + node1World.translation.
+    const auto offset = transform_row4(
+        {87.80000305F, 0.0F, 4.28000021F, 1.0F}, *node0);
+    const Vec3 spawn{
+        offset.x + node1->values[12],
+        offset.y + node1->values[13],
+        offset.z + node1->values[14],
+    };
+
+    // Direction/velocity domain = 50 * ((1,0,0,1) * node0World).
+    const auto d4 = transform_row4(
+        {1.0F, 0.0F, 0.0F, 1.0F}, *node0);
+    const Vec3 velocity{50.0F * d4.x, 50.0F * d4.y, 50.0F * d4.z};
+    const Vec3 direction = normalize3(velocity, {1.0F, 0.0F, 0.0F});
+    const Vec3 ref{0.0F, 1.0F, 0.0F};
+
+    // 0x14032F1D0:
+    // row0 = direction
+    // row1 = normalize(ref x direction)
+    // row2 = normalize(direction x row1)
+    const Vec3 row1 = robust_cross(ref, direction, true);
+    const Vec3 row2 = normalize3(cross3(direction, row1), {0.0F, 0.0F, 1.0F});
+
+    Shl03Spawn out;
+    out.velocity = velocity;
+    out.world.values = {
+        direction.x, direction.y, direction.z, 0.0F,
+        row1.x, row1.y, row1.z, 0.0F,
+        row2.x, row2.y, row2.z, 0.0F,
+        spawn.x, spawn.y, spawn.z, 1.0F,
+    };
+    return out;
+}
+
+void deactivate_lady_dynamic_visuals(Session* session) noexcept {
+    if (session == nullptr) return;
+    for (auto& visual : session->lady_dynamic_visuals) {
+        visual.active = false;
+        visual.spawn_frame = -1.0F;
+        visual.last_update_frame = -1.0F;
+        visual.retire_frame = -1.0F;
+        visual.velocity = {};
+        visual.world = Matrix4{};
+    }
+}
+
+void spawn_lady_dynamic_visual(
+    Session* session, std::int8_t actor, float event_frame) noexcept {
+    if (session == nullptr || actor < 0) return;
+
+    if (actor == 2) {
+        const auto node0 = lady_component_node_world(*session, 0U, 0U);
+        if (!node0.has_value()) return;
+        const Matrix4 world_matrix = shl02_actor_matrix(*node0);
+        for (auto& visual : session->lady_dynamic_visuals) {
+            if (visual.actor != 2U) continue;
+            visual.world = world_matrix;
+            // Exact post-spawn steering is world-context dependent:
+            // Shl02 state1 calls 0x140244870 with a live gameplay target
+            // selected through the global runtime manager. The standalone
+            // Reader has no authoritative target, so preserve the exact spawn
+            // pose instead of inventing a straight-line projectile path.
+            visual.velocity = {};
+            visual.spawn_frame = event_frame;
+            visual.last_update_frame = event_frame;
+            // Then state2 starts +0xD68=3.0 and only promotes to state3 after
+            // the subtraction becomes negative: 3->2->1->0->-1. The next
+            // actor update dispatches state3 through the retire path. With
+            // default delta1 this is six updates from spawn, not three.
+            visual.retire_frame = event_frame + 6.0F;
+            visual.active = true;
+        }
+        return;
+    }
+
+    if (actor == 3) {
+        const auto spawn = shl03_spawn(*session);
+        if (!spawn.has_value()) return;
+        for (auto& visual : session->lady_dynamic_visuals) {
+            if (visual.actor != 3U) continue;
+            visual.world = spawn->world;
+            visual.velocity = spawn->velocity;
+            visual.spawn_frame = event_frame;
+            visual.last_update_frame = event_frame;
+            visual.retire_frame = -1.0F;
+            visual.active = true;
+        }
+    }
+}
+
+void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
+    if (session == nullptr) return;
+    for (auto& visual : session->lady_dynamic_visuals) {
+        if (!visual.active || visual.spawn_frame < 0.0F) continue;
+        const float previous =
+            visual.last_update_frame >= visual.spawn_frame
+                ? visual.last_update_frame
+                : visual.spawn_frame;
+        if (visual.actor == 2U) {
+            // No standalone translation is applied. The EXE refreshes the
+            // direction from a live gameplay target before integrating state1;
+            // freezing at the exact spawn pose is evidence-safe, while a
+            // fabricated straight trajectory is not.
+        } else if (visual.actor == 3U) {
+            const float dt = std::max(frame - previous, 0.0F);
+            // Shl03 state1, 0x140174D39:
+            // actor+0x80 += actor+0x140 * actor+0x14.
+            visual.world.values[12] += visual.velocity.x * dt;
+            visual.world.values[13] += visual.velocity.y * dt;
+            visual.world.values[14] += visual.velocity.z * dt;
+        }
+        visual.last_update_frame = frame;
+        if (visual.retire_frame >= 0.0F && frame >= visual.retire_frame) {
+            visual.active = false;
+        }
+    }
+}
 
 [[nodiscard]] std::optional<PartMotion> bind_part(const RenderScene& scene,
                                                   std::size_t vertex_begin,
@@ -167,6 +551,106 @@ namespace {
         part.placed = true;
     }
     return part;
+}
+
+void reset_lady_runtime(Session* session) noexcept {
+    if (session == nullptr) return;
+    deactivate_lady_dynamic_visuals(session);
+    for (auto& binding : session->lady_component_bindings) {
+        (void)set_lady_component_preset(
+            session, binding, LadyPlacementPreset::BodyStowed);
+        binding.runtime_uniform_scale = 1.0F;
+        if (binding.component == 0U) {
+            (void)set_lady_component_control_domain(
+                session, binding, LadyControlDomain::BodyConstraint);
+        }
+    }
+}
+
+[[nodiscard]] bool apply_lady_script_runtime(Session* session,
+                                             MotionState& state,
+                                             float frame) noexcept {
+    if (session == nullptr || !state.script_driven ||
+        state.script_role != Session::MotionScriptRole::LadyBody ||
+        !state.lady_state.has_value()) {
+        return true;
+    }
+
+    const bool replay = !state.lady_entry_applied ||
+                        frame < state.lady_runtime_frame;
+    if (replay) {
+        // The 144-state entry dispatcher is authoritative for the actor state.
+        // apply_lady_state_entry only models states with recovered equipment
+        // side effects, so an unrecognized result means "no equipment change",
+        // not "invalid Lady state".
+        deactivate_lady_dynamic_visuals(session);
+        const auto entry = apply_lady_state_entry(session, *state.lady_state);
+        state.lady_entry_applied = true;
+        state.lady_runtime_frame = -1.0F;
+        if (entry.dynamic_actor >= 0) {
+            state.last_dynamic_actor = entry.dynamic_actor;
+            spawn_lady_dynamic_visual(session, entry.dynamic_actor, 0.0F);
+        }
+    }
+
+    // State0x81/action46 rebuilds +0x4400 to 1.0 every actor update, and
+    // promotes it to 1.5 only on the channel1 pulse. Reproduce that pulse
+    // rather than incorrectly making 1.5 a sticky placement state.
+    if (*state.lady_state == 0x81U) {
+        for (auto& binding : session->lady_component_bindings) {
+            if (binding.component == 3U) {
+                (void)set_lady_component_runtime_scale(session, binding, 1.0F);
+                break;
+            }
+        }
+    }
+
+    float latest_scale_pulse = -std::numeric_limits<float>::infinity();
+    for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+        for (const auto& signal : state.lady_lane_signals[lane]) {
+            if (!(frame > signal.after_frame)) continue;
+            if (!replay && signal.after_frame < state.lady_runtime_frame) continue;
+
+            for (std::uint8_t channel = 0U;
+                 channel < signal.channels.size();
+                 ++channel) {
+                const auto value = signal.channels[channel];
+                if (value == 0U &&
+                    !(*state.lady_state == 0x81U && lane == 1U &&
+                      channel == 1U)) {
+                    continue;
+                }
+                const auto applied = apply_lady_signal(
+                    session, *state.lady_state, lane, channel, value);
+                if (applied.dynamic_actor >= 0) {
+                    state.last_dynamic_actor = applied.dynamic_actor;
+                    spawn_lady_dynamic_visual(
+                        session, applied.dynamic_actor,
+                        std::max(signal.after_frame, 0.0F));
+                }
+                if (*state.lady_state == 0x81U && lane == 1U &&
+                    channel == 1U && value == 1U) {
+                    latest_scale_pulse =
+                        std::max(latest_scale_pulse, signal.after_frame);
+                }
+            }
+        }
+    }
+
+    if (*state.lady_state == 0x81U &&
+        std::isfinite(latest_scale_pulse) &&
+        frame > latest_scale_pulse + 1.0F) {
+        for (auto& binding : session->lady_component_bindings) {
+            if (binding.component == 3U) {
+                (void)set_lady_component_runtime_scale(session, binding, 1.0F);
+                break;
+            }
+        }
+    }
+
+    advance_lady_dynamic_visuals(session, frame);
+    state.lady_runtime_frame = frame;
+    return true;
 }
 
 }  // namespace
@@ -291,6 +775,48 @@ MotionLoadReport load_motion(Session* session,
     }
 }
 
+MotionLoadReport load_library_motion(Session* session,
+                                     std::size_t motion_index) noexcept {
+    MotionLoadReport report;
+    if (session == nullptr || motion_index >= session->motion_library.size()) {
+        report.detail = "Motion: invalid library index";
+        return report;
+    }
+    try {
+        clear_motion(session);
+        const auto payload = session->motion_library[motion_index];
+
+        // Raw MOT stays raw: no MotionScript state/channel execution. For the
+        // slot20-only PAC11 motions we only release the model from its body
+        // constraint so its own three-node MOT can be evaluated.
+        if (is_em034(*session) && payload.pack_slot == 11) {
+            auto* component = component0_binding(session);
+            if (component == nullptr ||
+                !set_lady_component_preset(
+                    session, *component, LadyPlacementPreset::BodyStowed) ||
+                !set_lady_component_control_domain(
+                    session, *component,
+                    LadyControlDomain::IndependentMotionScript)) {
+                report.detail =
+                    "Motion: Lady slot20 could not enter standalone MOT domain";
+                return report;
+            }
+        }
+
+        report = load_motion(
+            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        if (report.ok && is_em034(*session) && payload.pack_slot == 11) {
+            report.detail = "Raw component MOT (no MotionScript events): " +
+                            report.detail;
+        }
+        return report;
+    } catch (...) {
+        report = {};
+        report.detail = "Motion: raw library playback failed";
+        return report;
+    }
+}
+
 bool apply_motion_frame(Session* session, float frame) noexcept {
     if (session == nullptr || session->motion == nullptr || !std::isfinite(frame)) return false;
     try {
@@ -376,6 +902,14 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 if (wanted != binding.state) (void)set_weapon_state(session, binding, wanted);
             }
         }
+        // Resolve current body-driven equipment before Lady runtime signals
+        // query slot20 node worlds for Shl spawn transforms. This pass does not
+        // advance cloth; the final attachment pass below performs the actual
+        // frame's cloth steps.
+        if (!session->lady_component_bindings.empty()) {
+            (void)apply_part_attachments(session, 0U);
+        }
+        if (!apply_lady_script_runtime(session, state, frame)) return false;
         (void)apply_part_attachments(session, cloth_steps);
         (void)apply_uv_scrolls(session, state.scroll_clock);
         HierarchyOverlay overlay;
@@ -408,6 +942,10 @@ void clear_motion(Session* session) noexcept {
         if (binding.state != 0U) moved = set_weapon_state(session, binding, 0U) || moved;
     }
     if (moved) (void)apply_part_attachments(session);
+    if (!session->lady_component_bindings.empty()) {
+        reset_lady_runtime(session);
+        (void)apply_part_attachments(session);
+    }
 }
 
 bool has_motion(const Session* session) noexcept {
@@ -437,6 +975,188 @@ bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot)
         return false;
     } catch (...) {
         return false;
+    }
+}
+
+std::size_t motion_script_count(const Session* session) noexcept {
+    return session != nullptr ? session->motion_scripts.size() : 0U;
+}
+
+std::uint32_t motion_script_slot(const Session* session,
+                                 std::size_t script_index) noexcept {
+    if (session == nullptr || script_index >= session->motion_scripts.size()) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
+    return session->motion_scripts[script_index].archive_slot;
+}
+
+bool motion_script_can_play_motion(const Session* session,
+                                   std::size_t script_index,
+                                   std::size_t motion_index) noexcept {
+    if (session == nullptr ||
+        script_index >= session->motion_scripts.size() ||
+        motion_index >= session->motion_library.size()) {
+        return false;
+    }
+    try {
+        const auto& payload = session->motion_library[motion_index];
+        if (std::any_of(
+                payload.script_links.begin(), payload.script_links.end(),
+                [script_index](const Session::MotionPayload::ScriptLink& link) {
+                    return link.script_index == script_index;
+                })) {
+            return true;
+        }
+        return pick_script_motion(
+                   *session,
+                   session->motion_scripts[script_index],
+                   payload)
+            .has_value();
+    } catch (...) {
+        return false;
+    }
+}
+
+MotionLoadReport load_scripted_motion(Session* session,
+                                      std::size_t script_index,
+                                      std::size_t motion_index) noexcept {
+    MotionLoadReport report;
+    if (session == nullptr ||
+        script_index >= session->motion_scripts.size() ||
+        motion_index >= session->motion_library.size()) {
+        report.detail = "MotionScript: invalid script or MOT index";
+        return report;
+    }
+    try {
+        clear_motion(session);
+        const auto binding = session->motion_scripts[script_index];
+        const auto payload = session->motion_library[motion_index];
+
+        const Session::MotionPayload::ScriptLink* materialized_link = nullptr;
+        for (const auto& link : payload.script_links) {
+            if (link.script_index == script_index) {
+                materialized_link = &link;
+                break;
+            }
+        }
+
+        std::optional<ScriptMotionSelection> selection;
+        if (materialized_link != nullptr) {
+            selection = ScriptMotionSelection{
+                materialized_link->bank,
+                materialized_link->action,
+                0U,
+            };
+        } else {
+            selection = pick_script_motion(*session, binding, payload);
+        }
+        if (!selection.has_value() || binding.script == nullptr) {
+            report.detail =
+                "MotionScript slot" + std::to_string(binding.archive_slot) +
+                " does not reference " + payload.name;
+            return report;
+        }
+
+        if (binding.role == Session::MotionScriptRole::LadyComponent0) {
+            auto* component = component0_binding(session);
+            if (component == nullptr) {
+                report.detail = "MotionScript: Lady component0 binding is unavailable";
+                return report;
+            }
+            const auto initial =
+                selection->bank == 4U &&
+                (selection->action == 41U || selection->action == 42U)
+                    ? LadyPlacementPreset::ActiveDeployed
+                    : LadyPlacementPreset::BodyStowed;
+            if (!set_lady_component_preset(session, *component, initial) ||
+                !set_lady_component_control_domain(
+                    session, *component,
+                    LadyControlDomain::IndependentMotionScript)) {
+                report.detail =
+                    "MotionScript: Lady component0 could not enter independent control";
+                return report;
+            }
+        }
+
+        report = load_motion(
+            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        if (!report.ok || session->motion == nullptr) return report;
+
+        auto& state = *session->motion;
+        state.script_driven = true;
+        state.script_role = binding.role;
+        state.script_slot = binding.archive_slot;
+        state.script_bank = selection->bank;
+        state.script_action = selection->action;
+        state.script_signals =
+            binding.script->signals(selection->bank, selection->action);
+
+        if (binding.role == Session::MotionScriptRole::LadyBody) {
+            std::optional<LadyBodyScriptState> mapped;
+            if (materialized_link != nullptr &&
+                materialized_link->lady_state >= 0) {
+                mapped = LadyBodyScriptState{
+                    static_cast<std::uint16_t>(materialized_link->lady_state),
+                    materialized_link->lady_lane_mask,
+                };
+            } else {
+                mapped = lady_state_for_body_script_action(
+                    selection->bank, selection->action);
+            }
+            if (mapped.has_value()) {
+                state.lady_state = mapped->state;
+                state.lady_lane_mask = mapped->lane_mask;
+
+                // Reconstruct both CEm034+0x5070/+0x5190 controller starts,
+                // including the asymmetric state55..82 cases.
+                const auto starts = lady_body_state_scripts(mapped->state);
+                state.lady_lane_mask = 0U;
+                for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+                    const auto& start = starts.lanes[lane];
+                    if (!start.valid) continue;
+                    state.lady_lane_mask |=
+                        static_cast<std::uint8_t>(1U << lane);
+                    state.lady_lane_signals[lane] =
+                        binding.script->signals(start.bank, start.action);
+                }
+            } else {
+                state.lady_state.reset();
+                state.lady_lane_mask = 0U;
+            }
+            if (state.lady_state.has_value()) {
+                state.lady_entry_applied = false;
+                state.lady_runtime_frame = -1.0F;
+                if (!apply_motion_frame(session, 0.0F)) {
+                    clear_motion(session);
+                    report = {};
+                    report.detail =
+                        "MotionScript: Lady runtime bridge rejected first frame";
+                    return report;
+                }
+            }
+        }
+
+        report.detail =
+            "MotionScript slot" + std::to_string(binding.archive_slot) +
+            " bank" + std::to_string(selection->bank) +
+            "/action" + std::to_string(selection->action) +
+            (binding.role == Session::MotionScriptRole::LadyBody &&
+                     state.lady_state.has_value()
+                 ? " state" + std::to_string(*state.lady_state) +
+                       " lanes=" + std::to_string(state.lady_lane_mask)
+                 : std::string{}) +
+            " -> " + report.detail;
+        if (binding.role == Session::MotionScriptRole::LadyBody &&
+            !state.lady_state.has_value()) {
+            report.detail +=
+                "\nLady runtime state bridge: action parsed, state semantics "
+                "not promoted for this bank/action.";
+        }
+        return report;
+    } catch (...) {
+        report = {};
+        report.detail = "MotionScript: playback failed";
+        return report;
     }
 }
 

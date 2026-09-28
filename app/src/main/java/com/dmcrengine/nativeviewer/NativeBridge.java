@@ -68,6 +68,19 @@ public final class NativeBridge {
     public static native String[] archiveVariantNames(String archiveName);
     public static native int motionLibraryCount(long handle);
     public static native String motionLibraryName(long handle, int index);
+    // Physical top-level PAC slot containing the nested MOT pack; -1 when the
+    // motion did not come from a nested pack. Used only for UI grouping.
+    public static native int motionLibraryPackSlot(long handle, int index);
+
+    // MotionScript playback is separate from raw MOT playback. A PAC may own
+    // several independent controllers; every script gets its own Play button
+    // beside each MOT it can actually address.
+    public static native int motionScriptCount(long handle);
+    public static native int motionScriptSlot(long handle, int scriptIndex);
+    public static native boolean motionScriptCanPlayMotion(
+            long handle, int scriptIndex, int motionIndex);
+    public static native String loadLibraryMotionScript(
+            long handle, int scriptIndex, int motionIndex);
 
     // MOT playback. Frames are MOT timeline units (60 per second in DMC3).
     // load* return a human-readable report; hasMotion tells whether it bound.

@@ -49,7 +49,7 @@ struct EnemyClothSource final {
     std::uint32_t clt_slot;
 };
 
-inline constexpr std::array<EnemyClothSource, 8> kEnemyClothSources{{
+inline constexpr std::array<EnemyClothSource, 10> kEnemyClothSources{{
     {"em028", 4U, 7U},
     {"em028", 5U, 8U},
     {"em000", 3U, 2U},
@@ -58,6 +58,10 @@ inline constexpr std::array<EnemyClothSource, 8> kEnemyClothSources{{
     {"em000", 12U, 11U},
     {"em000", 15U, 14U},
     {"em000", 17U, 16U},
+    // em034_018.clt identifies itself as pl002_01.clt and addresses bones
+    // 2/4/6/8, exactly matching the four chains of both 9-node companion MODs.
+    {"em034", 17U, 18U},
+    {"em034", 34U, 18U},
 }};
 
 // Texture scroll (.tsc) slot and the model slots its CDrawUV objects drive:
@@ -275,6 +279,26 @@ inline constexpr std::array<EnemyVariant, 8> kEm000Variants{{
 // (em028.pac: the dress strip, objects 2-3 of slot 5, is drawn only while
 // bats are out -- 0x14012F790 sets or clears object bit 0, which the MOD draw
 // loops 0x140303460 / 0x140303DE0 require).
+struct ArchiveTextureOverride final {
+    std::uint32_t model_slot{};
+    std::uint32_t texture_slot{};
+};
+
+struct ArchivePartAttachment final {
+    std::uint32_t host_model_slot{};
+    std::uint32_t child_model_slot{};
+    std::uint32_t host_joint{};
+    bool root_local_identity{};
+    // true when the host relation is supported by retained structural/corpus
+    // evidence. exe_confirmed is stronger and is used when the exact runtime
+    // consumer and transform record have been recovered from dmc3.exe.
+    bool structural_confirmed{};
+    bool exe_confirmed{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_xyz_radians{};
+    bool explicit_offset{};
+};
+
 struct ArchiveVariant final {
     std::string label;
     const EnemyVariant* enemy{};  // em000 family
@@ -282,9 +306,303 @@ struct ArchiveVariant final {
     std::uint32_t hide_slot{};    // model slot whose objects are hidden
     std::array<std::uint32_t, 2> hide_objects{};
     std::uint32_t hide_count{};
+
+    // Some actor PACs carry several complete appearances and equipment models
+    // in one top-level archive. When non-zero, only these top-level MOD slots
+    // belong to this selectable appearance; every other MOD remains available
+    // as a PAC child instead of being incorrectly overlaid at the actor origin.
+    std::array<std::uint32_t, 12> include_top_level_mod_slots{};
+    std::uint32_t include_top_level_mod_count{};
+
+    // Explicit companion PTX association for appearance parts whose correct
+    // texture bank is not the nearest preceding PTX in physical slot order.
+    std::array<ArchiveTextureOverride, 12> texture_overrides{};
+    std::uint32_t texture_override_count{};
+
+    // Corpus/structure-backed companion placement. These records are distinct
+    // from EnemyVariant because they may be known from a PAC/CLT relationship
+    // before the exact class-init EXE consumer has been recovered.
+    std::array<ArchivePartAttachment, 12> part_attachments{};
+    std::uint32_t part_attachment_count{};
 };
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
+
+// Canonical boss-Lady (CEm034) equipment contract. This is intentionally
+// separate from CPlWpLadyGun / player weapon state tables: CEm034 owns five
+// persistent MOD managers and several dynamic CShell actors.
+enum class LadyPlacementPreset : std::uint8_t {
+    BodyStowed = 0,
+    ActiveDeployed = 1,
+};
+
+enum class LadyControlDomain : std::uint8_t {
+    BodyConstraint = 0,
+    IndependentMotionScript = 1,  // slot20 / em034_013 only
+};
+
+enum class LadyEffectiveParent : std::uint8_t {
+    BodyJoint = 0,
+    RuntimeBodyRootScaled = 1,  // CEm034+0x43C0, scale source +0x4400
+};
+
+struct LadyPlacementRecord final {
+    std::uint32_t serialized_node{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_xyz_radians{};
+    LadyEffectiveParent effective_parent{LadyEffectiveParent::BodyJoint};
+    std::uint32_t runtime_parent_offset{};
+    std::uint32_t runtime_scale_source_offset{};
+};
+
+struct LadyComponentContract final {
+    std::uint8_t component{};
+    std::uint32_t model_slot{};
+    std::array<LadyPlacementRecord, 2> presets{};
+};
+
+inline constexpr std::array<LadyComponentContract, 5> kCEm034LadyComponents{{
+    {0U, 20U, {{
+        {3U, {-2.0F, -20.0F, -17.0F},
+         {-1.570796251296997F, 0.0F, 1.0821040868759155F}},
+        {9U, {-8.399999618530273F, -1.0F, -1.2999999523162842F},
+         {0.0F, 0.0F, 3.141592502593994F}},
+    }}},
+    {1U, 21U, {{
+        {14U, {-1.0F, -4.0F, 13.0F},
+         {1.867502212524414F, 0.048869214951992035F, 2.4085543155670166F}},
+        {9U, {-7.5F, -0.6000000238418579F, -0.800000011920929F},
+         {0.0F, 0.0F, 0.0F}},
+    }}},
+    {2U, 22U, {{
+        {16U, {-9.199999809265137F, -13.0F, -9.100000381469727F},
+         {0.0F, 0.0F, 1.6580626964569092F}},
+        {13U, {7.699999809265137F, -0.800000011920929F, 0.5F},
+         {0.0F, 0.0F, 3.141592502593994F}},
+    }}},
+    {3U, 23U, {{
+        {19U, {10.0F, -15.0F, -2.5F},
+         {0.0F, 0.0F, -1.6580626964569092F}},
+        {13U, {7.199999809265137F, -1.2000000476837158F, 2.700000047683716F},
+         {0.0F, -0.1745329201221466F, 0.0F},
+         LadyEffectiveParent::RuntimeBodyRootScaled, 0x43C0U, 0x4400U},
+    }}},
+    {4U, 24U, {{
+        {14U, {17.0F, -5.0F, -16.0F},
+         {-1.2217304706573486F, -0.2356194406747818F, 0.6283184885978699F}},
+        {13U, {7.199999809265137F, -0.800000011920929F, -0.4000000059604645F},
+         {0.0F, 0.0F, 3.141592502593994F}},
+    }}},
+}};
+
+struct LadyComponentBinding final {
+    std::size_t host_part{};
+    std::size_t part{};
+    std::uint8_t component{};
+    std::uint32_t model_slot{};
+    LadyPlacementPreset preset{LadyPlacementPreset::BodyStowed};
+    LadyControlDomain control_domain{LadyControlDomain::BodyConstraint};
+    // CEm034+0x4400 for component3 ActiveDeployed. EXE writes 1.0 every
+    // action46 update and promotes it to 1.5 while lane1/channel1 == 1.
+    float runtime_uniform_scale{1.0F};
+};
+
+struct LadyDynamicActorContract final {
+    std::string_view class_name;
+    std::array<std::uint32_t, 2> model_slots{};
+    std::uint8_t model_slot_count{};
+};
+
+inline constexpr std::array<LadyDynamicActorContract, 6> kCEm034LadyDynamicActors{{
+    {"CEm034Shl00", {{0U, 0U}}, 0U},
+    {"CEm034Shl01", {{0U, 0U}}, 0U},
+    {"CEm034Shl02", {{25U, 0U}}, 1U},
+    {"CEm034Shl03", {{26U, 30U}}, 2U},
+    {"CEm034Shl04", {{0U, 0U}}, 0U},
+    {"CEm034Shl05", {{0U, 0U}}, 0U},
+}};
+
+[[nodiscard]] constexpr const LadyComponentContract* lady_component_contract(
+    std::uint8_t component) noexcept {
+    return component < kCEm034LadyComponents.size()
+        ? &kCEm034LadyComponents[component]
+        : nullptr;
+}
+
+[[nodiscard]] constexpr const LadyComponentContract* lady_component_contract_for_slot(
+    std::uint32_t model_slot) noexcept {
+    for (const auto& contract : kCEm034LadyComponents) {
+        if (contract.model_slot == model_slot) return &contract;
+    }
+    return nullptr;
+}
+
+// Apply an EXE-confirmed CEm034 placement preset to an assembled persistent
+// component. RuntimeBodyRootScaled is represented exactly in the contract and
+// is not approximated as serialized node 13; if the live body-root/scale bridge
+// is unavailable this function returns false instead of guessing.
+bool set_lady_component_preset(Session* session,
+                               LadyComponentBinding& binding,
+                               LadyPlacementPreset preset) noexcept;
+
+// Slot20 may switch between body CCnsMatrix control and the independent
+// em034_013 MotionScript domain. This records the canonical domain transition;
+// the independent MOT controller is a separate playback layer.
+bool set_lady_component_control_domain(Session* session,
+                                       LadyComponentBinding& binding,
+                                       LadyControlDomain domain) noexcept;
+
+// Exact CEm034 component3 active-parent scalar (+0x4400). Re-materializes
+// RuntimeBodyRootScaled when component3 is currently ActiveDeployed.
+bool set_lady_component_runtime_scale(Session* session,
+                                      LadyComponentBinding& binding,
+                                      float uniform_scale) noexcept;
+
+struct LadyRuntimeApplyResult final {
+    bool recognized{};
+    bool fully_materialized{true};
+    bool runtime_side_effect{};
+    std::uint32_t changed_components{};
+    // -1 = no dynamic actor event; otherwise CEm034Shl00..05 index.
+    std::int8_t dynamic_actor{-1};
+};
+
+// Apply the recovered CEm034 state-entry baseline/overrides. The binding state
+// is updated even if an exact preview cannot be materialized (currently only
+// component3 ActiveDeployed's RuntimeBodyRootScaled parent).
+[[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
+    Session* session, std::uint16_t state) noexcept;
+
+struct LadyBodyScriptState final {
+    std::uint16_t state{};
+    // Which em034_012 controller starts this exact action at state entry:
+    // bit0 = lane0 (+0x5070), bit1 = lane1 (+0x5190).
+    std::uint8_t lane_mask{};
+};
+
+// Inverse of the canonical CEm034 entry dispatcher at 0x14016A410.
+// This returns the primary state for a body-script action. Some states 55..82
+// start a second, different action on the other lane; the returned lane mask
+// says which lane(s) execute the requested action.
+[[nodiscard]] constexpr std::optional<LadyBodyScriptState>
+lady_state_for_body_script_action(std::size_t bank, std::size_t action) noexcept {
+    if (bank == 0U) {
+        if (action <= 6U || (action >= 8U && action <= 14U)) {
+            return LadyBodyScriptState{static_cast<std::uint16_t>(action), 0x3U};
+        }
+        return std::nullopt;
+    }
+    if (bank == 1U) {
+        if (action <= 5U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(15U + action), 0x3U};
+        if (action == 7U) return LadyBodyScriptState{22U, 0x3U};
+        if (action >= 9U && action <= 11U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(15U + action), 0x3U};
+        if (action == 20U) return LadyBodyScriptState{35U, 0x3U};
+        if (action >= 23U && action <= 26U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(15U + action), 0x3U};
+        return std::nullopt;
+    }
+    if (bank == 2U && action <= 3U) {
+        return LadyBodyScriptState{
+            static_cast<std::uint16_t>(42U + action), 0x3U};
+    }
+    if (bank == 3U) {
+        if (action == 0U) return LadyBodyScriptState{46U, 0x3U};
+        if (action >= 2U && action <= 8U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), 0x3U};
+        if (action >= 9U && action <= 15U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), 0x2U};
+        if (action >= 16U && action <= 22U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), static_cast<std::uint8_t>(action == 16U ? 0x3U : 0x2U)};
+        if (action >= 23U && action <= 29U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), static_cast<std::uint8_t>(action == 23U ? 0x3U : 0x2U)};
+        if (action >= 30U && action <= 36U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), static_cast<std::uint8_t>(action == 30U ? 0x3U : 0x2U)};
+        return std::nullopt;
+    }
+    if (bank == 4U) {
+        if (action <= 32U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(83U + action), 0x3U};
+        if (action >= 40U && action <= 47U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(83U + action), 0x3U};
+        if (action == 50U || action == 60U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(83U + action), 0x3U};
+    }
+    return std::nullopt;
+}
+
+struct LadyBodyLaneAction final {
+    bool valid{};
+    std::uint8_t bank{};
+    std::uint8_t action{};
+};
+
+struct LadyBodyStateScripts final {
+    std::array<LadyBodyLaneAction, 2> lanes{};
+};
+
+// Forward form of the same 0x14016A410 entry dispatcher. This is required
+// because states55..82 intentionally start different actions on lane0/lane1.
+[[nodiscard]] constexpr LadyBodyStateScripts lady_body_state_scripts(
+    std::uint16_t state) noexcept {
+    LadyBodyStateScripts out{};
+    const auto both = [&out](std::uint8_t bank, std::uint8_t action) constexpr {
+        out.lanes[0] = {true, bank, action};
+        out.lanes[1] = {true, bank, action};
+    };
+    if (state <= 6U || (state >= 8U && state <= 14U)) {
+        both(0U, static_cast<std::uint8_t>(state));
+    } else if (state >= 15U && state <= 20U) {
+        both(1U, static_cast<std::uint8_t>(state - 15U));
+    } else if (state == 22U) {
+        both(1U, 7U);
+    } else if (state >= 24U && state <= 26U) {
+        both(1U, static_cast<std::uint8_t>(state - 15U));
+    } else if (state == 35U) {
+        both(1U, 20U);
+    } else if (state >= 38U && state <= 41U) {
+        both(1U, static_cast<std::uint8_t>(state - 15U));
+    } else if (state >= 42U && state <= 45U) {
+        both(2U, static_cast<std::uint8_t>(state - 42U));
+    } else if (state == 46U) {
+        both(3U, 0U);
+    } else if (state >= 48U && state <= 54U) {
+        both(3U, static_cast<std::uint8_t>(state - 46U));
+    } else if (state >= 55U && state <= 61U) {
+        out.lanes[0] = {true, 0U, 1U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 62U && state <= 68U) {
+        out.lanes[0] = {true, 3U, 16U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 69U && state <= 75U) {
+        out.lanes[0] = {true, 3U, 23U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 76U && state <= 82U) {
+        out.lanes[0] = {true, 3U, 30U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 83U && state <= 115U) {
+        both(4U, static_cast<std::uint8_t>(state - 83U));
+    } else if (state >= 123U && state <= 130U) {
+        both(4U, static_cast<std::uint8_t>(state - 83U));
+    } else if (state == 133U) {
+        both(4U, 50U);
+    } else if (state == 143U) {
+        both(4U, 60U);
+    }
+    return out;
+}
+
+// Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.
+// lane is 0/1 for the two em034_012 controllers; channel is 0..4.
+[[nodiscard]] LadyRuntimeApplyResult apply_lady_signal(
+    Session* session, std::uint16_t state,
+    std::uint8_t lane, std::uint8_t channel, std::uint8_t value) noexcept;
+
+// Canonical MOD/CEm034 local matrix: translation + XYZ Euler using the
+// recovered DMC3 transform-domain composition.
+[[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
+                                         const std::array<float, 3>& rotation_xyz_radians) noexcept;
 
 // Translation plus Rz x Ry x Rx (0x1403304A0 order).
 [[nodiscard]] Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,

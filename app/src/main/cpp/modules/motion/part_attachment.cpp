@@ -603,6 +603,320 @@ Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
     return out;
 }
 
+bool set_lady_component_preset(Session* session,
+                               LadyComponentBinding& binding,
+                               LadyPlacementPreset preset) noexcept {
+    if (session == nullptr || binding.host_part >= session->composite_parts.size() ||
+        binding.part >= session->composite_parts.size()) {
+        return false;
+    }
+    const auto* contract = lady_component_contract(binding.component);
+    if (contract == nullptr || contract->model_slot != binding.model_slot) return false;
+    const auto index = static_cast<std::size_t>(preset);
+    if (index >= contract->presets.size()) return false;
+    const auto& record = contract->presets[index];
+
+    // CEm034 component3/preset1 deliberately bypasses serialized node13 and
+    // points CCnsMatrix at CEm034+0x43C0. Canonical EXE reconstruction:
+    //   +0x43C0 = bodyManager(+0x850)->currentWorld(+0x110)
+    //   effective parent = S(+0x4400) * bodyRoot
+    // Both retail Lady bodies (slots1/32) have node0 identity at rest, so the
+    // same result is materialized as (local * S) * hostRootWorld.
+    if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+        world::Matrix4f local{};
+        local.values =
+            attach_local_matrix(record.translation, record.rotation_xyz_radians).values;
+        auto scale = world::identity_matrix();
+        scale.values[0] = binding.runtime_uniform_scale;
+        scale.values[5] = binding.runtime_uniform_scale;
+        scale.values[10] = binding.runtime_uniform_scale;
+        const auto local_scaled = world::multiply_dmc3_matrices(local, scale);
+        Matrix4 offset;
+        offset.values = local_scaled.values;
+        if (!attach_part_skeleton(
+                session, binding.host_part, binding.part, 0U, false, offset)) {
+            return false;
+        }
+        binding.preset = preset;
+        return true;
+    }
+
+    if (!attach_part_skeleton(
+            session, binding.host_part, binding.part, record.serialized_node,
+            false, attach_local_matrix(record.translation,
+                                       record.rotation_xyz_radians))) {
+        return false;
+    }
+    binding.preset = preset;
+    if (binding.component == 3U && preset == LadyPlacementPreset::BodyStowed) {
+        binding.runtime_uniform_scale = 1.0F;
+    }
+    return true;
+}
+
+bool set_lady_component_control_domain(Session* session,
+                                       LadyComponentBinding& binding,
+                                       LadyControlDomain domain) noexcept {
+    if (session == nullptr || binding.component != 0U ||
+        binding.part >= session->composite_parts.size()) {
+        return false;
+    }
+    // Placement and control are orthogonal in CEm034. Most independent-script
+    // entries use BodyStowed, but states 0x7C/0x7D retain ActiveDeployed while
+    // +0x4020 selects em034_013. Never collapse these into one scalar state.
+    auto& part = session->composite_parts[binding.part];
+    if (domain == LadyControlDomain::IndependentMotionScript) {
+        // Freeze the currently resolved equipment world as the root for its
+        // own 3-node MOT domain. HostJointSkeleton must be disabled, otherwise
+        // the generic motion player correctly treats the part as host-driven
+        // and refuses to animate it independently.
+        if (!part.placement.resolved) return false;
+        part.placement.mode = CompositePlacementMode::HostJoint;
+        binding.control_domain = domain;
+        return true;
+    }
+
+    binding.control_domain = LadyControlDomain::BodyConstraint;
+    // Re-enter the EXE placement helper domain and rebuild the current preset
+    // against the freshly posed Lady body.
+    return set_lady_component_preset(session, binding, binding.preset);
+}
+
+bool set_lady_component_runtime_scale(Session* session,
+                                      LadyComponentBinding& binding,
+                                      float uniform_scale) noexcept {
+    if (session == nullptr || binding.component != 3U ||
+        !std::isfinite(uniform_scale) || uniform_scale < 0.0F) {
+        return false;
+    }
+    binding.runtime_uniform_scale = uniform_scale;
+    if (binding.preset != LadyPlacementPreset::ActiveDeployed) return true;
+    return set_lady_component_preset(
+        session, binding, LadyPlacementPreset::ActiveDeployed);
+}
+
+namespace {
+
+[[nodiscard]] LadyComponentBinding* lady_binding(Session* session,
+                                                 std::uint8_t component) noexcept {
+    if (session == nullptr) return nullptr;
+    for (auto& binding : session->lady_component_bindings) {
+        if (binding.component == component) return &binding;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool apply_lady_preset(Session* session,
+                                     std::uint8_t component,
+                                     LadyPlacementPreset preset,
+                                     LadyRuntimeApplyResult& out) noexcept {
+    auto* binding = lady_binding(session, component);
+    if (binding == nullptr) return false;
+    const bool materialized = set_lady_component_preset(session, *binding, preset);
+    // Runtime state remains known even when the preview lacks the special
+    // RuntimeBodyRootScaled materialization bridge.
+    binding->preset = preset;
+    ++out.changed_components;
+    if (!materialized) out.fully_materialized = false;
+    return true;
+}
+
+void set_lady_domain(Session* session, LadyControlDomain domain,
+                     LadyRuntimeApplyResult& out) noexcept {
+    if (auto* binding = lady_binding(session, 0U); binding != nullptr) {
+        if (set_lady_component_control_domain(session, *binding, domain)) {
+            ++out.changed_components;
+        }
+    }
+}
+
+[[nodiscard]] bool in_range(std::uint16_t v,
+                            std::uint16_t first,
+                            std::uint16_t last) noexcept {
+    return v >= first && v <= last;
+}
+
+void reset_lady_components(Session* session, LadyRuntimeApplyResult& out) noexcept {
+    for (std::uint8_t component = 0U; component < 5U; ++component) {
+        (void)apply_lady_preset(
+            session, component, LadyPlacementPreset::BodyStowed, out);
+    }
+    set_lady_domain(session, LadyControlDomain::BodyConstraint, out);
+}
+
+}  // namespace
+
+LadyRuntimeApplyResult apply_lady_state_entry(Session* session,
+                                              std::uint16_t state) noexcept {
+    LadyRuntimeApplyResult out;
+    if (session == nullptr || session->lady_component_bindings.empty()) {
+        out.fully_materialized = false;
+        return out;
+    }
+
+    const bool group_component1 =
+        state == 0x2EU || in_range(state, 0x30U, 0x52U);
+    const bool group_component0_active =
+        in_range(state, 0x53U, 0x59U) || state == 0x5EU || state == 0x61U;
+    const bool group_component0_independent =
+        in_range(state, 0x5AU, 0x5DU) || in_range(state, 0x64U, 0x73U);
+
+    if (group_component1) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 1U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (group_component0_active) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+        if (state == 0x5EU) out.dynamic_actor = 3;  // immediate CEm034Shl03
+    } else if (group_component0_independent) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (state == 0x5FU || state == 0x62U) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x60U || state == 0x63U) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+        (void)apply_lady_preset(
+            session, 4U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x7BU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (state == 0x7CU || state == 0x7DU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (state == 0x7FU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 1U, LadyPlacementPreset::ActiveDeployed, out);
+        (void)apply_lady_preset(
+            session, 2U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x81U) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        if (auto* binding = lady_binding(session, 3U); binding != nullptr) {
+            binding->runtime_uniform_scale = 1.0F;
+        }
+        (void)apply_lady_preset(
+            session, 3U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x85U || state == 0x8FU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+    }
+    return out;
+}
+
+LadyRuntimeApplyResult apply_lady_signal(Session* session,
+                                        std::uint16_t state,
+                                        std::uint8_t lane,
+                                        std::uint8_t channel,
+                                        std::uint8_t value) noexcept {
+    LadyRuntimeApplyResult out;
+    if (session == nullptr || session->lady_component_bindings.empty() ||
+        lane > 1U || channel > 4U) {
+        if (session == nullptr) out.fully_materialized = false;
+        return out;
+    }
+
+    const auto preset = [&](std::uint8_t component, LadyPlacementPreset p) {
+        out.recognized = true;
+        (void)apply_lady_preset(session, component, p, out);
+    };
+    const auto spawn = [&](std::int8_t actor) {
+        out.recognized = true;
+        out.dynamic_actor = actor;
+    };
+    const auto side_effect = [&]() {
+        out.recognized = true;
+        out.runtime_side_effect = true;
+    };
+
+    if (state == 0x2AU && lane == 0U && channel == 0U) {
+        if (value == 1U) preset(1U, LadyPlacementPreset::ActiveDeployed);
+        else if (value == 2U) preset(1U, LadyPlacementPreset::BodyStowed);
+    } else if (state == 0x2BU && lane == 0U && channel == 0U) {
+        if (value == 1U) preset(4U, LadyPlacementPreset::ActiveDeployed);
+        else if (value == 2U) preset(4U, LadyPlacementPreset::BodyStowed);
+    } else if (state == 0x7BU && lane == 0U && channel == 0U && value == 1U) {
+        preset(0U, LadyPlacementPreset::ActiveDeployed);
+        set_lady_domain(session, LadyControlDomain::BodyConstraint, out);
+    } else if ((state == 0x5CU || state == 0x5DU) &&
+               lane == 0U && channel == 0U && value == 1U) {
+        preset(0U, LadyPlacementPreset::ActiveDeployed);
+        set_lady_domain(session, LadyControlDomain::BodyConstraint, out);
+    } else if ((state == 0x59U || state == 0x61U) &&
+               lane == 0U && channel == 0U && value == 1U) {
+        preset(0U, LadyPlacementPreset::BodyStowed);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (in_range(state, 0x56U, 0x58U) &&
+               lane == 1U && channel == 0U && value == 1U) {
+        spawn(2);  // CEm034Shl02
+    } else if (((in_range(state, 0x34U, 0x36U) ||
+                 in_range(state, 0x3BU, 0x3DU) ||
+                 in_range(state, 0x42U, 0x44U) ||
+                 in_range(state, 0x49U, 0x4BU) ||
+                 in_range(state, 0x50U, 0x52U)) &&
+                lane == 1U && channel == 0U && value == 1U) ||
+               (state == 0x7FU && lane == 1U && channel == 0U && value == 1U)) {
+        spawn(0);  // CEm034Shl00
+    } else if (((in_range(state, 0x53U, 0x55U) ||
+                 state == 0x5AU || state == 0x5BU || state == 0x5EU ||
+                 in_range(state, 0x64U, 0x73U)) &&
+                lane == 1U && channel == 0U && value == 1U)) {
+        spawn(1);  // CEm034Shl01
+    } else if (state == 0x81U && lane == 1U) {
+        if (channel == 0U && value == 1U) {
+            spawn(5);
+        } else if (channel == 1U) {
+            // 0x140169EC2 writes 1.0 every state81 update; 0x140169EE0
+            // promotes it to 1.5 only while channel1 == 1.
+            out.recognized = true;
+            if (auto* binding = lady_binding(session, 3U); binding != nullptr) {
+                const float scale = value == 1U ? 1.5F : 1.0F;
+                if (!set_lady_component_runtime_scale(session, *binding, scale)) {
+                    out.fully_materialized = false;
+                }
+                ++out.changed_components;
+            }
+        } else if (channel == 2U && value == 1U) {
+            preset(3U, LadyPlacementPreset::BodyStowed);
+        }
+    } else if (state == 0x85U && lane == 1U) {
+        if (channel == 1U && value == 1U) {
+            preset(4U, LadyPlacementPreset::ActiveDeployed);
+        } else if (channel == 1U && value == 2U) {
+            preset(4U, LadyPlacementPreset::BodyStowed);
+        } else if (channel == 0U && (value == 1U || value == 2U)) {
+            side_effect();
+        }
+    } else if (state == 0x8FU && lane == 1U &&
+               channel == 0U && value == 1U) {
+        spawn(4);  // CEm034Shl04
+    } else if ((state == 0x60U || state == 0x63U) &&
+               lane == 1U && (channel == 0U || channel == 1U) &&
+               value == 1U) {
+        side_effect();
+    } else if (state == 0x7FU && lane == 1U && channel == 1U) {
+        side_effect();
+    }
+
+    return out;
+}
+
 const WeaponStateRecord* weapon_state_record(std::string_view class_name,
                                              std::uint8_t state) noexcept {
     if (state >= 24U) return nullptr;
@@ -677,6 +991,7 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     if (!out.empty()) return out;
     const auto slash = archive_name.find_last_of("/\\");
     if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+
     constexpr std::string_view nevan = "em028.pac";
     bool is_nevan = archive_name.size() == nevan.size();
     for (std::size_t i = 0U; is_nevan && i < nevan.size(); ++i) {
@@ -692,6 +1007,82 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         ArchiveVariant swarm;
         swarm.label = "Bats out";
         out.push_back(swarm);
+        return out;
+    }
+
+    // em034.pac (Lady) contains two complete appearance sets plus a separate
+    // group of equipment/weapon MODs. Corpus evidence from the retail PAC:
+    //   slots 1 + 17  -> MOD header +0x14 = 0x00000384
+    //   slots 32 + 34 -> MOD header +0x14 = 0x0000063D
+    //   slots 20..26 + 30 -> +0x14 = 0x000AF258 (equipment group)
+    // Both appearance pairs also share the same transform/texture-domain
+    // shape (23+9 nodes, two texture slots). Keeping all twelve MODs in one
+    // composite is therefore structurally wrong and visibly overlays both
+    // costumes while dropping equipment at source origin.
+    constexpr std::string_view lady = "em034.pac";
+    bool is_lady = archive_name.size() == lady.size();
+    for (std::size_t i = 0U; is_lady && i < lady.size(); ++i) {
+        is_lady = std::tolower(static_cast<unsigned char>(archive_name[i])) == lady[i];
+    }
+    if (is_lady) {
+        // CEm034 runtime ownership is now EXE-confirmed:
+        //   persistent components: slots20..24, owned for the actor lifetime;
+        //   dynamic CShell resources: slot25 (Shl02), slots26+30 (Shl03).
+        // Dynamic resources remain PAC children and are not overlaid in the
+        // base Lady appearance.
+        const auto bind_core = [](ArchiveVariant& variant,
+                                  std::uint32_t body_slot,
+                                  std::uint32_t hair_slot) {
+            variant.part_attachments[0] =
+                {body_slot, hair_slot, 5U, false, true};
+            for (std::size_t i = 0U; i < kCEm034LadyComponents.size(); ++i) {
+                const auto& component = kCEm034LadyComponents[i];
+                const auto& stowed =
+                    component.presets[static_cast<std::size_t>(
+                        LadyPlacementPreset::BodyStowed)];
+                variant.part_attachments[i + 1U] = {
+                    body_slot,
+                    component.model_slot,
+                    stowed.serialized_node,
+                    false,
+                    true,
+                    true,
+                    stowed.translation,
+                    stowed.rotation_xyz_radians,
+                    true,
+                };
+            }
+            variant.part_attachment_count =
+                1U + static_cast<std::uint32_t>(kCEm034LadyComponents.size());
+        };
+
+        ArchiveVariant first;
+        first.label = "Lady · costume 1";
+        first.include_top_level_mod_slots =
+            {1U, 17U, 20U, 21U, 22U, 23U, 24U};
+        first.include_top_level_mod_count = 7U;
+        first.texture_overrides = {{
+            {1U, 0U}, {17U, 0U},
+            {20U, 19U}, {21U, 19U}, {22U, 19U}, {23U, 19U},
+            {24U, 19U},
+        }};
+        first.texture_override_count = 7U;
+        bind_core(first, 1U, 17U);
+        out.push_back(first);
+
+        ArchiveVariant second;
+        second.label = "Lady · costume 2";
+        second.include_top_level_mod_slots =
+            {32U, 34U, 20U, 21U, 22U, 23U, 24U};
+        second.include_top_level_mod_count = 7U;
+        second.texture_overrides = {{
+            {32U, 31U}, {34U, 31U},
+            {20U, 33U}, {21U, 33U}, {22U, 33U}, {23U, 33U},
+            {24U, 33U},
+        }};
+        second.texture_override_count = 7U;
+        bind_core(second, 32U, 34U);
+        out.push_back(second);
     }
     return out;
 }
