@@ -127,6 +127,8 @@ public final class MainActivity extends Activity {
     private long pendingExportSession;
     private int pendingPtxPart = -1;
     private int selectedMotionIndex = -1;
+    // -1 = raw MOT playback; >=0 = MotionScript button/controller index.
+    private int selectedScriptIndex = -1;
     private LinearLayout headerBar;
     // Hidden by the top-edge swipe: bars and the visibility each had.
     private boolean uiHidden;
@@ -1127,9 +1129,15 @@ public final class MainActivity extends Activity {
         ArrayList<MotionEntry> motions = motionEntries();
         if (motions.isEmpty() || !isRootScene()) {
             motionScroll.setVisibility(View.GONE);
-            if (motions.isEmpty()) selectedMotionIndex = -1;
+            if (motions.isEmpty()) {
+                selectedMotionIndex = -1;
+                selectedScriptIndex = -1;
+            }
             return;
         }
+
+        final int scriptCount = session == 0
+                ? 0 : Math.max(0, NativeBridge.motionScriptCount(session));
         int previousPack = Integer.MIN_VALUE;
         for (int index = 0; index < motions.size(); ++index) {
             final int motionIndex = index;
@@ -1139,14 +1147,55 @@ public final class MainActivity extends Activity {
             }
             previousPack = entry.packSlot;
 
-            final boolean active = index == selectedMotionIndex;
-            Button button = makeSquareButton("", "Play animation " + entry.name, 11f);
-            button.setText(motionCardLabel(entry.name));
-            button.setActivated(active);
-            button.setAlpha(active ? 1.0f : 0.72f);
-            button.setOnClickListener(v -> selectMotion(motionIndex));
-            addToolButton(motionBar, button);
-            motionCards.add(button);
+            // One visual row per MOT:
+            // [Script Play ...] [raw MOT].
+            // Script buttons stay visible even when this script cannot address
+            // the MOT, so the PAC's controller count is always explicit.
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+
+            if (entry.libraryIndex >= 0) {
+                for (int script = 0; script < scriptCount; ++script) {
+                    final int scriptIndex = script;
+                    final int slot = NativeBridge.motionScriptSlot(session, scriptIndex);
+                    final boolean available = NativeBridge.motionScriptCanPlayMotion(
+                            session, scriptIndex, entry.libraryIndex);
+                    final boolean activeScript =
+                            index == selectedMotionIndex &&
+                            scriptIndex == selectedScriptIndex;
+
+                    Button scriptButton = makeSquareButton(
+                            "▶\nS" + (slot >= 0 ? Integer.toString(slot) : "?"),
+                            "Play " + entry.name + " through MotionScript " +
+                                    (slot >= 0 ? "slot " + slot : Integer.toString(scriptIndex)),
+                            9f);
+                    scriptButton.setEnabled(available);
+                    scriptButton.setActivated(activeScript);
+                    scriptButton.setAlpha(
+                            activeScript ? 1.0f : (available ? 0.78f : 0.30f));
+                    scriptButton.setOnClickListener(
+                            v -> selectMotionScript(motionIndex, scriptIndex));
+                    addToolButton(row, scriptButton);
+                }
+            }
+
+            final boolean activeMot =
+                    index == selectedMotionIndex && selectedScriptIndex < 0;
+            Button motButton = makeSquareButton(
+                    "", "Play raw MOT " + entry.name, 11f);
+            motButton.setText(motionCardLabel(entry.name));
+            motButton.setActivated(activeMot);
+            motButton.setAlpha(activeMot ? 1.0f : 0.72f);
+            motButton.setOnClickListener(v -> selectMotion(motionIndex));
+            addToolButton(row, motButton);
+
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP));
+            rowParams.setMarginStart(dp(1));
+            rowParams.setMarginEnd(dp(1));
+            motionBar.addView(row, rowParams);
+            motionCards.add(row);
         }
         motionScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
     }
@@ -1192,11 +1241,12 @@ public final class MainActivity extends Activity {
         return result;
     }
 
-    // Tap a card: bind + play. Tap the playing card again: pause/resume.
+    // Raw MOT playback: no MotionScript state/channels are executed.
     private void selectMotion(int index) {
         ArrayList<MotionEntry> motions = motionEntries();
         if (session == 0 || index < 0 || index >= motions.size()) return;
-        if (index == selectedMotionIndex && NativeBridge.hasMotion(session)) {
+        if (index == selectedMotionIndex && selectedScriptIndex < 0 &&
+                NativeBridge.hasMotion(session)) {
             if (renderView.isMotionPlaying()) {
                 renderView.pauseMotion();
             } else {
@@ -1221,13 +1271,63 @@ public final class MainActivity extends Activity {
 
         final boolean bound = NativeBridge.hasMotion(session);
         selectedMotionIndex = bound ? index : -1;
+        selectedScriptIndex = -1;
         refreshMotionStrip();
         if (bound) renderView.startMotion();
         else renderView.renderNow();
-        notice(bound ? entry.name + " ▶" : (report == null ? "Motion rejected" : report), Toast.LENGTH_LONG);
+        notice(bound ? entry.name + " · raw MOT ▶"
+                     : (report == null ? "Motion rejected" : report),
+                Toast.LENGTH_LONG);
         rebuildInfo(titleView.getText().toString());
         if (report != null && !report.isEmpty()) {
-            setInfo(infoText + "\nMOTION\n" + report + "\n");
+            setInfo(infoText + "\nMOTION · RAW MOT\n" + report + "\n");
+        }
+    }
+
+    // MotionScript playback: script action + MOT + class runtime bridge.
+    private void selectMotionScript(int index, int scriptIndex) {
+        ArrayList<MotionEntry> motions = motionEntries();
+        if (session == 0 || index < 0 || index >= motions.size() ||
+                scriptIndex < 0) {
+            return;
+        }
+        final MotionEntry entry = motions.get(index);
+        if (entry.libraryIndex < 0 ||
+                !NativeBridge.motionScriptCanPlayMotion(
+                        session, scriptIndex, entry.libraryIndex)) {
+            return;
+        }
+
+        if (index == selectedMotionIndex && scriptIndex == selectedScriptIndex &&
+                NativeBridge.hasMotion(session)) {
+            if (renderView.isMotionPlaying()) {
+                renderView.pauseMotion();
+            } else {
+                renderView.startMotion();
+            }
+            return;
+        }
+
+        renderView.pauseMotion();
+        final int slot = NativeBridge.motionScriptSlot(session, scriptIndex);
+        final String report = NativeBridge.loadLibraryMotionScript(
+                session, scriptIndex, entry.libraryIndex);
+        final boolean bound = NativeBridge.hasMotion(session);
+        selectedMotionIndex = bound ? index : -1;
+        selectedScriptIndex = bound ? scriptIndex : -1;
+        refreshMotionStrip();
+        if (bound) renderView.startMotion();
+        else renderView.renderNow();
+
+        final String scriptName =
+                slot >= 0 ? "S" + slot : "Script " + scriptIndex;
+        notice(bound ? scriptName + " · " + entry.name + " ▶"
+                     : (report == null ? "MotionScript rejected" : report),
+                Toast.LENGTH_LONG);
+        rebuildInfo(titleView.getText().toString());
+        if (report != null && !report.isEmpty()) {
+            setInfo(infoText + "\nMOTION SCRIPT · " + scriptName +
+                    "\n" + report + "\n");
         }
     }
 
@@ -1843,6 +1943,7 @@ public final class MainActivity extends Activity {
         sharedModelPtxUri = null;
         stagedAssets.clear();
         selectedMotionIndex = -1;
+        selectedScriptIndex = -1;
         assembledPacUri = null;
         addedPacUris.clear();
     }
@@ -1888,6 +1989,7 @@ public final class MainActivity extends Activity {
     private void activateSession(long handle, String name) {
         session = handle;
         selectedMotionIndex = -1;
+        selectedScriptIndex = -1;
         titleView.setText(name);
         renderView.setSession(session);
         refreshBlackWidowState();
