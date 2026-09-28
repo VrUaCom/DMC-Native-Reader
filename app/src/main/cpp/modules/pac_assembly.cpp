@@ -560,9 +560,9 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                 }
             }
-            // PAC appearance companion attachments that are supported by
-            // structural/corpus evidence but are intentionally kept separate
-            // from EXE-confirmed EnemyVariant bindings.
+            // PAC appearance companion attachments. CEm034 core equipment
+            // now carries exact EXE-confirmed host joints and local records;
+            // hair remains structural/corpus-confirmed.
             if (position != nullptr && position->part_attachment_count != 0U) {
                 for (std::uint32_t a = 0U;
                      a < position->part_attachment_count &&
@@ -577,27 +577,60 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         if (*entry.slot == attach.host_model_slot) host = part;
                         if (*entry.slot == attach.child_model_slot) child = part;
                     }
+                    const auto offset = attach.explicit_offset
+                        ? motion::attach_local_matrix(
+                              attach.translation, attach.rotation_xyz_radians)
+                        : Matrix4{};
                     if (host && child &&
                         motion::attach_part_skeleton(
                             assembled.get(), *host, *child, attach.host_joint,
-                            attach.root_local_identity)) {
+                            attach.root_local_identity, offset)) {
                         ++report.attached_parts;
+                        const char* level = attach.exe_confirmed
+                            ? " exe slot"
+                            : (attach.structural_confirmed
+                                   ? " structural slot"
+                                   : " candidate slot");
                         report.detail_attachments +=
-                            (attach.structural_confirmed ? " structural slot" : " candidate slot") +
+                            std::string{level} +
                             std::to_string(attach.child_model_slot) +
                             "->slot" + std::to_string(attach.host_model_slot) +
                             "/joint" + std::to_string(attach.host_joint);
+
+                        const auto evidence = attach.exe_confirmed
+                            ? EvidenceLevel::ExeConfirmed
+                            : (attach.structural_confirmed
+                                   ? EvidenceLevel::StructuralConfirmed
+                                   : EvidenceLevel::Recognized);
+                        const char* tag = attach.exe_confirmed
+                            ? " [EXE_CONFIRMED]"
+                            : (attach.structural_confirmed
+                                   ? " [STRUCTURAL_CONFIRMED]"
+                                   : " [SEMANTIC_CANDIDATE]");
                         assembled->inspection.root.properties.push_back({
                             "AppearanceAttachment",
                             "MOD slot" + std::to_string(attach.child_model_slot) +
                                 " -> MOD slot" + std::to_string(attach.host_model_slot) +
                                 " / body joint " + std::to_string(attach.host_joint) +
-                                (attach.structural_confirmed
-                                     ? " [STRUCTURAL_CONFIRMED]"
-                                     : " [SEMANTIC_CANDIDATE]"),
-                            attach.structural_confirmed
-                                ? EvidenceLevel::StructuralConfirmed
-                                : EvidenceLevel::Recognized});
+                                (attach.explicit_offset ? " / canonical local offset" : "") +
+                                tag,
+                            evidence});
+
+                        if (attach.exe_confirmed) {
+                            if (const auto* contract =
+                                    motion::lady_component_contract_for_slot(
+                                        attach.child_model_slot);
+                                contract != nullptr) {
+                                assembled->lady_component_bindings.push_back({
+                                    *host,
+                                    *child,
+                                    contract->component,
+                                    contract->model_slot,
+                                    motion::LadyPlacementPreset::BodyStowed,
+                                    motion::LadyControlDomain::BodyConstraint,
+                                });
+                            }
+                        }
                     }
                 }
                 if (archive_name.find("em034") != std::string_view::npos) {
@@ -605,10 +638,18 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         "em034 hair placement (slot 17/34 -> body joint 5) is "
                         "STRUCTURAL_CONFIRMED from retail UV, MOD bounds and pl002_01.clt; "
                         "exact CEm034 class-init code is not yet EXE_CONFIRMED.");
-                    assembled->non_canonical_notes.push_back(
-                        "em034 Kalina Ann source-space assembly (slots 20..26/30) is "
-                        "preserved and placed on body joint 9 as a SEMANTIC_CANDIDATE; "
-                        "the exact runtime hand selector/offset still requires CEm034 EXE reverse.");
+                    assembled->inspection.root.properties.push_back({
+                        "LadyDynamicActors",
+                        "slots25/26/30 remain PAC children: slot25 is CEm034Shl02; "
+                        "slots26+30 are CEm034Shl03. They are spawned runtime actors, "
+                        "not persistent body attachments.",
+                        EvidenceLevel::ExeAndCorpusConfirmed});
+                    assembled->inspection.root.properties.push_back({
+                        "LadyComponentRuntime",
+                        "slots20..24 default to BodyStowed; preset1 is ActiveDeployed. "
+                        "component3 preset1 uses RuntimeBodyRootScaled "
+                        "(CEm034+0x43C0, scale source +0x4400), not body joint13.",
+                        EvidenceLevel::ExeConfirmed});
                 }
             }
             // Chains (.clt text slots): player coat slot 12 <- slot 13, enemy
