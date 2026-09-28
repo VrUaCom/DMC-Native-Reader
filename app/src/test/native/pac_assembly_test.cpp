@@ -369,18 +369,22 @@ int main() {
         assert(part.name.find("slot_0030.mod") == std::string::npos);
     }
 
-    // Exact preset switching works for body-joint components. Component3
-    // active mode uses CEm034+0x43C0 and must refuse a fake joint13 fallback.
+    // Exact preset switching works for body-joint components and for
+    // component3's RuntimeBodyRootScaled parent. The latter materializes on
+    // body root node0 and never uses the raw serialized node13 as its parent.
     assert(dmcresource::motion::set_lady_component_preset(
         lady_first.get(), lady_first->lady_component_bindings[0],
         dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
     assert(lady_first->composite_parts[
         lady_first->lady_component_bindings[0].part].placement.attachment_selector == 9U);
-    assert(!dmcresource::motion::set_lady_component_preset(
+    assert(dmcresource::motion::set_lady_component_preset(
         lady_first.get(), lady_first->lady_component_bindings[3],
         dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
     assert(lady_first->lady_component_bindings[3].preset ==
            dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+    assert(lady_first->composite_parts[
+        lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+    assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
 
     // State-entry and signal bridge regressions from the canonical CEm034
     // dispatcher. These specifically guard the old single-joint/single-state
@@ -401,10 +405,23 @@ int main() {
     {
         const auto entry = dmcresource::motion::apply_lady_state_entry(
             lady_first.get(), 0x81U);
-        assert(entry.recognized);
-        assert(!entry.fully_materialized);  // CEm034+0x43C0, never fake joint13.
+        assert(entry.recognized && entry.fully_materialized);
         assert(lady_first->lady_component_bindings[3].preset ==
                dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
+
+        const auto enlarge = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x81U, 1U, 1U, 1U);
+        assert(enlarge.recognized && enlarge.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.5F);
+        assert(lady_first->composite_parts[
+            lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+
+        const auto normalize = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x81U, 1U, 1U, 0U);
+        assert(normalize.recognized && normalize.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
+
         const auto restore = dmcresource::motion::apply_lady_signal(
             lady_first.get(), 0x81U, 1U, 2U, 1U);
         assert(restore.recognized && restore.fully_materialized);
