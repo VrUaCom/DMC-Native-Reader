@@ -7,13 +7,16 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/inspection_format.h"
 
+#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -185,6 +188,47 @@ std::vector<std::uint8_t> make_scm() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_hits() {
+    // One valid HITS cell and one triangle-plane record.  The fixture checks
+    // the environment-collision boundary without assigning surface semantics
+    // to raw flags.
+    std::vector<std::uint8_t> bytes(0x88U, 0U);
+    bytes[0] = 'H'; bytes[1] = 'I'; bytes[2] = 'T'; bytes[3] = 'S';
+    put_u32(bytes, 0x04U, 0x88U);
+    put_f32(bytes, 0x08U, 0.0F);   put_f32(bytes, 0x0CU, 0.0F);   put_f32(bytes, 0x10U, 0.0F);
+    put_f32(bytes, 0x14U, 100.0F); put_f32(bytes, 0x18U, 100.0F); put_f32(bytes, 0x1CU, 100.0F);
+    put_f32(bytes, 0x20U, 100.0F); put_f32(bytes, 0x24U, 100.0F); put_f32(bytes, 0x28U, 100.0F);
+    put_u32(bytes, 0x2CU, 1U); put_u32(bytes, 0x30U, 1U); put_u32(bytes, 0x34U, 1U);
+    put_u32(bytes, 0x38U, 1U); put_u32(bytes, 0x3CU, 0x3CU); put_u32(bytes, 0x40U, 0x48U);
+    put_u32(bytes, 0x44U, 0x40U);  // cell list at file offset 0x48
+    put_u32(bytes, 0x48U, 0U);      // triangle byte offset 0
+    put_u32(bytes, 0x4CU, 0xFFFFFFFFU);
+    put_u32(bytes, 0x50U, 0x12345678U);
+    put_f32(bytes, 0x54U, 0.0F);  put_f32(bytes, 0x58U, 0.0F);  put_f32(bytes, 0x5CU, 0.0F);
+    put_f32(bytes, 0x60U, 10.0F); put_f32(bytes, 0x64U, 0.0F);  put_f32(bytes, 0x68U, 0.0F);
+    put_f32(bytes, 0x6CU, 0.0F);  put_f32(bytes, 0x70U, 0.0F);  put_f32(bytes, 0x74U, 10.0F);
+    put_f32(bytes, 0x78U, 0.0F);  put_f32(bytes, 0x7CU, 1.0F);  put_f32(bytes, 0x80U, 0.0F);
+    put_f32(bytes, 0x84U, 0.0F);
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_stage_pac(const std::vector<std::uint8_t>& scm,
+                                         const std::vector<std::uint8_t>& hits) {
+    // PAC offsets are relative physical slot starts.  Keeping the HITS in a
+    // separate slot exercises the same provenance path as a real stage PAC.
+    constexpr std::size_t scm_offset = 0x10U;
+    constexpr std::size_t hits_offset = 0x1C0U;
+    std::vector<std::uint8_t> bytes(hits_offset + hits.size(), 0U);
+    bytes[0] = 'P'; bytes[1] = 'A'; bytes[2] = 'C'; bytes[3] = 0U;
+    put_u32(bytes, 0x04U, 2U);
+    put_u32(bytes, 0x08U, static_cast<std::uint32_t>(scm_offset));
+    put_u32(bytes, 0x0CU, static_cast<std::uint32_t>(hits_offset));
+    assert(scm.size() == hits_offset - scm_offset);
+    std::copy(scm.begin(), scm.end(), bytes.begin() + static_cast<std::ptrdiff_t>(scm_offset));
+    std::copy(hits.begin(), hits.end(), bytes.begin() + static_cast<std::ptrdiff_t>(hits_offset));
+    return bytes;
+}
+
 bool trace_contains(const dmcresource::PipelineResult& result,
                     std::string_view id) {
     for (const auto& module : result.modules) {
@@ -274,6 +318,20 @@ int main() {
     assert(has_capability(mod_result.capabilities,
                           ResourceCapability::UvCoordinates));
 
+    const auto hits = make_hits();
+    const auto hits_result = run_decode_pipeline(
+        "stage.hits", hits.data(), hits.size());
+    assert(hits_result.accepted && !hits_result.renderable);
+    assert(hits_result.probe.format == Format::Hits);
+    assert(hits_result.inspection.format == "HITS");
+    assert(has_capability(hits_result.capabilities, ResourceCapability::Collision));
+    const auto collision = dmcresource::environment_collision::parse(
+        "slot_0003.hits", 3U,
+        std::span<const std::uint8_t>{hits.data(), hits.size()});
+    assert(collision && collision->resource_slot == 3U && collision->triangles.size() == 1U);
+    assert(collision->cell_reference_count == 1U);
+    assert(dmcresource::environment_collision::debug_lines(*collision).size() == 6U);
+
     // Both canonical adapters must preserve slots through render materialization
     // and expose the native companion action (including MOD's nonzero slot 5).
     for (const auto* result : {&scm_result, &mod_result}) {
@@ -303,6 +361,13 @@ int main() {
         const auto built = room::build_room("sample.scm", scm.data(), scm.size());
         assert(built && built->pieces == 1U && built->mesh.indices.size() == 3U);
         assert(built->triangle_texture_slots.size() == 1U && !built->spots.empty());
+        const auto stage_pac = make_stage_pac(scm, hits);
+        const auto built_stage = room::build_room("stage.pac", stage_pac.data(), stage_pac.size());
+        assert(built_stage && built_stage->pieces == 1U);
+        assert(built_stage->collision_sources.size() == 1U);
+        assert(built_stage->collision_sources[0].resource_slot == 1U);
+        assert(built_stage->collision_sources[0].triangles.size() == 1U);
+        assert(built_stage->collision_lines.size() == 6U);
         const auto stage = dmcresource::open_session("sample.scm", scm.data(), scm.size());
         const auto model = dmcresource::open_session("sample.mod", mod.data(), mod.size());
         assert(stage && room::is_stage_session(*stage) && model && !room::is_stage_session(*model));

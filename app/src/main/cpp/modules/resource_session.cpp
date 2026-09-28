@@ -11,8 +11,10 @@
 #include "dmcresource/format_views.h"
 #include "dmcresource/neutral_texture.h"
 #include "dmcresource/raster_card.h"
+#include "dmcresource/matrix_ops.h"
 
 #include <span>
+#include <array>
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
@@ -721,11 +723,247 @@ struct PreparedView final {
     Mesh presentation_mesh;
     std::vector<std::uint32_t> presentation_texture_slots;
     std::vector<ImagePreview> presentation_textures;
+    std::vector<ViewState::EffectSprite> effect_sprites;
     bool dynamic_presentation{};
     std::vector<Vec3> floor_shadow;
     std::vector<Vec3> collision_lines;
+    std::vector<Vec3> room_collision_lines;
     std::shared_ptr<const stage_room::Room> room;
 };
+
+[[nodiscard]] const Session::EffectBank* find_effect_bank(
+    const Session& session, std::uint32_t slot) noexcept {
+    const auto it = std::find_if(
+        session.effect_banks.begin(), session.effect_banks.end(),
+        [slot](const Session::EffectBank& bank) {
+            return bank.resource_slot == slot;
+        });
+    return it == session.effect_banks.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] const effect_bank::Record* find_effect_record(
+    const Session& session, char kind, std::uint16_t id,
+    std::uint32_t slot) noexcept {
+    const auto* bank = find_effect_bank(session, slot);
+    if (bank == nullptr) return nullptr;
+    const auto it = std::find_if(
+        bank->bank.records.begin(), bank->bank.records.end(),
+        [kind, id](const effect_bank::Record& record) {
+            return record.kind == kind && record.id == id;
+        });
+    return it == bank->bank.records.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] const ImagePreview* find_effect_texture(
+    const Session& session, std::uint32_t slot, std::uint16_t id) noexcept {
+    const auto* bank = find_effect_bank(session, slot);
+    if (bank == nullptr) return nullptr;
+    const auto it = std::find_if(
+        bank->textures.begin(), bank->textures.end(),
+        [id](const Session::EffectTexture& texture) { return texture.id == id; });
+    return it == bank->textures.end() ? nullptr : &it->image;
+}
+
+[[nodiscard]] Matrix4 effect_child_matrix(
+    const motion::EffectChildRef& child) noexcept {
+    constexpr float kDegreesToRadians = 0.017453292519943295769F;
+    const std::array<float, 3> translation = child.translation;
+    const std::array<float, 3> rotation = {
+        child.rotation_degrees[0] * kDegreesToRadians,
+        child.rotation_degrees[1] * kDegreesToRadians,
+        child.rotation_degrees[2] * kDegreesToRadians};
+    Matrix4 out = motion::attach_local_matrix_zyx(translation, rotation);
+    // The V registrar stores a scale triplet. DMC3's row-vector transform
+    // domain applies those factors to the three local basis rows.
+    for (std::size_t component = 0U; component < 3U; ++component) {
+        const float scale = child.scale[component];
+        if (!std::isfinite(scale)) return Matrix4{};
+        for (std::size_t column = 0U; column < 3U; ++column) {
+            out.values[component * 4U + column] *= scale;
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] bool compose_effect_world(
+    const Matrix4& parent, const motion::EffectChildRef& child,
+    Matrix4* out) noexcept {
+    if (out == nullptr) return false;
+    const auto local = effect_child_matrix(child);
+    // Same local*parent order as the canonical MOD world transform builder.
+    return matrix_ops::multiply(local, parent, out);
+}
+
+[[nodiscard]] const effect_bank::Record* find_animation_record(
+    const Session& session, std::uint32_t slot, std::uint16_t id) noexcept {
+    return find_effect_record(session, 'A', id, slot);
+}
+
+[[nodiscard]] char effect_kind_for_dispatch(
+    std::uint8_t dispatch_kind) noexcept {
+    switch (dispatch_kind) {
+    case 0U: return 'P';
+    case 1U: return 'E';
+    case 2U: return 'G';
+    case 3U: return 'V';
+    default: return '\0';
+    }
+}
+
+[[nodiscard]] bool append_effect_sprite(
+    const Session& session, const motion::EffectChildRef& child,
+    const Matrix4& world,
+    std::vector<ViewState::EffectSprite>* out) {
+    if (out == nullptr || child.effect_kind != 'E') return true;
+    const auto* record = find_effect_record(
+        session, 'E', child.effect_id, child.resource_slot);
+    if (record == nullptr) return false;
+    const auto descriptor = effect_bank::effect_descriptor(*record);
+    if (!descriptor.has_value()) return false;
+    // The portable presentation boundary is closed for the EXE mode paths
+    // whose resource rectangle/atlas contract is decoded. Mode 5 intentionally
+    // stays undecoded; it has no safe texture fallback.
+    if (descriptor->mode < 1U || descriptor->mode > 3U) return true;
+
+    effect_bank::SpriteFrame frame = descriptor->rectangle;
+    std::uint16_t texture_id = descriptor->texture;
+    if (descriptor->animation_gate == 1U && descriptor->animation != 0xFFFFU) {
+        const auto* animation_record = find_animation_record(
+            session, child.resource_slot, descriptor->animation);
+        if (animation_record != nullptr) {
+            const auto animation = effect_bank::sprite_animation(*animation_record);
+            if (animation.has_value() && !animation->frames.empty()) {
+                texture_id = animation->texture;
+                // A's local animation clock is advanced by the E runtime,
+                // not by MotionScript/actor age. Until that EXE clock is
+                // bridged, retain the exact A/T dependency and show its
+                // canonical first atlas frame instead of guessing a frame
+                // rate or treating script frames as effect ticks.
+                frame = animation->frames.front();
+            }
+        }
+    }
+    if (frame.w == 0U || frame.h == 0U) return true;
+    const auto* texture = find_effect_texture(
+        session, child.resource_slot, texture_id);
+    if (texture == nullptr || !texture->available()) return false;
+    const float inv_w = 1.0F / static_cast<float>(texture->width);
+    const float inv_h = 1.0F / static_cast<float>(texture->height);
+    out->push_back({
+        world,
+        texture,
+        static_cast<float>(frame.w),
+        static_cast<float>(frame.h),
+        static_cast<float>(frame.x) * inv_w,
+        static_cast<float>(frame.y) * inv_h,
+        static_cast<float>(frame.x + frame.w) * inv_w,
+        static_cast<float>(frame.y + frame.h) * inv_h});
+    return true;
+}
+
+bool collect_effect_children(
+    const Session& session, const motion::RuntimeEffectInstance& instance,
+    const motion::EffectChildRef& child, const Matrix4& parent_world,
+    std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
+    if (out == nullptr || depth > 16U) return false;
+    // The signed V threshold is owned by the V-local update clock. The EXE
+    // reverse has not proven that clock equal to MotionScript frame/actor age,
+    // so only the canonical entry threshold (zero) is presentable here. A
+    // non-zero child remains in the runtime/resource graph until the generic V
+    // update bridge is closed; converting it to a guessed script-frame timer
+    // would create a false E/G/P event.
+    if (child.activation_offset > 0) {
+        return true;
+    }
+    Matrix4 world;
+    if (!compose_effect_world(parent_world, child, &world)) return false;
+    if (child.effect_kind == 'E') {
+        return append_effect_sprite(session, child, world, out);
+    }
+    if (child.effect_kind != 'V') {
+        // P/G are retained as exact dependencies. Their render subtype is not
+        // decoded, so they are deliberately not replaced by a guessed sprite.
+        return true;
+    }
+    // Profile bindings may already carry the reverse-confirmed graph (Lady
+    // currently does). Generic profiles are also allowed to provide only the
+    // V root: in that case decode the exact child dispatch table from the
+    // retained FXBANK record. No semantic name or guessed child is introduced.
+    std::vector<motion::EffectChildRef> decoded_children;
+    std::span<const motion::EffectChildRef> children = child.children;
+    if (children.empty()) {
+        const auto* record = find_effect_record(
+            session, 'V', child.effect_id, child.resource_slot);
+        const auto composite = record == nullptr
+            ? std::optional<effect_bank::CompositeRecord>{}
+            : effect_bank::composite_record(*record);
+        if (composite.has_value()) {
+            decoded_children.reserve(composite->entries.size());
+            for (const auto& entry : composite->entries) {
+                const char kind = effect_kind_for_dispatch(entry.dispatch_kind);
+                if (kind == '\0') return false;
+                motion::EffectChildRef decoded;
+                decoded.effect_kind = kind;
+                decoded.effect_id = entry.id;
+                decoded.resource_slot = child.resource_slot;
+                decoded.dispatch_kind = entry.dispatch_kind;
+                decoded.translation = entry.translation;
+                decoded.rotation_degrees = entry.rotation_degrees;
+                decoded.scale = entry.scale;
+                decoded.evidence = child.evidence;
+                decoded.activation_offset = entry.activation_offset;
+                decoded_children.push_back(decoded);
+            }
+            children = decoded_children;
+        }
+    }
+    for (const auto& nested : children) {
+        if (!collect_effect_children(session, instance, nested, world, out, depth + 1U)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool build_effect_presentation(
+    const Session& session, PreparedView* out) {
+    if (out == nullptr || session.effect_runtime == nullptr ||
+        session.effect_banks.empty()) return false;
+    try {
+        for (const auto& instance : session.effect_runtime->presentation_instances()) {
+            const auto& source = instance.source;
+            if (!source.world_authoritative) continue;
+            if (!source.children.empty()) {
+                for (const auto& child : source.children) {
+                    if (!collect_effect_children(
+                            session, instance, child, source.world,
+                            &out->effect_sprites, 0U)) {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            // A generic profile may register an E/V root without a prebuilt
+            // child span. Resolve that root through the same raw bank path.
+            motion::EffectChildRef root;
+            root.effect_kind = source.effect_kind;
+            root.effect_id = static_cast<std::uint16_t>(source.effect_id);
+            root.resource_slot = source.resource_slot;
+            root.dispatch_kind = source.effect_kind == 'V' ? 3U : 1U;
+            root.evidence = source.evidence;
+            root.scale = {1.0F, 1.0F, 1.0F};
+            if (!collect_effect_children(
+                    session, instance, root, source.world,
+                    &out->effect_sprites, 0U)) {
+                return false;
+            }
+        }
+        return !out->effect_sprites.empty();
+    } catch (...) {
+        out->effect_sprites.clear();
+        return false;
+    }
+}
 
 [[nodiscard]] Vec3 transform_dynamic_vertex(
     const Vec3& p, const Matrix4& m) noexcept {
@@ -1197,6 +1435,8 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         out->textures = out->presentation_textures.empty()
             ? nullptr : &out->presentation_textures;
     }
+    (void)build_effect_presentation(session, out);
+    view.effect_sprites = out->effect_sprites;
 
     const auto& rest = view.framing_vertices.empty() ? std::span<const Vec3>{session.render_mesh.vertices}
                                                      : view.framing_vertices;
@@ -1260,6 +1500,12 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
         out->collision_lines = collision::posed_collision_lines(session);
         view.overlay_lines = out->collision_lines;
+    }
+    if (!view.uv_layout && out->room != nullptr &&
+        has_render_flag(flags, RenderFlag::RoomCollision) &&
+        !out->room->collision_lines.empty()) {
+        out->room_collision_lines = out->room->collision_lines;
+        view.room_collision_lines = out->room_collision_lines;
     }
 }
 

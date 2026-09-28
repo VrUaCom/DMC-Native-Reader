@@ -10,8 +10,10 @@
 #include <vector>
 
 #include "dmcresource/composite_model.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
@@ -132,6 +134,42 @@ struct Session {
     // Keep this separate from player WeaponBinding so a single scalar weapon
     // state cannot silently collapse the recovered multi-channel contract.
     std::vector<motion::LadyComponentBinding> lady_component_bindings;
+
+    // Script-owned effect state. Raw MOT playback never feeds this runtime;
+    // profile bridges provide evidence-backed bindings and Script Play is the
+    // only producer. Visibility is presentation-only and must not reset state.
+    std::shared_ptr<motion::EffectRuntime> effect_runtime;
+    bool effects_visible{true};
+    // Owned profile data used by the generic installer. Each profile may
+    // replace this table when its Script controller is selected; MotionPlayer
+    // does not inspect character names or effect semantics.
+    std::vector<motion::EffectBinding> script_effect_bindings;
+    // Optional profile-owned producer for any Script Play profile. Its
+    // prepare/reset/step hooks are called only by Script Play; raw MOT never
+    // enters this path. The producer feeds the one shared EffectRuntime.
+    motion::ScriptEffectBridge script_effect_bridge{};
+    // Direct PAC slots whose payload was identified as an EXE FXBANK. Runtime
+    // bindings may only resolve against these retained resource identities;
+    // an absent slot is never substituted with another bank or child record.
+    std::vector<std::uint32_t> effect_bank_slots;
+    // Exact `(kind,u16 id)` keys parsed from those banks. This is a resource
+    // availability gate, not a semantic effect-name table.
+    std::vector<motion::EffectResourceRef> effect_resources;
+
+    // Retained resource-backed FXBANK data. The parsed record spans point into
+    // `source`, so a runtime presentation lookup never falls back to a
+    // different bank or to a synthetic effect resource.
+    struct EffectTexture final {
+        std::uint16_t id{};
+        ImagePreview image;
+    };
+    struct EffectBank final {
+        std::uint32_t resource_slot{};
+        std::shared_ptr<const std::vector<std::uint8_t>> source;
+        effect_bank::Bank bank;
+        std::vector<EffectTexture> textures;
+    };
+    std::vector<EffectBank> effect_banks;
 
     // Dynamic CEm034 CShell visuals stay outside the persistent composite.
     // Source geometry/textures are retained once; active/world are presentation

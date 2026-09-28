@@ -20,6 +20,9 @@ enum class RenderFlag : std::uint32_t {
     Shadows = 1U << 6U,
     Collision = 1U << 7U,
     Room = 1U << 8U,
+    // HITS room/environment collision overlay. This is deliberately separate
+    // from Collision (character attack shapes on body bones).
+    RoomCollision = 1U << 14U,
     SmoothTextures = 1U << 9U,  // bilinear texture filtering on models
     Unlit = 1U << 10U,          // no camera light on models
     Preview = 1U << 13U,        // fast frame while the view moves: nearest texels
@@ -55,6 +58,21 @@ struct ViewState {
     std::span<const Vec3> floor_shadow{};
     // Optional coloured line pairs drawn over the model (collision debug).
     std::span<const Vec3> overlay_lines{};
+    std::span<const Vec3> room_collision_lines{};
+    // Resource-backed EXE effect presentation. The runtime supplies explicit
+    // world transforms and atlas UVs; the renderer does not infer an effect
+    // from an MOT name or from a body joint.
+    struct EffectSprite final {
+        Matrix4 world{};
+        const ImagePreview* texture{};
+        float width{};
+        float height{};
+        float u0{};
+        float v0{};
+        float u1{1.0F};
+        float v1{1.0F};
+    };
+    std::span<const EffectSprite> effect_sprites{};
     // Texture for triangles without one (neutral_texture.h); lit by a
     // camera light so the form stays readable. nullptr: depth-shaded grey.
     const ImagePreview* fallback_texture{nullptr};

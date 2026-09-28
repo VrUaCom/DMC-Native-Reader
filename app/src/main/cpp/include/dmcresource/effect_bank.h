@@ -26,7 +26,8 @@ namespace dmcresource::effect_bank {
 
 struct Record final {
     char kind{};
-    std::uint32_t id{};
+    // Canonical loader identity is (kind, u16 id), not a filename or ordinal.
+    std::uint16_t id{};
     std::uint32_t slot{};                    // record slot in the inner PNST
     std::span<const std::uint8_t> bytes;     // empty when the slot is absent
     std::span<const std::uint8_t> companion; // M only (the next slot)
@@ -132,5 +133,32 @@ struct PRuntimeView final {
     std::vector<std::uint32_t> target_offsets;
 };
 [[nodiscard]] std::optional<PRuntimeView> p_runtime_view(const Record& record);
+// EXE-confirmed E record fields used by the runtime presentation path. The
+// fields intentionally keep their structural names: semantic effect names are
+// not inferred from a texture or a MotionScript action.
+struct EffectDescriptor final {
+    std::uint8_t mode{};
+    std::uint16_t texture{};
+    std::uint8_t animation_gate{};
+    std::uint16_t animation{0xFFFFU};
+    SpriteFrame rectangle{}; // direct x/y/width/height when A is inactive
+};
+[[nodiscard]] std::optional<EffectDescriptor> effect_descriptor(const Record& record);
+
+// V is a composite runtime record. Its entries are kept as a dependency graph
+// so callers can compose the EXE child transforms without flattening a nested
+// V or assigning a semantic name to a P/G subtype.
+struct CompositeEntry final {
+    std::uint8_t dispatch_kind{}; // 0=P, 1=E, 2=G, 3=V
+    std::uint16_t id{};
+    std::int16_t activation_offset{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_degrees{};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+};
+struct CompositeRecord final {
+    std::vector<CompositeEntry> entries;
+};
+[[nodiscard]] std::optional<CompositeRecord> composite_record(const Record& record);
 
 }  // namespace dmcresource::effect_bank

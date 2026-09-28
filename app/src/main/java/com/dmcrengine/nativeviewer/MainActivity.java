@@ -830,6 +830,16 @@ public final class MainActivity extends Activity {
         if (roomLoaded) {
             content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
                     i -> { if ((i == 0) != roomShown()) roomToggle(); }));
+            if (NativeBridge.roomCollisionSourceCount() > 0) {
+                content.addView(choiceRow("HITS room collision", new String[]{"On", "Off"},
+                        renderView.isRoomCollisionVisible() ? 0 : 1,
+                        i -> {
+                            if (i == 0 && !roomShown()) {
+                                prefs().edit().putBoolean(PREF_ROOM_SHOWN, true).apply();
+                            }
+                            renderView.setRoomCollisionVisible(i == 0);
+                        }));
+            }
             if (NativeBridge.roomSpotCount() > 1) addAction.accept("Next floor spot", this::roomNextSpot);
             addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
         }
@@ -1214,9 +1224,9 @@ public final class MainActivity extends Activity {
             previousPack = entry.packSlot;
 
             // One visual row per MOT:
-            // [Script Play ...] [raw MOT].
-            // Script buttons stay visible even when this script cannot address
-            // the MOT, so the PAC's controller count is always explicit.
+            // [linked Script Play ...] [raw MOT].
+            // A controller without a real link to this MOT is not a disabled
+            // action: it is absent data, so do not spend UI space on it.
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1227,6 +1237,7 @@ public final class MainActivity extends Activity {
                     final int slot = NativeBridge.motionScriptSlot(session, scriptIndex);
                     final boolean available = NativeBridge.motionScriptCanPlayMotion(
                             session, scriptIndex, entry.libraryIndex);
+                    if (!available) continue;
                     final boolean activeScript =
                             index == selectedMotionIndex &&
                             scriptIndex == selectedScriptIndex;
@@ -1236,10 +1247,8 @@ public final class MainActivity extends Activity {
                             "Play " + entry.name + " through MotionScript " +
                                     (slot >= 0 ? "slot " + slot : Integer.toString(scriptIndex)),
                             9f);
-                    scriptButton.setEnabled(available);
                     scriptButton.setActivated(activeScript);
-                    scriptButton.setAlpha(
-                            activeScript ? 1.0f : (available ? 0.78f : 0.30f));
+                    scriptButton.setAlpha(activeScript ? 1.0f : 0.78f);
                     scriptButton.setOnClickListener(
                             v -> selectMotionScript(motionIndex, scriptIndex));
                     addToolButton(row, scriptButton);

@@ -1,6 +1,7 @@
 #include "dmcresource/stage_room.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -23,7 +24,20 @@ struct Item final {
     std::string container;
     Format format{Format::Unknown};
     const std::vector<std::uint8_t>* bytes{};
+    std::uint32_t slot{std::numeric_limits<std::uint32_t>::max()};
 };
+
+[[nodiscard]] std::uint32_t physical_slot(const ChildResource& child) noexcept {
+    constexpr std::string_view prefix = "slot-";
+    if (!child.id.starts_with(prefix)) return std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t slot = 0U;
+    const auto* first = child.id.data() + prefix.size();
+    const auto* last = child.id.data() + child.id.size();
+    const auto parsed = std::from_chars(first, last, slot);
+    return parsed.ec == std::errc{} && parsed.ptr == last
+        ? slot
+        : std::numeric_limits<std::uint32_t>::max();
+}
 
 // Same walk as PAC assembly: nested PACs are opened and kept alive; effect
 // banks and PNSTs (effects, trails) are not room geometry.
@@ -44,8 +58,10 @@ void walk(const Session& container,
             walk(*owner->back(), name + "/", depth + 1U, owner, out);
             continue;
         }
-        if (kind.format == Format::Scm || kind.format == Format::Mod || kind.format == Format::Ptx) {
-            out->push_back({name, prefix, kind.format, &child.source_bytes});
+        if (kind.format == Format::Scm || kind.format == Format::Mod ||
+            kind.format == Format::Ptx || kind.format == Format::Hits) {
+            out->push_back({name, prefix, kind.format, &child.source_bytes,
+                            physical_slot(child)});
         }
     }
 }
@@ -455,6 +471,20 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                 append(*piece, room.get());
             }
         }
+        for (const auto& item : items) {
+            if (item.format != Format::Hits || item.bytes == nullptr || item.bytes->empty()) continue;
+            const auto parsed = environment_collision::parse(
+                item.name, item.slot,
+                std::span<const std::uint8_t>{item.bytes->data(), item.bytes->size()});
+            if (parsed) room->collision_sources.push_back(*parsed);
+        }
+        if (!room->collision_sources.empty()) {
+            // The first physical HITS source is the explicit default debug
+            // source. Other sources remain available as separate provenance
+            // records and are not merged or reinterpreted.
+            room->collision_lines = environment_collision::debug_lines(
+                room->collision_sources.front());
+        }
         if (room->mesh.indices.size() < 3U) return nullptr;
         // Soft-alpha textures: more than 2 % of texels between 8 and 239.
         std::vector<std::uint8_t> soft(room->textures.size(), 0U);
@@ -495,6 +525,23 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                << objects << " placed objects), "
                << room->textured_pieces << " textured, " << room->mesh.vertices.size() << " vertices, "
                << room->mesh.indices.size() / 3U << " triangles, " << room->spots.size() << " floor spots";
+        if (!room->collision_sources.empty()) {
+            std::size_t triangles = 0U;
+            for (const auto& source : room->collision_sources) triangles += source.triangles.size();
+            detail << ", " << room->collision_sources.size() << " HITS collision source(s), "
+                   << triangles << " triangle-plane records";
+            for (const auto& source : room->collision_sources) {
+                detail << "\n  HITS " << source.resource_name << " slot=";
+                if (source.resource_slot == std::numeric_limits<std::uint32_t>::max()) {
+                    detail << "unknown";
+                } else {
+                    detail << source.resource_slot;
+                }
+                detail << " grid=" << source.grid_count_x << 'x' << source.grid_count_y << 'x'
+                       << source.grid_count_z << " triangles=" << source.triangles.size()
+                       << " refs=" << source.cell_reference_count;
+            }
+        }
         room->detail = detail.str();
         return room;
     } catch (...) {

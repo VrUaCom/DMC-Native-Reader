@@ -21,6 +21,7 @@ public final class DmcRenderView extends View {
     private static final int RENDER_SHADOWS = 1 << 6;
     private static final int RENDER_COLLISION = 1 << 7;
     private static final int RENDER_ROOM = 1 << 8;
+    private static final int RENDER_ROOM_COLLISION = 1 << 14;
     private static final int RENDER_PREVIEW = 1 << 13;
     // Fast preview: while a finger moves, the view spins or a motion plays,
     // frames render at half size with nearest texels; 150 ms after the last
@@ -120,6 +121,7 @@ public final class DmcRenderView extends View {
     // The chosen room (Settings): kept across sessions; native skips it for
     // stages (SCM / archives holding SCM) and in wireframe / UV views.
     private boolean roomVisible;
+    private boolean roomCollisionVisible;
     private boolean hierarchyAvailable;
     private boolean staticImagePreview;
     private float lastX;
@@ -422,7 +424,9 @@ public final class DmcRenderView extends View {
         }
         session = newSession;
         // Shadows start on; native ignores the flag when no SHW is bound.
-        renderFlags = (shadowsAtOpen ? RENDER_SHADOWS : 0) | (roomVisible ? RENDER_ROOM : 0);
+        renderFlags = (shadowsAtOpen ? RENDER_SHADOWS : 0) |
+                (roomVisible ? RENDER_ROOM : 0) |
+                (roomCollisionVisible ? RENDER_ROOM_COLLISION : 0);
         hierarchyAvailable = false;
         staticImagePreview = false;
         releaseBitmap();
@@ -532,8 +536,27 @@ public final class DmcRenderView extends View {
             renderFlags |= RENDER_ROOM;
         } else {
             renderFlags &= ~RENDER_ROOM;
+            roomCollisionVisible = false;
+            renderFlags &= ~RENDER_ROOM_COLLISION;
         }
         if (!staticImagePreview) renderNow();
+    }
+
+    public void setRoomCollisionVisible(boolean visible) {
+        roomCollisionVisible = visible;
+        if (isUvLayoutVisible()) return;
+        if (visible) {
+            roomVisible = true;
+            renderFlags |= RENDER_ROOM | RENDER_ROOM_COLLISION;
+        } else {
+            renderFlags &= ~RENDER_ROOM_COLLISION;
+        }
+        if (!staticImagePreview) renderNow();
+    }
+
+    public boolean isRoomCollisionVisible() {
+        return !staticImagePreview && !isUvLayoutVisible() &&
+                (renderFlags & RENDER_ROOM_COLLISION) != 0;
     }
 
     public void refreshRoom() {

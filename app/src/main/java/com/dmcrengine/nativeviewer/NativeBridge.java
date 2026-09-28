@@ -123,6 +123,8 @@ public final class NativeBridge {
     public static native void clearRoom();
     public static native int roomSpotCount();
     public static native int nextRoomSpot();
+    /** Number of independently retained HITS environment-collision sources. */
+    public static native int roomCollisionSourceCount();
     public static native boolean isStageSession(long handle);
     public static native boolean hasCollision(long handle);
     public static native int[] collisionAttackIds(long handle);

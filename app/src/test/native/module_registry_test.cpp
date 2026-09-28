@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 16U);
+    assert(modules.size() == 17U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -23,6 +23,13 @@ int main() {
     assert(ptx != nullptr && ptx->format == Format::Ptx && !ptx->renderable);
     assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
            !event_tbl->renderable);
+
+    const auto* hits = NativeModuleRegistry::find("HITS");
+    assert(hits != nullptr && hits->format == Format::Hits && !hits->renderable &&
+           has_capability(hits->capabilities, ResourceCapability::Collision));
+    const std::array<std::uint8_t, 4> hits_magic{'H', 'I', 'T', 'S'};
+    const auto hits_probe = probe("renamed.bin", hits_magic.data(), hits_magic.size());
+    assert(hits_probe.format == Format::Hits && hits_probe.content_confirmed);
 
     // v34: PAC (read-only archive browser/assembler) and MOT (motion reader)
     // are promoted; both are byte-identified, never by extension alone.
@@ -89,7 +96,7 @@ int main() {
 
     // Removed/archived families must not leak back into the clean registry.
     for (const std::string_view family : {
-             "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
+             "TXT", ".index", "DCA", "LIG", "LIG2",
              "NBZ", "MRP"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
@@ -102,6 +109,7 @@ int main() {
     assert(probe("renamed.bin", mod_magic.data(), mod_magic.size()).format == Format::Mod);
     assert(probe("renamed.bin", dds_magic.data(), dds_magic.size()).format == Format::Dds);
     assert(probe("renamed.bin", evt_magic.data(), evt_magic.size()).format == Format::Evt);
+    assert(probe("renamed.bin", hits_magic.data(), hits_magic.size()).format == Format::Hits);
     assert(probe("texture.ptx", nullptr, 0U).format == Format::Ptx);
     assert(probe("legacy.tm2", nullptr, 0U).format == Format::Dds);
 

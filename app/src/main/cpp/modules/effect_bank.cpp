@@ -1,5 +1,7 @@
 #include "dmcresource/effect_bank.h"
 
+#include <bit>
+#include <cmath>
 #include <cstring>
 
 namespace dmcresource::effect_bank {
@@ -20,6 +22,10 @@ namespace {
 
 [[nodiscard]] std::int32_t i32(std::span<const std::uint8_t> b, std::size_t o) noexcept {
     return static_cast<std::int32_t>(u32(b, o));
+}
+
+[[nodiscard]] std::int16_t i16(std::span<const std::uint8_t> b, std::size_t o) noexcept {
+    return static_cast<std::int16_t>(u16(b, o));
 }
 
 [[nodiscard]] float f32(std::span<const std::uint8_t> b, std::size_t o) noexcept {
@@ -158,7 +164,9 @@ bool looks_like_bank(std::span<const std::uint8_t> bytes) noexcept {
         Tokens tokens{text};
         const auto kind = tokens.next();
         const auto id = tokens.next();
-        return kind && kind->size() == 1U && (*kind)[0] >= 'A' && (*kind)[0] <= 'Z' && id && decimal(*id);
+        const auto parsed_id = id ? decimal(*id) : std::optional<std::uint32_t>{};
+        return kind && kind->size() == 1U && (*kind)[0] >= 'A' && (*kind)[0] <= 'Z' &&
+               parsed_id.has_value() && *parsed_id <= 0xFFFFU;
     } catch (...) {
         return false;
     }
@@ -183,18 +191,29 @@ std::optional<Bank> parse_bank(std::span<const std::uint8_t> bytes) {
             break;
         }
         const auto id_token = tokens.next();
+        const auto parsed_id = id_token ? decimal(*id_token) : std::optional<std::uint32_t>{};
+        if (id_token && (!parsed_id.has_value() || *parsed_id > 0xFFFFU)) {
+            return std::nullopt;
+        }
         Record r;
         r.kind = (*token)[0];
-        r.id = id_token ? decimal(*id_token).value_or(0U) : 0U;
+        if (!parsed_id.has_value()) return std::nullopt;
+        r.id = static_cast<std::uint16_t>(*parsed_id);
         r.slot = slot;
-        if (slot < inner->slots.size()) r.bytes = inner->slots[slot];
+        if (slot >= inner->slots.size()) return std::nullopt;
+        r.bytes = inner->slots[slot];
         ++slot;
         if (r.kind == 'M') {
-            if (slot < inner->slots.size()) r.companion = inner->slots[slot];
+            if (slot >= inner->slots.size()) return std::nullopt;
+            r.companion = inner->slots[slot];
             ++slot;
         }
         bank.records.push_back(r);
-        if (!id_token) break;
+    }
+    for (; slot < inner->slots.size(); ++slot) {
+        // Empty capacity slots are legal. A populated unconsumed slot would
+        // contradict the EXE physical-slot walk and must not be re-labeled.
+        if (!inner->slots[slot].empty()) return std::nullopt;
     }
     return bank;
 }
@@ -214,6 +233,53 @@ std::optional<SpriteAnimation> sprite_animation(const Record& record) {
             return static_cast<std::uint16_t>(b[at] | (b[at + 1U] << 8U));
         };
         out.frames.push_back({u16(o), u16(o + 2U), u16(o + 4U), u16(o + 6U)});
+    }
+    return out;
+}
+
+std::optional<EffectDescriptor> effect_descriptor(const Record& record) {
+    const auto& b = record.bytes;
+    if (record.kind != 'E' || b.size() < 0x14U) return std::nullopt;
+    EffectDescriptor out;
+    out.mode = b[0x01U];
+    out.texture = u16(b, 0x04U);
+    out.animation_gate = b[0x06U];
+    out.animation = u16(b, 0x08U);
+    out.rectangle = {
+        u16(b, 0x0CU), u16(b, 0x0EU),
+        u16(b, 0x10U), u16(b, 0x12U)};
+    return out;
+}
+
+std::optional<CompositeRecord> composite_record(const Record& record) {
+    const auto& b = record.bytes;
+    if (record.kind != 'V' || b.size() < 4U) return std::nullopt;
+    const auto count = i16(b, 0U);
+    if (count < 0 || count > 64) return std::nullopt;
+    constexpr std::size_t kEntrySize = 0x2CU;
+    const auto total = 4U + static_cast<std::size_t>(count) * kEntrySize;
+    if (total > b.size()) return std::nullopt;
+
+    CompositeRecord out;
+    out.entries.reserve(static_cast<std::size_t>(count));
+    for (std::size_t index = 0U; index < static_cast<std::size_t>(count); ++index) {
+        const auto base = 4U + index * kEntrySize;
+        CompositeEntry entry;
+        entry.dispatch_kind = b[base + 0x00U];
+        if (entry.dispatch_kind > 3U) return std::nullopt;
+        entry.id = u16(b, base + 0x02U);
+        entry.activation_offset = i16(b, base + 0x04U);
+        for (std::size_t component = 0U; component < 3U; ++component) {
+            entry.translation[component] = f32(b, base + 0x08U + component * 4U);
+            entry.rotation_degrees[component] = f32(b, base + 0x14U + component * 4U);
+            entry.scale[component] = f32(b, base + 0x20U + component * 4U);
+            if (!std::isfinite(entry.translation[component]) ||
+                !std::isfinite(entry.rotation_degrees[component]) ||
+                !std::isfinite(entry.scale[component])) {
+                return std::nullopt;
+            }
+        }
+        out.entries.push_back(entry);
     }
     return out;
 }

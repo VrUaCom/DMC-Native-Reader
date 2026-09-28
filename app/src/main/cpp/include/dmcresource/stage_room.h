@@ -10,6 +10,7 @@
 
 #include "dmcresource/image_preview.h"
 #include "dmcresource/mesh.h"
+#include "dmcresource/environment_collision.h"
 
 // Viewer "room": a stage archive (st*.pac, a lone .scm, or any PAC with
 // models) the user picked as the backdrop for every model instead of the
@@ -36,6 +37,12 @@ struct Room final {
     std::vector<Vec3> spots;
     std::size_t pieces{};
     std::size_t textured_pieces{};
+    // Environment collision sources are preserved independently from the
+    // visible room mesh. HITS source ordering and physical slots remain part
+    // of provenance; only the first source is selected for the optional
+    // inspection overlay.
+    std::vector<environment_collision::Source> collision_sources;
+    std::vector<Vec3> collision_lines;
     std::string name;
     std::string detail;
 };
