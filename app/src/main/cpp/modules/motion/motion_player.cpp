@@ -325,6 +325,26 @@ struct Vec4f final {
     return {v.x * inv, v.y * inv, v.z * inv};
 }
 
+[[nodiscard]] Matrix4 normalized_runtime_basis(const Matrix4& source) noexcept {
+    Matrix4 out = source;
+    for (std::size_t row = 0U; row < 3U; ++row) {
+        const std::size_t base = row * 4U;
+        const Vec3 n = normalize3(
+            {source.values[base + 0U],
+             source.values[base + 1U],
+             source.values[base + 2U]},
+            row == 0U ? Vec3{1.0F, 0.0F, 0.0F}
+                      : (row == 1U ? Vec3{0.0F, 1.0F, 0.0F}
+                                   : Vec3{0.0F, 0.0F, 1.0F}));
+        out.values[base + 0U] = n.x;
+        out.values[base + 1U] = n.y;
+        out.values[base + 2U] = n.z;
+        out.values[base + 3U] = 0.0F;
+    }
+    out.values[15] = 1.0F;
+    return out;
+}
+
 [[nodiscard]] Vec3 robust_cross(
     Vec3 a, Vec3 b, bool a_cross_b) noexcept {
     Vec3 out = a_cross_b ? cross3(a, b) : cross3(b, a);
@@ -497,6 +517,12 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
         visual.last_update_frame = frame;
         if (visual.retire_frame >= 0.0F && frame >= visual.retire_frame) {
             visual.active = false;
+            if (session->effect_runtime != nullptr) {
+                session->effect_runtime->record_actor_event(
+                    static_cast<std::int8_t>(visual.actor), false, frame);
+                session->effect_runtime->retire_owner(
+                    static_cast<std::int8_t>(visual.actor), frame);
+            }
         }
     }
 }
@@ -556,6 +582,9 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
 void reset_lady_runtime(Session* session) noexcept {
     if (session == nullptr) return;
     deactivate_lady_dynamic_visuals(session);
+    if (session->effect_runtime != nullptr) {
+        session->effect_runtime->reset();
+    }
     for (auto& binding : session->lady_component_bindings) {
         (void)set_lady_component_preset(
             session, binding, LadyPlacementPreset::BodyStowed);
@@ -584,12 +613,19 @@ void reset_lady_runtime(Session* session) noexcept {
         // side effects, so an unrecognized result means "no equipment change",
         // not "invalid Lady state".
         deactivate_lady_dynamic_visuals(session);
+        if (session->effect_runtime != nullptr) {
+            session->effect_runtime->reset();
+        }
         const auto entry = apply_lady_state_entry(session, *state.lady_state);
         state.lady_entry_applied = true;
         state.lady_runtime_frame = -1.0F;
         if (entry.dynamic_actor >= 0) {
             state.last_dynamic_actor = entry.dynamic_actor;
             spawn_lady_dynamic_visual(session, entry.dynamic_actor, 0.0F);
+            if (session->effect_runtime != nullptr) {
+                session->effect_runtime->record_actor_event(
+                    entry.dynamic_actor, true, 0.0F);
+            }
         }
     }
 
@@ -624,9 +660,40 @@ void reset_lady_runtime(Session* session) noexcept {
                     session, *state.lady_state, lane, channel, value);
                 if (applied.dynamic_actor >= 0) {
                     state.last_dynamic_actor = applied.dynamic_actor;
+                    const float event_frame =
+                        std::max(signal.after_frame, 0.0F);
                     spawn_lady_dynamic_visual(
-                        session, applied.dynamic_actor,
-                        std::max(signal.after_frame, 0.0F));
+                        session, applied.dynamic_actor, event_frame);
+
+                    if (session->effect_runtime != nullptr) {
+                        session->effect_runtime->record_actor_event(
+                            applied.dynamic_actor, true, event_frame);
+
+                        Matrix4 exact_effect_world;
+                        const Matrix4* effect_world = nullptr;
+                        if (applied.dynamic_actor == 2) {
+                            // CEm034 calls V423 through 0x1402E7A90 mode3
+                            // with slot20 current matrix: normalize the 3x3
+                            // basis while preserving its translation.
+                            const auto node0 =
+                                lady_component_node_world(*session, 0U, 0U);
+                            if (node0.has_value()) {
+                                exact_effect_world =
+                                    normalized_runtime_basis(*node0);
+                                effect_world = &exact_effect_world;
+                            }
+                        }
+
+                        (void)spawn_lady_actor_effects(
+                            *session->effect_runtime,
+                            applied.dynamic_actor,
+                            *state.lady_state,
+                            lane,
+                            channel,
+                            value,
+                            event_frame,
+                            effect_world);
+                    }
                 }
                 if (*state.lady_state == 0x81U && lane == 1U &&
                     channel == 1U && value == 1U) {
@@ -649,6 +716,9 @@ void reset_lady_runtime(Session* session) noexcept {
     }
 
     advance_lady_dynamic_visuals(session, frame);
+    if (session->effect_runtime != nullptr) {
+        session->effect_runtime->update(frame);
+    }
     state.lady_runtime_frame = frame;
     return true;
 }
