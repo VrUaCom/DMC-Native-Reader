@@ -514,11 +514,11 @@ lady_state_for_body_script_action(std::size_t bank, std::size_t action) noexcept
         if (action >= 9U && action <= 15U) return LadyBodyScriptState{
             static_cast<std::uint16_t>(46U + action), 0x2U};
         if (action >= 16U && action <= 22U) return LadyBodyScriptState{
-            static_cast<std::uint16_t>(46U + action), action == 16U ? 0x3U : 0x2U};
+            static_cast<std::uint16_t>(46U + action), static_cast<std::uint8_t>(action == 16U ? 0x3U : 0x2U)};
         if (action >= 23U && action <= 29U) return LadyBodyScriptState{
-            static_cast<std::uint16_t>(46U + action), action == 23U ? 0x3U : 0x2U};
+            static_cast<std::uint16_t>(46U + action), static_cast<std::uint8_t>(action == 23U ? 0x3U : 0x2U)};
         if (action >= 30U && action <= 36U) return LadyBodyScriptState{
-            static_cast<std::uint16_t>(46U + action), action == 30U ? 0x3U : 0x2U};
+            static_cast<std::uint16_t>(46U + action), static_cast<std::uint8_t>(action == 30U ? 0x3U : 0x2U)};
         return std::nullopt;
     }
     if (bank == 4U) {
