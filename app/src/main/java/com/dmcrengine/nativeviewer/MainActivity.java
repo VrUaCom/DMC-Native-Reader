@@ -62,7 +62,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_STAGE_PHYSICS = 1008;
     private static final int REQUEST_STAGE_CLOTH = 1009;
     private static final int REQUEST_STAGE_OTHER = 1010;
-    private static final int REQUEST_EXPORT_DIAGNOSTICS = 1011;
+    private static final int REQUEST_EXPORT_DIAGNOSTICS = 1014;
 
     private static final int MENU_OPEN = 1;
     private static final int MENU_ADD_MOD = 2;
