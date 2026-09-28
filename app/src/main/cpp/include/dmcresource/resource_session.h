@@ -135,6 +135,10 @@ struct Session {
     struct LadyDynamicVisual final {
         std::uint8_t actor{};   // CEm034Shl00..05 index
         std::uint32_t model_slot{};
+        // Preserve the canonical MOD scene for dynamic skeletal deformation
+        // (slot30 uses its five-node skin domain). source_mesh is the retained
+        // flattened rest projection consumed by the presentation layer.
+        RenderScene source_scene;
         Mesh source_mesh;
         std::vector<std::uint32_t> texture_slots;
         std::vector<ImagePreview> textures;
