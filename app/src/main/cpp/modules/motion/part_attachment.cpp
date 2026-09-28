@@ -617,11 +617,28 @@ bool set_lady_component_preset(Session* session,
     const auto& record = contract->presets[index];
 
     // CEm034 component3/preset1 deliberately bypasses serialized node13 and
-    // points CCnsMatrix at CEm034+0x43C0. That matrix is body-root-derived and
-    // uniformly scaled from runtime +0x4400. Do not approximate it with joint13.
+    // points CCnsMatrix at CEm034+0x43C0. Canonical EXE reconstruction:
+    //   +0x43C0 = bodyManager(+0x850)->currentWorld(+0x110)
+    //   effective parent = S(+0x4400) * bodyRoot
+    // Both retail Lady bodies (slots1/32) have node0 identity at rest, so the
+    // same result is materialized as (local * S) * hostRootWorld.
     if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+        world::Matrix4f local{};
+        local.values =
+            attach_local_matrix(record.translation, record.rotation_xyz_radians).values;
+        auto scale = world::identity_matrix();
+        scale.values[0] = binding.runtime_uniform_scale;
+        scale.values[5] = binding.runtime_uniform_scale;
+        scale.values[10] = binding.runtime_uniform_scale;
+        const auto local_scaled = world::multiply_dmc3_matrices(local, scale);
+        Matrix4 offset;
+        offset.values = local_scaled.values;
+        if (!attach_part_skeleton(
+                session, binding.host_part, binding.part, 0U, false, offset)) {
+            return false;
+        }
         binding.preset = preset;
-        return false;
+        return true;
     }
 
     if (!attach_part_skeleton(
@@ -631,6 +648,9 @@ bool set_lady_component_preset(Session* session,
         return false;
     }
     binding.preset = preset;
+    if (binding.component == 3U && preset == LadyPlacementPreset::BodyStowed) {
+        binding.runtime_uniform_scale = 1.0F;
+    }
     return true;
 }
 
@@ -643,6 +663,19 @@ bool set_lady_component_control_domain(Session* session,
     // +0x4020 selects em034_013. Never collapse these into one scalar state.
     binding.control_domain = domain;
     return true;
+}
+
+bool set_lady_component_runtime_scale(Session* session,
+                                      LadyComponentBinding& binding,
+                                      float uniform_scale) noexcept {
+    if (session == nullptr || binding.component != 3U ||
+        !std::isfinite(uniform_scale) || uniform_scale < 0.0F) {
+        return false;
+    }
+    binding.runtime_uniform_scale = uniform_scale;
+    if (binding.preset != LadyPlacementPreset::ActiveDeployed) return true;
+    return set_lady_component_preset(
+        session, binding, LadyPlacementPreset::ActiveDeployed);
 }
 
 namespace {
@@ -758,6 +791,9 @@ LadyRuntimeApplyResult apply_lady_state_entry(Session* session,
     } else if (state == 0x81U) {
         out.recognized = true;
         reset_lady_components(session, out);
+        if (auto* binding = lady_binding(session, 3U); binding != nullptr) {
+            binding->runtime_uniform_scale = 1.0F;
+        }
         (void)apply_lady_preset(
             session, 3U, LadyPlacementPreset::ActiveDeployed, out);
     } else if (state == 0x85U || state == 0x8FU) {
@@ -774,7 +810,7 @@ LadyRuntimeApplyResult apply_lady_signal(Session* session,
                                         std::uint8_t value) noexcept {
     LadyRuntimeApplyResult out;
     if (session == nullptr || session->lady_component_bindings.empty() ||
-        lane > 1U || channel > 4U || value == 0U) {
+        lane > 1U || channel > 4U) {
         if (session == nullptr) out.fully_materialized = false;
         return out;
     }
@@ -826,9 +862,20 @@ LadyRuntimeApplyResult apply_lady_signal(Session* session,
                 lane == 1U && channel == 0U && value == 1U)) {
         spawn(1);  // CEm034Shl01
     } else if (state == 0x81U && lane == 1U) {
-        if (channel == 0U && value == 1U) spawn(5);
-        else if (channel == 1U && value == 1U) side_effect();
-        else if (channel == 2U && value == 1U) {
+        if (channel == 0U && value == 1U) {
+            spawn(5);
+        } else if (channel == 1U) {
+            // 0x140169EC2 writes 1.0 every state81 update; 0x140169EE0
+            // promotes it to 1.5 only while channel1 == 1.
+            out.recognized = true;
+            if (auto* binding = lady_binding(session, 3U); binding != nullptr) {
+                const float scale = value == 1U ? 1.5F : 1.0F;
+                if (!set_lady_component_runtime_scale(session, *binding, scale)) {
+                    out.fully_materialized = false;
+                }
+                ++out.changed_components;
+            }
+        } else if (channel == 2U && value == 1U) {
             preset(3U, LadyPlacementPreset::BodyStowed);
         }
     } else if (state == 0x85U && lane == 1U) {
