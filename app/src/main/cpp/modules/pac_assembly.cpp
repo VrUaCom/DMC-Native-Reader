@@ -642,7 +642,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         "LadyDynamicActors",
                         "slots25/26/30 remain PAC children: slot25 is CEm034Shl02; "
                         "slots26+30 are CEm034Shl03. They are spawned runtime actors, "
-                        "not persistent body attachments.",
+                        "not persistent body attachments. Shl03 slot30 uses the "
+                        "EXE-confirmed per-frame five-bone straight tether; Shl02 "
+                        "spawn pose is exact while post-spawn steering requires the "
+                        "live gameplay target manager and is not fabricated standalone.",
                         EvidenceLevel::ExeAndCorpusConfirmed});
                     assembled->inspection.root.properties.push_back({
                         "LadyComponentRuntime",
