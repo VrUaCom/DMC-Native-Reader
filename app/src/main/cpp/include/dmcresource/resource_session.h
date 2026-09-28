@@ -139,6 +139,9 @@ struct Session {
         std::vector<std::uint32_t> texture_slots;
         std::vector<ImagePreview> textures;
         Matrix4 world{};
+        Vec3 velocity{};
+        float spawn_frame{-1.0F};
+        float retire_frame{-1.0F};  // <0 = owner/state controlled
         bool active{};
         // slot30 shares Shl03 actor transform but has an additional internal
         // tether deformation domain that is not yet claimed pixel-exact.
