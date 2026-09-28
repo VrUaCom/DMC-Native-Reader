@@ -280,13 +280,16 @@ namespace {
 
 struct ExeGroups final {
     std::string_view stem;
-    std::array<int, 4> slots;  // -1 = not set by the class
+    std::array<int, 7> slots;  // group -> top-level PAC slot; -1 = not closed
 };
 
-// Motion PAC arrays read from the class inits (see bind_motion_groups).
-constexpr std::array<ExeGroups, 2> kExeGroups{{
-    {"em028", {2, 3, -1, -1}},
-    {"em000", {35, -1, -1, -1}},
+// Motion PAC arrays read from class init/runtime evidence. A single physical
+// pack may serve more than one script resource group (CEm034 slot6 serves
+// groups 4 and 6), so EXE-confirmed bindings are intentionally reusable.
+constexpr std::array<ExeGroups, 3> kExeGroups{{
+    {"em028", {2, 3, -1, -1, -1, -1, -1}},
+    {"em000", {35, -1, -1, -1, -1, -1, -1}},
+    {"em034", {-1, 3, 4, 5, 6, -1, 6}},
 }};
 
 }  // namespace
