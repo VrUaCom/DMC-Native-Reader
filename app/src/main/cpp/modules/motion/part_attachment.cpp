@@ -620,6 +620,7 @@ bool set_lady_component_preset(Session* session,
     // points CCnsMatrix at CEm034+0x43C0. That matrix is body-root-derived and
     // uniformly scaled from runtime +0x4400. Do not approximate it with joint13.
     if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+        binding.preset = preset;
         return false;
     }
 
@@ -637,20 +638,219 @@ bool set_lady_component_control_domain(Session* session,
                                        LadyComponentBinding& binding,
                                        LadyControlDomain domain) noexcept {
     if (session == nullptr || binding.component != 0U) return false;
-    if (domain == LadyControlDomain::IndependentMotionScript) {
-        // Canonical CEm034 transitions first restore component0 to preset0,
-        // then start em034_013 and clear +0x4020. The independent controller
-        // itself is a separate playback layer; this binding records that owner.
-        if (!set_lady_component_preset(
-                session, binding, LadyPlacementPreset::BodyStowed)) {
-            return false;
-        }
-        binding.control_domain = domain;
-        return true;
-    }
-    if (!set_lady_component_preset(session, binding, binding.preset)) return false;
-    binding.control_domain = LadyControlDomain::BodyConstraint;
+    // Placement and control are orthogonal in CEm034. Most independent-script
+    // entries use BodyStowed, but states 0x7C/0x7D retain ActiveDeployed while
+    // +0x4020 selects em034_013. Never collapse these into one scalar state.
+    binding.control_domain = domain;
     return true;
+}
+
+namespace {
+
+[[nodiscard]] LadyComponentBinding* lady_binding(Session* session,
+                                                 std::uint8_t component) noexcept {
+    if (session == nullptr) return nullptr;
+    for (auto& binding : session->lady_component_bindings) {
+        if (binding.component == component) return &binding;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool apply_lady_preset(Session* session,
+                                     std::uint8_t component,
+                                     LadyPlacementPreset preset,
+                                     LadyRuntimeApplyResult& out) noexcept {
+    auto* binding = lady_binding(session, component);
+    if (binding == nullptr) return false;
+    const bool materialized = set_lady_component_preset(session, *binding, preset);
+    // Runtime state remains known even when the preview lacks the special
+    // RuntimeBodyRootScaled materialization bridge.
+    binding->preset = preset;
+    ++out.changed_components;
+    if (!materialized) out.fully_materialized = false;
+    return true;
+}
+
+void set_lady_domain(Session* session, LadyControlDomain domain,
+                     LadyRuntimeApplyResult& out) noexcept {
+    if (auto* binding = lady_binding(session, 0U); binding != nullptr) {
+        if (set_lady_component_control_domain(session, *binding, domain)) {
+            ++out.changed_components;
+        }
+    }
+}
+
+[[nodiscard]] bool in_range(std::uint16_t v,
+                            std::uint16_t first,
+                            std::uint16_t last) noexcept {
+    return v >= first && v <= last;
+}
+
+void reset_lady_components(Session* session, LadyRuntimeApplyResult& out) noexcept {
+    for (std::uint8_t component = 0U; component < 5U; ++component) {
+        (void)apply_lady_preset(
+            session, component, LadyPlacementPreset::BodyStowed, out);
+    }
+    set_lady_domain(session, LadyControlDomain::BodyConstraint, out);
+}
+
+}  // namespace
+
+LadyRuntimeApplyResult apply_lady_state_entry(Session* session,
+                                              std::uint16_t state) noexcept {
+    LadyRuntimeApplyResult out;
+    if (session == nullptr || session->lady_component_bindings.empty()) {
+        out.fully_materialized = false;
+        return out;
+    }
+
+    const bool group_component1 =
+        state == 0x2EU || in_range(state, 0x30U, 0x52U);
+    const bool group_component0_active =
+        in_range(state, 0x53U, 0x59U) || state == 0x5EU || state == 0x61U;
+    const bool group_component0_independent =
+        in_range(state, 0x5AU, 0x5DU) || in_range(state, 0x64U, 0x73U);
+
+    if (group_component1) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 1U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (group_component0_active) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+        if (state == 0x5EU) out.dynamic_actor = 3;  // immediate CEm034Shl03
+    } else if (group_component0_independent) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (state == 0x5FU || state == 0x62U) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x60U || state == 0x63U) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+        (void)apply_lady_preset(
+            session, 4U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x7BU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (state == 0x7CU || state == 0x7DU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 0U, LadyPlacementPreset::ActiveDeployed, out);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (state == 0x7FU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 1U, LadyPlacementPreset::ActiveDeployed, out);
+        (void)apply_lady_preset(
+            session, 2U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x81U) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+        (void)apply_lady_preset(
+            session, 3U, LadyPlacementPreset::ActiveDeployed, out);
+    } else if (state == 0x85U || state == 0x8FU) {
+        out.recognized = true;
+        reset_lady_components(session, out);
+    }
+    return out;
+}
+
+LadyRuntimeApplyResult apply_lady_signal(Session* session,
+                                        std::uint16_t state,
+                                        std::uint8_t lane,
+                                        std::uint8_t channel,
+                                        std::uint8_t value) noexcept {
+    LadyRuntimeApplyResult out;
+    if (session == nullptr || session->lady_component_bindings.empty() ||
+        lane > 1U || channel > 4U || value == 0U) {
+        if (session == nullptr) out.fully_materialized = false;
+        return out;
+    }
+
+    const auto preset = [&](std::uint8_t component, LadyPlacementPreset p) {
+        out.recognized = true;
+        (void)apply_lady_preset(session, component, p, out);
+    };
+    const auto spawn = [&](std::int8_t actor) {
+        out.recognized = true;
+        out.dynamic_actor = actor;
+    };
+    const auto side_effect = [&]() {
+        out.recognized = true;
+        out.runtime_side_effect = true;
+    };
+
+    if (state == 0x2AU && lane == 0U && channel == 0U) {
+        if (value == 1U) preset(1U, LadyPlacementPreset::ActiveDeployed);
+        else if (value == 2U) preset(1U, LadyPlacementPreset::BodyStowed);
+    } else if (state == 0x2BU && lane == 0U && channel == 0U) {
+        if (value == 1U) preset(4U, LadyPlacementPreset::ActiveDeployed);
+        else if (value == 2U) preset(4U, LadyPlacementPreset::BodyStowed);
+    } else if (state == 0x7BU && lane == 0U && channel == 0U && value == 1U) {
+        preset(0U, LadyPlacementPreset::ActiveDeployed);
+        set_lady_domain(session, LadyControlDomain::BodyConstraint, out);
+    } else if ((state == 0x5CU || state == 0x5DU) &&
+               lane == 0U && channel == 0U && value == 1U) {
+        preset(0U, LadyPlacementPreset::ActiveDeployed);
+        set_lady_domain(session, LadyControlDomain::BodyConstraint, out);
+    } else if ((state == 0x59U || state == 0x61U) &&
+               lane == 0U && channel == 0U && value == 1U) {
+        preset(0U, LadyPlacementPreset::BodyStowed);
+        set_lady_domain(session, LadyControlDomain::IndependentMotionScript, out);
+    } else if (in_range(state, 0x56U, 0x58U) &&
+               lane == 1U && channel == 0U && value == 1U) {
+        spawn(2);  // CEm034Shl02
+    } else if (((in_range(state, 0x34U, 0x36U) ||
+                 in_range(state, 0x3BU, 0x3DU) ||
+                 in_range(state, 0x42U, 0x44U) ||
+                 in_range(state, 0x49U, 0x4BU) ||
+                 in_range(state, 0x50U, 0x52U)) &&
+                lane == 1U && channel == 0U && value == 1U) ||
+               (state == 0x7FU && lane == 1U && channel == 0U && value == 1U)) {
+        spawn(0);  // CEm034Shl00
+    } else if (((in_range(state, 0x53U, 0x55U) ||
+                 state == 0x5AU || state == 0x5BU || state == 0x5EU ||
+                 in_range(state, 0x64U, 0x73U)) &&
+                lane == 1U && channel == 0U && value == 1U)) {
+        spawn(1);  // CEm034Shl01
+    } else if (state == 0x81U && lane == 1U) {
+        if (channel == 0U && value == 1U) spawn(5);
+        else if (channel == 1U && value == 1U) side_effect();
+        else if (channel == 2U && value == 1U) {
+            preset(3U, LadyPlacementPreset::BodyStowed);
+        }
+    } else if (state == 0x85U && lane == 1U) {
+        if (channel == 1U && value == 1U) {
+            preset(4U, LadyPlacementPreset::ActiveDeployed);
+        } else if (channel == 1U && value == 2U) {
+            preset(4U, LadyPlacementPreset::BodyStowed);
+        } else if (channel == 0U && (value == 1U || value == 2U)) {
+            side_effect();
+        }
+    } else if (state == 0x8FU && lane == 1U &&
+               channel == 0U && value == 1U) {
+        spawn(4);  // CEm034Shl04
+    } else if ((state == 0x60U || state == 0x63U) &&
+               lane == 1U && (channel == 0U || channel == 1U) &&
+               value == 1U) {
+        side_effect();
+    } else if (state == 0x7FU && lane == 1U && channel == 1U) {
+        side_effect();
+    }
+
+    return out;
 }
 
 const WeaponStateRecord* weapon_state_record(std::string_view class_name,
