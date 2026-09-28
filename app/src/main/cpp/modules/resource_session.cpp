@@ -655,6 +655,180 @@ std::string session_composite_part_name(const Session* session, int index) {
     return session->composite_parts[static_cast<std::size_t>(index)].name;
 }
 
+std::optional<CompositePartState> session_composite_part_state(
+        const Session* session, int index) {
+    if (session == nullptr || index < 0 ||
+        static_cast<std::size_t>(index) >= session->composite_parts.size()) {
+        return std::nullopt;
+    }
+
+    const auto& part = session->composite_parts[static_cast<std::size_t>(index)];
+    CompositePartState state;
+    state.name = part.name;
+    state.asset_id = part.asset_id;
+    state.instance_id = part.instance_id;
+    state.texture_companion_attached = part.texture_companion_attached;
+    state.placement_mode = part.placement.mode;
+    state.placement_resolved = part.placement.resolved;
+    state.host_instance_id = part.placement.host_instance_id;
+    state.attachment_selector = part.placement.attachment_selector;
+
+    if (state.placement_resolved && state.host_instance_id != kInvalidInstanceId) {
+        for (std::size_t host_index = 0U;
+             host_index < session->composite_parts.size();
+             ++host_index) {
+            const auto& host = session->composite_parts[host_index];
+            if (host.instance_id != state.host_instance_id) continue;
+            state.host_part_index = host_index;
+            state.host_name = host.name;
+            if (state.attachment_selector != kNoAttachmentSelector &&
+                static_cast<std::size_t>(state.attachment_selector) <
+                    host.scene.nodes.size()) {
+                state.attachment_name =
+                    host.scene.nodes[static_cast<std::size_t>(
+                        state.attachment_selector)].name;
+            }
+            break;
+        }
+    }
+
+    return state;
+}
+
+std::string describe_composite_part_state(
+        const Session* session, int index) {
+    const auto state = session_composite_part_state(session, index);
+    if (!state) return {};
+
+    std::ostringstream out;
+    out << state->name
+        << "\nasset=" << state->asset_id
+        << " | instance=" << state->instance_id
+        << " | PTX=" << (state->texture_companion_attached ? "attached" : "not-attached")
+        << "\nplacement="
+        << (state->placement_mode == CompositePlacementMode::HostJoint
+                ? "host-joint"
+                : "source-coordinates")
+        << " | resolved=" << (state->placement_resolved ? "yes" : "no");
+
+    if (state->placement_resolved) {
+        out << "\nhostInstance=" << state->host_instance_id;
+        if (state->host_part_index != kNoCompositePart) {
+            out << " | hostPart=" << state->host_part_index;
+            if (!state->host_name.empty()) out << " (" << state->host_name << ")";
+        }
+        if (state->attachment_selector != kNoAttachmentSelector) {
+            out << "\njoint=" << state->attachment_selector;
+            if (!state->attachment_name.empty()) {
+                out << " (" << state->attachment_name << ")";
+            }
+        }
+    }
+
+    return out.str();
+}
+
+std::size_t session_composite_part_node_count(
+        const Session* session, int part_index) noexcept {
+    if (session == nullptr || part_index < 0 ||
+        static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
+        return 0U;
+    }
+    return session->composite_parts[static_cast<std::size_t>(part_index)].scene.nodes.size();
+}
+
+std::string session_composite_part_node_name(
+        const Session* session, int part_index, int node_index) {
+    if (session == nullptr || part_index < 0 || node_index < 0 ||
+        static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
+        return {};
+    }
+    const auto& nodes =
+        session->composite_parts[static_cast<std::size_t>(part_index)].scene.nodes;
+    if (static_cast<std::size_t>(node_index) >= nodes.size()) return {};
+    return nodes[static_cast<std::size_t>(node_index)].name;
+}
+
+std::optional<std::uint32_t> session_composite_part_default_attachment_selector(
+        const Session* session, int part_index) noexcept {
+    if (session == nullptr || part_index < 0 ||
+        static_cast<std::size_t>(part_index) >= session->composite_parts.size()) {
+        return std::nullopt;
+    }
+    const auto& part = session->composite_parts[static_cast<std::size_t>(part_index)];
+    if (!part.scene.default_attachment_selector ||
+        *part.scene.default_attachment_selector >= part.scene.nodes.size()) {
+        return std::nullopt;
+    }
+    return part.scene.default_attachment_selector;
+}
+
+std::string describe_session_diagnostics(const Session* session) {
+    if (session == nullptr) return {};
+
+    using spider::black_widow::StateFlag;
+    using spider::black_widow::has_state;
+    struct NamedFlag final {
+        StateFlag flag;
+        const char* name;
+    };
+    static constexpr NamedFlag kFlags[] = {
+        {StateFlag::CanRender, "CanRender"},
+        {StateFlag::CanWireframe, "CanWireframe"},
+        {StateFlag::CanInspect, "CanInspect"},
+        {StateFlag::CanShowHierarchy, "CanShowHierarchy"},
+        {StateFlag::HasSkinning, "HasSkinning"},
+        {StateFlag::HasSkinWeights, "HasSkinWeights"},
+        {StateFlag::HasTextureBindings, "HasTextureBindings"},
+        {StateFlag::CanPreviewImage, "CanPreviewImage"},
+        {StateFlag::HasChildResources, "HasChildResources"},
+        {StateFlag::IsText, "IsText"},
+        {StateFlag::IsContainer, "IsContainer"},
+        {StateFlag::HasCollision, "HasCollision"},
+        {StateFlag::HasAdjacency, "HasAdjacency"},
+        {StateFlag::HasTransformSelectors, "HasTransformSelectors"},
+        {StateFlag::CanShowUv, "CanShowUv"},
+        {StateFlag::ChildBrowserMode, "ChildBrowserMode"},
+        {StateFlag::TextureCompanionAttachable, "TextureCompanionAttachable"},
+        {StateFlag::TextureCompanionAttached, "TextureCompanionAttached"},
+        {StateFlag::UvMapView, "UvMapView"},
+        {StateFlag::CanInspectUv, "CanInspectUv"},
+        {StateFlag::CanInspectMeshes, "CanInspectMeshes"},
+        {StateFlag::CanInspectHierarchy, "CanInspectHierarchy"},
+        {StateFlag::CanExportPng, "CanExportPng"},
+        {StateFlag::CanAddModelPart, "CanAddModelPart"},
+        {StateFlag::CanStageCompanion, "CanStageCompanion"},
+    };
+
+    std::ostringstream out;
+    out << "family=" << session->probe.family
+        << " domain=" << session->probe.domain
+        << " support=" << session->probe.support
+        << " evidence=" << session->probe.evidence
+        << " content_confirmed="
+        << (session->probe.content_confirmed ? "true" : "false");
+
+    if (!session->detail.empty()) {
+        std::string detail = session->detail;
+        for (char& ch : detail) {
+            if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+        }
+        out << "\n  detail=" << detail;
+    }
+
+    const auto bits = black_widow_state(session);
+    out << "\n  black_widow=0x" << std::hex << bits << std::dec << " [";
+    bool first = true;
+    for (const auto& item : kFlags) {
+        if (!has_state(bits, item.flag)) continue;
+        if (!first) out << ",";
+        first = false;
+        out << item.name;
+    }
+    out << "]";
+    return out.str();
+}
+
 std::string describe_session(const Session* session) {
     if (session == nullptr) return "no session";
     std::ostringstream out;

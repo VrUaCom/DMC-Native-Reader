@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "dmcresource/resource_capabilities.h"
+#include "dmcresource/resource_session.h"
 #include "dmcresource/spider/black_widow.h"
 
 int main() {
@@ -180,6 +181,31 @@ int main() {
     assert(widow::has_state(state, widow::StateFlag::CanExportPng));
     assert(!widow::has_state(state, widow::StateFlag::CanAddModelPart));
     assert(!widow::has_state(state, widow::StateFlag::CanStageCompanion));
+
+    // Android/desktop diagnostics consume one native-produced projection rather
+    // than reconstructing capability policy in a platform shell.
+    Session diagnostic;
+    diagnostic.probe.family = "MOD";
+    diagnostic.probe.domain = "model";
+    diagnostic.probe.support = "read";
+    diagnostic.probe.evidence = "test-evidence";
+    diagnostic.probe.content_confirmed = true;
+    diagnostic.capabilities = capabilities;
+    diagnostic.renderable = true;
+    diagnostic.render_mesh = mesh;
+    diagnostic.render_triangle_texture_slots = {2U};
+    diagnostic.detail = "line one\nline two";
+
+    const auto diagnostic_text = describe_session_diagnostics(&diagnostic);
+    assert(diagnostic_text.find("family=MOD") != std::string::npos);
+    assert(diagnostic_text.find("domain=model") != std::string::npos);
+    assert(diagnostic_text.find("support=read") != std::string::npos);
+    assert(diagnostic_text.find("evidence=test-evidence") != std::string::npos);
+    assert(diagnostic_text.find("content_confirmed=true") != std::string::npos);
+    assert(diagnostic_text.find("detail=line one line two") != std::string::npos);
+    assert(diagnostic_text.find("CanRender") != std::string::npos);
+    assert(diagnostic_text.find("CanAddModelPart") != std::string::npos);
+    assert(describe_session_diagnostics(nullptr).empty());
 
     return 0;
 }
