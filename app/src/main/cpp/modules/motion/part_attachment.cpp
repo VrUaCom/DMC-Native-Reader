@@ -603,6 +603,56 @@ Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
     return out;
 }
 
+bool set_lady_component_preset(Session* session,
+                               LadyComponentBinding& binding,
+                               LadyPlacementPreset preset) noexcept {
+    if (session == nullptr || binding.host_part >= session->composite_parts.size() ||
+        binding.part >= session->composite_parts.size()) {
+        return false;
+    }
+    const auto* contract = lady_component_contract(binding.component);
+    if (contract == nullptr || contract->model_slot != binding.model_slot) return false;
+    const auto index = static_cast<std::size_t>(preset);
+    if (index >= contract->presets.size()) return false;
+    const auto& record = contract->presets[index];
+
+    // CEm034 component3/preset1 deliberately bypasses serialized node13 and
+    // points CCnsMatrix at CEm034+0x43C0. That matrix is body-root-derived and
+    // uniformly scaled from runtime +0x4400. Do not approximate it with joint13.
+    if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+        return false;
+    }
+
+    if (!attach_part_skeleton(
+            session, binding.host_part, binding.part, record.serialized_node,
+            false, attach_local_matrix(record.translation,
+                                       record.rotation_xyz_radians))) {
+        return false;
+    }
+    binding.preset = preset;
+    return true;
+}
+
+bool set_lady_component_control_domain(Session* session,
+                                       LadyComponentBinding& binding,
+                                       LadyControlDomain domain) noexcept {
+    if (session == nullptr || binding.component != 0U) return false;
+    if (domain == LadyControlDomain::IndependentMotionScript) {
+        // Canonical CEm034 transitions first restore component0 to preset0,
+        // then start em034_013 and clear +0x4020. The independent controller
+        // itself is a separate playback layer; this binding records that owner.
+        if (!set_lady_component_preset(
+                session, binding, LadyPlacementPreset::BodyStowed)) {
+            return false;
+        }
+        binding.control_domain = domain;
+        return true;
+    }
+    if (!set_lady_component_preset(session, binding, binding.preset)) return false;
+    binding.control_domain = LadyControlDomain::BodyConstraint;
+    return true;
+}
+
 const WeaponStateRecord* weapon_state_record(std::string_view class_name,
                                              std::uint8_t state) noexcept {
     if (state >= 24U) return nullptr;
@@ -711,62 +761,63 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         is_lady = std::tolower(static_cast<unsigned char>(archive_name[i])) == lady[i];
     }
     if (is_lady) {
-        // Retail em034 resource groups:
-        //   appearance 1: body slot 1 + hair slot 17 -> PTX slot 0
-        //   appearance 2: body slot 32 + hair slot 34 -> PTX slot 31
-        //   Kalina Ann assembly: slots 20..26 -> PTX 19 (costume 1) or
-        //     PTX 33 (costume 2); slot 30 is the cable/chain part -> PTX 29.
-        //
-        // Hair placement is structurally confirmed without guessing:
-        //   * slot 17/34 UVs sample the hair region of the corresponding body PTX;
-        //   * slot 18 is pl002_01.clt and drives its four hair chains (2/4/6/8);
-        //   * raw hair Y [-3.75,15.94] + body joint 5 Y=148.47 aligns with
-        //     body head object Y [144.46,160.23].
-        //
-        // The Kalina Ann MODs form one coherent source-space assembly around a
-        // common zero root. Attaching all of them through one body hand keeps
-        // their relative layout instead of scattering them at world origin.
-        // The hand selector remains a viewer candidate until the exact CEm034
-        // class-init attachment consumer is recovered from the EXE.
-        constexpr std::array<std::uint32_t, 8> weapon_slots{
-            20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U};
+        // CEm034 runtime ownership is now EXE-confirmed:
+        //   persistent components: slots20..24, owned for the actor lifetime;
+        //   dynamic CShell resources: slot25 (Shl02), slots26+30 (Shl03).
+        // Dynamic resources remain PAC children and are not overlaid in the
+        // base Lady appearance.
+        const auto bind_core = [](ArchiveVariant& variant,
+                                  std::uint32_t body_slot,
+                                  std::uint32_t hair_slot) {
+            variant.part_attachments[0] =
+                {body_slot, hair_slot, 5U, false, true};
+            for (std::size_t i = 0U; i < kCEm034LadyComponents.size(); ++i) {
+                const auto& component = kCEm034LadyComponents[i];
+                const auto& stowed =
+                    component.presets[static_cast<std::size_t>(
+                        LadyPlacementPreset::BodyStowed)];
+                variant.part_attachments[i + 1U] = {
+                    body_slot,
+                    component.model_slot,
+                    stowed.serialized_node,
+                    false,
+                    true,
+                    true,
+                    stowed.translation,
+                    stowed.rotation_xyz_radians,
+                    true,
+                };
+            }
+            variant.part_attachment_count =
+                1U + static_cast<std::uint32_t>(kCEm034LadyComponents.size());
+        };
 
         ArchiveVariant first;
         first.label = "Lady · costume 1";
         first.include_top_level_mod_slots =
-            {1U, 17U, 20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U};
-        first.include_top_level_mod_count = 10U;
+            {1U, 17U, 20U, 21U, 22U, 23U, 24U};
+        first.include_top_level_mod_count = 7U;
         first.texture_overrides = {{
             {1U, 0U}, {17U, 0U},
             {20U, 19U}, {21U, 19U}, {22U, 19U}, {23U, 19U},
-            {24U, 19U}, {25U, 19U}, {26U, 19U}, {30U, 29U},
+            {24U, 19U},
         }};
-        first.texture_override_count = 10U;
-        first.part_attachments[0] = {1U, 17U, 5U, false, true};
-        for (std::size_t i = 0U; i < weapon_slots.size(); ++i) {
-            first.part_attachments[i + 1U] =
-                {1U, weapon_slots[i], 9U, false, false};
-        }
-        first.part_attachment_count = 9U;
+        first.texture_override_count = 7U;
+        bind_core(first, 1U, 17U);
         out.push_back(first);
 
         ArchiveVariant second;
         second.label = "Lady · costume 2";
         second.include_top_level_mod_slots =
-            {32U, 34U, 20U, 21U, 22U, 23U, 24U, 25U, 26U, 30U};
-        second.include_top_level_mod_count = 10U;
+            {32U, 34U, 20U, 21U, 22U, 23U, 24U};
+        second.include_top_level_mod_count = 7U;
         second.texture_overrides = {{
             {32U, 31U}, {34U, 31U},
             {20U, 33U}, {21U, 33U}, {22U, 33U}, {23U, 33U},
-            {24U, 33U}, {25U, 33U}, {26U, 33U}, {30U, 29U},
+            {24U, 33U},
         }};
-        second.texture_override_count = 10U;
-        second.part_attachments[0] = {32U, 34U, 5U, false, true};
-        for (std::size_t i = 0U; i < weapon_slots.size(); ++i) {
-            second.part_attachments[i + 1U] =
-                {32U, weapon_slots[i], 9U, false, false};
-        }
-        second.part_attachment_count = 9U;
+        second.texture_override_count = 7U;
+        bind_core(second, 32U, 34U);
         out.push_back(second);
     }
     return out;
