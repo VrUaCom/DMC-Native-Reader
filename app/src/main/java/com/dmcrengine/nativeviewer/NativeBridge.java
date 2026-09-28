@@ -24,6 +24,12 @@ public final class NativeBridge {
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
     public static native boolean imagePreview(long handle, Bitmap target);
+
+    // Optional dual preview used by FXBANK and any future resource that has a
+    // visual/playback representation plus a separate evidence/info rendering.
+    public static native boolean hasDualPreview(long handle);
+    public static native boolean infoPreviewActive(long handle);
+    public static native boolean setInfoPreviewActive(long handle, boolean active);
     public static native String inspection(long handle);
     public static final int INSPECT_UV = 1;
     public static final int INSPECT_MESHES = 2;

@@ -300,12 +300,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreviewWidth(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
-    if (session == nullptr || !session->image_preview.available() ||
-        session->image_preview.width > static_cast<std::uint32_t>(
+    const auto* preview = dmcresource::session_active_preview(session);
+    if (preview == nullptr || !preview->available() ||
+        preview->width > static_cast<std::uint32_t>(
             std::numeric_limits<jint>::max())) {
         return 0;
     }
-    return static_cast<jint>(session->image_preview.width);
+    return static_cast<jint>(preview->width);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -313,12 +314,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreviewHeight(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
-    if (session == nullptr || !session->image_preview.available() ||
-        session->image_preview.height > static_cast<std::uint32_t>(
+    const auto* preview = dmcresource::session_active_preview(session);
+    if (preview == nullptr || !preview->available() ||
+        preview->height > static_cast<std::uint32_t>(
             std::numeric_limits<jint>::max())) {
         return 0;
     }
-    return static_cast<jint>(session->image_preview.height);
+    return static_cast<jint>(preview->height);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -326,8 +328,34 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_imagePreview(
         JNIEnv* env, jclass, jlong handle, jobject target) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    return preview_to_bitmap(env, target, session->image_preview)
+    const auto* preview = dmcresource::session_active_preview(session);
+    if (preview == nullptr) return JNI_FALSE;
+    return preview_to_bitmap(env, target, *preview)
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hasDualPreview(
+        JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    return dmcresource::session_has_dual_preview(from_handle(handle))
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_infoPreviewActive(
+        JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    return dmcresource::session_info_preview_active(from_handle(handle))
+        ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setInfoPreviewActive(
+        JNIEnv*, jclass, jlong handle, jboolean active) {
+    const SessionLock jni_lock{session_mutex()};
+    return dmcresource::session_set_info_preview(
+        from_handle(handle), active == JNI_TRUE)
         ? JNI_TRUE : JNI_FALSE;
 }
 

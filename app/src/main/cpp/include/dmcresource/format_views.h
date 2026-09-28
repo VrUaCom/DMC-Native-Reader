@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -44,6 +45,33 @@ inline constexpr int kViewHeight = 1440;
 // nullptr (frames drawn as outlines on the texture's pixel grid).
 [[nodiscard]] ImagePreview render_sprite_view(const effect_bank::SpriteAnimation& animation,
                                               std::uint32_t record_id, const ImagePreview* texture);
+
+// FXBANK effect-record views recovered from the runtime consumers. T keeps its
+// decoded DDS view, A keeps render_sprite_view, and M uses the ordinary model
+// renderer. This view covers the remaining registered effect kinds so a PNST
+// gallery never has to represent them as empty black tiles. E may receive its
+// resolved T texture and optional A animation from the owning bank.
+[[nodiscard]] ImagePreview render_effect_record_view(
+    const effect_bank::Record& record,
+    const ImagePreview* texture = nullptr,
+    const effect_bank::SpriteAnimation* animation = nullptr);
+
+// Cleaner Visual-mode projection. It intentionally uses only confirmed runtime
+// links/fields; missing linked previews stay explicit instead of being guessed.
+struct EffectLinkedVisual final {
+    char kind{};
+    std::uint32_t id{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_degrees{};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+    const ImagePreview* preview{};
+};
+
+[[nodiscard]] ImagePreview render_effect_visual_view(
+    const effect_bank::Record& record,
+    const ImagePreview* texture = nullptr,
+    const effect_bank::SpriteAnimation* animation = nullptr,
+    std::span<const EffectLinkedVisual> linked = {});
 
 // Attack index: every entry (id, target mask, bone, shape).
 [[nodiscard]] ImagePreview render_attack_index_view(const std::vector<collision::AttackEntry>& entries);

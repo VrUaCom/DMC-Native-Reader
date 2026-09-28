@@ -19,18 +19,42 @@ namespace {
 // Effect record budget for decoded thumbnails (RGBA pixels).
 constexpr std::uint64_t kMaxThumbnailPixels = 4U * 1024U * 1024U;
 
-[[nodiscard]] std::string record_filename(const effect_bank::Record& r) {
-    char base[32];
-    std::snprintf(base, sizeof(base), "%c%03u", r.kind, r.id);
+// Internal decoder hint only. FXBANK does not store historical child filenames:
+ // the canonical loader addresses records by manifest kind + numeric id and
+ // physical PNST slot. Keep UI labels separate from these neutral probe names.
+[[nodiscard]] std::string record_probe_filename(const effect_bank::Record& r) {
+    char base[48];
+    std::snprintf(base, sizeof(base), "slot_%04u", r.slot);
     std::string name{base};
     if (r.kind == 'T') return name + ".dds";
     if (r.kind == 'M') {
-        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "EFM ", 4U) == 0) return name + ".efm";
-        return name + ".mod";
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "EFM ", 4U) == 0) {
+            return name + ".efm";
+        }
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "MOD", 3U) == 0) {
+            return name + ".mod";
+        }
     }
-    name += ".fx";
-    name.push_back(static_cast<char>(r.kind >= 'A' && r.kind <= 'Z' ? r.kind + 32 : 'x'));
-    return name;
+    return name + ".bin";
+}
+
+[[nodiscard]] std::string record_format_label(const effect_bank::Record& r) {
+    if (r.kind == 'T' && !effect_bank::texture_dds(r).empty()) return "DDS";
+    if (r.kind == 'M') {
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "EFM ", 4U) == 0) return "EFM";
+        if (r.bytes.size() >= 4U && std::memcmp(r.bytes.data(), "MOD", 3U) == 0) return "MOD";
+    }
+    return {};
+}
+
+[[nodiscard]] std::string record_title(const effect_bank::Record& r) {
+    std::string title;
+    title.push_back(r.kind);
+    title += " " + std::to_string(r.id);
+    const auto format = record_format_label(r);
+    if (!format.empty()) title += " · " + format;
+    title += " · " + std::to_string(r.bytes.size()) + " B";
+    return title;
 }
 
 PipelineResult run_effect_bank_module(const NativeModule& module,
@@ -94,6 +118,7 @@ PipelineResult run_effect_bank_module(const NativeModule& module,
 
         // Decoded textures of this bank by id (sprite views sample them).
         std::map<std::uint32_t, ImagePreview> textures;
+        std::map<std::pair<char, std::uint32_t>, std::size_t> child_by_key;
         std::uint64_t thumbnail_pixels = 0U;
         std::size_t index = 0U;
         for (const auto& r : bank->records) {
@@ -101,14 +126,14 @@ PipelineResult run_effect_bank_module(const NativeModule& module,
             if (r.bytes.empty()) continue;
             ChildResource child;
             child.id = "fx-" + std::to_string(index - 1U);
-            child.suggested_filename = record_filename(r);
+            child.suggested_filename = record_probe_filename(r);
             std::span<const std::uint8_t> payload = r.bytes;
             if (r.kind == 'T') {
                 const auto dds = effect_bank::texture_dds(r);
                 if (!dds.empty()) payload = dds;
             }
             child.source_bytes.assign(payload.begin(), payload.end());
-            child.title = child.suggested_filename + " · " + std::to_string(r.bytes.size()) + " B";
+            child.title = record_title(r);
             child.probe = dmcresource::probe(child.suggested_filename, child.source_bytes.data(),
                                              child.source_bytes.size());
             child.capabilities = capability(ResourceCapability::Inspection);
@@ -132,24 +157,136 @@ PipelineResult run_effect_bank_module(const NativeModule& module,
                     child.image_preview = std::move(decoded.image_preview);
                 }
             }
+            child_by_key[{r.kind, r.id}] = out.children.size();
             out.children.push_back(std::move(child));
         }
-        // Sprite animations: drawn over their texture when the bank holds it.
-        std::size_t child_index = 0U;
+        // Bank-local A records are reusable by E records. Keep the parsed
+        // animation keyed by its manifest id; this mirrors the EXE's A manager
+        // lookup rather than deriving identity from a synthetic filename.
+        std::map<std::uint32_t, effect_bank::SpriteAnimation> animations;
         for (const auto& r : bank->records) {
-            if (r.bytes.empty()) continue;
-            auto& child = out.children[child_index++];
-            if (r.kind != 'A') continue;
-            const auto sprite = effect_bank::sprite_animation(r);
-            if (!sprite) continue;
-            const auto found = textures.find(sprite->texture);
-            child.image_preview = views::render_sprite_view(
-                *sprite, r.id, found != textures.end() ? &found->second : nullptr);
-            child.capabilities = child.capabilities | ResourceCapability::ImagePreview;
-            child.detail += "\nSprite: texture T" + std::to_string(sprite->texture) + ", " +
-                            std::to_string(sprite->frames.size()) + " frames, frame time " +
-                            std::to_string(sprite->frame_time) + (sprite->loop ? ", loop" : ", once");
+            if (r.kind != 'A' || r.bytes.empty()) continue;
+            if (auto sprite = effect_bank::sprite_animation(r)) {
+                animations.emplace(r.id, std::move(*sprite));
+            }
         }
+
+        // Every registered effect record gets two native surfaces when the
+        // runtime structure is understood:
+        //   Visual = texture/graph/parameter reconstruction from confirmed links
+        //   Info   = the EXE-backed diagnostic view with offsets/fields.
+        // T remains the real decoded texture; M remains the ordinary MOD/EFM 3D
+        // renderer. Their generic info is already available through the reader's
+        // normal information panel.
+        for (const auto& r : bank->records) {
+            if (r.bytes.empty() || r.kind == 'T' || r.kind == 'M') continue;
+            const auto child_found = child_by_key.find({r.kind, r.id});
+            if (child_found == child_by_key.end()) continue;
+            auto& child = out.children[child_found->second];
+
+            if (r.kind == 'A') {
+                const auto animation = animations.find(r.id);
+                if (animation == animations.end()) {
+                    child.image_preview = views::render_effect_visual_view(r);
+                } else {
+                    const auto found = textures.find(animation->second.texture);
+                    child.image_preview = views::render_sprite_view(
+                        animation->second, r.id,
+                        found != textures.end() ? &found->second : nullptr);
+                    child.detail += "\nSprite: texture T" +
+                                    std::to_string(animation->second.texture) + ", " +
+                                    std::to_string(animation->second.frames.size()) +
+                                    " frames, frame time " +
+                                    std::to_string(animation->second.frame_time) +
+                                    (animation->second.loop ? ", loop" : ", once");
+                }
+                child.info_preview = views::render_effect_record_view(r);
+            } else {
+                const ImagePreview* texture = nullptr;
+                const effect_bank::SpriteAnimation* animation = nullptr;
+                if (r.kind == 'E') {
+                    if (const auto runtime = effect_bank::e_runtime_view(r)) {
+                        const auto texture_found = textures.find(runtime->texture_id);
+                        if (texture_found != textures.end()) {
+                            texture = &texture_found->second;
+                        }
+                        if (runtime->uses_animation) {
+                            const auto animation_found =
+                                animations.find(runtime->animation_id);
+                            if (animation_found != animations.end()) {
+                                animation = &animation_found->second;
+                            }
+                        }
+                        child.detail += "\nRuntime E: mode " +
+                                        std::to_string(runtime->mode) +
+                                        ", T " + std::to_string(runtime->texture_id);
+                        if (runtime->uses_animation) {
+                            child.detail += ", A " +
+                                            std::to_string(runtime->animation_id);
+                        }
+                    }
+                }
+
+                child.image_preview =
+                    views::render_effect_visual_view(r, texture, animation);
+                child.info_preview =
+                    views::render_effect_record_view(r, texture, animation);
+            }
+
+            if (child.image_preview.available()) {
+                child.capabilities =
+                    child.capabilities | ResourceCapability::ImagePreview;
+            }
+        }
+
+        // V is a composite dispatcher. Re-render its Visual surface after every
+        // direct child acquired its own Visual image so V can show the actual
+        // resolved E texture imagery (and the graphical P/G/V child views)
+        // instead of only labels. This is a static reconstruction of confirmed
+        // dependencies/transforms, not yet a claim of frame-accurate gameplay.
+        for (const auto& r : bank->records) {
+            if (r.kind != 'V' || r.bytes.empty()) continue;
+            const auto runtime = effect_bank::v_runtime_view(r);
+            const auto child_found = child_by_key.find({r.kind, r.id});
+            if (!runtime || child_found == child_by_key.end()) continue;
+
+            std::vector<views::EffectLinkedVisual> linked;
+            linked.reserve(runtime->entries.size());
+            for (const auto& entry : runtime->entries) {
+                char kind = '?';
+                switch (entry.dispatch) {
+                case 0U: kind = 'P'; break;
+                case 1U: kind = 'E'; break;
+                case 2U: kind = 'G'; break;
+                case 3U: kind = 'V'; break;
+                default: break;
+                }
+
+                const ImagePreview* preview = nullptr;
+                if (kind != '?') {
+                    const auto target = child_by_key.find({kind, entry.id});
+                    if (target != child_by_key.end()) {
+                        const auto& target_child = out.children[target->second];
+                        if (target_child.image_preview.available()) {
+                            preview = &target_child.image_preview;
+                        }
+                    }
+                }
+                linked.push_back({
+                    kind,
+                    entry.id,
+                    entry.translation,
+                    entry.rotation_degrees,
+                    entry.scale,
+                    preview,
+                });
+            }
+
+            auto& child = out.children[child_found->second];
+            child.image_preview = views::render_effect_visual_view(
+                r, nullptr, nullptr, linked);
+        }
+
         out.detail = detail.str();
         return out;
     } catch (...) {

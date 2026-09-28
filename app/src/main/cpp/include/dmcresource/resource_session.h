@@ -35,7 +35,11 @@ struct Session {
     dmcresource::ResourceCapabilities capabilities{};
     dmcresource::InspectionDocument inspection;
     dmcresource::RenderScene scene;
+    // Primary visual/playback-facing preview.
     dmcresource::ImagePreview image_preview;
+    // Optional evidence/diagnostic view of the same logical effect/resource.
+    dmcresource::ImagePreview info_preview;
+    bool info_preview_active{};
     std::vector<dmcresource::ChildResource> children;
 
     dmcresource::Mesh render_mesh;
@@ -189,6 +193,13 @@ struct Session {
 [[nodiscard]] const ImagePreview* session_child_preview(
     const Session* session, int index, ImagePreview* scratch);
 [[nodiscard]] std::unique_ptr<Session> open_session_child(const Session* session, int index);
+
+// Dual Visual / Info surface. The active preview is the image exposed to
+// platform shells; sessions without info_preview behave exactly as before.
+[[nodiscard]] bool session_has_dual_preview(const Session* session) noexcept;
+[[nodiscard]] bool session_info_preview_active(const Session* session) noexcept;
+[[nodiscard]] bool session_set_info_preview(Session* session, bool info) noexcept;
+[[nodiscard]] const ImagePreview* session_active_preview(const Session* session) noexcept;
 [[nodiscard]] std::string describe_session(const Session* session);
 [[nodiscard]] spider::black_widow::StateBits black_widow_state(const Session* session) noexcept;
 
