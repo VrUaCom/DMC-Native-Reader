@@ -1,0 +1,26 @@
+name: Export v72 base bundle
+
+on:
+  push:
+    branches:
+      - build/v72-effects-runtime-a9f4b45-ci
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create full repository bundle
+        run: |
+          git bundle create native-reader-base.bundle --all
+          git bundle verify native-reader-base.bundle
+          sha256sum native-reader-base.bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-reader-base-bundle
+          path: native-reader-base.bundle
+          retention-days: 1
