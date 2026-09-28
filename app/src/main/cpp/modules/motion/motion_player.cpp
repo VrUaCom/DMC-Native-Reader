@@ -491,6 +491,48 @@ MotionLoadReport load_motion(Session* session,
     }
 }
 
+MotionLoadReport load_library_motion(Session* session,
+                                     std::size_t motion_index) noexcept {
+    MotionLoadReport report;
+    if (session == nullptr || motion_index >= session->motion_library.size()) {
+        report.detail = "Motion: invalid library index";
+        return report;
+    }
+    try {
+        clear_motion(session);
+        const auto payload = session->motion_library[motion_index];
+
+        // Raw MOT stays raw: no MotionScript state/channel execution. For the
+        // slot20-only PAC11 motions we only release the model from its body
+        // constraint so its own three-node MOT can be evaluated.
+        if (is_em034(*session) && payload.pack_slot == 11) {
+            auto* component = component0_binding(session);
+            if (component == nullptr ||
+                !set_lady_component_preset(
+                    session, *component, LadyPlacementPreset::BodyStowed) ||
+                !set_lady_component_control_domain(
+                    session, *component,
+                    LadyControlDomain::IndependentMotionScript)) {
+                report.detail =
+                    "Motion: Lady slot20 could not enter standalone MOT domain";
+                return report;
+            }
+        }
+
+        report = load_motion(
+            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        if (report.ok && is_em034(*session) && payload.pack_slot == 11) {
+            report.detail = "Raw component MOT (no MotionScript events): " +
+                            report.detail;
+        }
+        return report;
+    } catch (...) {
+        report = {};
+        report.detail = "Motion: raw library playback failed";
+        return report;
+    }
+}
+
 bool apply_motion_frame(Session* session, float frame) noexcept {
     if (session == nullptr || session->motion == nullptr || !std::isfinite(frame)) return false;
     try {
@@ -609,6 +651,10 @@ void clear_motion(Session* session) noexcept {
         if (binding.state != 0U) moved = set_weapon_state(session, binding, 0U) || moved;
     }
     if (moved) (void)apply_part_attachments(session);
+    if (!session->lady_component_bindings.empty()) {
+        reset_lady_runtime(session);
+        (void)apply_part_attachments(session);
+    }
 }
 
 bool has_motion(const Session* session) noexcept {
@@ -683,6 +729,7 @@ MotionLoadReport load_scripted_motion(Session* session,
         return report;
     }
     try {
+        clear_motion(session);
         const auto binding = session->motion_scripts[script_index];
         const auto payload = session->motion_library[motion_index];
         const auto selection = pick_script_motion(*session, binding, payload);
