@@ -284,6 +284,91 @@ struct ScriptMotionSelection final {
     return part;
 }
 
+void reset_lady_runtime(Session* session) noexcept {
+    if (session == nullptr) return;
+    for (auto& binding : session->lady_component_bindings) {
+        (void)set_lady_component_preset(
+            session, binding, LadyPlacementPreset::BodyStowed);
+        binding.runtime_uniform_scale = 1.0F;
+        if (binding.component == 0U) {
+            (void)set_lady_component_control_domain(
+                session, binding, LadyControlDomain::BodyConstraint);
+        }
+    }
+}
+
+[[nodiscard]] bool apply_lady_script_runtime(Session* session,
+                                             MotionState& state,
+                                             float frame) noexcept {
+    if (session == nullptr || !state.script_driven ||
+        state.script_role != Session::MotionScriptRole::LadyBody ||
+        !state.lady_state.has_value()) {
+        return true;
+    }
+
+    const bool replay = !state.lady_entry_applied ||
+                        frame < state.lady_runtime_frame;
+    if (replay) {
+        const auto entry = apply_lady_state_entry(session, *state.lady_state);
+        if (!entry.recognized) return false;
+        state.lady_entry_applied = true;
+        state.lady_runtime_frame = -1.0F;
+        if (entry.dynamic_actor >= 0) state.last_dynamic_actor = entry.dynamic_actor;
+    }
+
+    // State0x81/action46 rebuilds +0x4400 to 1.0 every actor update, and
+    // promotes it to 1.5 only on the channel1 pulse. Reproduce that pulse
+    // rather than incorrectly making 1.5 a sticky placement state.
+    if (*state.lady_state == 0x81U) {
+        for (auto& binding : session->lady_component_bindings) {
+            if (binding.component == 3U) {
+                (void)set_lady_component_runtime_scale(session, binding, 1.0F);
+                break;
+            }
+        }
+    }
+
+    float latest_scale_pulse = -std::numeric_limits<float>::infinity();
+    for (const auto& signal : state.script_signals) {
+        if (!(frame > signal.after_frame)) continue;
+        if (!replay && signal.after_frame < state.lady_runtime_frame) continue;
+
+        for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+            for (std::uint8_t channel = 0U; channel < signal.channels.size(); ++channel) {
+                const auto value = signal.channels[channel];
+                if (value == 0U &&
+                    !(*state.lady_state == 0x81U && channel == 1U)) {
+                    continue;
+                }
+                const auto applied = apply_lady_signal(
+                    session, *state.lady_state, lane, channel, value);
+                if (applied.dynamic_actor >= 0) {
+                    state.last_dynamic_actor = applied.dynamic_actor;
+                }
+                if (*state.lady_state == 0x81U && lane == 1U &&
+                    channel == 1U && value == 1U) {
+                    latest_scale_pulse =
+                        std::max(latest_scale_pulse, signal.after_frame);
+                }
+            }
+        }
+    }
+
+    if (*state.lady_state == 0x81U &&
+        std::isfinite(latest_scale_pulse) &&
+        frame > latest_scale_pulse + 1.0F) {
+        for (auto& binding : session->lady_component_bindings) {
+            if (binding.component == 3U) {
+                (void)set_lady_component_runtime_scale(session, binding, 1.0F);
+                break;
+            }
+        }
+    }
+
+    state.lady_runtime_frame = frame;
+    return true;
+}
+
 }  // namespace
 
 MotionLoadReport load_motion(Session* session,
