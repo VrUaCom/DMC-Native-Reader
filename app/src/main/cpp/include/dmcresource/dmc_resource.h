@@ -16,6 +16,7 @@ enum class Format : std::uint8_t {
     Dds,
     Ptx,
     Evt,
+    Hits,
     Pac,
     Mot,
     Pnst,

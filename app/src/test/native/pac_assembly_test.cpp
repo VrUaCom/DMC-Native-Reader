@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
 
@@ -235,6 +236,34 @@ std::vector<std::uint8_t> make_pac(const std::vector<std::vector<std::uint8_t>>&
     return bytes;
 }
 
+std::vector<std::uint8_t> make_pnst(
+    const std::vector<std::vector<std::uint8_t>>& payloads) {
+    std::size_t cursor = 8U + payloads.size() * 4U;
+    cursor = (cursor + 0x0FU) & ~std::size_t{0x0FU};
+    std::vector<std::uint8_t> bytes(cursor, 0U);
+    bytes[0] = 'P';
+    bytes[1] = 'N';
+    bytes[2] = 'S';
+    bytes[3] = 'T';
+    put_u32(bytes, 4U, static_cast<std::uint32_t>(payloads.size()));
+    for (std::size_t index = 0U; index < payloads.size(); ++index) {
+        put_u32(bytes, 8U + index * 4U, static_cast<std::uint32_t>(bytes.size()));
+        bytes.insert(bytes.end(), payloads[index].begin(), payloads[index].end());
+        bytes.resize((bytes.size() + 0x0FU) & ~std::size_t{0x0FU}, 0U);
+    }
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_effect_bank() {
+    const std::string manifest = "V 423\r\n# End\r\n";
+    const std::vector<std::uint8_t> record(64U, 0U);
+    const auto records = make_pnst({record});
+    return make_pnst({
+        std::vector<std::uint8_t>(manifest.begin(), manifest.end()),
+        records,
+    });
+}
+
 }  // namespace
 
 int main() {
@@ -309,6 +338,7 @@ int main() {
         // visual sources while keeping them out of the persistent composite.
         lady_payloads[slot] = mod;
     }
+    lady_payloads[28] = make_effect_bank();
     lady_payloads[32] = lady_body;
     lady_payloads[34] = mod;
     const auto lady_pac = make_pac(lady_payloads);
@@ -358,6 +388,15 @@ int main() {
     assert(lady_first->lady_dynamic_visuals[1].model_slot == 26U);
     assert(lady_first->lady_dynamic_visuals[2].actor == 3U);
     assert(lady_first->lady_dynamic_visuals[2].model_slot == 30U);
+    assert(std::find(lady_first->effect_bank_slots.begin(),
+                     lady_first->effect_bank_slots.end(), 28U) !=
+           lady_first->effect_bank_slots.end());
+    assert(std::any_of(
+        lady_first->effect_resources.begin(), lady_first->effect_resources.end(),
+        [](const auto& resource) {
+            return resource.effect_kind == 'V' && resource.effect_id == 423U &&
+                   resource.resource_slot == 28U;
+        }));
     assert(!lady_first->lady_dynamic_visuals[0].active);
     assert(!lady_first->lady_dynamic_visuals[1].active);
     assert(!lady_first->lady_dynamic_visuals[2].active);
@@ -517,6 +556,30 @@ int main() {
         const auto shl04 = dmcresource::motion::apply_lady_signal(
             lady_first.get(), 0x8FU, 1U, 0U, 1U);
         assert(shl04.recognized && shl04.dynamic_actor == 4);
+    }
+    {
+        const auto bindings = dmcresource::motion::em034_effect_bindings();
+        assert(bindings.size() == 5U);
+        for (const auto& binding : bindings) {
+            assert(binding.lifetime ==
+                   dmcresource::motion::EffectLifetimeRule::ParentActorRetire);
+            assert(binding.lifetime_evidence ==
+                   dmcresource::motion::EvidenceStatus::EXE_CONFIRMED);
+        }
+        assert(bindings[0].effect_kind == 'V' && bindings[0].effect_id == 463U);
+        assert(bindings[0].children.size() == 1U);
+        assert(bindings[0].children[0].effect_kind == 'E' &&
+               bindings[0].children[0].effect_id == 741U);
+        assert(bindings[1].effect_id == 423U && bindings[1].children.size() == 3U);
+        assert(bindings[1].children[0].effect_id == 752U);
+        assert(bindings[1].children[1].effect_id == 887U);
+        assert(bindings[1].children[2].effect_kind == 'P' &&
+               bindings[1].children[2].effect_id == 337U);
+        assert(bindings[2].effect_id == 488U && bindings[2].children.size() == 6U);
+        assert(bindings[3].effect_id == 475U && bindings[3].children.size() == 1U &&
+               bindings[3].children[0].effect_id == 404U);
+        assert(bindings[4].effect_id == 276U && bindings[4].children.size() == 2U &&
+               bindings[4].children[1].rotation_degrees[2] == 90.0F);
     }
 
     auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);

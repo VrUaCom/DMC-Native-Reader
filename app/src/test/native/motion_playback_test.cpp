@@ -4,11 +4,13 @@
 #include "dmcresource/resource_session.h"
 
 #include <bit>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <vector>
 
@@ -194,8 +196,86 @@ std::vector<std::uint8_t> make_translation_mot() {
     return bytes;
 }
 
+// Enemy-form MotionScript with five banks and 45 actions per bank. Every
+// action resolves to the same tiny script; bank4/action44 is the canonical
+// synthetic Lady state-0x7F route used below. The opcode-3 payload is a
+// five-channel row whose lane1 channel0 value is 1, so the CEm034 bridge can
+// be exercised without naming or guessing an effect frame.
+std::vector<std::uint8_t> make_lady_runtime_script() {
+    constexpr std::size_t kTable = 6U;
+    constexpr std::size_t kBankCount = 5U;
+    constexpr std::size_t kActionCount = 45U;
+    constexpr std::size_t kBankListBytes = kBankCount * 2U + 2U;
+    constexpr std::size_t kActionListBytes = kActionCount * 2U + 2U;
+    constexpr std::size_t kScriptBytes = 8U + 6U + 6U + 6U;
+
+    std::vector<std::uint8_t> bytes(kTable + kBankListBytes, 0U);
+    put_u16(bytes, 0U, static_cast<std::uint16_t>(kTable));
+    put_u16(bytes, 2U, 0U);  // no resource table: the test supplies ScriptLink
+    put_u16(bytes, 4U, 0xFFFFU);
+
+    std::array<std::size_t, kBankCount> bank_lists{};
+    for (std::size_t bank = 0U; bank < kBankCount; ++bank) {
+        bank_lists[bank] = bytes.size();
+        bytes.resize(bytes.size() + kActionListBytes, 0U);
+        put_u16(bytes, kTable + bank * 2U,
+                static_cast<std::uint16_t>(bank_lists[bank] - kTable));
+    }
+    put_u16(bytes, kTable + kBankCount * 2U, 0xFFFFU);
+
+    const std::size_t script = bytes.size();
+    bytes.resize(bytes.size() + kScriptBytes, 0U);
+    bytes[script + 0U] = 1U;       // play MOT
+    bytes[script + 4U] = 4U;       // bank metadata, not the runtime link
+    bytes[script + 5U] = 44U;
+    bytes[script + 8U] = 3U;       // opcode3: five channels
+    bytes[script + 9U] = 1U;       // channel0 == 1 on the lane that consumes it
+    bytes[script + 14U] = 0U;      // wait to frame 10
+    put_u16(bytes, script + 16U, 10U);
+    bytes[script + 20U] = 0U;      // terminal wait
+    put_u16(bytes, script + 22U, 0x7FFFU);
+
+    for (const auto list : bank_lists) {
+        const auto relative = static_cast<std::uint16_t>(script - list);
+        for (std::size_t action = 0U; action < kActionCount; ++action) {
+            put_u16(bytes, list + action * 2U, relative);
+        }
+        put_u16(bytes, list + kActionCount * 2U, 0xFFFFU);
+    }
+    return bytes;
+}
+
 [[nodiscard]] bool near(float a, float b, float epsilon = 0.0005F) {
     return std::fabs(a - b) < epsilon;
+}
+
+std::size_t g_generic_bridge_resets{};
+
+void generic_profile_effect_reset(dmcresource::Session*) noexcept {
+    ++g_generic_bridge_resets;
+}
+
+void generic_profile_effect_step(dmcresource::Session* session,
+                                 float frame) noexcept {
+    if (session == nullptr || session->effect_runtime == nullptr) return;
+    dmcresource::motion::DynamicActorEvent event;
+    event.actor = 7U;
+    event.actor_state = 4U;
+    event.lane = 0U;
+    event.channel = 2U;
+    event.signal_value = 3U;
+    event.script_frame = frame;
+    event.world_authoritative = true;
+    event.evidence = dmcresource::motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+    const auto instances = session->effect_runtime->instances();
+    if (instances.empty()) {
+        event.kind = dmcresource::motion::DynamicActorEventKind::Spawn;
+        event.actor_instance = 1U;
+    } else {
+        event.kind = dmcresource::motion::DynamicActorEventKind::Update;
+        event.actor_instance = instances.front().actor_instance;
+    }
+    session->effect_runtime->apply_actor_event(event);
 }
 
 }  // namespace
@@ -238,9 +318,12 @@ int main() {
     assert(report.animated_parts == 1U);
     assert(report.end_frame == 10.0F);
     assert(motion::has_motion(session.get()));
+    // Raw MOT is intentionally isolated from Script Play runtime effects.
+    assert(motion::effect_events(session.get()).empty());
 
     // Frame 5: root translation-x = 15, vertices bound to bone 0 move +5.
     assert(motion::apply_motion_frame(session.get(), 5.0F));
+    assert(motion::effect_events(session.get()).empty());
     assert(near(session->scene.nodes[0].world.values[12], 15.0F));
     for (std::size_t i = 0U; i < rest.size(); ++i) {
         assert(near(session->render_mesh.vertices[i].x, rest[i].x + 5.0F));
@@ -278,12 +361,15 @@ int main() {
     assert(!rejected.ok);
     assert(!motion::has_motion(session.get()));
 
-    // 0x140310A61 binds only joints of the evaluated motion group: a MOT
-    // covering the leading joints drives a model whose extra trailing joints
-    // belong to another group (em000: 22-node MOTs on 23-node bodies).
+    // 0x140310A61 consumes one mask per initialized CMotion joint. A shorter
+    // declared MOT domain is valid when the aligned header tail contains zero
+    // masks for the remaining model nodes (the em034 slot20 2-mask/3-node
+    // controller is the canonical real-resource case).
     auto short_mot = make_translation_mot();
     put_u16(short_mot, 0x1CU, 2U);
-    assert(!motion::load_motion(session.get(), "short.mot", short_mot.data(), short_mot.size()).ok);
+    assert(motion::load_motion(session.get(), "short.mot", short_mot.data(), short_mot.size()).ok);
+    assert(near(session->scene.nodes[0].world.values[12], 10.0F));
+    assert(near(session->scene.nodes[2].world.values[12], 10.0F));
     auto grouped_mod = make_spatial_mod();
     put_u8(grouped_mod, 0x229U, 2U);   // order position 1 = node 2 -> motion group 2
     auto grouped = dmcresource::open_session("grouped.mod", grouped_mod.data(), grouped_mod.size());
@@ -293,6 +379,169 @@ int main() {
         motion::load_motion(grouped.get(), "short.mot", short_mot.data(), short_mot.size());
     assert(grouped_report.ok && grouped_report.animated_parts == 1U);
     assert(motion::motion_can_drive(*grouped, short_mot));
-    assert(!motion::motion_can_drive(*session, short_mot));
+    assert(motion::motion_can_drive(*session, short_mot));
+
+    // A non-zero byte in the aligned mask tail is not silently promoted to a
+    // synthetic domain entry; the bounded compatibility rule fails closed.
+    auto nonzero_padding = short_mot;
+    put_u16(nonzero_padding, 0x22U, 0x040U);
+    assert(!motion::load_motion(
+        session.get(), "nonzero-padding.mot",
+        nonzero_padding.data(), nonzero_padding.size()).ok);
+
+    // Integrated Script Play: controller -> bank4/action44 -> CEm034 state
+    // 0x7F -> lane1/channel0 -> Shl00 -> V463. The synthetic session has no
+    // exact Shl00 actor matrix, so the effect must remain deferred rather than
+    // appearing at identity. This still exercises the real MotionPlayer
+    // bridge, resource gate and deterministic reverse replay.
+    {
+        auto lady = dmcresource::open_session(
+            "em034-body.mod", mod.data(), mod.size());
+        assert(lady != nullptr);
+        lady->archive_name = "em034.pac";
+        lady->effect_bank_slots = {28U};
+        const auto append_resource = [&effect_resources = lady->effect_resources](
+                                         char kind,
+                                         std::uint16_t id,
+                                         std::uint32_t slot,
+                                         motion::EvidenceStatus evidence) {
+            effect_resources.push_back({kind, id, slot, evidence});
+        };
+        const auto append_child_resources =
+            [&append_resource](const auto& self,
+                               const motion::EffectChildRef& child) -> void {
+                append_resource(child.effect_kind, child.effect_id,
+                                child.resource_slot, child.evidence);
+                for (const auto& nested : child.children) self(self, nested);
+            };
+        for (const auto& profile : motion::em034_effect_bindings()) {
+            append_resource(profile.effect_kind, profile.effect_id,
+                            profile.resource_slot,
+                            motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED);
+            for (const auto& child : profile.children) {
+                append_child_resources(append_child_resources, child);
+            }
+        }
+        lady->script_effect_bridge.prepare = motion::install_effect_bindings;
+        lady->lady_component_bindings.push_back({
+            0U, 0U, 0U, 20U, motion::LadyPlacementPreset::BodyStowed,
+            motion::LadyControlDomain::BodyConstraint, 1.0F});
+
+        const auto script_bytes = make_lady_runtime_script();
+        const auto script = motion::MotionScriptFile::parse(script_bytes);
+        assert(script && script->bank_count() == 5U);
+        assert(script->signals(4U, 44U).size() == 1U);
+        lady->motion_scripts.push_back({
+            12U, dmcresource::Session::MotionScriptRole::LadyBody,
+            std::make_shared<const motion::MotionScriptFile>(*script)});
+        lady->motion_library.push_back({});
+        auto& payload = lady->motion_library.back();
+        payload.name = "synthetic-lady.mot";
+        payload.bytes = make_translation_mot();
+        payload.script_links.push_back({0U, 4U, 44U, 0x7F, 0x3U});
+
+        const auto first = motion::run_script_frame(
+            lady.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 0.0F);
+        assert(first.actor_events.size() == 1U);
+        assert(first.actor_events[0].actor == 0U);
+        assert(first.actor_events[0].lane == 1U &&
+               first.actor_events[0].channel == 0U &&
+               first.actor_events[0].signal_value == 1U);
+        assert(first.effect_events.size() == 1U);
+        assert(first.effect_events[0].kind ==
+               motion::RuntimeEffectEvent::Kind::Deferred);
+        assert(first.effect_events[0].instance.source.effect_kind == 'V');
+        assert(first.effect_events[0].instance.source.effect_id == 463U);
+        assert(first.effect_events[0].instance.state ==
+               motion::EffectRuntimeState::DeferredTransform);
+        assert(motion::active_effect_instances(lady.get()).empty());
+        assert(lady->effect_runtime != nullptr &&
+               lady->effect_runtime->instances().size() == 1U);
+
+        const auto sequential = motion::run_script_frame(
+            lady.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 45.0F);
+        assert(sequential.effect_events.empty());
+        assert(lady->effect_runtime->instances().size() == 1U);
+        assert(lady->effect_runtime->instances()[0].state ==
+               motion::EffectRuntimeState::DeferredTransform);
+
+        motion::set_effects_visible(lady.get(), false);
+        assert(lady->effect_runtime->instances().size() == 1U);
+        assert(lady->effect_runtime->presentation_instances().empty());
+        assert(motion::presentation_effect_instances(lady.get()).empty());
+        motion::set_effects_visible(lady.get(), true);
+
+        const auto reverse = motion::run_script_frame(
+            lady.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 10.0F);
+        assert(reverse.effect_events.size() == 1U);
+        assert(reverse.effect_events[0].kind ==
+               motion::RuntimeEffectEvent::Kind::Deferred);
+        assert(reverse.effect_events[0].instance.instance_id == 1U);
+        assert(reverse.effect_events[0].instance.source.effect_id == 463U);
+        assert(lady->effect_runtime->instances().size() == 1U);
+        assert(lady->effect_runtime->instances()[0].current_frame == 0.0F);
+    }
+
+    // Profile-neutral ScriptEffectBridge: a non-Lady character can emit its
+    // own evidence-backed actor events through the same runtime. Reverse seek
+    // resets and replays the effect timeline, while raw MOT stays isolated.
+    {
+        dmcresource::Session unknown_profile;
+        unknown_profile.archive_name = "em999.pac";
+        unknown_profile.effect_bank_slots = {28U};
+        assert(!motion::install_effect_bindings(&unknown_profile));
+        assert(unknown_profile.script_effect_bindings.empty());
+
+        auto generic = dmcresource::open_session(
+            "em999-body.mod", mod.data(), mod.size());
+        assert(generic != nullptr);
+        constexpr motion::EffectBinding binding{
+            7U, 'P', 18U, 41U, motion::RuntimeEffectParent::DynamicActor,
+            4U, 0U, 2U, 3U,
+            motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+            motion::EffectLifetimeRule::ParentActorRetire,
+            motion::EvidenceStatus::EXE_CONFIRMED};
+        generic->effect_resources.push_back(
+            {'P', 18U, 41U, motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+        assert(motion::set_script_effect_bindings(
+            generic.get(), std::span<const motion::EffectBinding>{&binding, 1U}));
+        generic->script_effect_bridge = {
+            nullptr, generic_profile_effect_reset, generic_profile_effect_step};
+        assert(motion::ensure_effect_runtime(generic.get()));
+
+        const auto script_bytes = make_lady_runtime_script();
+        const auto script = motion::MotionScriptFile::parse(script_bytes);
+        assert(script.has_value());
+        generic->motion_scripts.push_back({
+            38U, dmcresource::Session::MotionScriptRole::Primary,
+            std::make_shared<const motion::MotionScriptFile>(*script)});
+        generic->motion_library.push_back({});
+        auto& payload = generic->motion_library.back();
+        payload.name = "synthetic-generic.mot";
+        payload.bytes = make_translation_mot();
+        payload.script_links.push_back({0U, 4U, 44U, -1, 0U});
+
+        const auto first = motion::run_script_frame(
+            generic.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 0.0F);
+        assert(first.effect_events.size() == 1U);
+        assert(first.effect_events[0].kind == motion::RuntimeEffectEvent::Kind::Spawn);
+        assert(first.effect_events[0].instance.source.effect_id == 18U);
+
+        const auto forward = motion::run_script_frame(
+            generic.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 10.0F);
+        assert(forward.effect_events.size() == 1U);
+        assert(forward.effect_events[0].kind == motion::RuntimeEffectEvent::Kind::Update);
+        assert(generic->effect_runtime->instances()[0].current_frame == 10.0F);
+
+        const auto reverse = motion::run_script_frame(
+            generic.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 2.0F);
+        assert(reverse.effect_events.size() == 1U);
+        assert(reverse.effect_events[0].kind == motion::RuntimeEffectEvent::Kind::Spawn);
+        assert(generic->effect_runtime->instances()[0].current_frame == 2.0F);
+        assert(g_generic_bridge_resets > 0U);
+
+        assert(motion::load_library_motion(generic.get(), 0U).ok);
+        assert(motion::effect_events(generic.get()).empty());
+    }
     return 0;
 }

@@ -75,6 +75,10 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Evt, true, "EventTbl", "event-script", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.eventtbl");
     }
+    if (magic4(bytes, size, 'H', 'I', 'T', 'S')) {
+        return result(Format::Hits, true, "HITS", "environment-collision", "inspection",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.hits");
+    }
 
     if (magic4(bytes, size, 'P', 'A', 'C', '\0')) {
         return result(Format::Pac, true, "PAC", "archive", "child-resources",
@@ -194,6 +198,7 @@ const char* format_name(Format format) noexcept {
     case Format::Dds: return "DDS";
     case Format::Ptx: return "PTX";
     case Format::Evt: return "EventTbl";
+    case Format::Hits: return "HITS";
     case Format::Pac: return "PAC";
     case Format::Mot: return "MOT";
     case Format::Pnst: return "PNST";

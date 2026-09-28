@@ -2,9 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
+
+#include "dmcresource/motion/effect_runtime.h"
 
 namespace dmcresource {
 struct Session;
@@ -67,5 +70,34 @@ void clear_motion(Session* session) noexcept;
 [[nodiscard]] MotionLoadReport load_scripted_motion(Session* session,
                                                     std::size_t script_index,
                                                     std::size_t motion_index) noexcept;
+
+using ScriptControllerId = std::size_t;
+
+// Generic Script Play frame boundary. `motion_index` is optional: when left at
+// max, the bound script action or canonical script link/group map resolves the
+// MOT. Bank/action can be supplied when the caller already has script identity.
+struct ScriptActionId final {
+    std::size_t bank{std::numeric_limits<std::size_t>::max()};
+    std::size_t action{std::numeric_limits<std::size_t>::max()};
+    std::size_t motion_index{std::numeric_limits<std::size_t>::max()};
+};
+
+[[nodiscard]] RuntimeStepResult run_script_frame(
+    Session* session,
+    ScriptControllerId controller,
+    ScriptActionId action,
+    float frame) noexcept;
+
+[[nodiscard]] std::span<const RuntimeEffectInstance> active_effect_instances(
+    const Session* session) noexcept;
+[[nodiscard]] std::span<const RuntimeEffectInstance>
+presentation_effect_instances(const Session* session) noexcept;
+[[nodiscard]] std::span<const RuntimeEffectEvent> effect_events(
+    const Session* session) noexcept;
+
+// Presentation toggle only. It never changes script events, lifetime or
+// active instance state.
+void set_effects_visible(Session* session, bool visible) noexcept;
+[[nodiscard]] bool effects_visible(const Session* session) noexcept;
 
 }  // namespace dmcresource::motion

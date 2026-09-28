@@ -31,6 +31,7 @@ set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
     ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/pnst.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/shw.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/hits.cpp
 )
 
 # Native Reader language authority is centralized here and remains target-scoped.
@@ -87,6 +88,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/mod_attachment_resolver.cpp
     modules/model_texture_binding.cpp
     modules/resource_session.cpp
+    modules/environment_collision.cpp
     modules/session_gallery.cpp
     modules/session_inspection.cpp
     modules/uv_gallery.cpp
@@ -103,6 +105,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/skeleton_rig.cpp
     modules/motion/animated_local.cpp
     modules/motion/motion_clip.cpp
+    modules/motion/effect_runtime.cpp
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
     modules/motion/cloth_chain.cpp
@@ -115,6 +118,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/collision_debug.cpp
     modules/neutral_texture.cpp
     modules/stage_room.cpp
+    modules/module_hits.cpp
     modules/effect_bank.cpp
     modules/module_effects.cpp
     modules/module_archive.cpp
@@ -278,7 +282,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
-        motion_playback pac_assembly player_coat
+        effect_runtime motion_playback pac_assembly player_coat
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

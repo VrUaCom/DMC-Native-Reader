@@ -11,6 +11,7 @@
 
 #include "dmcresource/composite_model.h"
 #include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/render_scene.h"
 
 namespace dmcresource {
@@ -598,6 +599,19 @@ struct LadyBodyStateScripts final {
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_signal(
     Session* session, std::uint16_t state,
     std::uint8_t lane, std::uint8_t channel, std::uint8_t value) noexcept;
+
+// EXE/corpus-confirmed CEm034 actor-to-FXBANK bindings. This is a profile
+// data table consumed by the generic EffectRuntime; it is not an effect branch
+// in MotionPlayer and it intentionally carries no guessed semantic names.
+[[nodiscard]] std::span<const EffectBinding> em034_effect_bindings() noexcept;
+
+// Install the evidence-backed bindings for the current archive profile into
+// the profile-neutral Script Play EffectRuntime. The caller does not select a
+// resource by MOT name or by a guessed bank; this single registry boundary
+// validates the profile identity and supplies the parsed kind/u16-id catalog.
+// Profiles without an EXE/corpus-confirmed provider return false and remain
+// effect-free until their reverse evidence is complete.
+[[nodiscard]] bool install_effect_bindings(Session* session) noexcept;
 
 // Canonical MOD/CEm034 local matrix: translation + XYZ Euler using the
 // recovered DMC3 transform-domain composition.

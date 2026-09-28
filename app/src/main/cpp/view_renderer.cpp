@@ -1,6 +1,8 @@
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/matrix_ops.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <thread>
 #include <unordered_map>
@@ -707,6 +709,65 @@ void raster_room(const RoomTri& tri, bool translucent_pass, bool smooth, float c
     }
 }
 
+struct EffectSv final {
+    float x{}, y{}, z{};
+    float u{}, v{};
+};
+
+// E records are resource-backed alpha sprites. Their EXE mode paths enter the
+// camera-aware downstream presentation boundary; the portable pass therefore
+// keeps the exact world anchor/atlas rectangle and rasterises an explicit
+// camera-facing quad. No semantic effect name or MOT-derived position is used.
+void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv& c,
+                            const ImagePreview& texture, bool smooth,
+                            int row_begin, int row_end, RgbaImage& image,
+                            const std::vector<float>& depth) {
+    const P2 pa{a.x, a.y, a.z};
+    const P2 pb{b.x, b.y, b.z};
+    const P2 pc{c.x, c.y, c.z};
+    const float area = edge(pa, pb, c.x, c.y);
+    if (std::fabs(area) < 1.0e-6F) return;
+    const int y0 = std::max(row_begin, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+    const int y1 = std::min(row_end - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+    const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+    const int x1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+    if (y0 > y1 || x0 > x1) return;
+
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            const float px = static_cast<float>(x) + 0.5F;
+            const float py = static_cast<float>(y) + 0.5F;
+            const float w0 = edge(pb, pc, px, py) / area;
+            const float w1 = edge(pc, pa, px, py) / area;
+            const float w2 = edge(pa, pb, px, py) / area;
+            if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
+            const float z = w0 * a.z + w1 * b.z + w2 * c.z;
+            if (!std::isfinite(z) || z >= depth[static_cast<std::size_t>(y * image.width + x)]) continue;
+            const float u = w0 * a.u + w1 * b.u + w2 * c.u;
+            const float v = w0 * a.v + w1 * b.v + w2 * c.v;
+            std::uint8_t r = 0U, g = 0U, bl = 0U, alpha = 0U;
+            bool sampled = false;
+            if (smooth) {
+                int rgba[4]{};
+                if (sample_bilinear_fast(texture, u, v, rgba)) {
+                    r = static_cast<std::uint8_t>(std::clamp(rgba[0], 0, 255));
+                    g = static_cast<std::uint8_t>(std::clamp(rgba[1], 0, 255));
+                    bl = static_cast<std::uint8_t>(std::clamp(rgba[2], 0, 255));
+                    alpha = static_cast<std::uint8_t>(std::clamp(rgba[3], 0, 255));
+                    sampled = true;
+                }
+            } else {
+                sampled = sample_texture(texture, u, v, &r, &g, &bl, &alpha);
+            }
+            if (!sampled || alpha < 8U) continue;
+            // E's exact alpha/blend subtype is not promoted here. Normal alpha
+            // composition is the evidence-safe portable presentation for the
+            // decoded T/A rectangle and does not write a fake depth surface.
+            put_rgba(image, x, y, r, g, bl, alpha);
+        }
+    }
+}
+
 // Runs band(row_begin, row_end) over the image rows on several cores (row
 // chunks handed out in order; every pixel belongs to exactly one band, so
 // the result is the same as a single-threaded pass).
@@ -866,6 +927,71 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     const bool colored = mesh.has_color0();
     const bool smooth_model = view.smooth_textures && !view.fast_preview;
 
+    struct EffectQuad final {
+        std::array<EffectSv, 4> vertices{};
+        const ImagePreview* texture{};
+    };
+    std::vector<EffectQuad> effect_quads;
+    if (!view.wireframe && !view.effect_sprites.empty()) {
+        const float cy = std::cos(view.yaw_radians);
+        const float sy = std::sin(view.yaw_radians);
+        const float cp = std::cos(view.pitch_radians);
+        const float sp = std::sin(view.pitch_radians);
+        // Inverse camera basis for the same mirrored DMC3 camera used by
+        // project_in_frame(): camera-right, camera-up in world coordinates.
+        const Vec3 right{-cy, 0.0F, -sy};
+        const Vec3 up{0.0F, cp, -sp};
+        for (const auto& sprite : view.effect_sprites) {
+            if (sprite.texture == nullptr || !sprite.texture->available() ||
+                !std::isfinite(sprite.width) || !std::isfinite(sprite.height) ||
+                !(sprite.width > 0.0F) || !(sprite.height > 0.0F) ||
+                !matrix_ops::is_finite_affine(sprite.world)) {
+                continue;
+            }
+            Vec3 center;
+            if (!matrix_ops::transform_point({0.0F, 0.0F, 0.0F}, sprite.world, &center)) continue;
+            const auto axis_length = [](float x, float y, float z) {
+                return std::sqrt(std::max(0.0F, x * x + y * y + z * z));
+            };
+            const float sx = axis_length(sprite.world.values[0], sprite.world.values[1], sprite.world.values[2]);
+            const float sy_world = axis_length(sprite.world.values[4], sprite.world.values[5], sprite.world.values[6]);
+            if (!(sx > 1.0e-6F) || !(sy_world > 1.0e-6F)) continue;
+            const float hx = 0.5F * sprite.width * sx;
+            const float hy = 0.5F * sprite.height * sy_world;
+            const Vec3 corners[4] = {
+                {center.x - right.x * hx - up.x * hy,
+                 center.y - right.y * hx - up.y * hy,
+                 center.z - right.z * hx - up.z * hy},
+                {center.x + right.x * hx - up.x * hy,
+                 center.y + right.y * hx - up.y * hy,
+                 center.z + right.z * hx - up.z * hy},
+                {center.x + right.x * hx + up.x * hy,
+                 center.y + right.y * hx + up.y * hy,
+                 center.z + right.z * hx + up.z * hy},
+                {center.x - right.x * hx + up.x * hy,
+                 center.y - right.y * hx + up.y * hy,
+                 center.z - right.z * hx + up.z * hy},
+            };
+            EffectQuad quad;
+            quad.texture = sprite.texture;
+            const float uv[4][2] = {
+                {sprite.u0, sprite.v1}, {sprite.u1, sprite.v1},
+                {sprite.u1, sprite.v0}, {sprite.u0, sprite.v0},
+            };
+            bool valid = true;
+            for (std::size_t i = 0U; i < 4U; ++i) {
+                const auto projected = project(corners[i]);
+                if (!std::isfinite(projected.x) || !std::isfinite(projected.y) ||
+                    !std::isfinite(projected.z)) {
+                    valid = false;
+                    break;
+                }
+                quad.vertices[i] = {projected.x, projected.y, projected.z, uv[i][0], uv[i][1]};
+            }
+            if (valid) effect_quads.push_back(quad);
+        }
+    }
+
     // The model's triangles inside rows [row_begin, row_end).
     const auto model_band = [&](int row_begin, int row_end) {
         for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
@@ -1016,11 +1142,25 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             for (std::size_t t = 0U; t + 2U < shadow.size(); t += 3U) {
                 fill(shadow[t], shadow[t + 1U], shadow[t + 2U], row_begin, row_end, shadow_pixel);
             }
+            for (const auto& quad : effect_quads) {
+                if (quad.texture == nullptr) continue;
+                raster_effect_triangle(quad.vertices[0], quad.vertices[1], quad.vertices[2],
+                                       *quad.texture, !view.fast_preview,
+                                       row_begin, row_end, image, depth);
+                raster_effect_triangle(quad.vertices[0], quad.vertices[2], quad.vertices[3],
+                                       *quad.texture, !view.fast_preview,
+                                       row_begin, row_end, image, depth);
+            }
         });
     }
 
     for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
         line_rgba(image, project(view.overlay_lines[i]), project(view.overlay_lines[i + 1U]), 255U, 90U, 60U);
+    }
+    for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
+        line_rgba(image, project(room_place(view, view.room_collision_lines[i])),
+                  project(room_place(view, view.room_collision_lines[i + 1U])),
+                  90U, 190U, 255U);
     }
 
     if (hierarchy != nullptr && hierarchy->available()) {

@@ -127,6 +127,10 @@ struct MotionState final {
     float lady_runtime_frame{-1.0F};
     bool lady_entry_applied{};
     std::int8_t last_dynamic_actor{-1};
+    std::size_t script_controller{std::numeric_limits<std::size_t>::max()};
+    std::size_t script_motion_index{std::numeric_limits<std::size_t>::max()};
+    std::uint64_t next_actor_instance{1U};
+    std::array<std::uint64_t, 6> active_actor_instances{};
 };
 
 namespace {
@@ -241,15 +245,6 @@ struct ScriptMotionSelection final {
     if (session == nullptr) return nullptr;
     for (auto& binding : session->lady_component_bindings) {
         if (binding.component == 0U) return &binding;
-    }
-    return nullptr;
-}
-
-[[nodiscard]] LadyComponentBinding* lady_component_binding(
-    Session* session, std::uint8_t component) noexcept {
-    if (session == nullptr) return nullptr;
-    for (auto& binding : session->lady_component_bindings) {
-        if (binding.component == component) return &binding;
     }
     return nullptr;
 }
@@ -473,6 +468,103 @@ void spawn_lady_dynamic_visual(
     }
 }
 
+[[nodiscard]] std::optional<Matrix4> lady_dynamic_actor_world(
+    const Session& session, std::uint8_t actor) noexcept {
+    for (const auto& visual : session.lady_dynamic_visuals) {
+        if (visual.actor == actor && visual.active) return visual.world;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<float> lady_dynamic_actor_spawn_frame(
+    const Session& session, std::uint8_t actor) noexcept {
+    for (const auto& visual : session.lady_dynamic_visuals) {
+        if (visual.actor == actor && visual.active &&
+            visual.spawn_frame >= 0.0F) {
+            return visual.spawn_frame;
+        }
+    }
+    return std::nullopt;
+}
+
+void emit_lady_actor_event(Session* session,
+                           MotionState& state,
+                           std::int8_t actor,
+                           std::uint16_t actor_state,
+                           std::uint8_t lane,
+                           std::uint8_t channel,
+                           std::uint8_t value,
+                           float frame) {
+    if (session == nullptr || actor < 0 || actor >= 6 ||
+        session->effect_runtime == nullptr) {
+        return;
+    }
+    const auto actor_index = static_cast<std::uint8_t>(actor);
+    const auto instance = state.next_actor_instance++;
+    state.active_actor_instances[actor_index] = instance;
+
+    DynamicActorEvent event;
+    event.kind = DynamicActorEventKind::Spawn;
+    event.actor = actor_index;
+    event.actor_state = actor_state;
+    event.lane = lane;
+    event.channel = channel;
+    event.signal_value = value;
+    event.actor_instance = instance;
+    event.script_frame = frame;
+    event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+    if (const auto world = lady_dynamic_actor_world(*session, actor_index);
+        world.has_value()) {
+        event.world = *world;
+        // Shl02 and Shl03 transforms are the already-recovered exact Reader
+        // actor matrices. No other actor is promoted by identity fallback.
+        event.world_authoritative = actor_index == 2U || actor_index == 3U;
+    }
+    // Shl02's spawn pose is canonical, but its post-spawn state calls the
+    // shared gameplay target/query helper. The standalone Reader records this
+    // dependency and freezes at the exact recoverable pose; it never invents
+    // a target or a straight-line trajectory.
+    event.requires_gameplay_world_context = actor_index == 2U;
+    session->effect_runtime->apply_actor_event(event);
+}
+
+void sync_lady_actor_effects(Session* session,
+                             MotionState& state,
+                             float frame) {
+    if (session == nullptr || session->effect_runtime == nullptr) return;
+    for (std::uint8_t actor = 0U; actor < state.active_actor_instances.size(); ++actor) {
+        const auto instance = state.active_actor_instances[actor];
+        if (instance == 0U) continue;
+        const auto world = lady_dynamic_actor_world(*session, actor);
+        if (world.has_value()) {
+            // The spawn event already carries this exact matrix. Do not emit
+            // a synthetic same-frame update; a seek/replay consumer should
+            // observe one canonical spawn followed by later updates.
+            const auto spawn_frame =
+                lady_dynamic_actor_spawn_frame(*session, actor);
+            if (spawn_frame.has_value() && frame <= *spawn_frame) continue;
+            DynamicActorEvent event;
+            event.kind = DynamicActorEventKind::Update;
+            event.actor = actor;
+            event.actor_instance = instance;
+            event.script_frame = frame;
+            event.world = *world;
+            event.world_authoritative = actor == 2U || actor == 3U;
+            event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+            session->effect_runtime->apply_actor_event(event);
+        } else if (actor == 2U || actor == 3U) {
+            DynamicActorEvent event;
+            event.kind = DynamicActorEventKind::Retire;
+            event.actor = actor;
+            event.actor_instance = instance;
+            event.script_frame = frame;
+            event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+            session->effect_runtime->apply_actor_event(event);
+            state.active_actor_instances[actor] = 0U;
+        }
+    }
+}
+
 void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
     if (session == nullptr) return;
     for (auto& visual : session->lady_dynamic_visuals) {
@@ -569,7 +661,7 @@ void reset_lady_runtime(Session* session) noexcept {
 
 [[nodiscard]] bool apply_lady_script_runtime(Session* session,
                                              MotionState& state,
-                                             float frame) noexcept {
+                                             float frame) {
     if (session == nullptr || !state.script_driven ||
         state.script_role != Session::MotionScriptRole::LadyBody ||
         !state.lady_state.has_value()) {
@@ -584,12 +676,18 @@ void reset_lady_runtime(Session* session) noexcept {
         // side effects, so an unrecognized result means "no equipment change",
         // not "invalid Lady state".
         deactivate_lady_dynamic_visuals(session);
+        state.active_actor_instances.fill(0U);
+        state.next_actor_instance = 1U;
+        if (session->effect_runtime != nullptr) session->effect_runtime->reset();
         const auto entry = apply_lady_state_entry(session, *state.lady_state);
         state.lady_entry_applied = true;
         state.lady_runtime_frame = -1.0F;
         if (entry.dynamic_actor >= 0) {
             state.last_dynamic_actor = entry.dynamic_actor;
             spawn_lady_dynamic_visual(session, entry.dynamic_actor, 0.0F);
+            emit_lady_actor_event(
+                session, state, entry.dynamic_actor, *state.lady_state,
+                0xFFU, 0xFFU, 0xFFU, 0.0F);
         }
     }
 
@@ -627,6 +725,10 @@ void reset_lady_runtime(Session* session) noexcept {
                     spawn_lady_dynamic_visual(
                         session, applied.dynamic_actor,
                         std::max(signal.after_frame, 0.0F));
+                    emit_lady_actor_event(
+                        session, state, applied.dynamic_actor, *state.lady_state,
+                        lane, channel, value,
+                        std::max(signal.after_frame, 0.0F));
                 }
                 if (*state.lady_state == 0x81U && lane == 1U &&
                     channel == 1U && value == 1U) {
@@ -649,6 +751,7 @@ void reset_lady_runtime(Session* session) noexcept {
     }
 
     advance_lady_dynamic_visuals(session, frame);
+    sync_lady_actor_effects(session, state, frame);
     state.lady_runtime_frame = frame;
     return true;
 }
@@ -670,15 +773,9 @@ MotionLoadReport load_motion(Session* session,
             reinterpret_cast<const std::byte*>(bytes), size};
         auto state = std::make_shared<MotionState>();
         state->name = std::string{name};
-        // Motion script: weapon attach state per frame (0x1401F01F0).
-        if (session->motion_script != nullptr) {
-            for (const auto& payload : session->motion_library) {
-                if (payload.name != name || payload.bank < 0 || payload.index < 0) continue;
-                state->weapon_keys = session->motion_script->weapon_states_for_motion(
-                    static_cast<std::size_t>(payload.bank), static_cast<std::size_t>(payload.index));
-                break;
-            }
-        }
+        // Raw MOT is deliberately script-free. Weapon/equipment timelines are
+        // installed by load_scripted_motion after the controller/action has
+        // been selected; a raw MOT may only evaluate its skeleton channels.
 
         std::string reasons;
         std::size_t vertex_cursor = 0U;
@@ -821,6 +918,16 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
     if (session == nullptr || session->motion == nullptr || !std::isfinite(frame)) return false;
     try {
         auto& state = *session->motion;
+        const bool rewinding = state.last_frame >= 0.0F && frame < state.last_frame;
+        if (rewinding && state.script_role != Session::MotionScriptRole::LadyBody) {
+            if (session->script_effect_bridge.reset != nullptr) {
+                session->script_effect_bridge.reset(session);
+            }
+            if (session->effect_runtime != nullptr) {
+                session->effect_runtime->reset();
+            }
+        }
+        if (session->effect_runtime != nullptr) session->effect_runtime->begin_step();
         auto& vertices = session->render_mesh.vertices;
         const Matrix4f identity = world::identity_matrix();
 
@@ -910,6 +1017,11 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
             (void)apply_part_attachments(session, 0U);
         }
         if (!apply_lady_script_runtime(session, state, frame)) return false;
+        if (state.script_driven &&
+            state.script_role != Session::MotionScriptRole::LadyBody &&
+            session->script_effect_bridge.step != nullptr) {
+            session->script_effect_bridge.step(session, frame);
+        }
         (void)apply_part_attachments(session, cloth_steps);
         (void)apply_uv_scrolls(session, state.scroll_clock);
         HierarchyOverlay overlay;
@@ -923,7 +1035,13 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
 }
 
 void clear_motion(Session* session) noexcept {
-    if (session == nullptr || session->motion == nullptr) return;
+    if (session == nullptr) return;
+    if (session->motion != nullptr && session->motion->script_driven &&
+        session->script_effect_bridge.reset != nullptr) {
+        session->script_effect_bridge.reset(session);
+    }
+    if (session->effect_runtime != nullptr) session->effect_runtime->reset();
+    if (session->motion == nullptr) return;
     auto state = std::move(session->motion);
     session->motion.reset();
     if (state->source_vertices.size() == session->render_mesh.vertices.size()) {
@@ -1086,10 +1204,19 @@ MotionLoadReport load_scripted_motion(Session* session,
         state.script_driven = true;
         state.script_role = binding.role;
         state.script_slot = binding.archive_slot;
+        state.script_controller = script_index;
+        state.script_motion_index = motion_index;
         state.script_bank = selection->bank;
         state.script_action = selection->action;
         state.script_signals =
             binding.script->signals(selection->bank, selection->action);
+        if (payload.bank >= 0 && payload.index >= 0) {
+            // The action controller, not the raw MOT loader, owns this
+            // script-side equipment timeline.
+            state.weapon_keys = binding.script->weapon_states_for_motion(
+                static_cast<std::size_t>(payload.bank),
+                static_cast<std::size_t>(payload.index));
+        }
 
         if (binding.role == Session::MotionScriptRole::LadyBody) {
             std::optional<LadyBodyScriptState> mapped;
@@ -1126,14 +1253,28 @@ MotionLoadReport load_scripted_motion(Session* session,
             if (state.lady_state.has_value()) {
                 state.lady_entry_applied = false;
                 state.lady_runtime_frame = -1.0F;
-                if (!apply_motion_frame(session, 0.0F)) {
-                    clear_motion(session);
-                    report = {};
-                    report.detail =
-                        "MotionScript: Lady runtime bridge rejected first frame";
-                    return report;
-                }
             }
+        }
+
+        // Every profile uses one preparation/installation path. The callback
+        // only registers evidence-backed data; the shared runtime remains the
+        // sole owner of effect instances and lifecycle state.
+        if (session->script_effect_bridge.prepare != nullptr &&
+            !session->script_effect_bridge.prepare(session)) {
+            session->script_effect_bindings.clear();
+        }
+        (void)ensure_effect_runtime(session);
+
+        const bool needs_script_frame_zero =
+            state.lady_state.has_value() ||
+            session->effect_runtime != nullptr ||
+            session->script_effect_bridge.step != nullptr;
+        if (needs_script_frame_zero && !apply_motion_frame(session, 0.0F)) {
+            clear_motion(session);
+            report = {};
+            report.detail =
+                "MotionScript: profile runtime bridge rejected first frame";
+            return report;
         }
 
         report.detail =
@@ -1158,6 +1299,152 @@ MotionLoadReport load_scripted_motion(Session* session,
         report.detail = "MotionScript: playback failed";
         return report;
     }
+}
+
+RuntimeStepResult run_script_frame(Session* session,
+                                   ScriptControllerId controller,
+                                   ScriptActionId action,
+                                   float frame) noexcept {
+    RuntimeStepResult result;
+    try {
+        if (session == nullptr || !std::isfinite(frame) ||
+            controller >= motion_script_count(session)) {
+            return result;
+        }
+
+        std::size_t motion_index = action.motion_index;
+        if (motion_index >= session->motion_library.size() &&
+            session->motion != nullptr && session->motion->script_driven &&
+            session->motion->script_controller == controller &&
+            (action.bank == std::numeric_limits<std::size_t>::max() ||
+             session->motion->script_bank == action.bank) &&
+            (action.action == std::numeric_limits<std::size_t>::max() ||
+             session->motion->script_action == action.action)) {
+            // A bound Script Play action already owns its canonical MOT.
+            motion_index = session->motion->script_motion_index;
+        }
+        if (motion_index >= session->motion_library.size()) {
+            // Otherwise resolve the action against the controller's existing
+            // script links/group map. No filename or frame heuristic is used.
+            const auto& binding = session->motion_scripts[controller];
+            for (std::size_t candidate = 0U;
+                 candidate < session->motion_library.size(); ++candidate) {
+                const auto selection = pick_script_motion(
+                    *session, binding, session->motion_library[candidate]);
+                if (!selection.has_value() ||
+                    (action.bank != std::numeric_limits<std::size_t>::max() &&
+                     selection->bank != action.bank) ||
+                    (action.action != std::numeric_limits<std::size_t>::max() &&
+                     selection->action != action.action)) {
+                    continue;
+                }
+                motion_index = candidate;
+                break;
+            }
+        }
+        if (motion_index >= session->motion_library.size()) return result;
+
+        // Capture before the optional load as well: the first Script Play call
+        // may enter a new CEm034 placement/control domain at frame 0.
+        const auto capture_components = [](const Session& source) {
+            std::vector<ComponentTransition> snapshot;
+            snapshot.reserve(source.lady_component_bindings.size());
+            for (const auto& binding : source.lady_component_bindings) {
+                snapshot.push_back({
+                    binding.component,
+                    static_cast<std::uint8_t>(binding.preset),
+                    static_cast<std::uint8_t>(binding.control_domain),
+                    binding.runtime_uniform_scale,
+                });
+            }
+            return snapshot;
+        };
+        const auto before_components = capture_components(*session);
+
+        bool bound = false;
+        if (session->motion != nullptr && session->motion->script_driven) {
+            bound = session->motion->script_controller == controller &&
+                    session->motion->script_motion_index == motion_index;
+        }
+        const bool loaded = !bound;
+        if (!bound) {
+            const auto report = load_scripted_motion(
+                session, controller, motion_index);
+            if (!report.ok) return result;
+        }
+        if (session->motion == nullptr ||
+            (action.bank != std::numeric_limits<std::size_t>::max() &&
+             session->motion->script_bank != action.bank) ||
+            (action.action != std::numeric_limits<std::size_t>::max() &&
+             session->motion->script_action != action.action)) {
+            return result;
+        }
+        // load_scripted_motion materializes frame 0 once. Preserve that step's
+        // spawn events when the generic caller asks for the same frame instead
+        // of clearing them with an identical second evaluation.
+        if (!(loaded && frame == 0.0F) &&
+            !apply_motion_frame(session, frame)) {
+            return result;
+        }
+
+        const auto after_components = capture_components(*session);
+        for (const auto& after : after_components) {
+            const auto before = std::find_if(
+                before_components.begin(), before_components.end(),
+                [&after](const ComponentTransition& candidate) {
+                    return candidate.component == after.component;
+                });
+            if (before == before_components.end() ||
+                before->placement != after.placement ||
+                before->control_domain != after.control_domain ||
+                before->uniform_scale != after.uniform_scale) {
+                result.component_changes.push_back(after);
+            }
+        }
+
+        if (session->effect_runtime != nullptr) {
+            const auto actors = session->effect_runtime->actor_events();
+            const auto effects = session->effect_runtime->effect_events();
+            result.actor_events.assign(actors.begin(), actors.end());
+            result.effect_events.assign(effects.begin(), effects.end());
+        }
+    } catch (...) {
+        // The public runtime boundary is a no-throw API for the JNI/viewer
+        // shells. A failed materialization returns an empty step instead of
+        // terminating on vector growth or a malformed profile payload.
+        return {};
+    }
+    return result;
+}
+
+std::span<const RuntimeEffectInstance> active_effect_instances(
+    const Session* session) noexcept {
+    if (session == nullptr || session->effect_runtime == nullptr) return {};
+    return session->effect_runtime->active_instances();
+}
+
+std::span<const RuntimeEffectInstance> presentation_effect_instances(
+    const Session* session) noexcept {
+    if (session == nullptr || session->effect_runtime == nullptr) return {};
+    return session->effect_runtime->presentation_instances();
+}
+
+std::span<const RuntimeEffectEvent> effect_events(
+    const Session* session) noexcept {
+    if (session == nullptr || session->effect_runtime == nullptr) return {};
+    return session->effect_runtime->effect_events();
+}
+
+void set_effects_visible(Session* session, bool visible) noexcept {
+    if (session == nullptr) return;
+    session->effects_visible = visible;
+    if (session->effect_runtime != nullptr) {
+        session->effect_runtime->set_presentation_enabled(visible);
+    }
+}
+
+bool effects_visible(const Session* session) noexcept {
+    return session != nullptr && session->effects_visible;
 }
 
 std::span<const Vec3> motion_rest_vertices(const Session* session) noexcept {

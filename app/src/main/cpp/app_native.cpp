@@ -811,6 +811,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_nextRoomSpot(JNIEnv*, jclass) {
     return static_cast<jint>(dmcresource::stage_room::spot());
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomCollisionSourceCount(JNIEnv*, jclass) {
+    const auto room = dmcresource::stage_room::current();
+    return room ? static_cast<jint>(room->collision_sources.size()) : 0;
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_isStageSession(
         JNIEnv*, jclass, jlong handle) {
