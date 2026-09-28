@@ -473,14 +473,63 @@ struct LadyRuntimeApplyResult final {
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
     Session* session, std::uint16_t state) noexcept;
 
-// Canonical CEm034 bank4 mapping recovered from 0x14016A410:
-// action0 -> state83 ... action60 -> state143.
-[[nodiscard]] constexpr std::optional<std::uint16_t> lady_state_for_script_action(
-    std::size_t bank, std::size_t action) noexcept {
-    return bank == 4U && action <= 60U
-        ? std::optional<std::uint16_t>{
-              static_cast<std::uint16_t>(83U + action)}
-        : std::nullopt;
+struct LadyBodyScriptState final {
+    std::uint16_t state{};
+    // Which em034_012 controller starts this exact action at state entry:
+    // bit0 = lane0 (+0x5070), bit1 = lane1 (+0x5190).
+    std::uint8_t lane_mask{};
+};
+
+// Inverse of the canonical CEm034 entry dispatcher at 0x14016A410.
+// This returns the primary state for a body-script action. Some states 55..82
+// start a second, different action on the other lane; the returned lane mask
+// says which lane(s) execute the requested action.
+[[nodiscard]] constexpr std::optional<LadyBodyScriptState>
+lady_state_for_body_script_action(std::size_t bank, std::size_t action) noexcept {
+    if (bank == 0U) {
+        if (action <= 6U || (action >= 8U && action <= 14U)) {
+            return LadyBodyScriptState{static_cast<std::uint16_t>(action), 0x3U};
+        }
+        return std::nullopt;
+    }
+    if (bank == 1U) {
+        if (action <= 5U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(15U + action), 0x3U};
+        if (action == 7U) return LadyBodyScriptState{22U, 0x3U};
+        if (action >= 9U && action <= 11U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(15U + action), 0x3U};
+        if (action == 20U) return LadyBodyScriptState{35U, 0x3U};
+        if (action >= 23U && action <= 26U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(15U + action), 0x3U};
+        return std::nullopt;
+    }
+    if (bank == 2U && action <= 3U) {
+        return LadyBodyScriptState{
+            static_cast<std::uint16_t>(42U + action), 0x3U};
+    }
+    if (bank == 3U) {
+        if (action == 0U) return LadyBodyScriptState{46U, 0x3U};
+        if (action >= 2U && action <= 8U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), 0x3U};
+        if (action >= 9U && action <= 15U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), 0x2U};
+        if (action >= 16U && action <= 22U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), action == 16U ? 0x3U : 0x2U};
+        if (action >= 23U && action <= 29U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), action == 23U ? 0x3U : 0x2U};
+        if (action >= 30U && action <= 36U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(46U + action), action == 30U ? 0x3U : 0x2U};
+        return std::nullopt;
+    }
+    if (bank == 4U) {
+        if (action <= 32U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(83U + action), 0x3U};
+        if (action >= 40U && action <= 47U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(83U + action), 0x3U};
+        if (action == 50U || action == 60U) return LadyBodyScriptState{
+            static_cast<std::uint16_t>(83U + action), 0x3U};
+    }
+    return std::nullopt;
 }
 
 // Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.
