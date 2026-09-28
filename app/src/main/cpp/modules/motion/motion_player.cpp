@@ -422,6 +422,7 @@ void deactivate_lady_dynamic_visuals(Session* session) noexcept {
     for (auto& visual : session->lady_dynamic_visuals) {
         visual.active = false;
         visual.spawn_frame = -1.0F;
+        visual.last_update_frame = -1.0F;
         visual.retire_frame = -1.0F;
         visual.velocity = {};
         visual.world = Matrix4{};
@@ -439,12 +440,27 @@ void spawn_lady_dynamic_visual(
         for (auto& visual : session->lady_dynamic_visuals) {
             if (visual.actor != 2U) continue;
             visual.world = world_matrix;
-            visual.velocity = {};
+            // Shl02 state1 uses CShell flags=3 with scalar +0x160 = 30.0:
+            // normalize(+0x140), scale by 30, then position += delta*velocity.
+            // Under the Reader's default actor delta (1.0), +0x17C starts at
+            // 1.0 so state1 contributes exactly one movement tick.
+            const Vec3 forward{
+                world_matrix.values[8],
+                world_matrix.values[9],
+                world_matrix.values[10],
+            };
+            visual.velocity = {
+                forward.x * 30.0F,
+                forward.y * 30.0F,
+                forward.z * 30.0F,
+            };
             visual.spawn_frame = event_frame;
-            // CActor initializes +0x14/+0x18 to 1.0. Shl02 initializes its
-            // countdown to 3.0, so no-world preview retires after three actor
-            // update ticks; gameplay collision may end it earlier.
-            visual.retire_frame = event_frame + 3.0F;
+            visual.last_update_frame = event_frame;
+            // Then state2 starts +0xD68=3.0 and only promotes to state3 after
+            // the subtraction becomes negative: 3->2->1->0->-1. The next
+            // actor update dispatches state3 through the retire path. With
+            // default delta1 this is six updates from spawn, not three.
+            visual.retire_frame = event_frame + 6.0F;
             visual.active = true;
         }
         return;
@@ -458,6 +474,7 @@ void spawn_lady_dynamic_visual(
             visual.world = spawn->world;
             visual.velocity = spawn->velocity;
             visual.spawn_frame = event_frame;
+            visual.last_update_frame = event_frame;
             visual.retire_frame = -1.0F;
             visual.active = true;
         }
@@ -468,20 +485,34 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
     if (session == nullptr) return;
     for (auto& visual : session->lady_dynamic_visuals) {
         if (!visual.active || visual.spawn_frame < 0.0F) continue;
-        if (visual.retire_frame >= 0.0F && frame >= visual.retire_frame) {
-            visual.active = false;
-            continue;
-        }
-        if (visual.actor == 3U) {
-            const float dt = std::max(frame - visual.spawn_frame, 0.0F);
+        const float previous =
+            visual.last_update_frame >= visual.spawn_frame
+                ? visual.last_update_frame
+                : visual.spawn_frame;
+        if (visual.actor == 2U) {
+            // Only Shl02 state1 moves the projectile through the shared shell
+            // helper. Clamp the integrated interval to the first actor tick;
+            // state2 retains the resulting actor matrix while its 3.0
+            // countdown/effect phase runs.
+            const float before =
+                std::clamp(previous - visual.spawn_frame, 0.0F, 1.0F);
+            const float after =
+                std::clamp(frame - visual.spawn_frame, 0.0F, 1.0F);
+            const float dt = std::max(after - before, 0.0F);
+            visual.world.values[12] += visual.velocity.x * dt;
+            visual.world.values[13] += visual.velocity.y * dt;
+            visual.world.values[14] += visual.velocity.z * dt;
+        } else if (visual.actor == 3U) {
+            const float dt = std::max(frame - previous, 0.0F);
             // Shl03 state1, 0x140174D39:
             // actor+0x80 += actor+0x140 * actor+0x14.
             visual.world.values[12] += visual.velocity.x * dt;
             visual.world.values[13] += visual.velocity.y * dt;
             visual.world.values[14] += visual.velocity.z * dt;
-            // Make advancement absolute from spawn, not cumulative across
-            // repeated render/scrub calls.
-            visual.spawn_frame = frame;
+        }
+        visual.last_update_frame = frame;
+        if (visual.retire_frame >= 0.0F && frame >= visual.retire_frame) {
+            visual.active = false;
         }
     }
 }
