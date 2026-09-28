@@ -928,6 +928,77 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
 
         report.models = models.size();
 
+        // CEm034 dynamic Shl visuals are retained as latent source resources,
+        // never as persistent composite parts. They are materialized only by
+        // Script Play spawn events.
+        if (archive_name.find("em034") != std::string_view::npos &&
+            position != nullptr) {
+            const auto first_slot =
+                position->include_top_level_mod_count != 0U
+                    ? position->include_top_level_mod_slots[0]
+                    : 1U;
+            const std::uint32_t equipment_ptx =
+                first_slot == 32U ? 33U : 19U;
+
+            const auto materialize_dynamic =
+                [&](std::uint8_t actor,
+                    std::uint32_t model_slot,
+                    std::uint32_t ptx_slot,
+                    bool exact_deformation) {
+                    const decltype(entries)::value_type* model_entry_ptr = nullptr;
+                    const decltype(entries)::value_type* ptx_entry_ptr = nullptr;
+                    for (const auto& e : entries) {
+                        if (e.archive != 0U || !e.container.empty() || !e.slot) {
+                            continue;
+                        }
+                        if (*e.slot == model_slot &&
+                            e.kind.format == Format::Mod) {
+                            model_entry_ptr = &e;
+                        }
+                        if (*e.slot == ptx_slot &&
+                            e.kind.format == Format::Ptx) {
+                            ptx_entry_ptr = &e;
+                        }
+                    }
+                    if (model_entry_ptr == nullptr) return;
+                    auto source = open_session(
+                        model_entry_ptr->name,
+                        model_entry_ptr->bytes->data(),
+                        model_entry_ptr->bytes->size());
+                    if (!source || !source->renderable) return;
+                    if (ptx_entry_ptr != nullptr) {
+                        (void)spider::actions::attach_ptx(
+                            source.get(),
+                            ptx_entry_ptr->name,
+                            ptx_entry_ptr->bytes->data(),
+                            ptx_entry_ptr->bytes->size());
+                    }
+
+                    Session::LadyDynamicVisual visual;
+                    visual.actor = actor;
+                    visual.model_slot = model_slot;
+                    visual.source_mesh = source->render_mesh;
+                    visual.texture_slots =
+                        source->render_triangle_texture_slots;
+                    visual.textures = source->attached_textures;
+                    visual.exact_deformation = exact_deformation;
+                    assembled->lady_dynamic_visuals.push_back(
+                        std::move(visual));
+                };
+
+            materialize_dynamic(2U, 25U, equipment_ptx, true);
+            materialize_dynamic(3U, 26U, equipment_ptx, true);
+            // slot30 follows the exact Shl03 actor transform, but its internal
+            // cable/tether point-array deformation remains a separate layer.
+            materialize_dynamic(3U, 30U, 29U, false);
+
+            if (!assembled->lady_dynamic_visuals.empty()) {
+                report.detail_attachments +=
+                    " ladyDynamicLatent=" +
+                    std::to_string(assembled->lady_dynamic_visuals.size());
+            }
+        }
+
         // Parse every top-level MotionScript before filtering the MOT library.
         // A script may target a component that is host-constrained in the rest
         // pose (CEm034 slot20); those MOTs still need to remain visible so the
