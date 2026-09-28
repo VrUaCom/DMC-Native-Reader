@@ -50,6 +50,7 @@ EXPECTED_CTESTS = (
     "cxx23_profile",
     "dds_ptx_v1",
     "em028_corpus_contract",
+    "effect_visualization",
     "gdata_legacy",
     "mod_spatial_adapter",
     "module_registry",
