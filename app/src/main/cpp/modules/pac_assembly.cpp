@@ -990,40 +990,102 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             it->slots.push_back(static_cast<std::uint32_t>(m.mot_slot));
         }
 
-        std::vector<std::uint32_t> script_reachable_packs;
-        for (const auto& binding : assembled->motion_scripts) {
+        // Materialize exact per-MOT ScriptLinks once. UI and playback then
+        // consume the same bank/action/state/lane authority instead of
+        // independently re-solving a resource route on every tap.
+        const bool lady_archive =
+            archive_name.find("em034") != std::string_view::npos;
+        for (std::size_t script_index = 0U;
+             script_index < assembled->motion_scripts.size();
+             ++script_index) {
+            const auto& binding = assembled->motion_scripts[script_index];
             if (binding.script == nullptr) continue;
-            for (const auto& group : motion::bind_motion_groups(
-                     *binding.script, motion_packs, archive_name)) {
-                if (group.archive_slot) {
-                    script_reachable_packs.push_back(*group.archive_slot);
+
+            auto groups = motion::bind_motion_groups(
+                *binding.script, motion_packs, archive_name);
+
+            // em034_013 has a class-specific resource array independent of the
+            // body script: bank4/group4 -> top-level PAC slot11.
+            if (lady_archive &&
+                binding.role == Session::MotionScriptRole::LadyComponent0) {
+                groups.clear();
+                motion::MotionGroupBinding g;
+                g.group = 4U;
+                g.archive_slot = 11U;
+                g.exe_confirmed = true;
+                for (const auto& m : motions) {
+                    if (m.pack_slot == 11 && m.mot_slot >= 0) {
+                        g.slots.push_back(
+                            static_cast<std::uint32_t>(m.mot_slot));
+                    }
+                }
+                groups.push_back(std::move(g));
+            }
+
+            for (const auto& group : groups) {
+                if (!group.archive_slot) continue;
+                for (auto& m : motions) {
+                    if (m.pack_slot != static_cast<int>(*group.archive_slot) ||
+                        m.mot_slot < 0 || m.mot_slot >= 100) {
+                        continue;
+                    }
+                    const auto id = static_cast<std::uint16_t>(
+                        group.group * 100U +
+                        static_cast<std::uint16_t>(m.mot_slot));
+                    const auto actions = binding.script->actions_for(id);
+                    if (actions.empty()) continue;
+
+                    const motion::ScriptAction* pick = &actions.front();
+                    for (const auto& action : actions) {
+                        if (action.bank == group.group &&
+                            action.action ==
+                                static_cast<std::size_t>(m.mot_slot)) {
+                            pick = &action;
+                            break;
+                        }
+                        if (action.bank == group.group &&
+                            pick->bank != group.group) {
+                            pick = &action;
+                        } else if (action.action ==
+                                       static_cast<std::size_t>(m.mot_slot) &&
+                                   pick->action !=
+                                       static_cast<std::size_t>(m.mot_slot)) {
+                            pick = &action;
+                        }
+                    }
+
+                    Session::MotionPayload::ScriptLink link;
+                    link.script_index = script_index;
+                    link.bank = pick->bank;
+                    link.action = pick->action;
+                    if (binding.role ==
+                            Session::MotionScriptRole::LadyBody) {
+                        if (const auto mapped =
+                                motion::lady_state_for_body_script_action(
+                                    pick->bank, pick->action);
+                            mapped.has_value()) {
+                            link.lady_state = mapped->state;
+                            link.lady_lane_mask = mapped->lane_mask;
+                        }
+                    }
+                    const bool duplicate = std::any_of(
+                        m.script_links.begin(), m.script_links.end(),
+                        [&](const Session::MotionPayload::ScriptLink& existing) {
+                            return existing.script_index == link.script_index &&
+                                   existing.bank == link.bank &&
+                                   existing.action == link.action;
+                        });
+                    if (!duplicate) m.script_links.push_back(link);
                 }
             }
-            // Canonical CEm034 component0 route:
-            // em034_013 bank4 -> top-level PAC slot11.
-            if (binding.role == Session::MotionScriptRole::LadyComponent0 &&
-                archive_name.find("em034") != std::string_view::npos) {
-                script_reachable_packs.push_back(11U);
-            }
         }
-        std::sort(script_reachable_packs.begin(), script_reachable_packs.end());
-        script_reachable_packs.erase(
-            std::unique(script_reachable_packs.begin(),
-                        script_reachable_packs.end()),
-            script_reachable_packs.end());
 
         report.motions = motions.size();
         {
             std::vector<Session::MotionPayload> drivable;
             drivable.reserve(motions.size());
             for (auto& m : motions) {
-                const bool script_reachable =
-                    m.pack_slot >= 0 &&
-                    std::binary_search(
-                        script_reachable_packs.begin(),
-                        script_reachable_packs.end(),
-                        static_cast<std::uint32_t>(m.pack_slot));
-                if (script_reachable ||
+                if (!m.script_links.empty() ||
                     motion::motion_can_drive(*assembled, m.bytes)) {
                     drivable.push_back(std::move(m));
                 }
