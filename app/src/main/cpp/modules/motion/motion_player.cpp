@@ -1230,6 +1230,114 @@ MotionLoadReport load_scripted_motion(Session* session,
     }
 }
 
+RuntimeStepResult run_script_frame(
+    Session* session,
+    std::size_t script_index,
+    std::size_t bank,
+    std::size_t action,
+    float frame) noexcept {
+    RuntimeStepResult result;
+    if (session == nullptr || !std::isfinite(frame) ||
+        script_index >= session->motion_scripts.size()) {
+        result.detail = "MotionScript runtime: invalid request";
+        return result;
+    }
+
+    try {
+        std::optional<std::size_t> motion_index;
+        for (std::size_t index = 0U;
+             index < session->motion_library.size();
+             ++index) {
+            const auto& payload = session->motion_library[index];
+            const bool exact_link = std::any_of(
+                payload.script_links.begin(),
+                payload.script_links.end(),
+                [script_index, bank, action](
+                    const Session::MotionPayload::ScriptLink& link) {
+                    return link.script_index == script_index &&
+                           link.bank == bank &&
+                           link.action == action;
+                });
+            if (exact_link) {
+                motion_index = index;
+                break;
+            }
+
+            const auto selection = pick_script_motion(
+                *session,
+                session->motion_scripts[script_index],
+                payload);
+            if (selection.has_value() &&
+                selection->bank == bank &&
+                selection->action == action) {
+                motion_index = index;
+                break;
+            }
+        }
+
+        if (!motion_index.has_value()) {
+            result.detail =
+                "MotionScript runtime: action has no resolved MOT";
+            return result;
+        }
+
+        const bool same_action =
+            session->motion != nullptr &&
+            session->motion->script_driven &&
+            session->motion->script_slot ==
+                session->motion_scripts[script_index].archive_slot &&
+            session->motion->script_bank == bank &&
+            session->motion->script_action == action;
+        result.replayed =
+            !same_action ||
+            (same_action &&
+             session->motion->lady_runtime_frame >= 0.0F &&
+             frame < session->motion->lady_runtime_frame);
+
+        if (session->effect_runtime != nullptr) {
+            session->effect_runtime->clear_pending_events();
+        }
+
+        if (!same_action) {
+            const auto loaded =
+                load_scripted_motion(session, script_index, *motion_index);
+            if (!loaded.ok || session->motion == nullptr ||
+                session->motion->script_bank != bank ||
+                session->motion->script_action != action) {
+                result.detail =
+                    "MotionScript runtime: action/MOT route is ambiguous";
+                return result;
+            }
+        }
+
+        if (!apply_motion_frame(session, frame)) {
+            result.detail =
+                "MotionScript runtime: frame evaluation failed";
+            return result;
+        }
+
+        if (session->effect_runtime != nullptr) {
+            result.actor_events =
+                session->effect_runtime->consume_actor_events();
+            result.effect_events =
+                session->effect_runtime->consume_effect_events();
+        }
+        result.ok = true;
+        result.detail =
+            "MotionScript slot" +
+            std::to_string(
+                session->motion_scripts[script_index].archive_slot) +
+            " bank" + std::to_string(bank) +
+            "/action" + std::to_string(action) +
+            " frame" + std::to_string(frame);
+        return result;
+    } catch (...) {
+        result = {};
+        result.detail = "MotionScript runtime: unexpected failure";
+        return result;
+    }
+}
+
 std::span<const Vec3> motion_rest_vertices(const Session* session) noexcept {
     if (!has_motion(session)) return {};
     return session->motion->source_vertices;
