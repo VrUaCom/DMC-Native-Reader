@@ -88,9 +88,21 @@ struct Session {
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;
 
-    // Player motion script (pl000.pac slot 5) and the weapon parts whose
-    // attach record follows it during playback.
+    enum class MotionScriptRole : std::uint8_t {
+        Primary,
+        LadyBody,
+        LadyComponent0,
+    };
+    struct MotionScriptBinding final {
+        std::uint32_t archive_slot{};
+        MotionScriptRole role{MotionScriptRole::Primary};
+        std::shared_ptr<const motion::MotionScriptFile> script;
+    };
+
+    // Backward-compatible primary script used by player weapon-state playback.
+    // Enemy/boss archives may retain multiple independent controllers below.
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
+    std::vector<MotionScriptBinding> motion_scripts;
     std::vector<motion::WeaponBinding> weapon_bindings;
 
     // Boss-Lady CEm034 uses a different runtime: five persistent component
