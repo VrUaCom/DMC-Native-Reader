@@ -462,20 +462,29 @@ int main() {
                dmcresource::motion::LadyPlacementPreset::BodyStowed);
     }
     {
-        // Full entry-dispatch regression: state0x59 is asymmetric.
+        // Full entry-dispatch regression. CEm034 state numbers are integer
+        // values; state 59 decimal == 0x3B and is asymmetric:
+        // lane0 bank0/action1, lane1 bank3/action13.
         const auto mapped =
             dmcresource::motion::lady_state_for_body_script_action(3U, 13U);
         assert(mapped.has_value());
-        assert(mapped->state == 0x59U);
+        assert(mapped->state == 0x3BU);
         assert(mapped->lane_mask == 0x2U);
         const auto starts =
-            dmcresource::motion::lady_body_state_scripts(0x59U);
+            dmcresource::motion::lady_body_state_scripts(0x3BU);
         assert(starts.lanes[0].valid);
         assert(starts.lanes[0].bank == 0U);
         assert(starts.lanes[0].action == 1U);
         assert(starts.lanes[1].valid);
         assert(starts.lanes[1].bank == 3U);
         assert(starts.lanes[1].action == 13U);
+
+        // State 0x59 is 89 decimal and belongs to bank4/action6 on both lanes.
+        const auto state89 =
+            dmcresource::motion::lady_body_state_scripts(0x59U);
+        assert(state89.lanes[0].valid && state89.lanes[1].valid);
+        assert(state89.lanes[0].bank == 4U && state89.lanes[0].action == 6U);
+        assert(state89.lanes[1].bank == 4U && state89.lanes[1].action == 6U);
 
         const auto state85 =
             dmcresource::motion::lady_body_state_scripts(0x85U);
