@@ -379,6 +379,84 @@ int main() {
     assert(!dmcresource::motion::set_lady_component_preset(
         lady_first.get(), lady_first->lady_component_bindings[3],
         dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
+    assert(lady_first->lady_component_bindings[3].preset ==
+           dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+
+    // State-entry and signal bridge regressions from the canonical CEm034
+    // dispatcher. These specifically guard the old single-joint/single-state
+    // model and the corrected action50 channel trace.
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x7FU);
+        assert(entry.recognized && entry.fully_materialized);
+        assert(lady_first->lady_component_bindings[1].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        assert(lady_first->lady_component_bindings[2].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        assert(lady_first->composite_parts[
+            lady_first->lady_component_bindings[1].part].placement.attachment_selector == 9U);
+        assert(lady_first->composite_parts[
+            lady_first->lady_component_bindings[2].part].placement.attachment_selector == 13U);
+    }
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x81U);
+        assert(entry.recognized);
+        assert(!entry.fully_materialized);  // CEm034+0x43C0, never fake joint13.
+        assert(lady_first->lady_component_bindings[3].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto restore = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x81U, 1U, 2U, 1U);
+        assert(restore.recognized && restore.fully_materialized);
+        assert(lady_first->lady_component_bindings[3].preset ==
+               dmcresource::motion::LadyPlacementPreset::BodyStowed);
+    }
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x85U);
+        assert(entry.recognized);
+        const auto deploy = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x85U, 1U, 1U, 1U);
+        assert(deploy.recognized);
+        assert(lady_first->lady_component_bindings[4].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto flag_off = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x85U, 1U, 0U, 2U);
+        assert(flag_off.recognized && flag_off.runtime_side_effect);
+        // frame39/ch0=2 is NOT the placement restore.
+        assert(lady_first->lady_component_bindings[4].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto stow = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x85U, 1U, 1U, 2U);
+        assert(stow.recognized);
+        assert(lady_first->lady_component_bindings[4].preset ==
+               dmcresource::motion::LadyPlacementPreset::BodyStowed);
+    }
+    {
+        const auto entry = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x59U);
+        assert(entry.recognized);
+        assert(lady_first->lady_component_bindings[0].preset ==
+               dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
+        const auto delayed = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x59U, 0U, 0U, 1U);
+        assert(delayed.recognized);
+        assert(lady_first->lady_component_bindings[0].preset ==
+               dmcresource::motion::LadyPlacementPreset::BodyStowed);
+        assert(lady_first->lady_component_bindings[0].control_domain ==
+               dmcresource::motion::LadyControlDomain::IndependentMotionScript);
+    }
+    {
+        const auto rocket = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x56U, 1U, 0U, 1U);
+        assert(rocket.recognized && rocket.dynamic_actor == 2);
+        const auto grapple = dmcresource::motion::apply_lady_state_entry(
+            lady_first.get(), 0x5EU);
+        assert(grapple.recognized && grapple.dynamic_actor == 3);
+        const auto shl04 = dmcresource::motion::apply_lady_signal(
+            lady_first.get(), 0x8FU, 1U, 0U, 1U);
+        assert(shl04.recognized && shl04.dynamic_actor == 4);
+    }
 
     auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
     assert(lady_second != nullptr);
