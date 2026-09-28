@@ -156,28 +156,41 @@ struct ScriptMotionSelection final {
     return packs;
 }
 
-[[nodiscard]] std::optional<std::uint16_t> lady_group_for_pack(
+[[nodiscard]] std::vector<std::uint16_t> lady_groups_for_pack(
     const Session& session,
     const Session::MotionScriptBinding& binding,
-    const Session::MotionPayload& motion) noexcept {
-    if (!is_em034(session) || motion.pack_slot < 0) return std::nullopt;
+    const Session::MotionPayload& motion) {
+    std::vector<std::uint16_t> groups;
+    if (!is_em034(session) || motion.pack_slot < 0) return groups;
 
     if (binding.role == Session::MotionScriptRole::LadyComponent0) {
         // EXE_AND_CORPUS_CONFIRMED:
         // em034_013 bank4 -> top-level PAC slot11.
-        return motion.pack_slot == 11 ? std::optional<std::uint16_t>{4U}
-                                      : std::nullopt;
+        if (motion.pack_slot == 11) groups.push_back(4U);
+        return groups;
     }
 
     if (binding.role == Session::MotionScriptRole::LadyBody) {
-        // CEm034 body motion packs are laid out in PAC order for script groups
-        // 0..4: top-level slots2..6. The group6 resource remains external/
-        // unresolved and is intentionally not fabricated here.
-        if (motion.pack_slot >= 2 && motion.pack_slot <= 6) {
-            return static_cast<std::uint16_t>(motion.pack_slot - 2);
+        // EXE-confirmed CEm034 body pack map (shared pack reuse is valid):
+        //   group1 -> slot3
+        //   group2 -> slot4
+        //   group3 -> slot5
+        //   group4 -> slot6
+        //   group6 -> slot6
+        // group0 is intentionally left unbound.
+        switch (motion.pack_slot) {
+        case 3: groups.push_back(1U); break;
+        case 4: groups.push_back(2U); break;
+        case 5: groups.push_back(3U); break;
+        case 6:
+            groups.push_back(4U);
+            groups.push_back(6U);
+            break;
+        default:
+            break;
         }
     }
-    return std::nullopt;
+    return groups;
 }
 
 [[nodiscard]] std::optional<ScriptMotionSelection> pick_script_motion(
@@ -186,10 +199,8 @@ struct ScriptMotionSelection final {
     const Session::MotionPayload& motion) {
     if (binding.script == nullptr || motion.mot_slot < 0) return std::nullopt;
 
-    std::vector<std::uint16_t> groups;
-    if (const auto lady = lady_group_for_pack(session, binding, motion)) {
-        groups.push_back(*lady);
-    } else if (motion.pack_slot >= 0) {
+    auto groups = lady_groups_for_pack(session, binding, motion);
+    if (groups.empty() && motion.pack_slot >= 0) {
         const auto packs = session_motion_packs(session);
         for (const auto& g : bind_motion_groups(
                  *binding.script, packs, session.archive_name)) {
