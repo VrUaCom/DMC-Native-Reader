@@ -532,6 +532,67 @@ lady_state_for_body_script_action(std::size_t bank, std::size_t action) noexcept
     return std::nullopt;
 }
 
+struct LadyBodyLaneAction final {
+    bool valid{};
+    std::uint8_t bank{};
+    std::uint8_t action{};
+};
+
+struct LadyBodyStateScripts final {
+    std::array<LadyBodyLaneAction, 2> lanes{};
+};
+
+// Forward form of the same 0x14016A410 entry dispatcher. This is required
+// because states55..82 intentionally start different actions on lane0/lane1.
+[[nodiscard]] constexpr LadyBodyStateScripts lady_body_state_scripts(
+    std::uint16_t state) noexcept {
+    LadyBodyStateScripts out{};
+    const auto both = [&out](std::uint8_t bank, std::uint8_t action) constexpr {
+        out.lanes[0] = {true, bank, action};
+        out.lanes[1] = {true, bank, action};
+    };
+    if (state <= 6U || (state >= 8U && state <= 14U)) {
+        both(0U, static_cast<std::uint8_t>(state));
+    } else if (state >= 15U && state <= 20U) {
+        both(1U, static_cast<std::uint8_t>(state - 15U));
+    } else if (state == 22U) {
+        both(1U, 7U);
+    } else if (state >= 24U && state <= 26U) {
+        both(1U, static_cast<std::uint8_t>(state - 15U));
+    } else if (state == 35U) {
+        both(1U, 20U);
+    } else if (state >= 38U && state <= 41U) {
+        both(1U, static_cast<std::uint8_t>(state - 15U));
+    } else if (state >= 42U && state <= 45U) {
+        both(2U, static_cast<std::uint8_t>(state - 42U));
+    } else if (state == 46U) {
+        both(3U, 0U);
+    } else if (state >= 48U && state <= 54U) {
+        both(3U, static_cast<std::uint8_t>(state - 46U));
+    } else if (state >= 55U && state <= 61U) {
+        out.lanes[0] = {true, 0U, 1U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 62U && state <= 68U) {
+        out.lanes[0] = {true, 3U, 16U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 69U && state <= 75U) {
+        out.lanes[0] = {true, 3U, 23U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 76U && state <= 82U) {
+        out.lanes[0] = {true, 3U, 30U};
+        out.lanes[1] = {true, 3U, static_cast<std::uint8_t>(state - 46U)};
+    } else if (state >= 83U && state <= 115U) {
+        both(4U, static_cast<std::uint8_t>(state - 83U));
+    } else if (state >= 123U && state <= 130U) {
+        both(4U, static_cast<std::uint8_t>(state - 83U));
+    } else if (state == 133U) {
+        both(4U, 50U);
+    } else if (state == 143U) {
+        both(4U, 60U);
+    }
+    return out;
+}
+
 // Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.
 // lane is 0/1 for the two em034_012 controllers; channel is 0..4.
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_signal(
