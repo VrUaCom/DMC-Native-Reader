@@ -24,6 +24,7 @@ namespace dmcresource {
 
 namespace motion {
 struct MotionState;
+class EffectRuntime;
 }
 namespace collision {
 struct CollisionBinding;
@@ -153,6 +154,11 @@ struct Session {
         bool exact_deformation{true};
     };
     std::vector<LadyDynamicVisual> lady_dynamic_visuals;
+
+    // Generic Script Play effects runtime. The bank catalog is loaded from the
+    // actual PAC child that identifies as FXBANK; raw MOT playback never
+    // emits into this runtime.
+    std::shared_ptr<motion::EffectRuntime> effect_runtime;
 
     // Attack collision handle (index + shapes) on the body bones; drawn with
     // RenderFlag::Collision (collision_debug.h).
