@@ -727,10 +727,18 @@ bool motion_script_can_play_motion(const Session* session,
         return false;
     }
     try {
+        const auto& payload = session->motion_library[motion_index];
+        if (std::any_of(
+                payload.script_links.begin(), payload.script_links.end(),
+                [script_index](const Session::MotionPayload::ScriptLink& link) {
+                    return link.script_index == script_index;
+                })) {
+            return true;
+        }
         return pick_script_motion(
                    *session,
                    session->motion_scripts[script_index],
-                   session->motion_library[motion_index])
+                   payload)
             .has_value();
     } catch (...) {
         return false;
@@ -751,7 +759,25 @@ MotionLoadReport load_scripted_motion(Session* session,
         clear_motion(session);
         const auto binding = session->motion_scripts[script_index];
         const auto payload = session->motion_library[motion_index];
-        const auto selection = pick_script_motion(*session, binding, payload);
+
+        const Session::MotionPayload::ScriptLink* materialized_link = nullptr;
+        for (const auto& link : payload.script_links) {
+            if (link.script_index == script_index) {
+                materialized_link = &link;
+                break;
+            }
+        }
+
+        std::optional<ScriptMotionSelection> selection;
+        if (materialized_link != nullptr) {
+            selection = ScriptMotionSelection{
+                materialized_link->bank,
+                materialized_link->action,
+                0U,
+            };
+        } else {
+            selection = pick_script_motion(*session, binding, payload);
+        }
         if (!selection.has_value() || binding.script == nullptr) {
             report.detail =
                 "MotionScript slot" + std::to_string(binding.archive_slot) +
@@ -794,9 +820,18 @@ MotionLoadReport load_scripted_motion(Session* session,
             binding.script->signals(selection->bank, selection->action);
 
         if (binding.role == Session::MotionScriptRole::LadyBody) {
-            if (const auto mapped = lady_state_for_body_script_action(
+            std::optional<LadyBodyScriptState> mapped;
+            if (materialized_link != nullptr &&
+                materialized_link->lady_state >= 0) {
+                mapped = LadyBodyScriptState{
+                    static_cast<std::uint16_t>(materialized_link->lady_state),
+                    materialized_link->lady_lane_mask,
+                };
+            } else {
+                mapped = lady_state_for_body_script_action(
                     selection->bank, selection->action);
-                mapped.has_value()) {
+            }
+            if (mapped.has_value()) {
                 state.lady_state = mapped->state;
                 state.lady_lane_mask = mapped->lane_mask;
 
