@@ -141,6 +141,7 @@ struct Session {
         Matrix4 world{};
         Vec3 velocity{};
         float spawn_frame{-1.0F};
+        float last_update_frame{-1.0F};
         float retire_frame{-1.0F};  // <0 = owner/state controlled
         bool active{};
         // slot30 shares Shl03 actor transform but has an additional internal
