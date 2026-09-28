@@ -25,7 +25,12 @@ struct ChildResource {
     ResourceCapabilities capabilities{};
     InspectionDocument inspection;
     RenderScene scene;
+    // Primary visual representation used by the normal viewer/gallery.
     ImagePreview image_preview;
+    // Optional evidence/diagnostic representation of the same logical child.
+    // FXBANK records use this for the EXE-backed Info mode while image_preview
+    // remains the Visual/Playback-facing surface.
+    ImagePreview info_preview;
     std::vector<ChildResource> children;
 
     // Optional bounded source payload for lazy child materialization. Containers
