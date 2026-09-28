@@ -450,6 +450,28 @@ int main() {
                dmcresource::motion::LadyPlacementPreset::BodyStowed);
     }
     {
+        // Full entry-dispatch regression: state0x59 is asymmetric.
+        const auto mapped =
+            dmcresource::motion::lady_state_for_body_script_action(3U, 13U);
+        assert(mapped.has_value());
+        assert(mapped->state == 0x59U);
+        assert(mapped->lane_mask == 0x2U);
+        const auto starts =
+            dmcresource::motion::lady_body_state_scripts(0x59U);
+        assert(starts.lanes[0].valid);
+        assert(starts.lanes[0].bank == 0U);
+        assert(starts.lanes[0].action == 1U);
+        assert(starts.lanes[1].valid);
+        assert(starts.lanes[1].bank == 3U);
+        assert(starts.lanes[1].action == 13U);
+
+        const auto state85 =
+            dmcresource::motion::lady_body_state_scripts(0x85U);
+        assert(state85.lanes[0].valid && state85.lanes[1].valid);
+        assert(state85.lanes[0].bank == 4U && state85.lanes[0].action == 50U);
+        assert(state85.lanes[1].bank == 4U && state85.lanes[1].action == 50U);
+    }
+    {
         const auto entry = dmcresource::motion::apply_lady_state_entry(
             lady_first.get(), 0x59U);
         assert(entry.recognized);
