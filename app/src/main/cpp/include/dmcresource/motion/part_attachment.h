@@ -449,6 +449,11 @@ bool set_lady_component_control_domain(Session* session,
                                        LadyComponentBinding& binding,
                                        LadyControlDomain domain) noexcept;
 
+// Canonical MOD/CEm034 local matrix: translation + XYZ Euler using the
+// recovered DMC3 transform-domain composition.
+[[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
+                                         const std::array<float, 3>& rotation_xyz_radians) noexcept;
+
 // Translation plus Rz x Ry x Rx (0x1403304A0 order).
 [[nodiscard]] Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,
                                               const std::array<float, 3>& rotation_xyz_radians) noexcept;
