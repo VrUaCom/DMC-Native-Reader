@@ -657,12 +657,29 @@ bool set_lady_component_preset(Session* session,
 bool set_lady_component_control_domain(Session* session,
                                        LadyComponentBinding& binding,
                                        LadyControlDomain domain) noexcept {
-    if (session == nullptr || binding.component != 0U) return false;
+    if (session == nullptr || binding.component != 0U ||
+        binding.part >= session->composite_parts.size()) {
+        return false;
+    }
     // Placement and control are orthogonal in CEm034. Most independent-script
     // entries use BodyStowed, but states 0x7C/0x7D retain ActiveDeployed while
     // +0x4020 selects em034_013. Never collapse these into one scalar state.
-    binding.control_domain = domain;
-    return true;
+    auto& part = session->composite_parts[binding.part];
+    if (domain == LadyControlDomain::IndependentMotionScript) {
+        // Freeze the currently resolved equipment world as the root for its
+        // own 3-node MOT domain. HostJointSkeleton must be disabled, otherwise
+        // the generic motion player correctly treats the part as host-driven
+        // and refuses to animate it independently.
+        if (!part.placement.resolved) return false;
+        part.placement.mode = CompositePlacementMode::HostJoint;
+        binding.control_domain = domain;
+        return true;
+    }
+
+    binding.control_domain = LadyControlDomain::BodyConstraint;
+    // Re-enter the EXE placement helper domain and rebuild the current preset
+    // against the freshly posed Lady body.
+    return set_lady_component_preset(session, binding, binding.preset);
 }
 
 bool set_lady_component_runtime_scale(Session* session,
