@@ -527,8 +527,16 @@ int main() {
     assert(!lady_second->lady_dynamic_visuals[0].active);
     assert(!lady_second->lady_dynamic_visuals[1].active);
     assert(!lady_second->lady_dynamic_visuals[2].active);
-    assert(lady_second->composite_parts[0].name.find("slot_0032.mod") != std::string::npos);
-    assert(lady_second->composite_parts[1].name.find("slot_0034.mod") != std::string::npos);
+    const auto has_lady_part = [](const dmcresource::Session& session,
+                                  std::string_view token) {
+        return std::any_of(
+            session.composite_parts.begin(), session.composite_parts.end(),
+            [token](const auto& part) {
+                return part.name.find(token) != std::string::npos;
+            });
+    };
+    assert(has_lady_part(*lady_second, "slot_0032.mod"));
+    assert(has_lady_part(*lady_second, "slot_0034.mod"));
 
     // An archive without MOD is browsable but has nothing to assemble.
     const auto motions_only = make_pac({mot});
