@@ -402,6 +402,9 @@ struct LadyComponentBinding final {
     std::uint32_t model_slot{};
     LadyPlacementPreset preset{LadyPlacementPreset::BodyStowed};
     LadyControlDomain control_domain{LadyControlDomain::BodyConstraint};
+    // CEm034+0x4400 for component3 ActiveDeployed. EXE writes 1.0 every
+    // action46 update and promotes it to 1.5 while lane1/channel1 == 1.
+    float runtime_uniform_scale{1.0F};
 };
 
 struct LadyDynamicActorContract final {
@@ -448,6 +451,12 @@ bool set_lady_component_preset(Session* session,
 bool set_lady_component_control_domain(Session* session,
                                        LadyComponentBinding& binding,
                                        LadyControlDomain domain) noexcept;
+
+// Exact CEm034 component3 active-parent scalar (+0x4400). Re-materializes
+// RuntimeBodyRootScaled when component3 is currently ActiveDeployed.
+bool set_lady_component_runtime_scale(Session* session,
+                                      LadyComponentBinding& binding,
+                                      float uniform_scale) noexcept;
 
 struct LadyRuntimeApplyResult final {
     bool recognized{};
