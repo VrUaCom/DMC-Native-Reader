@@ -1,6 +1,6 @@
 # DMC Native Reader — Status
 
-Last updated: **2026-09-26**.
+Last updated: **2026-09-29**.
 
 ## Product target
 
@@ -8,15 +8,44 @@ DMC Native Reader currently targets resource data from **Devil May Cry 3: Specia
 
 ## Accepted `main`
 
-- current `main`: `f4548b2475f74e438dfade4d2e3653674fc81a36`
-- Android versionCode / versionName: **68 / 1.0.41**
+- current `main`: `d3bf1732ded403bd9631663226bcaf8ad19682bb`
+- Android product line: **post-v68 / v72 runtime source**
 - Android package: `com.dmcrengine.nativereader`
 - Android ABI: `arm64-v8a`
 - minSdk / targetSdk: `26 / 36`
 - native product language: target-scoped **C++23**
 - Android release tag: `android-v68-1.0.41`
 
-The v68 line is merged into and released from `main`.
+The v68 line and the post-v68 FXBANK/Visual-Info integration are merged into
+`main`. The current Lady/effects continuation is kept in `NR-Luna-v73` until
+physical acceptance is complete.
+
+## Phase 2 evidence integration
+
+The reviewed Phase 2 evidence/unblock stack is preserved as a merge candidate
+for `main`. Its product code does not replace the current C++23 core; the core
+and Spider migration are already present in `main`. The merge contributes the
+reviewed evidence tooling and regression contracts:
+
+- pre-provisioned/offline toolchain validation;
+- deterministic Phase 2 preflight;
+- SDK metadata and candidate-identity regressions;
+- exact-head runner updates and evidence-contract documentation.
+
+The canonical execution candidate remains the live head of
+`phase2/evidence-unblock-integration`; preflight is diagnostic only and does
+not substitute for the exact-head build/evidence run.
+
+## Branch architecture
+
+- `main` — shared C++23 Native Reader core;
+- `android` — Android shell and APK integration;
+- `windows` — Windows shell and portable artifact integration;
+- `ios` — iOS shell integration;
+- `NR-Luna-v73` — current Lady, FX and MotionScript/effects core continuation.
+
+Historical feature, CI and phase branches remain available as source evidence;
+they are not deleted as part of the consolidation.
 
 ## Platform status
 
