@@ -63,6 +63,10 @@ struct Session {
 
     std::string detail;
     std::string trace;
+    // Canonical source archive name for assembled PAC sessions. Runtime
+    // MotionScript-to-MOT routing uses it to apply EXE-confirmed group maps
+    // where available and deterministic corpus binding otherwise.
+    std::string archive_name;
     bool renderable{};
 
     // Motions discovered while assembling a PAC (read-only copies of the
