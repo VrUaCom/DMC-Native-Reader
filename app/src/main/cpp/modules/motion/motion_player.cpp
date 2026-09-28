@@ -576,6 +576,7 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 if (wanted != binding.state) (void)set_weapon_state(session, binding, wanted);
             }
         }
+        if (!apply_lady_script_runtime(session, state, frame)) return false;
         (void)apply_part_attachments(session, cloth_steps);
         (void)apply_uv_scrolls(session, state.scroll_clock);
         HierarchyOverlay overlay;
@@ -637,6 +638,127 @@ bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot)
         return false;
     } catch (...) {
         return false;
+    }
+}
+
+std::size_t motion_script_count(const Session* session) noexcept {
+    return session != nullptr ? session->motion_scripts.size() : 0U;
+}
+
+std::uint32_t motion_script_slot(const Session* session,
+                                 std::size_t script_index) noexcept {
+    if (session == nullptr || script_index >= session->motion_scripts.size()) {
+        return std::numeric_limits<std::uint32_t>::max();
+    }
+    return session->motion_scripts[script_index].archive_slot;
+}
+
+bool motion_script_can_play_motion(const Session* session,
+                                   std::size_t script_index,
+                                   std::size_t motion_index) noexcept {
+    if (session == nullptr ||
+        script_index >= session->motion_scripts.size() ||
+        motion_index >= session->motion_library.size()) {
+        return false;
+    }
+    try {
+        return pick_script_motion(
+                   *session,
+                   session->motion_scripts[script_index],
+                   session->motion_library[motion_index])
+            .has_value();
+    } catch (...) {
+        return false;
+    }
+}
+
+MotionLoadReport load_scripted_motion(Session* session,
+                                      std::size_t script_index,
+                                      std::size_t motion_index) noexcept {
+    MotionLoadReport report;
+    if (session == nullptr ||
+        script_index >= session->motion_scripts.size() ||
+        motion_index >= session->motion_library.size()) {
+        report.detail = "MotionScript: invalid script or MOT index";
+        return report;
+    }
+    try {
+        const auto binding = session->motion_scripts[script_index];
+        const auto payload = session->motion_library[motion_index];
+        const auto selection = pick_script_motion(*session, binding, payload);
+        if (!selection.has_value() || binding.script == nullptr) {
+            report.detail =
+                "MotionScript slot" + std::to_string(binding.archive_slot) +
+                " does not reference " + payload.name;
+            return report;
+        }
+
+        if (binding.role == Session::MotionScriptRole::LadyComponent0) {
+            auto* component = component0_binding(session);
+            if (component == nullptr) {
+                report.detail = "MotionScript: Lady component0 binding is unavailable";
+                return report;
+            }
+            const auto initial =
+                selection->bank == 4U &&
+                (selection->action == 41U || selection->action == 42U)
+                    ? LadyPlacementPreset::ActiveDeployed
+                    : LadyPlacementPreset::BodyStowed;
+            if (!set_lady_component_preset(session, *component, initial) ||
+                !set_lady_component_control_domain(
+                    session, *component,
+                    LadyControlDomain::IndependentMotionScript)) {
+                report.detail =
+                    "MotionScript: Lady component0 could not enter independent control";
+                return report;
+            }
+        }
+
+        report = load_motion(
+            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        if (!report.ok || session->motion == nullptr) return report;
+
+        auto& state = *session->motion;
+        state.script_driven = true;
+        state.script_role = binding.role;
+        state.script_slot = binding.archive_slot;
+        state.script_bank = selection->bank;
+        state.script_action = selection->action;
+        state.script_signals =
+            binding.script->signals(selection->bank, selection->action);
+
+        if (binding.role == Session::MotionScriptRole::LadyBody) {
+            state.lady_state =
+                lady_state_for_script_action(selection->bank, selection->action);
+            if (state.lady_state.has_value()) {
+                state.lady_entry_applied = false;
+                state.lady_runtime_frame = -1.0F;
+                if (!apply_motion_frame(session, 0.0F)) {
+                    clear_motion(session);
+                    report = {};
+                    report.detail =
+                        "MotionScript: Lady runtime bridge rejected first frame";
+                    return report;
+                }
+            }
+        }
+
+        report.detail =
+            "MotionScript slot" + std::to_string(binding.archive_slot) +
+            " bank" + std::to_string(selection->bank) +
+            "/action" + std::to_string(selection->action) +
+            " -> " + report.detail;
+        if (binding.role == Session::MotionScriptRole::LadyBody &&
+            !state.lady_state.has_value()) {
+            report.detail +=
+                "\nLady runtime state bridge: action parsed, state semantics "
+                "not promoted for this bank/action.";
+        }
+        return report;
+    } catch (...) {
+        report = {};
+        report.detail = "MotionScript: playback failed";
+        return report;
     }
 }
 
