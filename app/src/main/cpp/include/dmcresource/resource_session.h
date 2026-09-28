@@ -72,6 +72,18 @@ struct Session {
     // Motions discovered while assembling a PAC (read-only copies of the
     // retained payloads). Played through motion::load_motion.
     struct MotionPayload final {
+        struct ScriptLink final {
+            std::size_t script_index{};
+            std::size_t bank{};
+            std::size_t action{};
+            // CEm034 state that starts this action, when recovered. -1 means
+            // the action can still be executed by its script controller but
+            // no actor-state entry is implied by current evidence.
+            int lady_state{-1};
+            // Body lane mask: bit0=lane0, bit1=lane1. 0 for non-body scripts.
+            std::uint8_t lady_lane_mask{};
+        };
+
         std::string name;
         std::vector<std::uint8_t> bytes;
         // Motion script address (pl000_00_<bank>.pac, MOT index); -1 unknown.
@@ -83,6 +95,8 @@ struct Session {
         int mot_slot{-1};
         // Script actions that play it ("act 3,7 loop"), empty when unknown.
         std::string actions;
+        // Every script controller in this PAC that references this MOT.
+        std::vector<ScriptLink> script_links;
     };
     std::vector<MotionPayload> motion_library;
 
