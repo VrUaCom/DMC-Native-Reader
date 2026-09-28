@@ -289,10 +289,14 @@ struct ArchivePartAttachment final {
     std::uint32_t child_model_slot{};
     std::uint32_t host_joint{};
     bool root_local_identity{};
-    // true only when the host joint itself is supported by retained
-    // corpus/geometry evidence; false marks a viewer candidate that remains
-    // orange/non-canonical until the class-init consumer is reversed.
+    // true when the host relation is supported by retained structural/corpus
+    // evidence. exe_confirmed is stronger and is used when the exact runtime
+    // consumer and transform record have been recovered from dmc3.exe.
     bool structural_confirmed{};
+    bool exe_confirmed{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_xyz_radians{};
+    bool explicit_offset{};
 };
 
 struct ArchiveVariant final {
@@ -323,6 +327,127 @@ struct ArchiveVariant final {
 };
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
+
+// Canonical boss-Lady (CEm034) equipment contract. This is intentionally
+// separate from CPlWpLadyGun / player weapon state tables: CEm034 owns five
+// persistent MOD managers and several dynamic CShell actors.
+enum class LadyPlacementPreset : std::uint8_t {
+    BodyStowed = 0,
+    ActiveDeployed = 1,
+};
+
+enum class LadyControlDomain : std::uint8_t {
+    BodyConstraint = 0,
+    IndependentMotionScript = 1,  // slot20 / em034_013 only
+};
+
+enum class LadyEffectiveParent : std::uint8_t {
+    BodyJoint = 0,
+    RuntimeBodyRootScaled = 1,  // CEm034+0x43C0, scale source +0x4400
+};
+
+struct LadyPlacementRecord final {
+    std::uint32_t serialized_node{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_xyz_radians{};
+    LadyEffectiveParent effective_parent{LadyEffectiveParent::BodyJoint};
+    std::uint32_t runtime_parent_offset{};
+    std::uint32_t runtime_scale_source_offset{};
+};
+
+struct LadyComponentContract final {
+    std::uint8_t component{};
+    std::uint32_t model_slot{};
+    std::array<LadyPlacementRecord, 2> presets{};
+};
+
+inline constexpr std::array<LadyComponentContract, 5> kCEm034LadyComponents{{
+    {0U, 20U, {{
+        {3U, {-2.0F, -20.0F, -17.0F},
+         {-1.570796251296997F, 0.0F, 1.0821040868759155F}},
+        {9U, {-8.399999618530273F, -1.0F, -1.2999999523162842F},
+         {0.0F, 0.0F, 3.141592502593994F}},
+    }}},
+    {1U, 21U, {{
+        {14U, {-1.0F, -4.0F, 13.0F},
+         {1.867502212524414F, 0.048869214951992035F, 2.4085543155670166F}},
+        {9U, {-7.5F, -0.6000000238418579F, -0.800000011920929F},
+         {0.0F, 0.0F, 0.0F}},
+    }}},
+    {2U, 22U, {{
+        {16U, {-9.199999809265137F, -13.0F, -9.100000381469727F},
+         {0.0F, 0.0F, 1.6580626964569092F}},
+        {13U, {7.699999809265137F, -0.800000011920929F, 0.5F},
+         {0.0F, 0.0F, 3.141592502593994F}},
+    }}},
+    {3U, 23U, {{
+        {19U, {10.0F, -15.0F, -2.5F},
+         {0.0F, 0.0F, -1.6580626964569092F}},
+        {13U, {7.199999809265137F, -1.2000000476837158F, 2.700000047683716F},
+         {0.0F, -0.1745329201221466F, 0.0F},
+         LadyEffectiveParent::RuntimeBodyRootScaled, 0x43C0U, 0x4400U},
+    }}},
+    {4U, 24U, {{
+        {14U, {17.0F, -5.0F, -16.0F},
+         {-1.2217304706573486F, -0.2356194406747818F, 0.6283184885978699F}},
+        {13U, {7.199999809265137F, -0.800000011920929F, -0.4000000059604645F},
+         {0.0F, 0.0F, 3.141592502593994F}},
+    }}},
+}};
+
+struct LadyComponentBinding final {
+    std::size_t host_part{};
+    std::size_t part{};
+    std::uint8_t component{};
+    std::uint32_t model_slot{};
+    LadyPlacementPreset preset{LadyPlacementPreset::BodyStowed};
+    LadyControlDomain control_domain{LadyControlDomain::BodyConstraint};
+};
+
+struct LadyDynamicActorContract final {
+    std::string_view class_name;
+    std::array<std::uint32_t, 2> model_slots{};
+    std::uint8_t model_slot_count{};
+};
+
+inline constexpr std::array<LadyDynamicActorContract, 6> kCEm034LadyDynamicActors{{
+    {"CEm034Shl00", {{0U, 0U}}, 0U},
+    {"CEm034Shl01", {{0U, 0U}}, 0U},
+    {"CEm034Shl02", {{25U, 0U}}, 1U},
+    {"CEm034Shl03", {{26U, 30U}}, 2U},
+    {"CEm034Shl04", {{0U, 0U}}, 0U},
+    {"CEm034Shl05", {{0U, 0U}}, 0U},
+}};
+
+[[nodiscard]] constexpr const LadyComponentContract* lady_component_contract(
+    std::uint8_t component) noexcept {
+    return component < kCEm034LadyComponents.size()
+        ? &kCEm034LadyComponents[component]
+        : nullptr;
+}
+
+[[nodiscard]] constexpr const LadyComponentContract* lady_component_contract_for_slot(
+    std::uint32_t model_slot) noexcept {
+    for (const auto& contract : kCEm034LadyComponents) {
+        if (contract.model_slot == model_slot) return &contract;
+    }
+    return nullptr;
+}
+
+// Apply an EXE-confirmed CEm034 placement preset to an assembled persistent
+// component. RuntimeBodyRootScaled is represented exactly in the contract and
+// is not approximated as serialized node 13; if the live body-root/scale bridge
+// is unavailable this function returns false instead of guessing.
+bool set_lady_component_preset(Session* session,
+                               LadyComponentBinding& binding,
+                               LadyPlacementPreset preset) noexcept;
+
+// Slot20 may switch between body CCnsMatrix control and the independent
+// em034_013 MotionScript domain. This records the canonical domain transition;
+// the independent MOT controller is a separate playback layer.
+bool set_lady_component_control_domain(Session* session,
+                                       LadyComponentBinding& binding,
+                                       LadyControlDomain domain) noexcept;
 
 // Translation plus Rz x Ry x Rx (0x1403304A0 order).
 [[nodiscard]] Matrix4 attach_local_matrix_zyx(const std::array<float, 3>& translation,
