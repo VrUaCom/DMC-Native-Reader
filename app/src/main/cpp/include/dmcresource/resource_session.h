@@ -93,6 +93,12 @@ struct Session {
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
     std::vector<motion::WeaponBinding> weapon_bindings;
 
+    // Boss-Lady CEm034 uses a different runtime: five persistent component
+    // managers with two placement presets, plus separate dynamic CShell actors.
+    // Keep this separate from player WeaponBinding so a single scalar weapon
+    // state cannot silently collapse the recovered multi-channel contract.
+    std::vector<motion::LadyComponentBinding> lady_component_bindings;
+
     // Attack collision handle (index + shapes) on the body bones; drawn with
     // RenderFlag::Collision (collision_debug.h).
     std::shared_ptr<collision::CollisionBinding> collision;
