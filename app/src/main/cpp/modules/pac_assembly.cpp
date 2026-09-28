@@ -15,8 +15,10 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/collision_debug.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/mod_bytes.h"
 #include "dmcresource/shadow_hull.h"
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
@@ -930,6 +932,28 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         }
 
         report.models = models.size();
+
+        // Materialize the generic FXBANK catalog from the actual top-level PAC
+        // child. Runtime provenance is physical: source slot + (kind,u16 id).
+        // No archive name or guessed extension is sufficient authority.
+        for (const auto& child : pac.children) {
+            if (child.source_bytes.empty()) continue;
+            const auto source_slot = slot_of(child);
+            if (!source_slot.has_value()) continue;
+            const auto bytes = std::span<const std::uint8_t>{
+                child.source_bytes.data(), child.source_bytes.size()};
+            if (!effect_bank::looks_like_bank(bytes)) continue;
+
+            auto runtime = std::make_shared<motion::EffectRuntime>();
+            if (!runtime->load_bank(bytes, *source_slot)) continue;
+            assembled->effect_runtime = std::move(runtime);
+            report.detail_attachments +=
+                " effectBank=slot" + std::to_string(*source_slot) +
+                "(" + std::to_string(
+                    assembled->effect_runtime->catalog().size()) +
+                " records)";
+            break;
+        }
 
         // CEm034 dynamic Shl visuals are retained as latent source resources,
         // never as persistent composite parts. They are materialized only by
