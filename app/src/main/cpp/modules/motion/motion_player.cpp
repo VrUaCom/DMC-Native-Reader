@@ -121,6 +121,7 @@ struct MotionState final {
     std::size_t script_bank{};
     std::size_t script_action{};
     std::optional<std::uint16_t> lady_state;
+    std::uint8_t lady_lane_mask{0x3U};
     std::vector<ScriptSignalKey> script_signals;
     float lady_runtime_frame{-1.0F};
     bool lady_entry_applied{};
@@ -345,6 +346,9 @@ void reset_lady_runtime(Session* session) noexcept {
         if (!replay && signal.after_frame < state.lady_runtime_frame) continue;
 
         for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+            if ((state.lady_lane_mask & static_cast<std::uint8_t>(1U << lane)) == 0U) {
+                continue;
+            }
             for (std::uint8_t channel = 0U; channel < signal.channels.size(); ++channel) {
                 const auto value = signal.channels[channel];
                 if (value == 0U &&
@@ -786,8 +790,15 @@ MotionLoadReport load_scripted_motion(Session* session,
             binding.script->signals(selection->bank, selection->action);
 
         if (binding.role == Session::MotionScriptRole::LadyBody) {
-            state.lady_state =
-                lady_state_for_script_action(selection->bank, selection->action);
+            if (const auto mapped = lady_state_for_body_script_action(
+                    selection->bank, selection->action);
+                mapped.has_value()) {
+                state.lady_state = mapped->state;
+                state.lady_lane_mask = mapped->lane_mask;
+            } else {
+                state.lady_state.reset();
+                state.lady_lane_mask = 0U;
+            }
             if (state.lady_state.has_value()) {
                 state.lady_entry_applied = false;
                 state.lady_runtime_frame = -1.0F;
@@ -805,6 +816,11 @@ MotionLoadReport load_scripted_motion(Session* session,
             "MotionScript slot" + std::to_string(binding.archive_slot) +
             " bank" + std::to_string(selection->bank) +
             "/action" + std::to_string(selection->action) +
+            (binding.role == Session::MotionScriptRole::LadyBody &&
+                     state.lady_state.has_value()
+                 ? " state" + std::to_string(*state.lady_state) +
+                       " lanes=" + std::to_string(state.lady_lane_mask)
+                 : std::string{}) +
             " -> " + report.detail;
         if (binding.role == Session::MotionScriptRole::LadyBody &&
             !state.lady_state.has_value()) {
