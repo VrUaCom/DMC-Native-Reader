@@ -113,9 +113,124 @@ struct MotionState final {
     float scroll_clock{};
     // Weapon attach states from the motion script (pl000.pac slot 5).
     std::vector<WeaponStateKey> weapon_keys;
+
+    // Script Play is distinct from raw MOT playback.
+    bool script_driven{};
+    Session::MotionScriptRole script_role{Session::MotionScriptRole::Primary};
+    std::uint32_t script_slot{};
+    std::size_t script_bank{};
+    std::size_t script_action{};
+    std::optional<std::uint16_t> lady_state;
+    std::vector<ScriptSignalKey> script_signals;
+    float lady_runtime_frame{-1.0F};
+    bool lady_entry_applied{};
+    std::int8_t last_dynamic_actor{-1};
 };
 
 namespace {
+
+struct ScriptMotionSelection final {
+    std::size_t bank{};
+    std::size_t action{};
+    std::uint16_t resource_id{};
+};
+
+[[nodiscard]] bool is_em034(const Session& session) noexcept {
+    return session.archive_name.find("em034") != std::string::npos;
+}
+
+[[nodiscard]] std::vector<MotionPack> session_motion_packs(const Session& session) {
+    std::vector<MotionPack> packs;
+    for (const auto& motion : session.motion_library) {
+        if (motion.pack_slot < 0 || motion.mot_slot < 0) continue;
+        const auto slot = static_cast<std::uint32_t>(motion.pack_slot);
+        auto it = std::find_if(
+            packs.begin(), packs.end(),
+            [slot](const MotionPack& p) { return p.archive_slot == slot; });
+        if (it == packs.end()) {
+            packs.push_back({slot, {}});
+            it = std::prev(packs.end());
+        }
+        it->slots.push_back(static_cast<std::uint32_t>(motion.mot_slot));
+    }
+    return packs;
+}
+
+[[nodiscard]] std::optional<std::uint16_t> lady_group_for_pack(
+    const Session& session,
+    const Session::MotionScriptBinding& binding,
+    const Session::MotionPayload& motion) noexcept {
+    if (!is_em034(session) || motion.pack_slot < 0) return std::nullopt;
+
+    if (binding.role == Session::MotionScriptRole::LadyComponent0) {
+        // EXE_AND_CORPUS_CONFIRMED:
+        // em034_013 bank4 -> top-level PAC slot11.
+        return motion.pack_slot == 11 ? std::optional<std::uint16_t>{4U}
+                                      : std::nullopt;
+    }
+
+    if (binding.role == Session::MotionScriptRole::LadyBody) {
+        // CEm034 body motion packs are laid out in PAC order for script groups
+        // 0..4: top-level slots2..6. The group6 resource remains external/
+        // unresolved and is intentionally not fabricated here.
+        if (motion.pack_slot >= 2 && motion.pack_slot <= 6) {
+            return static_cast<std::uint16_t>(motion.pack_slot - 2);
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ScriptMotionSelection> pick_script_motion(
+    const Session& session,
+    const Session::MotionScriptBinding& binding,
+    const Session::MotionPayload& motion) {
+    if (binding.script == nullptr || motion.mot_slot < 0) return std::nullopt;
+
+    std::vector<std::uint16_t> groups;
+    if (const auto lady = lady_group_for_pack(session, binding, motion)) {
+        groups.push_back(*lady);
+    } else if (motion.pack_slot >= 0) {
+        const auto packs = session_motion_packs(session);
+        for (const auto& g : bind_motion_groups(
+                 *binding.script, packs, session.archive_name)) {
+            if (g.archive_slot &&
+                static_cast<int>(*g.archive_slot) == motion.pack_slot) {
+                groups.push_back(g.group);
+            }
+        }
+    }
+
+    for (const auto group : groups) {
+        const auto slot = static_cast<std::uint16_t>(motion.mot_slot);
+        if (group > 655U || slot >= 100U) continue;
+        const auto id = static_cast<std::uint16_t>(group * 100U + slot);
+        const auto actions = binding.script->actions_for(id);
+        if (actions.empty()) continue;
+
+        const ScriptAction* pick = &actions.front();
+        for (const auto& action : actions) {
+            if (action.bank == group && action.action == slot) {
+                pick = &action;
+                break;
+            }
+            if (action.bank == group && pick->bank != group) {
+                pick = &action;
+            } else if (action.action == slot && pick->action != slot) {
+                pick = &action;
+            }
+        }
+        return ScriptMotionSelection{pick->bank, pick->action, id};
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] LadyComponentBinding* component0_binding(Session* session) noexcept {
+    if (session == nullptr) return nullptr;
+    for (auto& binding : session->lady_component_bindings) {
+        if (binding.component == 0U) return &binding;
+    }
+    return nullptr;
+}
 
 [[nodiscard]] std::optional<PartMotion> bind_part(const RenderScene& scene,
                                                   std::size_t vertex_begin,
