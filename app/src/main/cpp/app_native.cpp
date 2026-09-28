@@ -644,6 +644,61 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryPackSlot(
         session->motion_library[static_cast<std::size_t>(index)].pack_slot);
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionScriptCount(
+        JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto count = dmcresource::motion::motion_script_count(from_handle(handle));
+    return count > static_cast<std::size_t>(std::numeric_limits<jint>::max())
+        ? std::numeric_limits<jint>::max()
+        : static_cast<jint>(count);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionScriptSlot(
+        JNIEnv*, jclass, jlong handle, jint script_index) {
+    const SessionLock jni_lock{session_mutex()};
+    if (script_index < 0) return -1;
+    const auto slot = dmcresource::motion::motion_script_slot(
+        from_handle(handle), static_cast<std::size_t>(script_index));
+    return slot == std::numeric_limits<std::uint32_t>::max() ||
+                   slot > static_cast<std::uint32_t>(
+                              std::numeric_limits<jint>::max())
+        ? -1
+        : static_cast<jint>(slot);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionScriptCanPlayMotion(
+        JNIEnv*, jclass, jlong handle, jint script_index, jint motion_index) {
+    const SessionLock jni_lock{session_mutex()};
+    if (script_index < 0 || motion_index < 0) return JNI_FALSE;
+    return dmcresource::motion::motion_script_can_play_motion(
+               from_handle(handle),
+               static_cast<std::size_t>(script_index),
+               static_cast<std::size_t>(motion_index))
+        ? JNI_TRUE
+        : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotionScript(
+        JNIEnv* env, jclass, jlong handle, jint script_index, jint motion_index) {
+    const SessionLock jni_lock{session_mutex()};
+    if (script_index < 0 || motion_index < 0) {
+        return env->NewStringUTF("MotionScript: invalid index");
+    }
+    try {
+        auto report = dmcresource::motion::load_scripted_motion(
+            from_handle(handle),
+            static_cast<std::size_t>(script_index),
+            static_cast<std::size_t>(motion_index));
+        return env->NewStringUTF(report.detail.c_str());
+    } catch (...) {
+        return env->NewStringUTF("MotionScript: load failed");
+    }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotion(
         JNIEnv* env, jclass, jlong handle, jint index) {
