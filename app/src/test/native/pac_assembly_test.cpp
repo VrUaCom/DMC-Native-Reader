@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
@@ -235,6 +236,37 @@ std::vector<std::uint8_t> make_pac(const std::vector<std::vector<std::uint8_t>>&
     return bytes;
 }
 
+
+std::vector<std::uint8_t> make_pnst(
+    const std::vector<std::vector<std::uint8_t>>& payloads) {
+    std::vector<std::uint8_t> out(8U + payloads.size() * 4U, 0U);
+    out[0] = 'P'; out[1] = 'N'; out[2] = 'S'; out[3] = 'T';
+    put_u32(out, 4U, static_cast<std::uint32_t>(payloads.size()));
+    for (std::size_t index = 0U; index < payloads.size(); ++index) {
+        if (payloads[index].empty()) continue;
+        put_u32(out, 8U + index * 4U, static_cast<std::uint32_t>(out.size()));
+        out.insert(out.end(), payloads[index].begin(), payloads[index].end());
+    }
+    return out;
+}
+
+std::vector<std::uint8_t> make_lady_fxbank() {
+    const std::string manifest_text = "V 463\r\nE 741\r\n# End\r\n";
+    std::vector<std::uint8_t> manifest(
+        manifest_text.begin(), manifest_text.end());
+
+    std::vector<std::uint8_t> v463(368U, 0U);
+    put_u16(v463, 0U, 1U);
+    v463[0x04U] = 1U;  // V child dispatch 1 -> E
+    put_u16(v463, 0x06U, 741U);
+    put_f32(v463, 0x24U, 1.0F);
+    put_f32(v463, 0x28U, 1.0F);
+    put_f32(v463, 0x2CU, 1.0F);
+
+    std::vector<std::uint8_t> e741(544U, 1U);
+    return make_pnst({manifest, make_pnst({v463, e741})});
+}
+
 }  // namespace
 
 int main() {
@@ -309,6 +341,8 @@ int main() {
         // visual sources while keeping them out of the persistent composite.
         lady_payloads[slot] = mod;
     }
+    // Synthetic provenance regression: PAC physical slot28 -> FXBANK catalog.
+    lady_payloads[28] = make_lady_fxbank();
     lady_payloads[32] = lady_body;
     lady_payloads[34] = mod;
     const auto lady_pac = make_pac(lady_payloads);
@@ -352,6 +386,10 @@ int main() {
     assert(lady_first->composite_parts.size() == 7U);
     assert(lady_first->lady_component_bindings.size() == 5U);
     assert(lady_first->lady_dynamic_visuals.size() == 3U);
+    assert(lady_first->effect_runtime != nullptr);
+    assert(lady_first->effect_runtime->loaded());
+    assert(lady_first->effect_runtime->source_slot() == 28U);
+    assert(lady_first->effect_runtime->dependencies_ready('V', 463U));
     assert(lady_first->lady_dynamic_visuals[0].actor == 2U);
     assert(lady_first->lady_dynamic_visuals[0].model_slot == 25U);
     assert(lady_first->lady_dynamic_visuals[1].actor == 3U);
