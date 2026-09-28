@@ -676,10 +676,175 @@ struct PreparedView final {
     const HierarchyOverlay* hierarchy{};
     const std::vector<std::uint32_t>* texture_slots{};
     const std::vector<ImagePreview>* textures{};
+    // Presentation-only mesh/banks used for dynamic CShell visuals. The
+    // canonical Session render_mesh/composite_parts are never mutated by
+    // Shl spawn/despawn.
+    Mesh presentation_mesh;
+    std::vector<std::uint32_t> presentation_texture_slots;
+    std::vector<ImagePreview> presentation_textures;
+    bool dynamic_presentation{};
     std::vector<Vec3> floor_shadow;
     std::vector<Vec3> collision_lines;
     std::shared_ptr<const stage_room::Room> room;
 };
+
+[[nodiscard]] Vec3 transform_dynamic_vertex(
+    const Vec3& p, const Matrix4& m) noexcept {
+    return {
+        p.x * m.values[0] + p.y * m.values[4] + p.z * m.values[8] + m.values[12],
+        p.x * m.values[1] + p.y * m.values[5] + p.z * m.values[9] + m.values[13],
+        p.x * m.values[2] + p.y * m.values[6] + p.z * m.values[10] + m.values[14],
+    };
+}
+
+[[nodiscard]] Vec3 transform_dynamic_normal(
+    const Vec3& n, const Matrix4& m) noexcept {
+    return {
+        n.x * m.values[0] + n.y * m.values[4] + n.z * m.values[8],
+        n.x * m.values[1] + n.y * m.values[5] + n.z * m.values[9],
+        n.x * m.values[2] + n.y * m.values[6] + n.z * m.values[10],
+    };
+}
+
+[[nodiscard]] bool build_lady_dynamic_presentation(
+    const Session& session, PreparedView* out) {
+    if (out == nullptr) return false;
+    const bool any = std::any_of(
+        session.lady_dynamic_visuals.begin(),
+        session.lady_dynamic_visuals.end(),
+        [](const Session::LadyDynamicVisual& v) { return v.active; });
+    if (!any) return false;
+
+    auto& mesh = out->presentation_mesh;
+    mesh = session.render_mesh;
+    out->presentation_textures = session.attached_textures;
+
+    const std::size_t base_triangles = mesh.indices.size() / 3U;
+    if (session.render_triangle_texture_slots.size() == base_triangles) {
+        out->presentation_texture_slots =
+            session.render_triangle_texture_slots;
+    } else {
+        out->presentation_texture_slots.assign(
+            base_triangles, kNoTextureSlot);
+    }
+
+    const auto ensure_uv = [&mesh]() {
+        if (mesh.uv0.empty()) mesh.uv0.assign(mesh.vertices.size(), {});
+    };
+    const auto ensure_color = [&mesh]() {
+        if (mesh.color0.empty()) {
+            mesh.color0.assign(mesh.vertices.size(), {128U, 128U, 128U, 128U});
+        }
+    };
+    const auto ensure_blend = [&mesh]() {
+        if (mesh.blend0.empty()) mesh.blend0.assign(mesh.vertices.size(), 0U);
+    };
+    const auto ensure_normal = [&mesh]() {
+        if (mesh.normal0.empty()) mesh.normal0.assign(mesh.vertices.size(), {});
+    };
+
+    for (const auto& visual : session.lady_dynamic_visuals) {
+        if (!visual.active || visual.source_mesh.vertices.empty() ||
+            visual.source_mesh.indices.size() < 3U) {
+            continue;
+        }
+
+        const std::size_t vertex_base = mesh.vertices.size();
+        const std::size_t before = mesh.vertices.size();
+
+        if (!mesh.uv0.empty() || visual.source_mesh.has_uv0()) ensure_uv();
+        if (!mesh.color0.empty() || visual.source_mesh.has_color0()) ensure_color();
+        if (!mesh.blend0.empty() || visual.source_mesh.has_blend0()) ensure_blend();
+        if (!mesh.normal0.empty() || visual.source_mesh.has_normal0()) ensure_normal();
+
+        mesh.vertices.reserve(mesh.vertices.size() + visual.source_mesh.vertices.size());
+        for (const auto& v : visual.source_mesh.vertices) {
+            mesh.vertices.push_back(transform_dynamic_vertex(v, visual.world));
+        }
+
+        if (!mesh.uv0.empty()) {
+            if (visual.source_mesh.has_uv0()) {
+                mesh.uv0.insert(mesh.uv0.end(),
+                                visual.source_mesh.uv0.begin(),
+                                visual.source_mesh.uv0.end());
+            } else {
+                mesh.uv0.resize(mesh.vertices.size());
+            }
+        }
+        if (!mesh.color0.empty()) {
+            if (visual.source_mesh.has_color0()) {
+                mesh.color0.insert(mesh.color0.end(),
+                                   visual.source_mesh.color0.begin(),
+                                   visual.source_mesh.color0.end());
+            } else {
+                mesh.color0.resize(
+                    mesh.vertices.size(), {128U, 128U, 128U, 128U});
+            }
+        }
+        if (!mesh.blend0.empty()) {
+            if (visual.source_mesh.has_blend0()) {
+                mesh.blend0.insert(mesh.blend0.end(),
+                                   visual.source_mesh.blend0.begin(),
+                                   visual.source_mesh.blend0.end());
+            } else {
+                mesh.blend0.resize(mesh.vertices.size(), 0U);
+            }
+        }
+        if (!mesh.normal0.empty()) {
+            if (visual.source_mesh.has_normal0()) {
+                for (const auto& n : visual.source_mesh.normal0) {
+                    mesh.normal0.push_back(
+                        transform_dynamic_normal(n, visual.world));
+                }
+            } else {
+                mesh.normal0.resize(mesh.vertices.size());
+            }
+        }
+
+        mesh.indices.reserve(mesh.indices.size() + visual.source_mesh.indices.size());
+        for (const auto index : visual.source_mesh.indices) {
+            if (index >= visual.source_mesh.vertices.size() ||
+                vertex_base > std::numeric_limits<std::uint32_t>::max() - index) {
+                return false;
+            }
+            mesh.indices.push_back(
+                static_cast<std::uint32_t>(vertex_base + index));
+        }
+
+        const std::uint32_t texture_base =
+            static_cast<std::uint32_t>(out->presentation_textures.size());
+        out->presentation_textures.insert(
+            out->presentation_textures.end(),
+            visual.textures.begin(), visual.textures.end());
+
+        const std::size_t dynamic_triangles =
+            visual.source_mesh.indices.size() / 3U;
+        if (visual.texture_slots.size() == dynamic_triangles) {
+            for (const auto slot : visual.texture_slots) {
+                if (slot == kNoTextureSlot) {
+                    out->presentation_texture_slots.push_back(kNoTextureSlot);
+                } else if (slot < visual.textures.size() &&
+                           texture_base <=
+                               std::numeric_limits<std::uint32_t>::max() - slot) {
+                    out->presentation_texture_slots.push_back(
+                        texture_base + slot);
+                } else {
+                    out->presentation_texture_slots.push_back(kNoTextureSlot);
+                }
+            }
+        } else {
+            out->presentation_texture_slots.insert(
+                out->presentation_texture_slots.end(),
+                dynamic_triangles, kNoTextureSlot);
+        }
+
+        if (mesh.vertices.size() <= before) return false;
+    }
+
+    out->dynamic_presentation =
+        mesh.vertices.size() > session.render_mesh.vertices.size();
+    return out->dynamic_presentation;
+}
 
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
@@ -708,6 +873,12 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         : nullptr;
     out->texture_slots = session.render_triangle_texture_slots.empty() ? nullptr : &session.render_triangle_texture_slots;
     out->textures = session.attached_textures.empty() ? nullptr : &session.attached_textures;
+    if (build_lady_dynamic_presentation(session, out)) {
+        out->texture_slots = out->presentation_texture_slots.empty()
+            ? nullptr : &out->presentation_texture_slots;
+        out->textures = out->presentation_textures.empty()
+            ? nullptr : &out->presentation_textures;
+    }
 
     const auto& rest = view.framing_vertices.empty() ? std::span<const Vec3>{session.render_mesh.vertices}
                                                      : view.framing_vertices;
@@ -795,7 +966,11 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
     if (!session->renderable) return {};
     PreparedView prepared;
     prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
-    return render_view(session->render_mesh, prepared.width, prepared.height, prepared.view,
+    const Mesh& presented =
+        prepared.dynamic_presentation
+            ? prepared.presentation_mesh
+            : session->render_mesh;
+    return render_view(presented, prepared.width, prepared.height, prepared.view,
                        prepared.hierarchy, prepared.texture_slots, prepared.textures);
 }
 
