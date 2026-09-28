@@ -129,6 +129,23 @@ struct Session {
     // state cannot silently collapse the recovered multi-channel contract.
     std::vector<motion::LadyComponentBinding> lady_component_bindings;
 
+    // Dynamic CEm034 CShell visuals stay outside the persistent composite.
+    // Source geometry/textures are retained once; active/world are presentation
+    // state driven only by the recovered Shl actor lifecycle.
+    struct LadyDynamicVisual final {
+        std::uint8_t actor{};   // CEm034Shl00..05 index
+        std::uint32_t model_slot{};
+        Mesh source_mesh;
+        std::vector<std::uint32_t> texture_slots;
+        std::vector<ImagePreview> textures;
+        Matrix4 world{};
+        bool active{};
+        // slot30 shares Shl03 actor transform but has an additional internal
+        // tether deformation domain that is not yet claimed pixel-exact.
+        bool exact_deformation{true};
+    };
+    std::vector<LadyDynamicVisual> lady_dynamic_visuals;
+
     // Attack collision handle (index + shapes) on the body bones; drawn with
     // RenderFlag::Collision (collision_debug.h).
     std::shared_ptr<collision::CollisionBinding> collision;
