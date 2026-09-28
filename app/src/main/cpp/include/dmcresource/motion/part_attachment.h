@@ -449,6 +449,27 @@ bool set_lady_component_control_domain(Session* session,
                                        LadyComponentBinding& binding,
                                        LadyControlDomain domain) noexcept;
 
+struct LadyRuntimeApplyResult final {
+    bool recognized{};
+    bool fully_materialized{true};
+    bool runtime_side_effect{};
+    std::uint32_t changed_components{};
+    // -1 = no dynamic actor event; otherwise CEm034Shl00..05 index.
+    std::int8_t dynamic_actor{-1};
+};
+
+// Apply the recovered CEm034 state-entry baseline/overrides. The binding state
+// is updated even if an exact preview cannot be materialized (currently only
+// component3 ActiveDeployed's RuntimeBodyRootScaled parent).
+[[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
+    Session* session, std::uint16_t state) noexcept;
+
+// Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.
+// lane is 0/1 for the two em034_012 controllers; channel is 0..4.
+[[nodiscard]] LadyRuntimeApplyResult apply_lady_signal(
+    Session* session, std::uint16_t state,
+    std::uint8_t lane, std::uint8_t channel, std::uint8_t value) noexcept;
+
 // Canonical MOD/CEm034 local matrix: translation + XYZ Euler using the
 // recovered DMC3 transform-domain composition.
 [[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
