@@ -304,7 +304,9 @@ int main() {
         lady_payloads[slot] = mod;
     }
     for (const std::size_t slot : {25U, 26U, 30U}) {
-        lady_payloads[slot] = opaque;
+        // Valid MOD payloads so the assembly can retain them as latent Shl
+        // visual sources while keeping them out of the persistent composite.
+        lady_payloads[slot] = mod;
     }
     lady_payloads[32] = lady_body;
     lady_payloads[34] = mod;
@@ -348,6 +350,16 @@ int main() {
     assert(report.models == 7U);
     assert(lady_first->composite_parts.size() == 7U);
     assert(lady_first->lady_component_bindings.size() == 5U);
+    assert(lady_first->lady_dynamic_visuals.size() == 3U);
+    assert(lady_first->lady_dynamic_visuals[0].actor == 2U);
+    assert(lady_first->lady_dynamic_visuals[0].model_slot == 25U);
+    assert(lady_first->lady_dynamic_visuals[1].actor == 3U);
+    assert(lady_first->lady_dynamic_visuals[1].model_slot == 26U);
+    assert(lady_first->lady_dynamic_visuals[2].actor == 3U);
+    assert(lady_first->lady_dynamic_visuals[2].model_slot == 30U);
+    assert(!lady_first->lady_dynamic_visuals[0].active);
+    assert(!lady_first->lady_dynamic_visuals[1].active);
+    assert(!lady_first->lady_dynamic_visuals[2].active);
     assert(lady_first->composite_parts[0].name.find("slot_0001.mod") != std::string::npos);
     assert(lady_first->composite_parts[1].name.find("slot_0017.mod") != std::string::npos);
     for (std::size_t i = 0U; i < 5U; ++i) {
@@ -502,6 +514,10 @@ int main() {
     assert(report.models == 7U);
     assert(lady_second->composite_parts.size() == 7U);
     assert(lady_second->lady_component_bindings.size() == 5U);
+    assert(lady_second->lady_dynamic_visuals.size() == 3U);
+    assert(!lady_second->lady_dynamic_visuals[0].active);
+    assert(!lady_second->lady_dynamic_visuals[1].active);
+    assert(!lady_second->lady_dynamic_visuals[2].active);
     assert(lady_second->composite_parts[0].name.find("slot_0032.mod") != std::string::npos);
     assert(lady_second->composite_parts[1].name.find("slot_0034.mod") != std::string::npos);
 
