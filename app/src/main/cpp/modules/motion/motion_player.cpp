@@ -123,6 +123,7 @@ struct MotionState final {
     std::optional<std::uint16_t> lady_state;
     std::uint8_t lady_lane_mask{0x3U};
     std::vector<ScriptSignalKey> script_signals;
+    std::array<std::vector<ScriptSignalKey>, 2> lady_lane_signals;
     float lady_runtime_frame{-1.0F};
     bool lady_entry_applied{};
     std::int8_t last_dynamic_actor{-1};
@@ -321,8 +322,11 @@ void reset_lady_runtime(Session* session) noexcept {
     const bool replay = !state.lady_entry_applied ||
                         frame < state.lady_runtime_frame;
     if (replay) {
+        // The 144-state entry dispatcher is authoritative for the actor state.
+        // apply_lady_state_entry only models states with recovered equipment
+        // side effects, so an unrecognized result means "no equipment change",
+        // not "invalid Lady state".
         const auto entry = apply_lady_state_entry(session, *state.lady_state);
-        if (!entry.recognized) return false;
         state.lady_entry_applied = true;
         state.lady_runtime_frame = -1.0F;
         if (entry.dynamic_actor >= 0) state.last_dynamic_actor = entry.dynamic_actor;
@@ -341,18 +345,18 @@ void reset_lady_runtime(Session* session) noexcept {
     }
 
     float latest_scale_pulse = -std::numeric_limits<float>::infinity();
-    for (const auto& signal : state.script_signals) {
-        if (!(frame > signal.after_frame)) continue;
-        if (!replay && signal.after_frame < state.lady_runtime_frame) continue;
+    for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+        for (const auto& signal : state.lady_lane_signals[lane]) {
+            if (!(frame > signal.after_frame)) continue;
+            if (!replay && signal.after_frame < state.lady_runtime_frame) continue;
 
-        for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
-            if ((state.lady_lane_mask & static_cast<std::uint8_t>(1U << lane)) == 0U) {
-                continue;
-            }
-            for (std::uint8_t channel = 0U; channel < signal.channels.size(); ++channel) {
+            for (std::uint8_t channel = 0U;
+                 channel < signal.channels.size();
+                 ++channel) {
                 const auto value = signal.channels[channel];
                 if (value == 0U &&
-                    !(*state.lady_state == 0x81U && channel == 1U)) {
+                    !(*state.lady_state == 0x81U && lane == 1U &&
+                      channel == 1U)) {
                     continue;
                 }
                 const auto applied = apply_lady_signal(
@@ -795,6 +799,19 @@ MotionLoadReport load_scripted_motion(Session* session,
                 mapped.has_value()) {
                 state.lady_state = mapped->state;
                 state.lady_lane_mask = mapped->lane_mask;
+
+                // Reconstruct both CEm034+0x5070/+0x5190 controller starts,
+                // including the asymmetric state55..82 cases.
+                const auto starts = lady_body_state_scripts(mapped->state);
+                state.lady_lane_mask = 0U;
+                for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+                    const auto& start = starts.lanes[lane];
+                    if (!start.valid) continue;
+                    state.lady_lane_mask |=
+                        static_cast<std::uint8_t>(1U << lane);
+                    state.lady_lane_signals[lane] =
+                        binding.script->signals(start.bank, start.action);
+                }
             } else {
                 state.lady_state.reset();
                 state.lady_lane_mask = 0U;
