@@ -440,20 +440,12 @@ void spawn_lady_dynamic_visual(
         for (auto& visual : session->lady_dynamic_visuals) {
             if (visual.actor != 2U) continue;
             visual.world = world_matrix;
-            // Shl02 state1 uses CShell flags=3 with scalar +0x160 = 30.0:
-            // normalize(+0x140), scale by 30, then position += delta*velocity.
-            // Under the Reader's default actor delta (1.0), +0x17C starts at
-            // 1.0 so state1 contributes exactly one movement tick.
-            const Vec3 forward{
-                world_matrix.values[8],
-                world_matrix.values[9],
-                world_matrix.values[10],
-            };
-            visual.velocity = {
-                forward.x * 30.0F,
-                forward.y * 30.0F,
-                forward.z * 30.0F,
-            };
+            // Exact post-spawn steering is world-context dependent:
+            // Shl02 state1 calls 0x140244870 with a live gameplay target
+            // selected through the global runtime manager. The standalone
+            // Reader has no authoritative target, so preserve the exact spawn
+            // pose instead of inventing a straight-line projectile path.
+            visual.velocity = {};
             visual.spawn_frame = event_frame;
             visual.last_update_frame = event_frame;
             // Then state2 starts +0xD68=3.0 and only promotes to state3 after
@@ -490,18 +482,10 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
                 ? visual.last_update_frame
                 : visual.spawn_frame;
         if (visual.actor == 2U) {
-            // Only Shl02 state1 moves the projectile through the shared shell
-            // helper. Clamp the integrated interval to the first actor tick;
-            // state2 retains the resulting actor matrix while its 3.0
-            // countdown/effect phase runs.
-            const float before =
-                std::clamp(previous - visual.spawn_frame, 0.0F, 1.0F);
-            const float after =
-                std::clamp(frame - visual.spawn_frame, 0.0F, 1.0F);
-            const float dt = std::max(after - before, 0.0F);
-            visual.world.values[12] += visual.velocity.x * dt;
-            visual.world.values[13] += visual.velocity.y * dt;
-            visual.world.values[14] += visual.velocity.z * dt;
+            // No standalone translation is applied. The EXE refreshes the
+            // direction from a live gameplay target before integrating state1;
+            // freezing at the exact spawn pose is evidence-safe, while a
+            // fabricated straight trajectory is not.
         } else if (visual.actor == 3U) {
             const float dt = std::max(frame - previous, 0.0F);
             // Shl03 state1, 0x140174D39:
