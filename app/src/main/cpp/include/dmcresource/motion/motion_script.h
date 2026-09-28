@@ -34,6 +34,14 @@ struct WeaponStateKey final {
     std::uint8_t state{};
 };
 
+// Raw opcode-3 five-channel payload at one script time. This is the generic
+// MotionScript contract used by CEm034; player weapon state remains a
+// projection of channel byte 1 (b2 low 6 bits).
+struct ScriptSignalKey final {
+    float after_frame{-1.0F};
+    std::array<std::uint8_t, 5> channels{};
+};
+
 // What one script does, walked like the interpreter (first block chain up to
 // the motion end, a loop jump or a hand-over to another MOT).
 struct ScriptSummary final {
@@ -45,6 +53,7 @@ struct ScriptSummary final {
     bool loops{};                // opcode 2 (backward jump)
     bool hands_over{};           // a second opcode 1
     std::vector<WeaponStateKey> states;
+    std::vector<ScriptSignalKey> signals;
     std::array<std::uint16_t, 64> opcodes{};  // count per opcode (0..63)
 };
 
@@ -88,6 +97,10 @@ public:
     // Weapon attach states of action `action` of bank `bank`.
     [[nodiscard]] std::vector<WeaponStateKey> weapon_states(std::size_t bank,
                                                             std::size_t action) const;
+
+    // Full opcode-3 five-channel timeline for enemy/boss consumers.
+    [[nodiscard]] std::vector<ScriptSignalKey> signals(std::size_t bank,
+                                                       std::size_t action) const;
 
     // Motion resources an action plays (empty without table B).
     [[nodiscard]] std::vector<MotionResource> resources(std::size_t bank,
