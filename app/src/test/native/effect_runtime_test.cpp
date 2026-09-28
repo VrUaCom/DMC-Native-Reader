@@ -140,22 +140,22 @@ int main() {
     const auto* v276 = runtime.find('V', 276U);
     assert(v276 != nullptr && v276->source_slot == 0U);
     assert(v276->children.size() == 2U);
-    assert(v276->children[0].key == EffectResourceKey{'E', 571U});
-    assert(v276->children[1].key == EffectResourceKey{'E', 571U});
+    assert((v276->children[0].key == EffectResourceKey{'E', 571U}));
+    assert((v276->children[1].key == EffectResourceKey{'E', 571U}));
 
     const auto* v423 = runtime.find('V', 423U);
     assert(v423 != nullptr && v423->children.size() == 3U);
-    assert(v423->children[0].key == EffectResourceKey{'E', 752U});
-    assert(v423->children[1].key == EffectResourceKey{'E', 887U});
-    assert(v423->children[2].key == EffectResourceKey{'P', 337U});
+    assert((v423->children[0].key == EffectResourceKey{'E', 752U}));
+    assert((v423->children[1].key == EffectResourceKey{'E', 887U}));
+    assert((v423->children[2].key == EffectResourceKey{'P', 337U}));
     assert(v423->children[0].translation[0] == 60.0F);
     assert(v423->children[2].rotation_degrees[1] == 90.0F);
 
     const auto* v488 = runtime.find('V', 488U);
     assert(v488 != nullptr && v488->children.size() == 6U);
-    assert(v488->children[0].key == EffectResourceKey{'P', 18U});
-    assert(v488->children[4].key == EffectResourceKey{'E', 1U});
-    assert(v488->children[5].key == EffectResourceKey{'V', 8U});
+    assert((v488->children[0].key == EffectResourceKey{'P', 18U}));
+    assert((v488->children[4].key == EffectResourceKey{'E', 1U}));
+    assert((v488->children[5].key == EffectResourceKey{'V', 8U}));
     assert(v488->children[4].translation[1] == 15.0F);
 
     for (const auto id : {276U, 423U, 463U, 475U, 488U}) {
