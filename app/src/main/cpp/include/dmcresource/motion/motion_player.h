@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "dmcresource/motion/effect_runtime.h"
+
 namespace dmcresource {
 struct Session;
 struct Vec3;
@@ -67,5 +69,15 @@ void clear_motion(Session* session) noexcept;
 [[nodiscard]] MotionLoadReport load_scripted_motion(Session* session,
                                                     std::size_t script_index,
                                                     std::size_t motion_index) noexcept;
+
+// Generic action boundary used by Script Play. It resolves the MOT through the
+// selected MotionScript bank/action, runs the same runtime bridge as sequential
+// playback, and returns actor/effect events produced by this step.
+[[nodiscard]] RuntimeStepResult run_script_frame(
+    Session* session,
+    std::size_t script_index,
+    std::size_t bank,
+    std::size_t action,
+    float frame) noexcept;
 
 }  // namespace dmcresource::motion
