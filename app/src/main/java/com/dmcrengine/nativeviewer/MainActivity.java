@@ -108,6 +108,10 @@ public final class MainActivity extends Activity {
     // Position in the collision cycle: -1 all attacks, then each used id.
     private int collisionCursor = -2;
     private Button infoButton;
+    private HorizontalScrollView effectModeScroll;
+    private LinearLayout effectModeBar;
+    private Button effectVisualButton;
+    private Button effectInfoButton;
     private HorizontalScrollView motionScroll;
     private HorizontalScrollView toolScroll;
     // In-viewport notice (replaces Toasts so messages never cover the motion
@@ -132,7 +136,7 @@ public final class MainActivity extends Activity {
     private LinearLayout headerBar;
     // Hidden by the top-edge swipe: bars and the visibility each had.
     private boolean uiHidden;
-    private final int[] barVisibility = new int[4];
+    private final int[] barVisibility = new int[5];
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
@@ -306,6 +310,33 @@ public final class MainActivity extends Activity {
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
         refreshMotionStrip();
         refreshVariantBar();
+        refreshEffectModeBar();
+    }
+
+    private void refreshEffectModeBar() {
+        if (effectModeScroll == null || effectVisualButton == null || effectInfoButton == null) {
+            return;
+        }
+        final boolean available = session != 0 && NativeBridge.hasDualPreview(session);
+        if (!available) {
+            effectModeScroll.setVisibility(View.GONE);
+            return;
+        }
+
+        final boolean info = NativeBridge.infoPreviewActive(session);
+        effectVisualButton.setActivated(!info);
+        effectVisualButton.setAlpha(info ? 0.68f : 1.0f);
+        effectInfoButton.setActivated(info);
+        effectInfoButton.setAlpha(info ? 1.0f : 0.68f);
+        effectModeScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
+    }
+
+    private void selectEffectPreviewMode(boolean info) {
+        if (session == 0 || !NativeBridge.hasDualPreview(session)) return;
+        if (!NativeBridge.setInfoPreviewActive(session, info)) return;
+        renderView.refreshStaticImagePreview();
+        refreshEffectModeBar();
+        notice(info ? "Info view" : "Visual view", Toast.LENGTH_SHORT);
     }
 
     private void applySystemBarInsets(LinearLayout root) {
@@ -386,6 +417,40 @@ public final class MainActivity extends Activity {
                 HorizontalScrollView.LayoutParams.WRAP_CONTENT,
                 HorizontalScrollView.LayoutParams.WRAP_CONTENT));
         root.addView(variantScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        effectModeScroll = new HorizontalScrollView(this);
+        effectModeScroll.setHorizontalScrollBarEnabled(false);
+        effectModeScroll.setFillViewport(true);
+        effectModeScroll.setVisibility(View.GONE);
+        effectModeBar = new LinearLayout(this);
+        effectModeBar.setOrientation(LinearLayout.HORIZONTAL);
+        effectModeBar.setGravity(Gravity.CENTER);
+        effectModeBar.setPadding(dp(8), dp(2), dp(8), dp(2));
+
+        effectVisualButton = makeSquareButton("Visual", "Show reconstructed effect view", 13f);
+        effectVisualButton.setPadding(dp(18), 0, dp(18), 0);
+        effectVisualButton.setOnClickListener(v -> selectEffectPreviewMode(false));
+        LinearLayout.LayoutParams visualParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+        visualParams.setMarginStart(dp(TOOL_GAP_DP));
+        visualParams.setMarginEnd(dp(TOOL_GAP_DP));
+        effectModeBar.addView(effectVisualButton, visualParams);
+
+        effectInfoButton = makeSquareButton("Info", "Show EXE-backed effect information", 13f);
+        effectInfoButton.setPadding(dp(18), 0, dp(18), 0);
+        effectInfoButton.setOnClickListener(v -> selectEffectPreviewMode(true));
+        LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+        infoParams.setMarginStart(dp(TOOL_GAP_DP));
+        infoParams.setMarginEnd(dp(TOOL_GAP_DP));
+        effectModeBar.addView(effectInfoButton, infoParams);
+
+        effectModeScroll.addView(effectModeBar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        root.addView(effectModeScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -820,7 +885,7 @@ public final class MainActivity extends Activity {
         }
 
         @Override public void onToggleUi() {
-            final View[] bars = {headerBar, variantScroll, motionScroll, toolScroll};
+            final View[] bars = {headerBar, variantScroll, effectModeScroll, motionScroll, toolScroll};
             uiHidden = !uiHidden;
             for (int i = 0; i < bars.length; ++i) {
                 if (bars[i] == null) continue;
@@ -834,6 +899,7 @@ public final class MainActivity extends Activity {
             if (!uiHidden) {
                 refreshMotionStrip();
                 refreshVariantBar();
+                refreshEffectModeBar();
             }
             notice(uiHidden ? "Full view — swipe down from the top to bring the bars back" : "Bars shown",
                     Toast.LENGTH_SHORT);
