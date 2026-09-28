@@ -927,28 +927,11 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         }
 
         report.models = models.size();
-        report.motions = motions.size();
-        // Only motions that can drive this scene are offered (e.g. em000's
-        // body motions are hidden on the CEm005Shl01 shell).
-        {
-            std::vector<Session::MotionPayload> drivable;
-            drivable.reserve(motions.size());
-            for (auto& m : motions) {
-                if (motion::motion_can_drive(*assembled, m.bytes)) drivable.push_back(std::move(m));
-            }
-            if (drivable.size() != motions.size()) {
-                report.detail_attachments += " motionsHidden=" + std::to_string(motions.size() - drivable.size());
-            }
-            motions = std::move(drivable);
-            report.motions = motions.size();
-        }
-        assembled->motion_library = std::move(motions);
-        // Motion scripts. Players normally have one primary script. CEm034
-        // canonically owns two independent controllers:
-        //   slot12 -> body script / two object lanes;
-        //   slot13 -> component0 (slot20) independent script.
-        // Retain every top-level MotionScript instead of discarding all but the
-        // first; keep motion_script as the backward-compatible primary view.
+
+        // Parse every top-level MotionScript before filtering the MOT library.
+        // A script may target a component that is host-constrained in the rest
+        // pose (CEm034 slot20); those MOTs still need to remain visible so the
+        // user can launch them through the independent script controller.
         for (const auto& e : entries) {
             if (e.archive != 0U || !e.container.empty() || !e.slot ||
                 e.kind.format != Format::MotionScript) {
@@ -970,16 +953,14 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 role = Session::MotionScriptRole::LadyComponent0;
             }
 
-            assembled->motion_scripts.push_back({
-                *e.slot, role, shared,
-            });
+            assembled->motion_scripts.push_back({*e.slot, role, shared});
 
-            // Motion-card labels belong to the body/primary script. The
-            // component0 script drives a companion model and must not rename
-            // the body MOT library.
+            // Motion-card action labels belong to the body/primary script.
+            // Component0 has its own script button and must not overwrite the
+            // body card's label.
             if (!shared->nested() &&
                 role != Session::MotionScriptRole::LadyComponent0) {
-                label_enemy_motions(*shared, archive_name, assembled->motion_library,
+                label_enemy_motions(*shared, archive_name, motions,
                                     &report.detail_attachments);
             }
 
@@ -988,6 +969,74 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 assembled->motion_script = shared;
             }
         }
+
+        // Build the generic script->motion-pack reachability before pruning.
+        // This preserves component-only MOTs (notably em034 slot11) while
+        // retaining the old rule that unrelated, non-drivable packs stay out
+        // of the motion strip.
+        std::vector<motion::MotionPack> motion_packs;
+        for (const auto& m : motions) {
+            if (m.pack_slot < 0 || m.mot_slot < 0) continue;
+            const auto pack_slot = static_cast<std::uint32_t>(m.pack_slot);
+            auto it = std::find_if(
+                motion_packs.begin(), motion_packs.end(),
+                [pack_slot](const motion::MotionPack& p) {
+                    return p.archive_slot == pack_slot;
+                });
+            if (it == motion_packs.end()) {
+                motion_packs.push_back({pack_slot, {}});
+                it = std::prev(motion_packs.end());
+            }
+            it->slots.push_back(static_cast<std::uint32_t>(m.mot_slot));
+        }
+
+        std::vector<std::uint32_t> script_reachable_packs;
+        for (const auto& binding : assembled->motion_scripts) {
+            if (binding.script == nullptr) continue;
+            for (const auto& group : motion::bind_motion_groups(
+                     *binding.script, motion_packs, archive_name)) {
+                if (group.archive_slot) {
+                    script_reachable_packs.push_back(*group.archive_slot);
+                }
+            }
+            // Canonical CEm034 component0 route:
+            // em034_013 bank4 -> top-level PAC slot11.
+            if (binding.role == Session::MotionScriptRole::LadyComponent0 &&
+                archive_name.find("em034") != std::string_view::npos) {
+                script_reachable_packs.push_back(11U);
+            }
+        }
+        std::sort(script_reachable_packs.begin(), script_reachable_packs.end());
+        script_reachable_packs.erase(
+            std::unique(script_reachable_packs.begin(),
+                        script_reachable_packs.end()),
+            script_reachable_packs.end());
+
+        report.motions = motions.size();
+        {
+            std::vector<Session::MotionPayload> drivable;
+            drivable.reserve(motions.size());
+            for (auto& m : motions) {
+                const bool script_reachable =
+                    m.pack_slot >= 0 &&
+                    std::binary_search(
+                        script_reachable_packs.begin(),
+                        script_reachable_packs.end(),
+                        static_cast<std::uint32_t>(m.pack_slot));
+                if (script_reachable ||
+                    motion::motion_can_drive(*assembled, m.bytes)) {
+                    drivable.push_back(std::move(m));
+                }
+            }
+            if (drivable.size() != motions.size()) {
+                report.detail_attachments +=
+                    " motionsHidden=" +
+                    std::to_string(motions.size() - drivable.size());
+            }
+            motions = std::move(drivable);
+            report.motions = motions.size();
+        }
+        assembled->motion_library = std::move(motions);
         assembled->archive_name = std::string{archive_name};
         assembled->children = pac.children;
         if (!assembled->children.empty()) {
