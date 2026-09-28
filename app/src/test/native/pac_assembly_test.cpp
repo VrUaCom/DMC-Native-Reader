@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
