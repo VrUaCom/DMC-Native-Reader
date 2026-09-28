@@ -977,6 +977,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     Session::LadyDynamicVisual visual;
                     visual.actor = actor;
                     visual.model_slot = model_slot;
+                    visual.source_scene = source->scene;
                     visual.source_mesh = source->render_mesh;
                     visual.texture_slots =
                         source->render_triangle_texture_slots;
@@ -988,9 +989,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
 
             materialize_dynamic(2U, 25U, equipment_ptx, true);
             materialize_dynamic(3U, 26U, equipment_ptx, true);
-            // slot30 follows the exact Shl03 actor transform, but its internal
-            // cable/tether point-array deformation remains a separate layer.
-            materialize_dynamic(3U, 30U, 29U, false);
+            // slot30 is a five-node skinned tether. Its per-frame straight
+            // chain matrices are EXE-confirmed and materialized by the
+            // presentation layer using the retained canonical source scene.
+            materialize_dynamic(3U, 30U, 29U, true);
 
             if (!assembled->lady_dynamic_visuals.empty()) {
                 report.detail_attachments +=
