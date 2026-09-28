@@ -29,6 +29,12 @@ struct MotionLoadReport final {
                                            const std::uint8_t* bytes,
                                            std::size_t size) noexcept;
 
+// Raw library MOT playback. This remains script-free, but may temporarily
+// release a component from its host constraint when the MOT targets that
+// component's own skeleton (CEm034 slot20 / PAC11).
+[[nodiscard]] MotionLoadReport load_library_motion(Session* session,
+                                                   std::size_t motion_index) noexcept;
+
 // Pose the Session at `frame` (MOT timeline units, 60 per second in DMC3).
 // Skins the render mesh through inverseRest * currentWorld and refreshes the
 // skeleton overlay. Returns false when no motion is bound.
