@@ -245,6 +245,247 @@ struct ScriptMotionSelection final {
     return nullptr;
 }
 
+[[nodiscard]] LadyComponentBinding* lady_component_binding(
+    Session* session, std::uint8_t component) noexcept {
+    if (session == nullptr) return nullptr;
+    for (auto& binding : session->lady_component_bindings) {
+        if (binding.component == component) return &binding;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<Matrix4> lady_component_node_world(
+    const Session& session, std::uint8_t component, std::size_t local_node) noexcept {
+    const LadyComponentBinding* binding = nullptr;
+    for (const auto& candidate : session.lady_component_bindings) {
+        if (candidate.component == component) {
+            binding = &candidate;
+            break;
+        }
+    }
+    if (binding == nullptr || binding->part >= session.composite_parts.size()) {
+        return std::nullopt;
+    }
+    const auto& part = session.composite_parts[binding->part];
+    if (local_node >= part.scene.nodes.size()) return std::nullopt;
+
+    std::size_t begin = 0U;
+    for (std::size_t i = 0U; i < binding->part; ++i) {
+        if (session.composite_parts[i].scene.nodes.size() >
+            std::numeric_limits<std::size_t>::max() - begin) {
+            return std::nullopt;
+        }
+        begin += session.composite_parts[i].scene.nodes.size();
+    }
+    if (begin + local_node >= session.scene.nodes.size()) return std::nullopt;
+    return session.scene.nodes[begin + local_node].world;
+}
+
+struct Vec4f final {
+    float x{};
+    float y{};
+    float z{};
+    float w{1.0F};
+};
+
+[[nodiscard]] Vec4f transform_row4(
+    const Vec4f& v, const Matrix4& m) noexcept {
+    return {
+        v.x * m.values[0] + v.y * m.values[4] +
+            v.z * m.values[8] + v.w * m.values[12],
+        v.x * m.values[1] + v.y * m.values[5] +
+            v.z * m.values[9] + v.w * m.values[13],
+        v.x * m.values[2] + v.y * m.values[6] +
+            v.z * m.values[10] + v.w * m.values[14],
+        v.x * m.values[3] + v.y * m.values[7] +
+            v.z * m.values[11] + v.w * m.values[15],
+    };
+}
+
+[[nodiscard]] Vec3 cross3(const Vec3& a, const Vec3& b) noexcept {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    };
+}
+
+[[nodiscard]] float length_sq3(const Vec3& v) noexcept {
+    return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
+[[nodiscard]] Vec3 normalize3(Vec3 v, Vec3 fallback) noexcept {
+    float len2 = length_sq3(v);
+    if (!(len2 > 1.0e-15F) || !std::isfinite(len2)) {
+        v = fallback;
+        len2 = length_sq3(v);
+    }
+    if (!(len2 > 1.0e-15F) || !std::isfinite(len2)) return {1.0F, 0.0F, 0.0F};
+    const float inv = 1.0F / std::sqrt(len2);
+    return {v.x * inv, v.y * inv, v.z * inv};
+}
+
+[[nodiscard]] Vec3 robust_cross(
+    Vec3 a, Vec3 b, bool a_cross_b) noexcept {
+    Vec3 out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    if (length_sq3(out) > 1.0e-15F) return normalize3(out, {1.0F, 0.0F, 0.0F});
+    // The EXE perturbs the reference axis in 0.1 steps when the vectors are
+    // nearly parallel. Preserve that behavior instead of choosing a fixed
+    // arbitrary perpendicular axis.
+    b.x += 0.1F;
+    out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    if (length_sq3(out) <= 1.0e-15F) {
+        b.y += 0.1F;
+        out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    }
+    if (length_sq3(out) <= 1.0e-15F) {
+        b.z += 0.1F;
+        out = a_cross_b ? cross3(a, b) : cross3(b, a);
+    }
+    return normalize3(out, {1.0F, 0.0F, 0.0F});
+}
+
+[[nodiscard]] Matrix4 shl02_actor_matrix(
+    const Matrix4& slot20_node0) noexcept {
+    // 0x14016F610: (1,0,0,1) * slot20 node0 current world.
+    const auto d4 = transform_row4({1.0F, 0.0F, 0.0F, 1.0F}, slot20_node0);
+    const Vec3 direction = normalize3({d4.x, d4.y, d4.z}, {1.0F, 0.0F, 0.0F});
+    const Vec3 up = normalize3({0.0F, 1.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+    // 0x14032FD90:
+    // row0 = normalize(up x direction)
+    // row1 = normalize(direction x row0)
+    // row2 = normalize(direction)
+    const Vec3 row0 = robust_cross(up, direction, true);
+    const Vec3 row1 = normalize3(cross3(direction, row0), {0.0F, 1.0F, 0.0F});
+
+    Matrix4 out;
+    out.values = {
+        row0.x, row0.y, row0.z, 0.0F,
+        row1.x, row1.y, row1.z, 0.0F,
+        direction.x, direction.y, direction.z, 0.0F,
+        slot20_node0.values[12],
+        slot20_node0.values[13],
+        slot20_node0.values[14],
+        1.0F,
+    };
+    return out;
+}
+
+struct Shl03Spawn final {
+    Matrix4 world{};
+    Vec3 velocity{};
+};
+
+[[nodiscard]] std::optional<Shl03Spawn> shl03_spawn(
+    const Session& session) noexcept {
+    const auto node0 = lady_component_node_world(session, 0U, 0U);
+    const auto node1 = lady_component_node_world(session, 0U, 1U);
+    if (!node0.has_value() || !node1.has_value()) return std::nullopt;
+
+    // 0x14016CBB0..0x14016CC41:
+    // spawn = (87.8,0,4.28,1) * node0World + node1World.translation.
+    const auto offset = transform_row4(
+        {87.80000305F, 0.0F, 4.28000021F, 1.0F}, *node0);
+    const Vec3 spawn{
+        offset.x + node1->values[12],
+        offset.y + node1->values[13],
+        offset.z + node1->values[14],
+    };
+
+    // Direction/velocity domain = 50 * ((1,0,0,1) * node0World).
+    const auto d4 = transform_row4(
+        {1.0F, 0.0F, 0.0F, 1.0F}, *node0);
+    const Vec3 velocity{50.0F * d4.x, 50.0F * d4.y, 50.0F * d4.z};
+    const Vec3 direction = normalize3(velocity, {1.0F, 0.0F, 0.0F});
+    const Vec3 ref{0.0F, 1.0F, 0.0F};
+
+    // 0x14032F1D0:
+    // row0 = direction
+    // row1 = normalize(ref x direction)
+    // row2 = normalize(direction x row1)
+    const Vec3 row1 = robust_cross(ref, direction, true);
+    const Vec3 row2 = normalize3(cross3(direction, row1), {0.0F, 0.0F, 1.0F});
+
+    Shl03Spawn out;
+    out.velocity = velocity;
+    out.world.values = {
+        direction.x, direction.y, direction.z, 0.0F,
+        row1.x, row1.y, row1.z, 0.0F,
+        row2.x, row2.y, row2.z, 0.0F,
+        spawn.x, spawn.y, spawn.z, 1.0F,
+    };
+    return out;
+}
+
+void deactivate_lady_dynamic_visuals(Session* session) noexcept {
+    if (session == nullptr) return;
+    for (auto& visual : session->lady_dynamic_visuals) {
+        visual.active = false;
+        visual.spawn_frame = -1.0F;
+        visual.retire_frame = -1.0F;
+        visual.velocity = {};
+        visual.world = Matrix4{};
+    }
+}
+
+void spawn_lady_dynamic_visual(
+    Session* session, std::int8_t actor, float event_frame) noexcept {
+    if (session == nullptr || actor < 0) return;
+
+    if (actor == 2) {
+        const auto node0 = lady_component_node_world(*session, 0U, 0U);
+        if (!node0.has_value()) return;
+        const Matrix4 world_matrix = shl02_actor_matrix(*node0);
+        for (auto& visual : session->lady_dynamic_visuals) {
+            if (visual.actor != 2U) continue;
+            visual.world = world_matrix;
+            visual.velocity = {};
+            visual.spawn_frame = event_frame;
+            // CActor initializes +0x14/+0x18 to 1.0. Shl02 initializes its
+            // countdown to 3.0, so no-world preview retires after three actor
+            // update ticks; gameplay collision may end it earlier.
+            visual.retire_frame = event_frame + 3.0F;
+            visual.active = true;
+        }
+        return;
+    }
+
+    if (actor == 3) {
+        const auto spawn = shl03_spawn(*session);
+        if (!spawn.has_value()) return;
+        for (auto& visual : session->lady_dynamic_visuals) {
+            if (visual.actor != 3U) continue;
+            visual.world = spawn->world;
+            visual.velocity = spawn->velocity;
+            visual.spawn_frame = event_frame;
+            visual.retire_frame = -1.0F;
+            visual.active = true;
+        }
+    }
+}
+
+void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
+    if (session == nullptr) return;
+    for (auto& visual : session->lady_dynamic_visuals) {
+        if (!visual.active || visual.spawn_frame < 0.0F) continue;
+        if (visual.retire_frame >= 0.0F && frame >= visual.retire_frame) {
+            visual.active = false;
+            continue;
+        }
+        if (visual.actor == 3U) {
+            const float dt = std::max(frame - visual.spawn_frame, 0.0F);
+            // Shl03 state1, 0x140174D39:
+            // actor+0x80 += actor+0x140 * actor+0x14.
+            visual.world.values[12] += visual.velocity.x * dt;
+            visual.world.values[13] += visual.velocity.y * dt;
+            visual.world.values[14] += visual.velocity.z * dt;
+            // Make advancement absolute from spawn, not cumulative across
+            // repeated render/scrub calls.
+            visual.spawn_frame = frame;
+        }
+    }
+}
+
 [[nodiscard]] std::optional<PartMotion> bind_part(const RenderScene& scene,
                                                   std::size_t vertex_begin,
                                                   std::size_t node_begin,
@@ -299,6 +540,7 @@ struct ScriptMotionSelection final {
 
 void reset_lady_runtime(Session* session) noexcept {
     if (session == nullptr) return;
+    deactivate_lady_dynamic_visuals(session);
     for (auto& binding : session->lady_component_bindings) {
         (void)set_lady_component_preset(
             session, binding, LadyPlacementPreset::BodyStowed);
@@ -326,10 +568,14 @@ void reset_lady_runtime(Session* session) noexcept {
         // apply_lady_state_entry only models states with recovered equipment
         // side effects, so an unrecognized result means "no equipment change",
         // not "invalid Lady state".
+        deactivate_lady_dynamic_visuals(session);
         const auto entry = apply_lady_state_entry(session, *state.lady_state);
         state.lady_entry_applied = true;
         state.lady_runtime_frame = -1.0F;
-        if (entry.dynamic_actor >= 0) state.last_dynamic_actor = entry.dynamic_actor;
+        if (entry.dynamic_actor >= 0) {
+            state.last_dynamic_actor = entry.dynamic_actor;
+            spawn_lady_dynamic_visual(session, entry.dynamic_actor, 0.0F);
+        }
     }
 
     // State0x81/action46 rebuilds +0x4400 to 1.0 every actor update, and
@@ -363,6 +609,9 @@ void reset_lady_runtime(Session* session) noexcept {
                     session, *state.lady_state, lane, channel, value);
                 if (applied.dynamic_actor >= 0) {
                     state.last_dynamic_actor = applied.dynamic_actor;
+                    spawn_lady_dynamic_visual(
+                        session, applied.dynamic_actor,
+                        std::max(signal.after_frame, 0.0F));
                 }
                 if (*state.lady_state == 0x81U && lane == 1U &&
                     channel == 1U && value == 1U) {
@@ -384,6 +633,7 @@ void reset_lady_runtime(Session* session) noexcept {
         }
     }
 
+    advance_lady_dynamic_visuals(session, frame);
     state.lady_runtime_frame = frame;
     return true;
 }
@@ -636,6 +886,13 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
             for (auto& binding : session->weapon_bindings) {
                 if (wanted != binding.state) (void)set_weapon_state(session, binding, wanted);
             }
+        }
+        // Resolve current body-driven equipment before Lady runtime signals
+        // query slot20 node worlds for Shl spawn transforms. This pass does not
+        // advance cloth; the final attachment pass below performs the actual
+        // frame's cloth steps.
+        if (!session->lady_component_bindings.empty()) {
+            (void)apply_part_attachments(session, 0U);
         }
         if (!apply_lady_script_runtime(session, state, frame)) return false;
         (void)apply_part_attachments(session, cloth_steps);
