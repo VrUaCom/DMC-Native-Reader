@@ -2,6 +2,7 @@
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
 
+#include <array>
 #include <bit>
 #include <cassert>
 #include <cstddef>
