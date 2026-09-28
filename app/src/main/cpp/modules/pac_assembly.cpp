@@ -988,8 +988,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 assembled->motion_script = shared;
             }
         }
+        assembled->archive_name = std::string{archive_name};
         assembled->children = pac.children;
-        (void)archive_name;
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
         }
