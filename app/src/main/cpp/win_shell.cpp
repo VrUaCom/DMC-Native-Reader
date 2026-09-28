@@ -26,7 +26,10 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cwctype>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -35,8 +38,12 @@
 #include <string>
 #include <vector>
 
+#include "dmcresource/collision_debug.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/motion/motion_player.h"
+#include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/stage_room.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/spider/model_placement_actions.h"
@@ -72,6 +79,8 @@ constexpr COLORREF kAccent = RGB(120, 170, 255);
 constexpr int kHeaderHeight = 42;
 constexpr int kToolbarHeight = 56;
 constexpr int kBtnSize = 44;
+constexpr UINT_PTR kMotionTimerId = 1;
+constexpr UINT kMotionTimerMs = 16;
 
 enum ButtonId : int {
     kBtnBack = 100,
@@ -83,6 +92,9 @@ enum ButtonId : int {
     kBtnHierarchy = 113,
     kBtnUv = 114,
     kBtnInfo = 115,
+    kBtnMotion = 116,
+    kBtnShadows = 117,
+    kBtnCollision = 118,
 };
 
 enum MenuId : int {
@@ -92,7 +104,13 @@ enum MenuId : int {
     kMenuQualityLow = 910,
     kMenuQualityMedium = 911,
     kMenuQualityHigh = 912,
+    kMenuSmoothTextures = 913,
+    kMenuUnlit = 914,
     kMenuOpenDiagnosticsLog = 920,
+    kMenuLoadRoom = 940,
+    kMenuToggleRoom = 941,
+    kMenuNextRoomSpot = 942,
+    kMenuClearRoom = 943,
     // Dynamic recent-workspace submenu, rebuilt on WM_INITMENUPOPUP;
     // kMenuRecentWorkspaceBase + i selects g_state.recent_workspaces[i].
     kMenuRecentWorkspaceBase = 930,
@@ -131,8 +149,16 @@ bool HasSupportedExtension(const std::wstring& name) {
     // already routes it through the same validated DDS path (see
     // native_module.h). Not a distinct format, just another name the shell
     // needs to recognize so the DDS path is actually reachable through it.
-    for (const wchar_t* want : {L".mod", L".scm", L".dds", L".ptx", L".evt", L".tm2"}) {
+    for (const wchar_t* want : {L".mod", L".scm", L".dds", L".ptx", L".evt", L".tm2",
+                                 L".pac", L".mot", L".efm", L".shw", L".tsc", L".clt",
+                                 L".fxbank", L".pnst", L".msc", L".colshape", L".colidx"}) {
         if (_wcsicmp(ext, want) == 0) return true;
+    }
+    if (_wcsicmp(ext, L".bin") == 0) {
+        std::wstring lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+        if (lower.find(L"eventtbl") != std::wstring::npos) return true;
     }
     return false;
 }
@@ -199,10 +225,15 @@ struct AppState {
     RgbaImage bgra;   // Same frame, byte-swapped for StretchDIBits.
     bool static_image = false;
 
-    float yaw = 0.65f;
+    float yaw = 2.49159265f;  // pi - 0.65: same front three-quarter view as Android v68.
     float pitch = -0.45f;
     float zoom = 1.0f;
     std::uint32_t render_flags = 0;
+
+    int selected_motion = -1;
+    bool motion_playing = false;
+    float motion_frame = 0.0f;
+    DWORD motion_last_tick = 0;
     bool hierarchy_available = false;
 
     // Rebuilt alongside g_state.bgra every RenderMesh() call, in the same
@@ -581,6 +612,19 @@ std::string BuildInspectionText() {
     if (!g_state.session->texture_attachment_detail.empty()) {
         text += "\r\n\r\n[PTX] " + g_state.session->texture_attachment_detail;
     }
+    if (!g_state.session->non_canonical_notes.empty()) {
+        text += "\r\n\r\nNOT CANONICAL (shown anyway)\r\n";
+        for (const auto& note : g_state.session->non_canonical_notes) text += "  - " + note + "\r\n";
+    }
+    if (!g_state.session->motion_library.empty()) {
+        text += "\r\n\r\nMOTIONS (" + std::to_string(g_state.session->motion_library.size()) + ")\r\n";
+        for (std::size_t i = 0; i < g_state.session->motion_library.size(); ++i) {
+            const auto& motion = g_state.session->motion_library[i];
+            text += "  [" + std::to_string(i) + "] " + motion.name;
+            if (!motion.actions.empty()) text += "  " + motion.actions;
+            text += "\r\n";
+        }
+    }
     const auto part_count = dmcresource::session_composite_part_count(g_state.session.get());
     if (part_count > 0) {
         text += "\r\n\r\nCOMPOSITE PARTS (" + std::to_string(part_count) + ")\r\n";
@@ -712,9 +756,14 @@ void RenderMesh(HWND hwnd) {
     const RECT view = ViewportRect(hwnd);
     int width = 0, height = 0;
     ComputeRenderSize(view.right - view.left, view.bottom - view.top, &width, &height);
+    std::uint32_t flags = g_state.render_flags;
+    if (g_state.dragging) {
+        flags |= dmcresource::render_flag(RenderFlag::Preview);
+        width = (std::max)(64, width / 2);
+        height = (std::max)(64, height / 2);
+    }
     g_state.rgba = dmcresource::render_session(g_state.session.get(), width, height,
-                                               g_state.yaw, g_state.pitch, g_state.zoom,
-                                               g_state.render_flags);
+                                               g_state.yaw, g_state.pitch, g_state.zoom, flags);
     g_state.bgra = ToBgra(g_state.rgba);
     g_state.static_image = false;
     g_state.last_render_tick = GetTickCount();
@@ -745,9 +794,15 @@ void ActivateSession(HWND hwnd, std::unique_ptr<Session> session, const std::wst
         g_state.nav_stack.push_back({std::move(g_state.session), g_state.title});
     }
 
+    KillTimer(hwnd, kMotionTimerId);
+    g_state.motion_playing = false;
+    g_state.selected_motion = -1;
+    g_state.motion_frame = 0.0f;
+    g_state.motion_last_tick = 0;
+
     g_state.session = std::move(session);
     g_state.title = title;
-    g_state.yaw = 0.65f;
+    g_state.yaw = 2.49159265f;
     g_state.pitch = -0.45f;
     g_state.zoom = 1.0f;
     g_state.render_flags = 0;
@@ -768,7 +823,11 @@ void ActivateSession(HWND hwnd, std::unique_ptr<Session> session, const std::wst
 
     const auto caps = CurrentCapabilities();
     g_state.child_browser_open = caps.child_browser_mode;
-    if (caps.uv_map_view) g_state.render_flags = dmcresource::render_flag(RenderFlag::UvLayout);
+    if (caps.uv_map_view) {
+        g_state.render_flags = dmcresource::render_flag(RenderFlag::UvLayout);
+    } else if (caps.can_render) {
+        g_state.render_flags |= dmcresource::render_flag(RenderFlag::Shadows);
+    }
 
     if (caps.child_browser_mode) {
         const auto count = dmcresource::session_child_count(g_state.session.get());
@@ -833,6 +892,23 @@ std::wstring FamilyFromExtension(const std::wstring& name) {
     if (_wcsicmp(ext, L".ptx") == 0) return L"PTX";
     if (_wcsicmp(ext, L".evt") == 0) return L"EVT";
     if (_wcsicmp(ext, L".tm2") == 0) return L"TM2";  // decodes via the DDS path
+    if (_wcsicmp(ext, L".pac") == 0) return L"PAC";
+    if (_wcsicmp(ext, L".mot") == 0) return L"MOT";
+    if (_wcsicmp(ext, L".efm") == 0) return L"EFM";
+    if (_wcsicmp(ext, L".shw") == 0) return L"SHW";
+    if (_wcsicmp(ext, L".tsc") == 0) return L"TSC";
+    if (_wcsicmp(ext, L".clt") == 0) return L"CLT";
+    if (_wcsicmp(ext, L".fxbank") == 0) return L"FX";
+    if (_wcsicmp(ext, L".pnst") == 0) return L"PNST";
+    if (_wcsicmp(ext, L".msc") == 0) return L"MSC";
+    if (_wcsicmp(ext, L".colshape") == 0) return L"HIT";
+    if (_wcsicmp(ext, L".colidx") == 0) return L"HITIDX";
+    if (_wcsicmp(ext, L".bin") == 0) {
+        std::wstring lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+        if (lower.find(L"eventtbl") != std::wstring::npos) return L"EVT";
+    }
     return L"";
 }
 
@@ -991,6 +1067,13 @@ void LoadFile(HWND hwnd, const std::wstring& path, bool refresh_siblings) {
     }
 
     const wchar_t* filename = PathFindFileNameW(path.c_str());
+    if (session && _wcsicmp(PathFindExtensionW(path.c_str()), L".pac") == 0) {
+        dmcresource::pac_assembly::AssemblyReport report;
+        const std::string archive_name = WideToUtf8(filename);
+        auto assembled =
+            dmcresource::pac_assembly::assemble_pac(*session, &report, archive_name, 0U);
+        if (assembled) session = std::move(assembled);
+    }
     if (!session) {
         ActivateSession(hwnd, nullptr, filename, false);
         AppendDiagnosticsLog(path, false);
@@ -1062,7 +1145,10 @@ void OpenFileDialog(HWND hwnd) {
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hwnd;
     ofn.lpstrFilter =
-        L"DMC resources (*.mod;*.scm;*.dds;*.ptx;*.evt;*.tm2)\0*.mod;*.scm;*.dds;*.ptx;*.evt;*.tm2\0"
+        L"DMC resources\0*.mod;*.scm;*.dds;*.ptx;*.tm2;*.pac;*.mot;*.efm;*.shw;*.tsc;*.clt;*.fxbank;*.pnst;*.msc;*.colshape;*.colidx;*.evt;*EventTbl*.bin\0"
+        L"Models / stages (*.mod;*.scm;*.efm)\0*.mod;*.scm;*.efm\0"
+        L"Archives / motion (*.pac;*.mot)\0*.pac;*.mot\0"
+        L"Textures (*.ptx;*.dds;*.tm2)\0*.ptx;*.dds;*.tm2\0"
         L"All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
@@ -1369,11 +1455,7 @@ void HandleDroppedFiles(HWND hwnd, const std::vector<std::wstring>& paths) {
     if (paths.size() == 1) {
         const auto& path = paths.front();
         if (GetFileAttributesW(path.c_str()) & FILE_ATTRIBUTE_DIRECTORY) {
-            MessageBoxW(hwnd,
-                       L"Folder drop (workspace mode) isn't supported yet -- drop a single "
-                       L".mod/.scm/.dds/.ptx/.evt file, or several .mod files together to "
-                       L"compose them.",
-                       L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+            OpenWorkspaceFolder(hwnd, path);
             return;
         }
         const bool is_texture = HasExtensionCI(path, L".dds") || HasExtensionCI(path, L".ptx") ||
@@ -1514,6 +1596,125 @@ void OpenUvGallery(HWND hwnd) {
     }
 }
 
+
+bool LoadMotionIndex(HWND hwnd, int index) {
+    if (!g_state.session || g_state.session->motion_library.empty()) return false;
+    const int count = static_cast<int>(g_state.session->motion_library.size());
+    if (index < 0 || index >= count) return false;
+    auto& payload = g_state.session->motion_library[static_cast<std::size_t>(index)];
+    const auto report = dmcresource::motion::load_motion(
+        g_state.session.get(), payload.name, payload.bytes.data(), payload.bytes.size());
+    if (!report.ok) return false;
+    g_state.selected_motion = index;
+    g_state.motion_frame = 0.0f;
+    g_state.motion_last_tick = GetTickCount();
+    g_state.motion_playing = true;
+    SetTimer(hwnd, kMotionTimerId, kMotionTimerMs, nullptr);
+    dmcresource::motion::apply_motion_frame(g_state.session.get(), 0.0f);
+    RenderMesh(hwnd);
+    UpdateButtonStates();
+    return true;
+}
+
+void SelectNextMotion(HWND hwnd, int direction) {
+    if (!g_state.session || g_state.session->motion_library.empty()) return;
+    const int count = static_cast<int>(g_state.session->motion_library.size());
+    int start = g_state.selected_motion;
+    if (start < 0) start = direction >= 0 ? -1 : 0;
+    for (int step = 1; step <= count; ++step) {
+        const int index = ((start + direction * step) % count + count) % count;
+        if (LoadMotionIndex(hwnd, index)) return;
+    }
+    MessageBoxW(hwnd, L"No MOT in this archive can drive the current model.",
+                L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
+}
+
+void ToggleMotionPlayback(HWND hwnd) {
+    if (!g_state.session || g_state.session->motion_library.empty()) return;
+    if (!dmcresource::motion::has_motion(g_state.session.get())) {
+        SelectNextMotion(hwnd, 1);
+        return;
+    }
+    g_state.motion_playing = !g_state.motion_playing;
+    g_state.motion_last_tick = GetTickCount();
+    if (g_state.motion_playing) {
+        SetTimer(hwnd, kMotionTimerId, kMotionTimerMs, nullptr);
+    } else {
+        KillTimer(hwnd, kMotionTimerId);
+    }
+    UpdateButtonStates();
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+void TickMotion(HWND hwnd) {
+    if (!g_state.motion_playing || !g_state.session ||
+        !dmcresource::motion::has_motion(g_state.session.get())) {
+        KillTimer(hwnd, kMotionTimerId);
+        return;
+    }
+    const DWORD now = GetTickCount();
+    const DWORD elapsed = g_state.motion_last_tick == 0 ? 0 : now - g_state.motion_last_tick;
+    g_state.motion_last_tick = now;
+    g_state.motion_frame += static_cast<float>((std::min)(elapsed, 100UL)) * 0.060f;
+
+    const float end = dmcresource::motion::motion_end_frame(g_state.session.get());
+    const float loop = dmcresource::motion::motion_loop_start_frame(g_state.session.get());
+    if (end > 0.0f && g_state.motion_frame > end) {
+        if (loop >= 0.0f && loop < end) {
+            const float span = end - loop;
+            g_state.motion_frame = loop + std::fmod(g_state.motion_frame - loop, span);
+        } else {
+            g_state.motion_frame = std::fmod(g_state.motion_frame, end);
+        }
+    }
+    if (dmcresource::motion::apply_motion_frame(g_state.session.get(), g_state.motion_frame)) {
+        RenderMesh(hwnd);
+    }
+}
+
+void CycleCollisionAttack(HWND hwnd) {
+    if (!g_state.session || !g_state.session->collision) return;
+    const auto ids = dmcresource::collision::collision_attack_ids(*g_state.session);
+    if (ids.empty()) return;
+    const int current = g_state.session->collision->attack;
+    int next = -1;
+    if (current < 0) {
+        next = ids.front();
+    } else {
+        const auto it = std::find(ids.begin(), ids.end(), current);
+        if (it != ids.end() && std::next(it) != ids.end()) next = *std::next(it);
+    }
+    dmcresource::collision::select_collision_attack(g_state.session.get(), next);
+    g_state.render_flags |= dmcresource::render_flag(RenderFlag::Collision);
+    RenderMesh(hwnd);
+    UpdateButtonStates();
+}
+
+void LoadRoomDialog(HWND hwnd) {
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFilter =
+        L"Stage / archive (*.pac;*.scm)\0*.pac;*.scm\0All files\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return;
+    const auto bytes = ReadFileBytes(path);
+    const auto room = dmcresource::stage_room::build_room(
+        WideToUtf8(std::wstring(PathFindFileNameW(path))), bytes.data(), bytes.size());
+    if (!room) {
+        MessageBoxW(hwnd, L"No renderable room/stage was found in this resource.",
+                    L"DMC Native Reader", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    dmcresource::stage_room::set_current(room);
+    dmcresource::stage_room::set_spot(0U);
+    g_state.render_flags |= dmcresource::render_flag(RenderFlag::Room);
+    RenderMesh(hwnd);
+}
+
 void ShowResourceInfo(HWND hwnd) {
     ShowInfoDialog(hwnd, g_state.title, BuildInspectionText());
 }
@@ -1560,8 +1761,11 @@ void LayoutButtons(HWND hwnd) {
     // Segoe UI itself doesn't carry and would otherwise risk showing tofu
     // boxes instead of an icon.
     const Def defs[] = {
-        {kBtnOpen, L"OPEN", L"Open MOD / SCM / DDS / PTX"},
+        {kBtnOpen, L"OPEN", L"Open DMC resource"},
         {kBtnResetExport, L"RESET", L"Reset view / export PNG"},
+        {kBtnMotion, L"MOT", L"Play / pause animation (right-click: next MOT)"},
+        {kBtnShadows, L"SHADOW", L"Toggle SHW / floor shadow"},
+        {kBtnCollision, L"HIT", L"Toggle collision (right-click: next attack)"},
         {kBtnWireframe, L"WIRE", L"Wireframe"},
         {kBtnHierarchy, L"BONES", L"Bones / hierarchy"},
         {kBtnUv, L"UV", L"UV layout"},
@@ -1607,6 +1811,30 @@ void UpdateButtonStates() {
                 b.tooltip = caps.can_export_png ? L"Export PNG" : L"Reset view";
                 b.enabled = caps.can_export_png || (has_session && caps.can_render);
                 b.active = false;
+                break;
+            case kBtnMotion:
+                b.enabled = has_session && caps.can_render && !g_state.session->motion_library.empty();
+                b.active = b.enabled && g_state.motion_playing;
+                b.glyph = b.active ? L"PAUSE" : L"MOT";
+                if (b.enabled && g_state.selected_motion >= 0 &&
+                    static_cast<std::size_t>(g_state.selected_motion) < g_state.session->motion_library.size()) {
+                    b.tooltip = L"Motion: " + Utf8ToWide(
+                        g_state.session->motion_library[static_cast<std::size_t>(g_state.selected_motion)].name) +
+                        L" (right-click: next)";
+                } else {
+                    b.tooltip = L"Play animation (right-click: next MOT)";
+                }
+                break;
+            case kBtnShadows:
+                b.enabled = has_session && caps.can_render && !caps.uv_map_view;
+                b.active = b.enabled && (g_state.render_flags &
+                    dmcresource::render_flag(RenderFlag::Shadows)) != 0;
+                break;
+            case kBtnCollision:
+                b.enabled = has_session && caps.can_render && !caps.uv_map_view &&
+                            static_cast<bool>(g_state.session->collision);
+                b.active = b.enabled && (g_state.render_flags &
+                    dmcresource::render_flag(RenderFlag::Collision)) != 0;
                 break;
             case kBtnWireframe:
                 b.enabled = has_session && caps.can_wireframe && !caps.uv_map_view;
@@ -1837,7 +2065,7 @@ void PaintViewport(HDC hdc, const RECT& viewport) {
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, kTextDim);
         SelectObject(hdc, g_state.ui_font);
-        const wchar_t* hint = L"Open a .mod / .scm / .dds / .ptx / .tm2 file";
+        const wchar_t* hint = L"Open a DMC resource: MOD / SCM / PAC / MOT / PTX / DDS / ...";
         RECT r = viewport;
         DrawTextW(hdc, hint, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
@@ -1928,6 +2156,17 @@ void HandleButtonClick(HWND hwnd, int id) {
             }
             break;
         }
+        case kBtnMotion:
+            ToggleMotionPlayback(hwnd);
+            break;
+        case kBtnShadows:
+            g_state.render_flags ^= dmcresource::render_flag(RenderFlag::Shadows);
+            RenderMesh(hwnd);
+            break;
+        case kBtnCollision:
+            g_state.render_flags ^= dmcresource::render_flag(RenderFlag::Collision);
+            RenderMesh(hwnd);
+            break;
         case kBtnWireframe:
             g_state.render_flags ^= dmcresource::render_flag(RenderFlag::Wireframe);
             RenderMesh(hwnd);
@@ -1952,6 +2191,12 @@ void HandleButtonClick(HWND hwnd, int id) {
 void HandleButtonRightClick(HWND hwnd, int id) {
     // Right-click is the desktop analog of Android's long-press-for-info.
     switch (id) {
+        case kBtnMotion:
+            SelectNextMotion(hwnd, 1);
+            break;
+        case kBtnCollision:
+            CycleCollisionAttack(hwnd);
+            break;
         case kBtnUv:
             ShowInspectionTopic(hwnd, InspectionTopic::Uv);
             break;
@@ -2019,6 +2264,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                        L"Render quality: &High (1024px, sharpest)");
             CheckMenuRadioItem(view_menu, kMenuQualityLow, kMenuQualityHigh, kMenuQualityHigh,
                               MF_BYCOMMAND);
+            AppendMenuW(view_menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(view_menu, MF_STRING, kMenuSmoothTextures, L"&Smooth model textures");
+            AppendMenuW(view_menu, MF_STRING, kMenuUnlit, L"&Flat / unlit model");
+            AppendMenuW(view_menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(view_menu, MF_STRING, kMenuLoadRoom, L"Load &room / stage...");
+            AppendMenuW(view_menu, MF_STRING, kMenuToggleRoom, L"Show / hide room");
+            AppendMenuW(view_menu, MF_STRING, kMenuNextRoomSpot, L"Next room floor &spot");
+            AppendMenuW(view_menu, MF_STRING, kMenuClearRoom, L"Clear room");
             AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(view_menu), L"&View");
             SetMenu(hwnd, menu_bar);
 
@@ -2039,6 +2292,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             DragAcceptFiles(hwnd, TRUE);
             return 0;
         }
+        case WM_TIMER:
+            if (wparam == kMotionTimerId) {
+                TickMotion(hwnd);
+                return 0;
+            }
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
         case WM_SIZE:
             LayoutButtons(hwnd);
             RerenderThrottled(hwnd, true);
@@ -2219,8 +2478,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     UpdateButtonStates();
                     InvalidateRect(hwnd, nullptr, TRUE);
                     return 0;
+                case VK_SPACE:
+                    if (!g_state.child_browser_open) ToggleMotionPlayback(hwnd);
+                    return 0;
                 case 'W':
                     if (!g_state.child_browser_open) HandleButtonClick(hwnd, kBtnWireframe);
+                    return 0;
+                case 'S':
+                    if (!g_state.child_browser_open) HandleButtonClick(hwnd, kBtnShadows);
                     return 0;
                 default:
                     return 0;
@@ -2233,8 +2498,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 RegisterFileAssociations();
                 MessageBoxW(hwnd,
                            L"Registered. .scm and .ptx now open with this reader by default; "
-                           L".mod and .dds were added to \"Open with\" without changing your "
-                           L"current default.",
+                           L"the current DMC resource families were added to \"Open with\" "
+                           L"without changing their existing defaults.",
                            L"DMC Native Reader", MB_OK | MB_ICONINFORMATION);
             } else if (LOWORD(wparam) == kMenuOpenWorkspace) {
                 const auto folder = PickFolderDialog(hwnd);
@@ -2263,6 +2528,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 CheckMenuRadioItem(GetSubMenu(GetMenu(hwnd), 1), kMenuQualityLow,
                                   kMenuQualityHigh, LOWORD(wparam), MF_BYCOMMAND);
                 RerenderThrottled(hwnd, true);
+            } else if (LOWORD(wparam) == kMenuSmoothTextures) {
+                g_state.render_flags ^= dmcresource::render_flag(RenderFlag::SmoothTextures);
+                CheckMenuItem(GetSubMenu(GetMenu(hwnd), 1), kMenuSmoothTextures,
+                              MF_BYCOMMAND | ((g_state.render_flags &
+                                  dmcresource::render_flag(RenderFlag::SmoothTextures)) ? MF_CHECKED : MF_UNCHECKED));
+                RenderMesh(hwnd);
+            } else if (LOWORD(wparam) == kMenuUnlit) {
+                g_state.render_flags ^= dmcresource::render_flag(RenderFlag::Unlit);
+                CheckMenuItem(GetSubMenu(GetMenu(hwnd), 1), kMenuUnlit,
+                              MF_BYCOMMAND | ((g_state.render_flags &
+                                  dmcresource::render_flag(RenderFlag::Unlit)) ? MF_CHECKED : MF_UNCHECKED));
+                RenderMesh(hwnd);
+            } else if (LOWORD(wparam) == kMenuLoadRoom) {
+                LoadRoomDialog(hwnd);
+            } else if (LOWORD(wparam) == kMenuToggleRoom) {
+                if (dmcresource::stage_room::current()) {
+                    g_state.render_flags ^= dmcresource::render_flag(RenderFlag::Room);
+                    RenderMesh(hwnd);
+                }
+            } else if (LOWORD(wparam) == kMenuNextRoomSpot) {
+                const auto room = dmcresource::stage_room::current();
+                if (room && !room->spots.empty()) {
+                    dmcresource::stage_room::set_spot(
+                        (dmcresource::stage_room::spot() + 1U) % room->spots.size());
+                    g_state.render_flags |= dmcresource::render_flag(RenderFlag::Room);
+                    RenderMesh(hwnd);
+                }
+            } else if (LOWORD(wparam) == kMenuClearRoom) {
+                dmcresource::stage_room::set_current(nullptr);
+                g_state.render_flags &= ~dmcresource::render_flag(RenderFlag::Room);
+                RenderMesh(hwnd);
             }
             return 0;
         case WM_INITMENUPOPUP: {
@@ -2344,7 +2640,9 @@ void RegisterFileAssociations() {
 
     set_key(L"Software\\Classes\\Applications\\DMCNativeReader.exe\\shell\\open\\command",
            open_command);
-    for (const auto& ext : {L".dds", L".mod", L".scm", L".ptx", L".tm2"}) {
+    for (const auto& ext : {L".dds", L".mod", L".scm", L".ptx", L".tm2", L".pac", L".mot",
+                            L".efm", L".shw", L".tsc", L".clt", L".fxbank", L".pnst",
+                            L".msc", L".colshape", L".colidx"}) {
         HKEY key;
         const std::wstring path = L"Software\\Classes\\" + std::wstring(ext) +
                                   L"\\OpenWithList\\DMCNativeReader.exe";
