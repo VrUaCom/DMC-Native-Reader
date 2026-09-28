@@ -709,10 +709,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotion(
         return env->NewStringUTF("Motion: invalid library index");
     }
     try {
-        // Copy: load_motion() may clear/replace state that references the library.
-        const auto payload = session->motion_library[static_cast<std::size_t>(index)];
-        const auto report = dmcresource::motion::load_motion(
-            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        const auto report = dmcresource::motion::load_library_motion(
+            session, static_cast<std::size_t>(index));
         return env->NewStringUTF(report.detail.c_str());
     } catch (...) { return env->NewStringUTF("Motion: load failed"); }
 }
