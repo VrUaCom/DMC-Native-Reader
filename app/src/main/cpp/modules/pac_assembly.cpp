@@ -943,9 +943,12 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             report.motions = motions.size();
         }
         assembled->motion_library = std::move(motions);
-        // Motion script: IPlayer pl000.pac slot 5 (0x1401EF461); enemies bind
-        // their own script slot (em028 slot 10 at 0x140131037, em000 slot 38
-        // at 0x1400982D9). Identified by its tables (MotionScriptFile).
+        // Motion scripts. Players normally have one primary script. CEm034
+        // canonically owns two independent controllers:
+        //   slot12 -> body script / two object lanes;
+        //   slot13 -> component0 (slot20) independent script.
+        // Retain every top-level MotionScript instead of discarding all but the
+        // first; keep motion_script as the backward-compatible primary view.
         for (const auto& e : entries) {
             if (e.archive != 0U || !e.container.empty() || !e.slot ||
                 e.kind.format != Format::MotionScript) {
@@ -957,10 +960,33 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             report.detail_attachments += " motionScript=slot" + std::to_string(*e.slot) + "(" +
                 std::to_string(script->bank_count()) + " banks)";
             auto shared = std::make_shared<const motion::MotionScriptFile>(std::move(*script));
-            if (!shared->nested()) label_enemy_motions(*shared, archive_name, assembled->motion_library,
-                                                       &report.detail_attachments);
-            assembled->motion_script = std::move(shared);
-            break;
+
+            Session::MotionScriptRole role = Session::MotionScriptRole::Primary;
+            const bool lady_archive =
+                archive_name.find("em034") != std::string_view::npos;
+            if (lady_archive && *e.slot == 12U) {
+                role = Session::MotionScriptRole::LadyBody;
+            } else if (lady_archive && *e.slot == 13U) {
+                role = Session::MotionScriptRole::LadyComponent0;
+            }
+
+            assembled->motion_scripts.push_back({
+                *e.slot, role, shared,
+            });
+
+            // Motion-card labels belong to the body/primary script. The
+            // component0 script drives a companion model and must not rename
+            // the body MOT library.
+            if (!shared->nested() &&
+                role != Session::MotionScriptRole::LadyComponent0) {
+                label_enemy_motions(*shared, archive_name, assembled->motion_library,
+                                    &report.detail_attachments);
+            }
+
+            if (assembled->motion_script == nullptr ||
+                role == Session::MotionScriptRole::LadyBody) {
+                assembled->motion_script = shared;
+            }
         }
         assembled->children = pac.children;
         (void)archive_name;
