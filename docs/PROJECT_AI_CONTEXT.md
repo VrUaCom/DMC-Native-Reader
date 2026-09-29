@@ -1,6 +1,6 @@
 # DMC Native Reader — Project AI Context, Standards & Rules
 
-Date: 2026-09-18
+Date: 2026-09-29
 Scope: `VrUaCom/DMC-Native-Reader` only.
 Audience: project owner + AI/engineering agents working inside this private repository/project.
 
@@ -339,7 +339,9 @@ Work only in the explicitly authorized repository/branch set.
 
 For the current migration program:
 - repository: `VrUaCom/DMC-Native-Reader` only;
-- current Phase-2 execution candidate: draft PR #95, branch `phase2/evidence-unblock-integration`; resolve its live `head_sha` immediately before execution instead of copying a historical SHA;
+- Phase 2 is already merged into `main` at `bfdb99f2520b71d852bb299b5a07881131e80aa0`; do not treat PR #95 or `phase2/evidence-unblock-integration` as a live execution candidate;
+- current reviewed v73 candidate: `NR-Luna-v73` at `09c8dfedfd8eeb5975ed974cf27e145905ff181b`;
+- `phase2/consolidated` remains a historical immutable snapshot, not a second product core;
 - historical branch `feature/png-export-multi-mod-v27` / PR #33 is merged and is no longer live execution authority;
 - `VrUaCom/dmc-rengine-cpp` remains absolute READ-ONLY, including during the PTX copy exception;
 - do not create a new repository or branch without a separate technical reason;
@@ -368,7 +370,7 @@ Canonical migration mode:
 
 Known hosted failure signature is `runner_id=0`, `steps=[]`: this is infrastructure evidence only, never compile/test PASS or FAIL.
 
-If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the active Phase/Review card nominates one exact reviewed candidate HEAD externally immediately before execution and that same 40-hex SHA is passed to both stages via `--expected-head`. The candidate may be current reviewed `main` or an explicitly nominated live PR head; closed historical PR identity is not execution authority. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
+If hosted capacity remains unavailable, an authorized Ubuntu/WSL2 x64 execution of `tools/bootstrap_phase2_self_hosted_ubuntu.sh` + `tools/run_phase2_exact_head.py` is acceptable only when the active Phase/Review card nominates one exact reviewed candidate HEAD externally immediately before execution and that same 40-hex SHA is passed to both stages via `--expected-head`. The candidate may be current reviewed `main` or the explicitly nominated live `NR-Luna-v73` head; closed historical PR identity is not execution authority. The bootstrap rejects stale or dirty source state; a locally self-derived `git rev-parse HEAD` is not sufficient candidate authority.
 
 If the exact canonical toolchain is already provisioned, `bootstrap_phase2_self_hosted_ubuntu.sh --preprovisioned` is an accepted preparation path. It performs validation-only preparation: no apt install, no network download, no sdkmanager mutation and no submodule fetch/update. The host must supply JDK 17, Gradle 9.5.0 and an Android SDK containing platform 36, Build Tools 36.0.0, NDK 30.0.16248370 and Android CMake 3.22.1; the pinned Rengine checkout must already match the gitlink and be clean. This path does not weaken or replace `run_phase2_exact_head.py`; only the canonical runner output is Phase-2 execution evidence.
 
@@ -393,7 +395,14 @@ Important v33/C++23 gates include:
 PTX #52 architecture acceptance does **not** mean the new runtime regression has executed. Until the final exact-head CMake/CTest checkpoint runs, its execution status remains pending.
 
 ### Cross-phase regression inheritance
-Phase 2 has an accepted historical exact inventory of 23 tests. Later phases may add focused tests, but each review gate must treat the full suite accepted by the previous gate as immutable baseline evidence:
+Phase 2 has an accepted historical baseline inventory of 23 tests. The
+current core `main` inventory is 24 tests, and the v73 inventory is 28 tests:
+the inherited baseline plus `effect_visualization` and the v73
+`effect_runtime`, `motion_playback`, `pac_assembly` and `player_coat`
+regressions. `tools/run_phase2_exact_head.py` must use the inventory matching
+the exact candidate head; a stale 23-test list is not valid for v73.
+
+Each review gate must treat the inherited suite as immutable baseline evidence:
 - inherited tests remain present and execute;
 - no silent rename/delete/disable;
 - intentional replacement requires explicit old -> new mapping and review;
