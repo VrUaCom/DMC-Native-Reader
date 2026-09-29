@@ -106,6 +106,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/animated_local.cpp
     modules/motion/motion_clip.cpp
     modules/motion/effect_runtime.cpp
+    modules/motion/effect_profile_registry.cpp
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
     modules/motion/cloth_chain.cpp
