@@ -477,5 +477,23 @@ int main() {
     assert(other_profile.effect_runtime->effect_events().size() == 1U);
     assert(other_profile.effect_runtime->effect_events()[0].instance.source.effect_kind == 'P');
     assert(other_profile.effect_runtime->effect_events()[0].instance.source.effect_id == 18U);
+
+    // Generic profile registry: em034 is selected only by profile identity
+    // plus its exact FXBANK slot. Unknown profiles remain effect-free.
+    dmcresource::Session lady_profile;
+    lady_profile.archive_name = "scr/em034.pac";
+    lady_profile.effect_bank_slots.push_back(28U);
+    assert(!effect_profile_providers().empty());
+    assert(install_effect_bindings(&lady_profile));
+    assert(lady_profile.script_effect_bindings.size() == 5U);
+    assert(lady_profile.script_effect_bindings[0].effect_kind == 'V');
+    assert(lady_profile.script_effect_bindings[0].effect_id == 463U);
+
+    dmcresource::Session unknown_profile;
+    unknown_profile.archive_name = "scr/em999.pac";
+    unknown_profile.effect_bank_slots.push_back(28U);
+    assert(!install_effect_bindings(&unknown_profile));
+    assert(unknown_profile.script_effect_bindings.empty());
+
     return 0;
 }
