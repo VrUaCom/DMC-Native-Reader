@@ -126,7 +126,7 @@
   - V activation offsets are not fully advanced by a bridged local clock;
   - animated E currently uses only the first atlas frame.
 - 🔴 Повний grenade/trajectory/impact/explosion-like lifecycle не підтверджений на Android.
-- 🟡 Deep-copy/lifetime contract для nested EffectBinding child spans потребує закриття для future dynamic profiles.
+- ✅ Deep-copy/lifetime contract для nested EffectBinding child spans закритий у Pass 01: Session і EffectRuntime володіють deep-copied child graph.
 - 🟡 Full child graph update/retire tests ще не green.
 
 ## G. Dynamic actors, stage і collision

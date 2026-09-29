@@ -13,6 +13,49 @@ namespace {
 constexpr std::uint16_t kAnyActorState = 0xFFFFU;
 constexpr std::uint8_t kAnyByte = 0xFFU;
 
+using OwnedEffectChildGroups =
+    std::vector<std::unique_ptr<std::vector<EffectChildRef>>>;
+
+[[nodiscard]] std::span<const EffectChildRef> copy_effect_child_graph(
+    std::span<const EffectChildRef> source,
+    OwnedEffectChildGroups* groups) {
+    if (groups == nullptr || source.empty()) return {};
+
+    auto group = std::make_unique<std::vector<EffectChildRef>>();
+    group->reserve(source.size());
+    for (const auto& child : source) {
+        EffectChildRef copy = child;
+        copy.children = copy_effect_child_graph(child.children, groups);
+        group->push_back(copy);
+    }
+
+    const auto copied = std::span<const EffectChildRef>{
+        group->data(), group->size()};
+    groups->push_back(std::move(group));
+    return copied;
+}
+
+void copy_effect_bindings(
+    std::span<const EffectBinding> source,
+    std::vector<EffectBinding>* bindings,
+    OwnedEffectChildGroups* groups) {
+    if (bindings == nullptr || groups == nullptr) return;
+
+    // Keep old child groups alive while copying source spans. This also makes
+    // self-replacement safe when source points into the destination table.
+    auto old_groups = std::move(*groups);
+    const std::vector<EffectBinding> source_copy(source.begin(), source.end());
+
+    bindings->clear();
+    groups->clear();
+    bindings->reserve(source_copy.size());
+    for (const auto& binding : source_copy) {
+        EffectBinding copy = binding;
+        copy.children = copy_effect_child_graph(binding.children, groups);
+        bindings->push_back(copy);
+    }
+}
+
 [[nodiscard]] bool can_materialize(EvidenceStatus status) noexcept {
     // Resource presence alone is not a runtime call, and structural or
     // undecoded records must remain inspection data. Only a proven EXE
@@ -28,7 +71,8 @@ EffectRuntime::EffectRuntime(std::span<const EffectBinding> bindings) {
 }
 
 void EffectRuntime::set_bindings(std::span<const EffectBinding> bindings) {
-    bindings_.assign(bindings.begin(), bindings.end());
+    reset();
+    copy_effect_bindings(bindings, &bindings_, &owned_child_groups_);
 }
 
 void EffectRuntime::set_resources(std::span<const EffectResourceRef> resources) {
@@ -216,8 +260,11 @@ bool set_script_effect_bindings(
     std::span<const EffectBinding> bindings) noexcept {
     if (session == nullptr || bindings.empty()) return false;
     try {
-        session->script_effect_bindings.assign(bindings.begin(), bindings.end());
-        return true;
+        copy_effect_bindings(
+            bindings,
+            &session->script_effect_bindings,
+            &session->script_effect_child_groups);
+        return session->script_effect_bindings.size() == bindings.size();
     } catch (...) {
         return false;
     }

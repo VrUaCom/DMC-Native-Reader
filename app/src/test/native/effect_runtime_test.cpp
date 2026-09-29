@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <vector>
 
 #include "dmcresource/resource_session.h"
 
@@ -494,6 +495,93 @@ int main() {
     unknown_profile.effect_bank_slots.push_back(28U);
     assert(!install_effect_bindings(&unknown_profile));
     assert(unknown_profile.script_effect_bindings.empty());
+
+    // Pass 01: nested binding spans are copied into runtime-owned storage.
+    // The provider-owned vectors are then destroyed; the runtime must retain
+    // the exact child graph and resource provenance without dangling spans.
+    std::vector<EffectChildRef> transient_nested;
+    transient_nested.push_back(EffectChildRef{
+        'E', 10U, 28U, 1U,
+        {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F},
+        {1.0F, 1.0F, 1.0F},
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED, 0});
+    std::vector<EffectChildRef> transient_children;
+    transient_children.push_back(EffectChildRef{
+        'V', 8U, 28U, 3U,
+        {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F},
+        {1.0F, 1.0F, 1.0F},
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED, 0,
+        std::span<const EffectChildRef>{
+            transient_nested.data(), transient_nested.size()}});
+    const EffectBinding transient_binding{
+        2U, 'V', 423U, 28U, RuntimeEffectParent::DynamicActor,
+        0xFFFFU, 1U, 0U, 1U,
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+        EffectLifetimeRule::ParentActorRetire,
+        EvidenceStatus::EXE_CONFIRMED,
+        std::span<const EffectChildRef>{
+            transient_children.data(), transient_children.size()}};
+    constexpr std::array<EffectResourceRef, 3> transient_resources{{
+        {'V', 423U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+        {'V', 8U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+        {'E', 10U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+    }};
+    EffectRuntime owned_graph_runtime(
+        std::span<const EffectBinding>{&transient_binding, 1U});
+    owned_graph_runtime.set_resources(transient_resources);
+    transient_nested.clear();
+    transient_children.clear();
+    assert(owned_graph_runtime.bindings().size() == 1U);
+    assert(owned_graph_runtime.bindings()[0].children.size() == 1U);
+    assert(owned_graph_runtime.bindings()[0].children[0].children.size() == 1U);
+    assert(owned_graph_runtime.bindings()[0].children[0].children[0].effect_id == 10U);
+    owned_graph_runtime.begin_step();
+    owned_graph_runtime.apply_actor_event(DynamicActorEvent{
+        .kind = DynamicActorEventKind::Spawn,
+        .actor = 2U,
+        .lane = 1U,
+        .channel = 0U,
+        .signal_value = 1U,
+        .actor_instance = 1U,
+        .script_frame = 1.0F,
+        .world = exact_world,
+        .world_authoritative = true,
+        .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+    assert(owned_graph_runtime.effect_events().size() == 1U);
+
+    // The Session registration boundary owns the same nested graph before
+    // the generic EffectRuntime is constructed.
+    std::vector<EffectChildRef> session_children;
+    session_children.push_back(EffectChildRef{
+        'E', 752U, 28U, 1U,
+        {60.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F},
+        {1.0F, 1.0F, 1.0F},
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED, 0});
+    const EffectBinding session_binding{
+        2U, 'V', 423U, 28U, RuntimeEffectParent::DynamicActor,
+        0xFFFFU, 1U, 0U, 1U,
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+        EffectLifetimeRule::ParentActorRetire,
+        EvidenceStatus::EXE_CONFIRMED,
+        std::span<const EffectChildRef>{
+            session_children.data(), session_children.size()}};
+    dmcresource::Session owned_session;
+    owned_session.effect_resources = {
+        {'V', 423U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+        {'E', 752U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+    };
+    assert(set_script_effect_bindings(
+        &owned_session,
+        std::span<const EffectBinding>{&session_binding, 1U}));
+    session_children.clear();
+    assert(owned_session.script_effect_bindings.size() == 1U);
+    assert(owned_session.script_effect_bindings[0].children.size() == 1U);
+    assert(owned_session.script_effect_bindings[0].children[0].effect_id == 752U);
+    assert(ensure_effect_runtime(&owned_session));
+    assert(owned_session.effect_runtime != nullptr);
+    assert(owned_session.effect_runtime->bindings().size() == 1U);
+    assert(owned_session.effect_runtime->bindings()[0].children.size() == 1U);
+    assert(owned_session.effect_runtime->bindings()[0].children[0].effect_id == 752U);
 
     return 0;
 }
