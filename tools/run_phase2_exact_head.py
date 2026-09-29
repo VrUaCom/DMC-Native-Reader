@@ -41,6 +41,8 @@ EXPECTED_MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
 EXPECTED_SIZE_AUTHORITY = "absolute-package-metrics+StorageStats.getAppBytes<=4MiB"
 EXPECTED_DEBUG_SIGNER_SHA256 = (
     "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
+# This inventory is the exact CMake contract for the v73 candidate:
+# Phase-2 inherited regressions plus the v72/v73 MotionScript/effects tests.
 EXPECTED_CTESTS = (
     "black_widow_state",
     "composite_builder",
@@ -50,9 +52,14 @@ EXPECTED_CTESTS = (
     "cxx23_profile",
     "dds_ptx_v1",
     "em028_corpus_contract",
+    "effect_visualization",
+    "effect_runtime",
     "gdata_legacy",
     "mod_spatial_adapter",
     "module_registry",
+    "motion_playback",
+    "pac_assembly",
+    "player_coat",
     "png_export_session",
     "ptx_model_texture",
     "ptx_runtime_compat",
