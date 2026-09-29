@@ -156,6 +156,46 @@ int main() {
     assert(missing_resource.effect_events().empty());
     assert(missing_resource.active_instances().empty());
 
+    // Child dispatch metadata is part of the decoded V graph. A mismatch
+    // must reject the complete graph instead of allowing a renderer to treat
+    // an E/P/G record as another dispatch kind.
+    constexpr EffectChildRef mismatched_child{
+        'E', 752U, 28U, 3U,
+        {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F},
+        {1.0F, 1.0F, 1.0F},
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED, 0};
+    constexpr std::array<EffectChildRef, 1> mismatched_children{{
+        mismatched_child}};
+    const EffectBinding malformed_graph{
+        2U, 'V', 423U, 28U, RuntimeEffectParent::DynamicActor,
+        0xFFFFU, 1U, 0U, 1U,
+        EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+        EffectLifetimeRule::ParentActorRetire,
+        EvidenceStatus::EXE_CONFIRMED,
+        std::span<const EffectChildRef>{mismatched_children}};
+    constexpr std::array<EffectResourceRef, 2> malformed_resources{{
+        {'V', 423U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+        {'E', 752U, 28U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED},
+    }};
+    EffectRuntime malformed_runtime(
+        std::span<const EffectBinding>{&malformed_graph, 1U});
+    malformed_runtime.set_resources(malformed_resources);
+    malformed_runtime.begin_step();
+    malformed_runtime.apply_actor_event(DynamicActorEvent{
+        .kind = DynamicActorEventKind::Spawn,
+        .actor = 2U,
+        .actor_state = 0U,
+        .lane = 1U,
+        .channel = 0U,
+        .signal_value = 1U,
+        .actor_instance = 1U,
+        .script_frame = 0.0F,
+        .world = exact_world,
+        .world_authoritative = true,
+        .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+    assert(malformed_runtime.effect_events().empty());
+    assert(malformed_runtime.active_instances().empty());
+
     // A corpus/structural record is retained as evidence but cannot become a
     // runtime instance without an EXE-confirmed consumer/factory binding.
     constexpr EffectBinding structural_binding{

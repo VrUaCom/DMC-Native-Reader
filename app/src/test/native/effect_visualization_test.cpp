@@ -61,6 +61,13 @@ int main() {
     assert(v->entries[0].translation[2] == 3.0F);
     assert(v->entries[0].rotation_degrees[1] == 90.0F);
     assert(v->entries[0].scale[0] == 1.0F);
+    put_u16(v_bytes, 0x08U, 3U);
+    const auto deferred = composite_record(v_record);
+    assert(deferred && deferred->entries.size() == 1U);
+    assert(deferred->entries[0].activation_offset == 3);
+    put_u16(v_bytes, 0x08U, static_cast<std::uint16_t>(-2));
+    const auto signed_deferred = composite_record(v_record);
+    assert(signed_deferred && signed_deferred->entries[0].activation_offset == -2);
     assert(views::render_effect_record_view(v_record).available());
     assert(views::render_effect_visual_view(v_record).available());
 

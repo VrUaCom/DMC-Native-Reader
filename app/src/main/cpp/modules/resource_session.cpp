@@ -788,7 +788,7 @@ struct PreparedView final {
 [[nodiscard]] bool compose_effect_world(
     const Matrix4& parent, const motion::EffectChildRef& child,
     Matrix4* out) noexcept {
-    if (out == nullptr) return false;
+    if (out == nullptr || !effect_child_shape_is_valid(child)) return false;
     const auto local = effect_child_matrix(child);
     // Same local*parent order as the canonical MOD world transform builder.
     return matrix_ops::multiply(local, parent, out);
@@ -808,6 +808,34 @@ struct PreparedView final {
     case 3U: return 'V';
     default: return '\0';
     }
+}
+
+[[nodiscard]] std::uint8_t dispatch_kind_for_effect_kind(
+    char effect_kind) noexcept {
+    switch (effect_kind) {
+    case 'P': return 0U;
+    case 'E': return 1U;
+    case 'G': return 2U;
+    case 'V': return 3U;
+    default: return 0xFFU;
+    }
+}
+
+[[nodiscard]] bool effect_child_shape_is_valid(
+    const motion::EffectChildRef& child) noexcept {
+    if (effect_kind_for_dispatch(child.dispatch_kind) != child.effect_kind) {
+        return false;
+    }
+    for (const float value : child.translation) {
+        if (!std::isfinite(value)) return false;
+    }
+    for (const float value : child.rotation_degrees) {
+        if (!std::isfinite(value)) return false;
+    }
+    for (const float value : child.scale) {
+        if (!std::isfinite(value)) return false;
+    }
+    return true;
 }
 
 [[nodiscard]] bool append_effect_sprite(
@@ -865,14 +893,19 @@ bool collect_effect_children(
     const Session& session, const motion::RuntimeEffectInstance& instance,
     const motion::EffectChildRef& child, const Matrix4& parent_world,
     std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
-    if (out == nullptr || depth > 16U) return false;
+    if (out == nullptr || depth >= 16U ||
+        !effect_child_shape_is_valid(child) ||
+        find_effect_record(session, child.effect_kind, child.effect_id,
+                           child.resource_slot) == nullptr) {
+        return false;
+    }
     // The signed V threshold is owned by the V-local update clock. The EXE
     // reverse has not proven that clock equal to MotionScript frame/actor age,
     // so only the canonical entry threshold (zero) is presentable here. A
     // non-zero child remains in the runtime/resource graph until the generic V
     // update bridge is closed; converting it to a guessed script-frame timer
     // would create a false E/G/P event.
-    if (child.activation_offset > 0) {
+    if (child.activation_offset != 0) {
         return true;
     }
     Matrix4 world;
@@ -930,6 +963,7 @@ bool collect_effect_children(
     if (out == nullptr || session.effect_runtime == nullptr ||
         session.effect_banks.empty()) return false;
     try {
+        std::vector<ViewState::EffectSprite> staged;
         for (const auto& instance : session.effect_runtime->presentation_instances()) {
             const auto& source = instance.source;
             if (!source.world_authoritative) continue;
@@ -937,7 +971,7 @@ bool collect_effect_children(
                 for (const auto& child : source.children) {
                     if (!collect_effect_children(
                             session, instance, child, source.world,
-                            &out->effect_sprites, 0U)) {
+                            &staged, 0U)) {
                         return false;
                     }
                 }
@@ -949,18 +983,21 @@ bool collect_effect_children(
             root.effect_kind = source.effect_kind;
             root.effect_id = static_cast<std::uint16_t>(source.effect_id);
             root.resource_slot = source.resource_slot;
-            root.dispatch_kind = source.effect_kind == 'V' ? 3U : 1U;
+            root.dispatch_kind =
+                dispatch_kind_for_effect_kind(source.effect_kind);
             root.evidence = source.evidence;
             root.scale = {1.0F, 1.0F, 1.0F};
             if (!collect_effect_children(
                     session, instance, root, source.world,
-                    &out->effect_sprites, 0U)) {
+                    &staged, 0U)) {
                 return false;
             }
         }
-        return !out->effect_sprites.empty();
+        if (staged.empty()) return false;
+        out->effect_sprites.insert(
+            out->effect_sprites.end(), staged.begin(), staged.end());
+        return true;
     } catch (...) {
-        out->effect_sprites.clear();
         return false;
     }
 }

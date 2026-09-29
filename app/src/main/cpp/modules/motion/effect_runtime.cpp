@@ -56,6 +56,35 @@ void copy_effect_bindings(
     }
 }
 
+[[nodiscard]] char effect_kind_for_dispatch(
+    std::uint8_t dispatch_kind) noexcept {
+    switch (dispatch_kind) {
+    case 0U: return 'P';
+    case 1U: return 'E';
+    case 2U: return 'G';
+    case 3U: return 'V';
+    default: return '\0';
+    }
+}
+
+[[nodiscard]] bool effect_child_shape_is_valid(
+    const EffectChildRef& child, std::size_t depth) noexcept {
+    if (depth > 16U ||
+        effect_kind_for_dispatch(child.dispatch_kind) != child.effect_kind) {
+        return false;
+    }
+    for (const float value : child.translation) {
+        if (!std::isfinite(value)) return false;
+    }
+    for (const float value : child.rotation_degrees) {
+        if (!std::isfinite(value)) return false;
+    }
+    for (const float value : child.scale) {
+        if (!std::isfinite(value)) return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool can_materialize(EvidenceStatus status) noexcept {
     // Resource presence alone is not a runtime call, and structural or
     // undecoded records must remain inspection data. Only a proven EXE
@@ -107,7 +136,25 @@ bool EffectRuntime::matches(const EffectBinding& binding,
 }
 
 bool EffectRuntime::resource_available(const EffectBinding& binding) const noexcept {
+    const auto shape_tree_is_valid =
+        [](const auto& self, const EffectChildRef& child,
+           std::size_t depth) -> bool {
+        if (!effect_child_shape_is_valid(child, depth)) return false;
+        return std::all_of(
+            child.children.begin(), child.children.end(),
+            [&self, depth](const EffectChildRef& nested) {
+                return self(self, nested, depth + 1U);
+            });
+    };
+    if (!std::all_of(
+            binding.children.begin(), binding.children.end(),
+            [&shape_tree_is_valid](const EffectChildRef& child) {
+                return shape_tree_is_valid(shape_tree_is_valid, child, 0U);
+            })) {
+        return false;
+    }
     if (!resource_gate_enabled_) return true;
+
     const auto contains = [this](char kind,
                                  std::uint16_t id,
                                  std::uint32_t slot,
