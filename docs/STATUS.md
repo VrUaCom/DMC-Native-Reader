@@ -65,10 +65,13 @@ APK verifier.
   `EM028` through Native Reader and rotating the screen, the restored
   session shows `PL000`; current `EM028` disappears. The selected
   slot/costume also resets to the first entry in comparable cases.
-- 🟡 A MotionScript observation showed a short-lived effect at the weapon handle
-  instead of the muzzle and a vertically oriented rocket-like visual. The exact
-  action and capture are not yet identified, so this remains an attachment/
-  orientation investigation item rather than a confirmed effect ID.
+- 🟡 Video evidence now identifies the MotionScript case: in
+  `em034.pac · assembled` / `Lady · costume 1`, the short yellow-white effect
+  repeats around the weapon handle/body area rather than the muzzle during
+  `S12` acts 5, 4 and 3 (`slot_0005.mot`, `slot_0004.mot`,
+  `slot_0003.mot`). A separate rocket-like visual is briefly near-vertical.
+  This is classified as an attachment/orientation regression; the exact
+  V-resource, parent/joint and local transform still require code-level trace.
 
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
