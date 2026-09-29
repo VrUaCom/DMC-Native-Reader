@@ -6,7 +6,7 @@
 
 До повного завершення затвердженого Native Reader plan усі зміни виконуються тільки в:
 
-\`NR-Luna-v73\`
+`NR-Luna-v73`
 
 Це стосується:
 
@@ -25,10 +25,10 @@
 
 До окремого explicit GO Віктора заборонено торкатися:
 
-- \`main\`;
-- \`platform/android\`;
-- \`platform/windows\`;
-- \`platform/ios\`.
+- `main`;
+- `platform/android`;
+- `platform/windows`;
+- `platform/ios`.
 
 Заборонені:
 
@@ -46,7 +46,7 @@ Platform-гілки залишаються збереженими як майб�
 
 ## Порядок
 
-1. Завершити повний plan у \`NR-Luna-v73\`.
+1. Завершити повний plan у `NR-Luna-v73`.
 2. Закрити всі source/runtime/test/replay/effect blockers.
 3. Виконати exact-head CI/APK/physical acceptance для v73.
 4. Отримати explicit GO на promotion.
@@ -54,9 +54,9 @@ Platform-гілки залишаються збереженими як майб�
 
 ## Branch policy для агентів
 
-Перед кожною дією перевірити target branch. Якщо target не дорівнює \`NR-Luna-v73\`, дію не виконувати.
+Перед кожною дією перевірити target branch. Якщо target не дорівнює `NR-Luna-v73`, дію не виконувати.
 
-\`main\` є core baseline, але на цьому етапі він read-only для поточної роботи. Platform branches є deferred wrappers. Поточна canonical implementation line — тільки \`NR-Luna-v73\`.
+`main` є core baseline, але на цьому етапі він read-only для поточної роботи. Platform branches є deferred wrappers. Поточна canonical implementation line — тільки `NR-Luna-v73`.
 
 ## Поточна робоча ціль
 
