@@ -4,7 +4,7 @@
 Репозиторій: `VrUaCom/DMC-Native-Reader`  
 Канонічна робоча гілка: `NR-Luna-v73`  
 Parent HEAD: `29b26adf4b5bf2c2ee30328fb30209757baa098b`
-Implementation checkpoints: `9e8c492` → `03a85c9`
+Implementation checkpoints: `9e8c492` → `03a85c9` → `b9d82ea`
 
 ## Scope
 
