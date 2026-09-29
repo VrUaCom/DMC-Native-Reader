@@ -8,44 +8,47 @@ DMC Native Reader currently targets resource data from **Devil May Cry 3: Specia
 
 ## Accepted `main`
 
-- current `main`: `d3bf1732ded403bd9631663226bcaf8ad19682bb`
-- Android product line: **post-v68 / v72 runtime source**
+- current `main`: `52210874f74d5526c2f1bd9000aaeab4594a03de`
+- Android product line: **v72/v73 runtime source under review**
 - Android package: `com.dmcrengine.nativereader`
 - Android ABI: `arm64-v8a`
 - minSdk / targetSdk: `26 / 36`
 - native product language: target-scoped **C++23**
 - Android release tag: `android-v68-1.0.41`
 
-The v68 line and the post-v68 FXBANK/Visual-Info integration are merged into
-`main`. The current Lady/effects continuation is kept in `NR-Luna-v73` until
-physical acceptance is complete.
+The v68 line, post-v68 FXBANK/Visual-Info integration and the reviewed Phase-2
+evidence/tooling are merged into `main`. The current Lady/LEDi/FX and
+MotionScript continuation is kept in `NR-Luna-v73` until exact-head CI and
+physical Android acceptance are complete.
+
+Current v73 review head: `09c8dfedfd8eeb5975ed974cf27e145905ff181b`.
+This head is a merge of the current core acceptance contract and the v73
+Lady/effects continuation; it is the active integration surface.
 
 ## Phase 2 evidence integration
 
-The reviewed Phase 2 evidence/unblock stack is preserved as a merge candidate
-for `main`. Its product code does not replace the current C++23 core; the core
-and Spider migration are already present in `main`. The merge contributes the
-reviewed evidence tooling and regression contracts:
+Phase 2 is already merged into `main` through merge commit
+`bfdb99f2520b71d852bb299b5a07881131e80aa0`. Its product code and Spider/C++23
+core are not a pending merge candidate.
 
-- pre-provisioned/offline toolchain validation;
-- deterministic Phase 2 preflight;
-- SDK metadata and candidate-identity regressions;
-- exact-head runner updates and evidence-contract documentation.
+The retained Phase-2 branch `phase2/consolidated` is an immutable historical
+snapshot. The exact-head tooling remains active as regression infrastructure,
+but it must target the reviewed current commit rather than the old branch.
 
-The canonical execution candidate remains the live head of
-`phase2/evidence-unblock-integration`; preflight is diagnostic only and does
-not substitute for the exact-head build/evidence run.
+The v73 runner now inventories the inherited Phase-2 tests plus the current
+MotionScript/effects tests. Preflight is diagnostic only and does not replace
+the exact-head build/evidence run.
 
 ## Branch architecture
 
 - `main` — shared C++23 Native Reader core;
-- `android` — Android shell and APK integration;
-- `windows` — Windows shell and portable artifact integration;
-- `ios` — iOS shell integration;
+- `platform/android` — Android shell and APK integration;
+- `platform/windows` — Windows shell and portable artifact integration;
+- `platform/ios` — iOS shell integration;
 - `NR-Luna-v73` — current Lady, FX and MotionScript/effects core continuation.
 
 Historical feature, CI and phase branches remain available as source evidence;
-they are not deleted as part of the consolidation.
+cleanup must preserve their exact heads/tags before any retirement.
 
 ## Platform status
 
@@ -116,8 +119,10 @@ Do not use “Devil May Cry 3 HD Collection” as a product title.
 
 ## Immediate work
 
-1. keep Android v68 release documentation and source identity synchronized;
-2. bring the Windows implementation forward from the public v1.0.0 Preview baseline toward current shared-core parity;
+1. keep Android release documentation and source identity synchronized;
+2. run exact-head validation for the current v73 review head;
+3. complete Lady effects renderer/lifecycle coverage and physical Android acceptance;
+4. bring the Windows implementation forward from the public v1.0.0 Preview baseline toward current shared-core parity;
 3. keep platform-specific release claims scoped to artifacts that were actually built and published;
 4. continue promoting deeper resource behavior only with bounded native parsing, evidence and regressions;
 5. keep editing/writing outside Native Reader.
