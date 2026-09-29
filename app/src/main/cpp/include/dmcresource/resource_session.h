@@ -147,7 +147,7 @@ struct Session {
     // Session-owned storage for nested binding spans. Profile providers may
     // supply temporary vectors; the session must retain the full graph before
     // Script Play or runtime construction can outlive the provider call.
-    std::vector<std::unique_ptr<std::vector<motion::EffectChildRef>>>
+    std::vector<std::shared_ptr<std::vector<motion::EffectChildRef>>>
         script_effect_child_groups;
     // Optional profile-owned producer for any Script Play profile. Its
     // prepare/reset/step hooks are called only by Script Play; raw MOT never

@@ -14,14 +14,14 @@ constexpr std::uint16_t kAnyActorState = 0xFFFFU;
 constexpr std::uint8_t kAnyByte = 0xFFU;
 
 using OwnedEffectChildGroups =
-    std::vector<std::unique_ptr<std::vector<EffectChildRef>>>;
+    std::vector<std::shared_ptr<std::vector<EffectChildRef>>>;
 
 [[nodiscard]] std::span<const EffectChildRef> copy_effect_child_graph(
     std::span<const EffectChildRef> source,
     OwnedEffectChildGroups* groups) {
     if (groups == nullptr || source.empty()) return {};
 
-    auto group = std::make_unique<std::vector<EffectChildRef>>();
+    auto group = std::make_shared<std::vector<EffectChildRef>>();
     group->reserve(source.size());
     for (const auto& child : source) {
         EffectChildRef copy = child;

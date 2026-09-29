@@ -14,7 +14,7 @@ Parent HEAD: `29b26adf4b5bf2c2ee30328fb30209757baa098b`
 ## Pass 01 — статус
 
 - ✅ Generic EffectRuntime копіює весь nested `EffectChildRef` graph у runtime-owned storage.
-- ✅ Session registration boundary копіює child graph до завершення lifetime profile provider.
+- ✅ Session registration boundary копіює child graph до завершення lifetime profile provider і зберігає Session copyability.
 - ✅ Self-replacement/reconfiguration зберігає старі span owners до завершення копіювання.
 - ✅ Resource gate продовжує перевіряти root і всі nested child resources з exact `(kind,id,slot)`.
 - ✅ Додані regression assertions для runtime-level і Session-level lifetime safety.

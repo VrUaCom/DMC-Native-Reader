@@ -283,7 +283,7 @@ private:
     // Runtime-owned copies keep nested child spans valid even when a
     // profile provider's temporary vectors go out of scope. The pointed-to
     // vectors are heap-stable; each span points into one immutable group.
-    std::vector<std::unique_ptr<std::vector<EffectChildRef>>>
+    std::vector<std::shared_ptr<std::vector<EffectChildRef>>>
         owned_child_groups_;
     std::vector<EffectBinding> bindings_;
     std::vector<EffectResourceRef> resources_;
