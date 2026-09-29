@@ -119,7 +119,7 @@
 
 ### Що ще не закрито
 
-- 🟡 Generic profile registry: Lady binding data фізично ще знаходиться в shared `part_attachment.cpp` і має em034-specific installation condition.
+- ✅ Generic profile registry доданий у `effect_profile_registry.cpp`; Lady binding data винесена з shared `part_attachment.cpp`; unknown profiles залишаються effect-free.
 - 🔴 P/G/V runtime update/presentation не завершені:
   - E children materialize only partially;
   - P/G children retained but not rendered;
@@ -234,8 +234,8 @@ Platform synchronization та branch cleanup є **deferred post-v73 operations**
 
 ## Рекомендований порядок виконання
 
-1. Generic profile registry і винесення Lady binding data з shared hardcoded path.
-2. V/P/G/E animation/update/presentation graph.
+1. ✅ Generic profile registry і винесення Lady binding data з shared hardcoded path — `27f192a`.
+2. 🟡 V/P/G/E animation/update/presentation graph.
 3. Full effect lifecycle + cleanup tests.
 4. Sequential/scrub/reverse replay tests.
 5. JNI/MainActivity Effects ON/OFF.
