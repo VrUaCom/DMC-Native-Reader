@@ -764,6 +764,12 @@ struct PreparedView final {
     return it == bank->textures.end() ? nullptr : &it->image;
 }
 
+[[nodiscard]] char effect_kind_for_dispatch(
+    std::uint8_t dispatch_kind) noexcept;
+
+[[nodiscard]] bool effect_child_shape_is_valid(
+    const motion::EffectChildRef& child) noexcept;
+
 [[nodiscard]] Matrix4 effect_child_matrix(
     const motion::EffectChildRef& child) noexcept {
     constexpr float kDegreesToRadians = 0.017453292519943295769F;
