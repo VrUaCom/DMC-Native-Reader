@@ -24,8 +24,8 @@
 
 - ✅ `main`: `52210874f74d5526c2f1bd9000aaeab4594a03de`
 - ✅ Audit baseline для `NR-Luna-v73`: `7b34490a53c7d221ca94cc5c5925b3ee74e2030c`.
-- ✅ Pass 01 implementation checkpoint: `b9d82eaa14cc853e647996555bb19d5608a49af7`.
-- ✅ На code checkpoint Pass 01 v73 випереджає `main` на 23 коміти і не відстає від нього.
+- ✅ Pass 01 implementation checkpoint: `2045e8ccf91cfa222227eac981bcb04a55f51f63`.
+- ✅ На code checkpoint Pass 01 v73 випереджає `main` на 24 коміти і не відстає від нього.
 - ✅ Phase 2 historical snapshot: `phase2/consolidated` = `e8f380113b7372210745957befcd8f890b9caa7a`.
 - ✅ Phase 2 вже входить в ancestry `main`; повторне blind merge не потрібне.
 - 🟡 Phase 3 historical snapshot: `phase3/consolidated-pre-lady` = `d0154abca364f9fb1194e72770fc3de760b9a4b9`; він diverged від current main і має 39 унікальних старих комітів. Потрібна selective reconciliation.
