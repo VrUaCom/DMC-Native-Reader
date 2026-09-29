@@ -1,8 +1,8 @@
 # NR Luna v73 — Native Reader Core A→Я Audit
 
 Дата: 2026-09-29  
-Репозиторій: \`VrUaCom/DMC-Native-Reader\`  
-Канонічна робоча гілка: \`NR-Luna-v73\`  
+Репозиторій: `VrUaCom/DMC-Native-Reader`  
+Канонічна робоча гілка: `NR-Luna-v73`  
 Мета: провести актуальне ядро v73 через увесь Native Reader і не позначати незавершене як виконане.
 
 ## Робочий scope lock
@@ -22,23 +22,23 @@
 
 ## 0. Exact refs і межі аудиту
 
-- ✅ \`main\`: \`52210874f74d5526c2f1bd9000aaeab4594a03de\`
-- ✅ \`NR-Luna-v73\`: \`7b34490a53c7d221ca94cc5c5925b3ee74e2030c\`
-- ✅ v73 випереджає \`main\` на 8 комітів і не відстає від нього.
-- ✅ Phase 2 historical snapshot: \`phase2/consolidated\` = \`e8f380113b7372210745957befcd8f890b9caa7a\`.
-- ✅ Phase 2 вже входить в ancestry \`main\`; повторне blind merge не потрібне.
-- 🟡 Phase 3 historical snapshot: \`phase3/consolidated-pre-lady\` = \`d0154abca364f9fb1194e72770fc3de760b9a4b9\`; він diverged від current main і має 39 унікальних старих комітів. Потрібна selective reconciliation.
-- ✅ \`V83\` не є окремою GitHub-гілкою; актуальна лінія — \`NR-Luna-v73\`.
+- ✅ `main`: `52210874f74d5526c2f1bd9000aaeab4594a03de`
+- ✅ `NR-Luna-v73`: `7b34490a53c7d221ca94cc5c5925b3ee74e2030c`
+- ✅ v73 випереджає `main` на 8 комітів і не відстає від нього.
+- ✅ Phase 2 historical snapshot: `phase2/consolidated` = `e8f380113b7372210745957befcd8f890b9caa7a`.
+- ✅ Phase 2 вже входить в ancestry `main`; повторне blind merge не потрібне.
+- 🟡 Phase 3 historical snapshot: `phase3/consolidated-pre-lady` = `d0154abca364f9fb1194e72770fc3de760b9a4b9`; він diverged від current main і має 39 унікальних старих комітів. Потрібна selective reconciliation.
+- ✅ `V83` не є окремою GitHub-гілкою; актуальна лінія — `NR-Luna-v73`.
 
 ## A. Core identity і архітектурна межа
 
-- ✅ Один Native Reader core у \`main\`/v73.
+- ✅ Один Native Reader core у `main`/v73.
 - ✅ Native Reader core використовує target-scoped C++23.
 - ✅ Rengine ReaderCore залишається окремою C++20 dependency.
 - ✅ CMake має duplicate-source guard.
 - ✅ CMake має duplicate-native-test guard.
 - ✅ Lady/FX changes не створюють окремого другого ядра.
-- 🟡 Потрібно завершити формальне перенесення всіх актуальних branch-specific core changes у \`main\`, коли v73 пройде acceptance.
+- 🟡 Потрібно завершити формальне перенесення всіх актуальних branch-specific core changes у `main`, коли v73 пройде acceptance.
 - ⚫ General Rengine mutation не дозволяється; Rengine використовується як read-side/reverse authority.
 
 ## B. Phase 1
@@ -52,12 +52,12 @@
 
 ## C. Phase 2 — C++23 baseline і evidence contract
 
-- ✅ Phase 2 source/static work інтегрований у \`main\` і є базою v73.
+- ✅ Phase 2 source/static work інтегрований у `main` і є базою v73.
 - ✅ Exception/noexcept boundary зафіксована.
 - ✅ PTX RuntimeCompat architecture/import history збережена.
 - ✅ FXBANK/Visual-Info/post-v68 additions уже присутні в current main ancestry.
 - ✅ v73 runner inventory адаптований з historical 23 до фактичних 28 CMake tests.
-- ✅ \`main\` runner inventory адаптований до фактичних 24 tests.
+- ✅ `main` runner inventory адаптований до фактичних 24 tests.
 - ✅ Historical 23-test Phase 2 contract не переписується.
 - 🔴 Exact-head v73 Linux/Android execution ще не підтверджена.
 - 🔴 Debug APK і unsigned release APK саме з v73 ще не зібрані та не перевірені.
@@ -67,10 +67,10 @@
 ## D. Format і resource materialization
 
 - ✅ PAC/PNST resource session pipeline використовується як спільна основа.
-- ✅ FXBANK canonical identity = \`(kind, u16 id)\`.
+- ✅ FXBANK canonical identity = `(kind, u16 id)`.
 - ✅ FXBANK loader ABI виправлений під EXE.
 - ✅ M record споживає record + companion slot.
-- ✅ Companion може бути PTX або empty slot; правило \`0x31\` відкинуто.
+- ✅ Companion може бути PTX або empty slot; правило `0x31` відкинуто.
 - ✅ Exact effect resource provenance зберігається: kind, id, slot.
 - ✅ Resource dependencies не зливаються в один guessed resource.
 - ✅ Environment collision structures додані до v73 reader model.
@@ -87,19 +87,19 @@
 - ✅ CEm034 state/signal bridge присутній.
 - ✅ Dynamic actor events відокремлені від persistent equipment.
 - ✅ Seek/reset базова runtime модель присутня.
-- 🟡 Full replay determinism через реальний \`run_script_frame\` і всі actor/effect consumers ще не доведена.
+- 🟡 Full replay determinism через реальний `run_script_frame` і всі actor/effect consumers ще не доведена.
 - 🟡 Reverse seek 45 → 10 і sequential-vs-scrub acceptance ще не green.
-- ⚫ Lady-specific \`play_lady_effect()\` API не допускається.
+- ⚫ Lady-specific `play_lady_effect()` API не допускається.
 
 ## F. Generic EffectRuntime
 
 ### Уже підтверджено
 
-- ✅ Generic \`EffectRuntime\`.
-- ✅ \`ScriptEffectBridge\`.
-- ✅ \`RuntimeEffectSpawn\`.
-- ✅ \`RuntimeEffectInstance\`.
-- ✅ \`RuntimeEffectEvent\`.
+- ✅ Generic `EffectRuntime`.
+- ✅ `ScriptEffectBridge`.
+- ✅ `RuntimeEffectSpawn`.
+- ✅ `RuntimeEffectInstance`.
+- ✅ `RuntimeEffectEvent`.
 - ✅ Parent domains: World, CharacterRoot, BodyJoint, PersistentComponent, DynamicActor, RuntimeMatrix, ProjectileTransform, TetherPoint.
 - ✅ Evidence gate.
 - ✅ Resource gate.
@@ -119,7 +119,7 @@
 
 ### Що ще не закрито
 
-- 🟡 Generic profile registry: Lady binding data фізично ще знаходиться в shared \`part_attachment.cpp\` і має em034-specific installation condition.
+- 🟡 Generic profile registry: Lady binding data фізично ще знаходиться в shared `part_attachment.cpp` і має em034-specific installation condition.
 - 🔴 P/G/V runtime update/presentation не завершені:
   - E children materialize only partially;
   - P/G children retained but not rendered;
@@ -169,9 +169,9 @@
 ## J. Platform wrappers
 
 - ✅ Канонічні wrapper-гілки визначені:
-  - \`platform/android\`
-  - \`platform/windows\`
-  - \`platform/ios\`
+  - `platform/android`
+  - `platform/windows`
+  - `platform/ios`
 - ✅ Android wrapper зберігає platform-specific diagnostics/UI.
 - ✅ Windows wrapper зберігає Windows-specific parity/Open With.
 - ✅ iOS wrapper зберігається окремо від portable core.
@@ -184,9 +184,9 @@
 ## K. Tests і CMake
 
 - ✅ v73 CMake inventory = 28 registered native tests.
-- ✅ v73 \`run_phase2_exact_head.py\` expected inventory = 28.
-- ✅ \`effect_runtime\` test присутній.
-- ✅ \`effect_visualization\` test присутній у v73 CMake.
+- ✅ v73 `run_phase2_exact_head.py` expected inventory = 28.
+- ✅ `effect_runtime` test присутній.
+- ✅ `effect_visualization` test присутній у v73 CMake.
 - ✅ Lane isolation/resource/evidence/deferred transform/reset базові тести присутні.
 - 🟡 Full exact-head v73 test execution не підтверджена в доступному середовищі.
 - 🟡 Full V/P/G renderer tests відсутні.
@@ -243,4 +243,4 @@ Platform synchronization та branch cleanup є **deferred post-v73 operations**
 7. Costume1/costume2 physical acceptance.
 8. Wrapper branch synchronization.
 9. Archive tags і branch cleanup.
-10. Після цього — selective promotion стабільних v73 core changes у \`main\`.
+10. Після цього — selective promotion стабільних v73 core changes у `main`.
