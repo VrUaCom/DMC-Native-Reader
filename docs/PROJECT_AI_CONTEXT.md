@@ -340,7 +340,9 @@ Work only in the explicitly authorized repository/branch set.
 For the current migration program:
 - repository: `VrUaCom/DMC-Native-Reader` only;
 - Phase 2 is already merged into `main` at `bfdb99f2520b71d852bb299b5a07881131e80aa0`; do not treat PR #95 or `phase2/evidence-unblock-integration` as a live execution candidate;
-- current v73 Pass 01 code checkpoint: `NR-Luna-v73` at `2045e8ccf91cfa222227eac981bcb04a55f51f63`;
+- current v73 Pass 02 code checkpoint: `NR-Luna-v73` at `6cae2e1df5906236228a32d051358e71074c72b4`;
+- Pass 01 remains the historical nested-effect ownership/lifecycle checkpoint at
+  `2045e8ccf91cfa222227eac981bcb04a55f51f63`;
 - `phase2/consolidated` remains a historical immutable snapshot, not a second product core;
 - historical branch `feature/png-export-multi-mod-v27` / PR #33 is merged and is no longer live execution authority;
 - `VrUaCom/dmc-rengine-cpp` remains absolute READ-ONLY, including during the PTX copy exception;

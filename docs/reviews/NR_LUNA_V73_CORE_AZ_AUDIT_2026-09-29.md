@@ -25,6 +25,12 @@
 - ✅ `main`: `52210874f74d5526c2f1bd9000aaeab4594a03de`
 - ✅ Audit baseline для `NR-Luna-v73`: `7b34490a53c7d221ca94cc5c5925b3ee74e2030c`.
 - ✅ Pass 01 implementation checkpoint: `2045e8ccf91cfa222227eac981bcb04a55f51f63`.
+- ✅ Phase 2 Pass 02 code checkpoint: `6cae2e1df5906236228a32d051358e71074c72b4`.
+- ✅ Pass 02 закрив fail-closed child dispatch/finite-transform gate, exact
+  `(kind,id,slot)` lookup для кожного presentable child, staged presentation
+  без partial graph draw і deferred handling для всіх non-zero V offsets.
+- 🟡 На code checkpoint Pass 02 exact-head build/CTest ще не виконані; цей ref
+  не є execution PASS.
 - ✅ На code checkpoint Pass 01 v73 випереджає `main` на 26 комітів і не відстає від нього.
 - ✅ Phase 2 historical snapshot: `phase2/consolidated` = `e8f380113b7372210745957befcd8f890b9caa7a`.
 - ✅ Phase 2 вже входить в ancestry `main`; повторне blind merge не потрібне.

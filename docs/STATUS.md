@@ -21,10 +21,11 @@ evidence/tooling are merged into `main`. The current Lady/LEDi/FX and
 MotionScript continuation is kept in `NR-Luna-v73` until exact-head CI and
 physical Android acceptance are complete.
 
-Current v73 Pass 01 code checkpoint: `2045e8ccf91cfa222227eac981bcb04a55f51f63`.
-This checkpoint contains the current Lady/effects continuation, generic profile
-registry, and the Pass 01 nested effect-graph ownership contract; it is the
-active v73 implementation surface.
+Current v73 Pass 02 code checkpoint: `6cae2e1df5906236228a32d051358e71074c72b4`.
+This checkpoint contains the Pass 01 runtime ownership/lifecycle base plus the
+Pass 02 exact P/E/G/V child-graph presentation gate. Pass 01 remains the
+historical ownership checkpoint; the active v73 implementation surface is now
+the Pass 02 checkpoint.
 
 ## Phase 2 evidence integration
 
