@@ -183,6 +183,12 @@ bool install_effect_bindings(dmcresource::Session* session) noexcept {
     if (session == nullptr) return false;
 
     session->script_effect_bindings.clear();
+    session->script_effect_child_groups.clear();
+    if (session->effect_runtime != nullptr) {
+        session->effect_runtime->reset();
+        session->effect_runtime->set_bindings(
+            std::span<const EffectBinding>{});
+    }
     for (const auto& provider : effect_profile_providers()) {
         if (provider.matches == nullptr ||
             provider.bindings == nullptr ||

@@ -20,6 +20,7 @@ Implementation checkpoints: `9e8c492` → `03a85c9` → `b9d82ea`
 - ✅ Resource gate продовжує перевіряти root і всі nested child resources з exact `(kind,id,slot)`.
 - ✅ Додані regression assertions для runtime-level і Session-level lifetime safety.
 - ✅ Canonical retire є terminal; пізніший update не resurrect-ить retired instance.
+- ✅ Profile switch очищає старі runtime bindings; unknown profile залишається effect-free.
 - 🟡 Повний P/E/G/V presentation/update path ще не закритий.
 - 🟡 V-local clock, A animation progression, cleanup/replay ще попереду.
 - 🔴 Exact-head build, APK і physical Android acceptance ще не виконані для нового HEAD.

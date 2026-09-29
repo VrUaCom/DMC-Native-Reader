@@ -510,6 +510,21 @@ int main() {
     assert(!install_effect_bindings(&unknown_profile));
     assert(unknown_profile.script_effect_bindings.empty());
 
+    // Switching an already configured Session to an unknown profile must
+    // clear the old runtime table as well as the Session registration table.
+    dmcresource::Session switched_profile;
+    switched_profile.archive_name = "scr/em034.pac";
+    switched_profile.effect_bank_slots.push_back(28U);
+    assert(install_effect_bindings(&switched_profile));
+    assert(ensure_effect_runtime(&switched_profile));
+    assert(switched_profile.effect_runtime != nullptr);
+    assert(!switched_profile.effect_runtime->bindings().empty());
+    switched_profile.archive_name = "scr/em999.pac";
+    assert(!install_effect_bindings(&switched_profile));
+    assert(switched_profile.script_effect_bindings.empty());
+    assert(switched_profile.effect_runtime->bindings().empty());
+    assert(switched_profile.effect_runtime->active_instances().empty());
+
     // Pass 01: nested binding spans are copied into runtime-owned storage.
     // The provider-owned vectors are then destroyed; the runtime must retain
     // the exact child graph and resource provenance without dangling spans.
