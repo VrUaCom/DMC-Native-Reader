@@ -50,16 +50,30 @@ file-manager route, де поточний ресурс зберігається.
 Це не виглядає як втрата або помилка парсингу `EM028`; симптом виникає
 саме під час Android configuration/state restoration.
 
-## Effect observation
+## Effect observation — video evidence
 
-Під час запуску MotionScript спостерігалися:
+Відеозапис переглянуто покадрово. Контекст: `em034.pac · assembled`,
+`Lady · costume 1`.
 
-- короткий effect біля рукоятки замість дула;
-- коротка rocket-like visual у вертикальній орієнтації.
+У capture повторюється короткий жовто-білий effect у неправильній точці:
 
-Без точного action ID або відео не можна достовірно визначити, чи це
-неправильний parent/joint, local rotation або конкретний V-resource. Потрібен
-окремий reproduction capture.
+- приблизно `00:07.87` — `S12 · act 5 loop · slot_0006.pac/slot_0005.mot`;
+- приблизно `00:13.60` — `S12 · act 4 loop · slot_0006.pac/slot_0004.mot`;
+- приблизно `00:15.53` — `S12 · act 3 loop · slot_0006.pac/slot_0003.mot`.
+
+В усіх трьох випадках спалах видно в зоні корпуса/рукоятки зброї, а не на
+вільному кінці дула Kalina. Окремо видно короткий rocket-like об'єкт майже у
+вертикальній орієнтації, тоді як основна Kalina у кадрі лежить під іншим
+кутом. Відео не дає надійно визначити V-resource або траєкторію projectile.
+
+### Preliminary classification
+
+- 🟡 `FX_ATTACHMENT_ORIENTATION_REGRESSION`: неправильні position/parent або
+  local rotation підтверджені візуально; code-level owner ще не визначений.
+- Це не виглядає як spawn у світовому origin: effect повторно з'являється
+  відносно персонажа/зброї.
+- Точний V-resource, parent/joint і числовий local transform залишаються
+  відкритими для code-level trace.
 
 ## Acceptance disposition
 
