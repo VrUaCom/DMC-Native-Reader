@@ -101,6 +101,20 @@ int main() {
     assert(runtime.effect_events()[0].kind == RuntimeEffectEvent::Kind::Retire);
     assert(runtime.active_instances().empty());
 
+    // Retire is terminal: a later authoritative update is retained as input
+    // but cannot resurrect the retired effect instance.
+    runtime.begin_step();
+    runtime.apply_actor_event(DynamicActorEvent{
+        .kind = DynamicActorEventKind::Update,
+        .actor = 2U,
+        .actor_instance = 2U,
+        .script_frame = 11.0F,
+        .world = exact_world,
+        .world_authoritative = true,
+        .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+    assert(runtime.effect_events().empty());
+    assert(runtime.active_instances().empty());
+
     // When a Session supplies a canonical bank catalog, the exact kind/id and
     // source slot must exist before a confirmed binding can materialize.
     constexpr EffectResourceRef present_resource{

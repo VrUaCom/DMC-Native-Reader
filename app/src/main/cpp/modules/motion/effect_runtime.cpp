@@ -215,6 +215,11 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
             continue;
         }
 
+        // A canonical retire is terminal for this actor instance. Later
+        // updates may still be retained in actor_events_ for inspection, but
+        // they must not resurrect a retired effect instance.
+        if (instance.state == EffectRuntimeState::Retired) continue;
+
         // Update is also the point at which a deferred actor-domain matrix may
         // become available. Until then it remains a non-presentable record.
         if (event.world_authoritative) {
