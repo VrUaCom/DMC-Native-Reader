@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <array>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "dmcresource/render_scene.h"
@@ -149,6 +150,20 @@ struct EffectBinding final {
     std::span<const EffectChildRef> children{};
 };
 
+// Generic profile registry. Each provider owns only evidence-backed
+// profile matching and binding data; the shared runtime owns execution.
+using EffectProfileMatchFn = bool (*)(const dmcresource::Session*) noexcept;
+using EffectProfileBindingsFn = std::span<const EffectBinding> (*)() noexcept;
+
+struct EffectProfileProvider final {
+    std::string_view profile_id;
+    EffectProfileMatchFn matches{};
+    EffectProfileBindingsFn bindings{};
+};
+
+[[nodiscard]] std::span<const EffectProfileProvider>
+effect_profile_providers() noexcept;
+
 struct RuntimeEffectSpawn final {
     char effect_kind{};
     std::uint32_t effect_id{};
@@ -283,6 +298,11 @@ private:
 [[nodiscard]] bool set_script_effect_bindings(
     dmcresource::Session* session,
     std::span<const EffectBinding> bindings) noexcept;
+
+// Select the first matching generic profile provider. Unknown profiles remain
+// effect-free; no archive-name/MOT/effect-name guess is allowed.
+[[nodiscard]] bool install_effect_bindings(
+    dmcresource::Session* session) noexcept;
 
 // Rebuild/configure the session-owned runtime from the profile bindings and
 // the session's canonical FXBANK resource catalog. An empty binding set is
