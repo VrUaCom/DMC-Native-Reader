@@ -48,6 +48,33 @@ commit ancestry and project documentation before this status update.
 
 Review record: [`docs/reviews/NR_LUNA_V73_PHASE1_REVIEW_2026-09-29.md`](reviews/NR_LUNA_V73_PHASE1_REVIEW_2026-09-29.md).
 
+## Android acceptance — initial v73 device pass
+
+The first physical test pass used the debug APK built from
+`NR-Luna-v73`, source commit `55f874d575203792d86fd88cc49c3209b8db4f14`,
+workflow run `36587531306`. The APK installed and passed the repository
+APK verifier.
+
+- ✅ APK installed without a crash.
+- ✅ Opening through both available routes worked.
+- ✅ Screen rotation from the external file manager route preserved the opened
+  resource.
+- ✅ MOD, SCM, DDS and PTX baseline opening passed in the first pass.
+- ✅ Reopening another file did not retain stale effects from the previous file.
+- 🔴 **Acceptance regression:** after opening `PL000`, then opening
+  `EM028` through Native Reader and rotating the screen, the restored
+  session shows `PL000`; current `EM028` disappears. The selected
+  slot/costume also resets to the first entry in comparable cases.
+- 🟡 A MotionScript observation showed a short-lived effect at the weapon handle
+  instead of the muzzle and a vertically oriented rocket-like visual. The exact
+  action and capture are not yet identified, so this remains an attachment/
+  orientation investigation item rather than a confirmed effect ID.
+
+Acceptance disposition: APK installation and baseline opening are green, but
+rotation/state restoration is NO-GO for Android acceptance until the current
+Native Reader session, selected resource and selected costume/slot survive
+configuration change. No code was changed in this report.
+
 ## Phase 2 evidence integration
 
 Phase 2 is already merged into `main` through merge commit
