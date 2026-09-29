@@ -65,13 +65,19 @@ APK verifier.
   `EM028` through Native Reader and rotating the screen, the restored
   session shows `PL000`; current `EM028` disappears. The selected
   slot/costume also resets to the first entry in comparable cases.
-- 🟡 Video evidence now identifies the MotionScript case: in
+- 🟡 Video evidence identifies the MotionScript case: in
   `em034.pac · assembled` / `Lady · costume 1`, the short yellow-white effect
   repeats around the weapon handle/body area rather than the muzzle during
   `S12` acts 5, 4 and 3 (`slot_0005.mot`, `slot_0004.mot`,
   `slot_0003.mot`). A separate rocket-like visual is briefly near-vertical.
-  This is classified as an attachment/orientation regression; the exact
-  V-resource, parent/joint and local transform still require code-level trace.
+  This is classified as an attachment/orientation regression.
+- ✅ Exact trace is now closed on `NR-Luna-v73`: actions 3/4/5 resolve to
+  `CEm034Shl02 -> V423` from `em034.pac` FXBANK slot 28; the visible
+  presentable child is `E752`, with local `T=(60,0,0)`. The parent chain
+  resolves through Lady slot20 node0, with active placement on body joint 9
+  and local `T=(-8.4,-1.0,-1.3), Rz=pi`. The remaining implementation
+  suspect is the Shl02 parent-basis/muzzle alignment, not the FXBANK ID. See
+  [the detailed trace](reviews/NR_LUNA_V73_ANDROID_ACCEPTANCE_PASS01_2026-09-29.md).
 
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
