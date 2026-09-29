@@ -27,6 +27,27 @@ Pass 02 exact P/E/G/V child-graph presentation gate. Pass 01 remains the
 historical ownership checkpoint; the active v73 implementation surface is now
 the Pass 02 checkpoint.
 
+## Phase 1 baseline review
+
+Phase 1 was reviewed read-only against the current `NR-Luna-v73` source,
+commit ancestry and project documentation before this status update.
+
+- ✅ **Implementation baseline: CLOSED** — architecture/scope lock, C++23-first
+  Native Reader boundary, canonical resource/session pipeline, raw MOT vs Script
+  Play separation, generic Effect Profile Registry, unknown-profile isolation,
+  nested graph ownership/copyability, exact resource gating and terminal
+  lifecycle foundations are evidenced by code and reviewed refs.
+- ✅ Regression coverage for the Phase 1 foundations is authored and registered
+  in the current v73 CMake inventory.
+- 🟡 **Execution evidence: OPEN** — exact-head configure/build/CTest has not been
+  run for the current v73 candidate; no test PASS or APK/device PASS is claimed.
+- ⚫ Full P/E/G/V renderer/update clocks, deterministic replay/reverse seek, JNI
+  Effects ON/OFF, APK production evidence, physical Android acceptance and full
+  grenade/world-collision lifecycle are Phase 2/acceptance work, not missing
+  Phase 1 implementation.
+
+Review record: [`docs/reviews/NR_LUNA_V73_PHASE1_REVIEW_2026-09-29.md`](reviews/NR_LUNA_V73_PHASE1_REVIEW_2026-09-29.md).
+
 ## Phase 2 evidence integration
 
 Phase 2 is already merged into `main` through merge commit

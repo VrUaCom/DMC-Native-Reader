@@ -54,8 +54,12 @@
 - ✅ Архітектурна межа C++23-first Native Reader зафіксована.
 - ✅ Правило єдиної semantic authority зафіксоване.
 - ✅ Reader/Rengine ownership boundary зафіксована.
+- ✅ Phase 1 implementation baseline перевірений по актуальному source/docs стану
+  `NR-Luna-v73` і закритий як historical completed baseline у project status.
 - ✅ Phase 1 не треба повторно переносити як окрему гілку.
-- 🟡 Потрібно позначити Phase 1 як historical completed baseline у project-картці.
+- 🟡 Exact-head CMake/CTest execution evidence ще не виконана; це окремий
+  evidence gate і вона не відкриває заново завершений Phase 1 implementation
+  baseline.
 
 ## C. Phase 2 — C++23 baseline і evidence contract
 

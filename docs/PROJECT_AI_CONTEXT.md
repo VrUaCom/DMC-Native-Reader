@@ -343,6 +343,10 @@ For the current migration program:
 - current v73 Pass 02 code checkpoint: `NR-Luna-v73` at `6cae2e1df5906236228a32d051358e71074c72b4`;
 - Pass 01 remains the historical nested-effect ownership/lifecycle checkpoint at
   `2045e8ccf91cfa222227eac981bcb04a55f51f63`;
+- Phase 1 review status at docs HEAD `2ced6a51d6b6a70dfff7449a6be4b97532ee80bf`:
+  implementation baseline **CLOSED**; exact-head CMake/CTest execution evidence
+  remains **OPEN**. Do not claim tests, APK or device acceptance without the
+  corresponding exact artifact evidence;
 - `phase2/consolidated` remains a historical immutable snapshot, not a second product core;
 - historical branch `feature/png-export-multi-mod-v27` / PR #33 is merged and is no longer live execution authority;
 - `VrUaCom/dmc-rengine-cpp` remains absolute READ-ONLY, including during the PTX copy exception;
