@@ -21,9 +21,10 @@ evidence/tooling are merged into `main`. The current Lady/LEDi/FX and
 MotionScript continuation is kept in `NR-Luna-v73` until exact-head CI and
 physical Android acceptance are complete.
 
-Current v73 review head: `09c8dfedfd8eeb5975ed974cf27e145905ff181b`.
-This head is a merge of the current core acceptance contract and the v73
-Lady/effects continuation; it is the active integration surface.
+Current v73 Pass 01 checkpoint: `03a85c9f9829141e80d39b8811b02818013b3467`.
+This checkpoint contains the current Lady/effects continuation, generic profile
+registry, and the Pass 01 nested effect-graph ownership contract; it is the
+active v73 implementation surface.
 
 ## Phase 2 evidence integration
 

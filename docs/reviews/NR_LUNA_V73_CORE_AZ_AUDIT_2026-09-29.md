@@ -23,8 +23,9 @@
 ## 0. Exact refs і межі аудиту
 
 - ✅ `main`: `52210874f74d5526c2f1bd9000aaeab4594a03de`
-- ✅ `NR-Luna-v73`: `7b34490a53c7d221ca94cc5c5925b3ee74e2030c`
-- ✅ v73 випереджає `main` на 8 комітів і не відстає від нього.
+- ✅ Audit baseline для `NR-Luna-v73`: `7b34490a53c7d221ca94cc5c5925b3ee74e2030c`.
+- ✅ Pass 01 implementation checkpoint: `03a85c9f9829141e80d39b8811b02818013b3467`.
+- ✅ На checkpoint Pass 01 v73 випереджає `main` на 22 коміти і не відстає від нього.
 - ✅ Phase 2 historical snapshot: `phase2/consolidated` = `e8f380113b7372210745957befcd8f890b9caa7a`.
 - ✅ Phase 2 вже входить в ancestry `main`; повторне blind merge не потрібне.
 - 🟡 Phase 3 historical snapshot: `phase3/consolidated-pre-lady` = `d0154abca364f9fb1194e72770fc3de760b9a4b9`; він diverged від current main і має 39 унікальних старих комітів. Потрібна selective reconciliation.
@@ -235,12 +236,13 @@ Platform synchronization та branch cleanup є **deferred post-v73 operations**
 ## Рекомендований порядок виконання
 
 1. ✅ Generic profile registry і винесення Lady binding data з shared hardcoded path — `27f192a`.
-2. 🟡 V/P/G/E animation/update/presentation graph.
-3. Full effect lifecycle + cleanup tests.
-4. Sequential/scrub/reverse replay tests.
-5. JNI/MainActivity Effects ON/OFF.
-6. Exact-head CI/APK.
-7. Costume1/costume2 physical acceptance.
-8. Wrapper branch synchronization.
-9. Archive tags і branch cleanup.
-10. Після цього — selective promotion стабільних v73 core changes у `main`.
+2. ✅ Binding graph ownership/lifetime contract — `03a85c9`.
+3. 🟡 V/P/G/E animation/update/presentation graph.
+4. Full effect lifecycle + cleanup tests.
+5. Sequential/scrub/reverse replay tests.
+6. JNI/MainActivity Effects ON/OFF.
+7. Exact-head CI/APK.
+8. Costume1/costume2 physical acceptance.
+9. Wrapper branch synchronization.
+10. Archive tags і branch cleanup.
+11. Після цього — selective promotion стабільних v73 core changes у `main`.
