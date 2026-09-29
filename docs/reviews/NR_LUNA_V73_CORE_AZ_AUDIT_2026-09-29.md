@@ -5,6 +5,13 @@
 Канонічна робоча гілка: \`NR-Luna-v73\`  
 Мета: провести актуальне ядро v73 через увесь Native Reader і не позначати незавершене як виконане.
 
+## Робочий scope lock
+
+- ✅ До завершення v73 plan працюємо тільки в `NR-Luna-v73`.
+- ✅ `main`, `platform/android`, `platform/windows`, `platform/ios` read-only для поточного етапу.
+- ✅ Platform synchronization, promotion і release branching відкладені до explicit GO після v73 acceptance.
+- ✅ Детальне правило: `docs/reviews/NR_LUNA_V73_WORKING_SCOPE_LOCK_2026-09-29.md`.
+
 ## Легенда статусів
 
 - ✅ **DONE / EVIDENCED** — виконано й підтверджено кодом, тестом або зафіксованим ref.
@@ -206,10 +213,10 @@
 - ✅ Старі branches не видалялися.
 - ✅ Phase 1/2 історія не втрачена.
 - 🟡 78 branch refs ще присутні в репозиторії.
-- 🟡 Потрібно створити immutable archive tags для Phase 2/3, CI/APK і review snapshots.
-- 🟡 Потрібно звірити всі унікальні commits старих feature/fix/integrate/ci/validation branches.
-- 🔵 Після tag verification можна прибрати obsolete branch refs без втрати commits.
-- 🔵 Потрібно захистити п’ять canonical branches від випадкового force-push/delete.
+- 🟡 Archive tags і branch cleanup не є поточною v73 implementation роботою.
+- 🟡 До завершення v73 жодна історична гілка не видаляється.
+- 🔵 Після v73 acceptance можна створити immutable archive tags і виконати окремий cleanup pass.
+- 🔵 Після explicit GO потрібно захистити п’ять canonical branches.
 
 ## Закриття v73
 
@@ -221,8 +228,9 @@ v73 не можна позначити як повністю завершени�
 4. Android Effects ON/OFF presentation bridge.
 5. physical Android effects acceptance.
 6. grenade/world collision lifecycle.
-7. wrapper synchronization.
-8. archive/tag/branch cleanup.
+7. generic runtime, tests і v73 physical acceptance.
+
+Platform synchronization та branch cleanup є **deferred post-v73 operations** і не виконуються в поточному scope.
 
 ## Рекомендований порядок виконання
 
