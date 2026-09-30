@@ -12,6 +12,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <string>
 #include <vector>
 
 // MOT playback regression: EXE 0x140310310 animated local, compression-2
@@ -169,6 +170,31 @@ std::vector<std::uint8_t> make_spatial_mod() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_lady_body_mod() {
+    auto bytes = make_spatial_mod();
+    bytes.resize(0x580U, 0U);
+    put_u8(bytes, 0x11U, 23U);
+    put_u64(bytes, 0x20U, 0x200U);
+
+    // The synthetic body only needs one triangle, but it retains a full
+    // 23-node spatial domain so the recovered component presets can address
+    // host joints 3 and 9 without weakening the production attachment gate.
+    put_u32(bytes, 0x200U, 0x20U);
+    put_u32(bytes, 0x204U, 0x40U);
+    put_u32(bytes, 0x208U, 0x60U);
+    put_u32(bytes, 0x20CU, 0x80U);
+    for (std::size_t node = 0U; node < 23U; ++node) {
+        put_u8(bytes, 0x220U + node,
+                node == 0U ? 0xFFU : static_cast<std::uint8_t>(node - 1U));
+        put_u8(bytes, 0x240U + node, static_cast<std::uint8_t>(node));
+        put_u8(bytes, 0x260U + node, 0U);
+        put_transform(bytes, 0x280U + node * 0x20U,
+                      0.0F, node == 0U ? 0.0F : 1.0F, 0.0F,
+                      node == 0U ? 0.0F : 1.0F);
+    }
+    return bytes;
+}
+
 // Three-node MOT: node 0 translation-x only, one compression-2 track with
 // keys (frame 0 -> 10.0) and (frame 10 -> 20.0).
 std::vector<std::uint8_t> make_translation_mot() {
@@ -193,6 +219,33 @@ std::vector<std::uint8_t> make_translation_mot() {
     put_u16(bytes, 0x46U, 0U);
     put_u16(bytes, 0x48U, 10U);
     put_u16(bytes, 0x4AU, 0xFFFFU);
+    return bytes;
+}
+
+// Same translation track with a full 23-node body header.
+std::vector<std::uint8_t> make_translation_mot_domain23() {
+    std::vector<std::uint8_t> bytes(0x70U, 0U);
+    put_u32(bytes, 0x00U, 0x50U);
+    bytes[4] = 'M';
+    bytes[5] = 'O';
+    bytes[6] = 'T';
+    bytes[7] = 0;
+    put_f32(bytes, 0x0CU, 10.0F);
+    put_f32(bytes, 0x14U, 10.0F);
+    put_u16(bytes, 0x1CU, 23U);
+    put_u16(bytes, 0x1EU, 0x040U);
+
+    put_u32(bytes, 0x50U, 1U);
+    put_u16(bytes, 0x54U, 0x18U);
+    put_u16(bytes, 0x56U, 2U);
+    put_u16(bytes, 0x58U, 2U);
+    put_u16(bytes, 0x5AU, 0U);
+    put_f32(bytes, 0x5CU, 10.0F);
+    put_f32(bytes, 0x60U, 10.0F);
+    put_u16(bytes, 0x64U, 0U);
+    put_u16(bytes, 0x66U, 0U);
+    put_u16(bytes, 0x68U, 10U);
+    put_u16(bytes, 0x6AU, 0xFFFFU);
     return bytes;
 }
 
@@ -500,6 +553,101 @@ int main() {
         assert(reverse.effect_events[0].instance.source.effect_id == 463U);
         assert(lady->effect_runtime->instances().size() == 1U);
         assert(lady->effect_runtime->instances()[0].current_frame == 0.0F);
+    }
+
+    // Confirmed synchronized Lady pair: the body controller and component0
+    // controller own separate MOD parts but are evaluated at one Script Play
+    // frame. This is the bounded em034 bank4/action3..5 integration slice;
+    // no unverified controller/resource pairing is introduced here.
+    {
+        const auto lady_body_mod = make_lady_body_mod();
+        auto body_source = dmcresource::open_session(
+            "em034-body.mod", lady_body_mod.data(), lady_body_mod.size());
+        auto component_source = dmcresource::open_session(
+            "em034-component.mod", mod.data(), mod.size());
+        assert(body_source != nullptr && component_source != nullptr);
+        const std::vector<const dmcresource::Session*> parts{
+            body_source.get(), component_source.get()};
+        const std::vector<std::string> names{"Lady body", "Lady component0"};
+        auto lady_pair = dmcresource::compose_mod_sessions(parts, names);
+        assert(lady_pair != nullptr && lady_pair->composite_parts.size() == 2U);
+        const auto body_mot23 = make_translation_mot_domain23();
+        const auto raw_body = motion::load_motion(
+            body_source.get(), "synthetic-body-domain23.mot",
+            body_mot23.data(), body_mot23.size());
+        assert(raw_body.ok);
+        lady_pair->archive_name = "em034.pac";
+        lady_pair->lady_component_bindings.push_back({
+            0U, 1U, 0U, 20U, motion::LadyPlacementPreset::BodyStowed,
+            motion::LadyControlDomain::BodyConstraint, 1.0F});
+        auto& component_binding = lady_pair->lady_component_bindings.front();
+        assert(motion::set_lady_component_preset(
+            lady_pair.get(), component_binding,
+            motion::LadyPlacementPreset::BodyStowed));
+
+        const auto script_bytes = make_lady_runtime_script();
+        const auto script = motion::MotionScriptFile::parse(script_bytes);
+        assert(script.has_value());
+        const auto shared_script =
+            std::make_shared<const motion::MotionScriptFile>(*script);
+        lady_pair->motion_scripts.push_back({
+            12U, dmcresource::Session::MotionScriptRole::LadyBody,
+            shared_script});
+        lady_pair->motion_scripts.push_back({
+            13U, dmcresource::Session::MotionScriptRole::LadyComponent0,
+            shared_script});
+
+        lady_pair->motion_library.resize(2U);
+        lady_pair->motion_library[0].name = "synthetic-lady-body.mot";
+        lady_pair->motion_library[0].bytes = body_mot23;
+        lady_pair->motion_library[0].script_links.push_back({
+            0U, 4U, 3U, -1, 0U});
+        lady_pair->motion_library[1].name = "synthetic-lady-component0.mot";
+        lady_pair->motion_library[1].bytes = make_translation_mot();
+        lady_pair->motion_library[1].script_links.push_back({
+            1U, 4U, 3U, -1, 0U});
+
+        // The legacy load entry used by the JNI/UI shell must promote the
+        // same confirmed pair; this guards the integration boundary separately
+        // from the frame-step API below.
+        const auto direct = motion::load_scripted_motion(
+            lady_pair.get(), 0U, 0U);
+        assert(direct.ok);
+        assert(direct.synchronized_tracks == 2U);
+        assert(direct.deferred_tracks == 0U);
+
+        const auto legacy_step = motion::run_script_frame(
+            lady_pair.get(), 0U, motion::ScriptActionId{4U, 3U, 0U}, 0.0F);
+        assert(legacy_step.synchronized_tracks == 2U);
+        assert(legacy_step.deferred_tracks == 0U);
+
+        const std::array<motion::ScriptTrackAction, 2> tracks{{
+            {0U, motion::ScriptActionId{4U, 3U, 0U}},
+            {1U, motion::ScriptActionId{
+                4U, 3U, std::numeric_limits<std::size_t>::max()}},
+        }};
+        const auto first = motion::run_synchronized_script_frame(
+            lady_pair.get(), tracks, 0.0F);
+        assert(first.synchronized_tracks == 2U);
+        assert(first.deferred_tracks == 0U);
+        assert(motion::has_motion(lady_pair.get()));
+        assert(component_binding.control_domain ==
+               motion::LadyControlDomain::IndependentMotionScript);
+        assert(lady_pair->composite_parts[1].placement.mode ==
+               dmcresource::CompositePlacementMode::HostJoint);
+
+        const float body_root_at_zero =
+            lady_pair->scene.nodes[0].world.values[12];
+        const float component_root_at_zero =
+            lady_pair->scene.nodes[23].world.values[12];
+        const auto forward = motion::run_synchronized_script_frame(
+            lady_pair.get(), tracks, 5.0F);
+        assert(forward.synchronized_tracks == 2U);
+        assert(forward.deferred_tracks == 0U);
+        assert(near(lady_pair->scene.nodes[0].world.values[12],
+                    body_root_at_zero + 5.0F));
+        assert(near(lady_pair->scene.nodes[23].world.values[12],
+                    component_root_at_zero + 5.0F));
     }
 
     // Profile-neutral ScriptEffectBridge: a non-Lady character can emit its

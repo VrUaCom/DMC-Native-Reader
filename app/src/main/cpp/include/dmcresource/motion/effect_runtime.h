@@ -230,6 +230,8 @@ struct RuntimeStepResult final {
     std::vector<ComponentTransition> component_changes;
     std::vector<DynamicActorEvent> actor_events;
     std::vector<RuntimeEffectEvent> effect_events;
+    std::size_t synchronized_tracks{};
+    std::size_t deferred_tracks{};
 };
 
 class EffectRuntime final {

@@ -20,6 +20,8 @@ struct MotionLoadReport final {
     bool ok{false};
     std::size_t animated_parts{};
     std::size_t static_parts{};
+    std::size_t synchronized_tracks{};
+    std::size_t deferred_tracks{};
     float end_frame{};
     std::string detail;
 };
@@ -88,10 +90,25 @@ struct ScriptActionId final {
     std::size_t motion_index{std::numeric_limits<std::size_t>::max()};
 };
 
+// One controller/action in a synchronized Script Play set. Each track keeps
+// its own controller/resource resolution while all tracks are evaluated at
+// the caller's shared script frame.
+struct ScriptTrackAction final {
+    ScriptControllerId controller{};
+    ScriptActionId action{};
+};
+
 [[nodiscard]] RuntimeStepResult run_script_frame(
     Session* session,
     ScriptControllerId controller,
     ScriptActionId action,
+    float frame) noexcept;
+
+// Generic multi-controller Script Play boundary. Unknown/unresolved tracks
+// are deferred; confirmed tracks remain playable and share one frame.
+[[nodiscard]] RuntimeStepResult run_synchronized_script_frame(
+    Session* session,
+    std::span<const ScriptTrackAction> tracks,
     float frame) noexcept;
 
 [[nodiscard]] std::span<const RuntimeEffectInstance> active_effect_instances(

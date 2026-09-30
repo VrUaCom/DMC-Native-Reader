@@ -99,6 +99,14 @@ struct PartMotion final {
 }  // namespace
 
 struct MotionState final {
+    struct ActiveScriptTrack final {
+        ScriptControllerId controller{};
+        std::size_t bank{};
+        std::size_t action{};
+        std::size_t motion_index{};
+        Session::MotionScriptRole role{Session::MotionScriptRole::Primary};
+    };
+
     std::string name;
     std::vector<PartMotion> parts;
     std::size_t static_parts{};
@@ -131,6 +139,7 @@ struct MotionState final {
     std::size_t script_motion_index{std::numeric_limits<std::size_t>::max()};
     std::uint64_t next_actor_instance{1U};
     std::array<std::uint64_t, 6> active_actor_instances{};
+    std::vector<ActiveScriptTrack> script_tracks;
 };
 
 namespace {
@@ -139,6 +148,15 @@ struct ScriptMotionSelection final {
     std::size_t bank{};
     std::size_t action{};
     std::uint16_t resource_id{};
+};
+
+struct ResolvedScriptTrack final {
+    ScriptControllerId controller{};
+    ScriptActionId requested{};
+    std::size_t bank{};
+    std::size_t action{};
+    std::size_t motion_index{};
+    Session::MotionScriptRole role{Session::MotionScriptRole::Primary};
 };
 
 [[nodiscard]] bool is_em034(const Session& session) noexcept {
@@ -239,6 +257,97 @@ struct ScriptMotionSelection final {
         return ScriptMotionSelection{pick->bank, pick->action, id};
     }
     return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ResolvedScriptTrack> resolve_script_track(
+    const Session& session,
+    ScriptControllerId controller,
+    ScriptActionId requested) {
+    if (controller >= session.motion_scripts.size()) return std::nullopt;
+    const auto& binding = session.motion_scripts[controller];
+    if (binding.script == nullptr) return std::nullopt;
+
+    if (requested.motion_index >= session.motion_library.size() &&
+        session.motion != nullptr) {
+        for (const auto& active : session.motion->script_tracks) {
+            if (active.controller != controller ||
+                (requested.bank != std::numeric_limits<std::size_t>::max() &&
+                 active.bank != requested.bank) ||
+                (requested.action != std::numeric_limits<std::size_t>::max() &&
+                 active.action != requested.action)) {
+                continue;
+            }
+            requested.motion_index = active.motion_index;
+            break;
+        }
+    }
+
+    auto accept = [&](std::size_t motion_index, std::size_t bank,
+                      std::size_t action) -> std::optional<ResolvedScriptTrack> {
+        if (motion_index >= session.motion_library.size()) return std::nullopt;
+        if (requested.bank != std::numeric_limits<std::size_t>::max() &&
+            requested.bank != bank) {
+            return std::nullopt;
+        }
+        if (requested.action != std::numeric_limits<std::size_t>::max() &&
+            requested.action != action) {
+            return std::nullopt;
+        }
+        return ResolvedScriptTrack{
+            controller, requested, bank, action, motion_index, binding.role};
+    };
+
+    for (std::size_t candidate = 0U;
+         candidate < session.motion_library.size(); ++candidate) {
+        if (requested.motion_index < session.motion_library.size() &&
+            candidate != requested.motion_index) {
+            continue;
+        }
+        const auto& motion = session.motion_library[candidate];
+        for (const auto& link : motion.script_links) {
+            if (link.script_index != controller ||
+                (requested.bank != std::numeric_limits<std::size_t>::max() &&
+                 link.bank != requested.bank) ||
+                (requested.action != std::numeric_limits<std::size_t>::max() &&
+                 link.action != requested.action)) {
+                continue;
+            }
+            if (auto resolved = accept(candidate, link.bank, link.action);
+                resolved.has_value()) {
+                return resolved;
+            }
+        }
+
+        if (auto selection = pick_script_motion(session, binding, motion);
+            selection.has_value()) {
+            if (auto resolved = accept(
+                    candidate, selection->bank, selection->action);
+                resolved.has_value()) {
+                return resolved;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ScriptControllerId> lady_component_controller(
+    const Session& session) noexcept {
+    for (std::size_t index = 0U; index < session.motion_scripts.size(); ++index) {
+        if (session.motion_scripts[index].role ==
+            Session::MotionScriptRole::LadyComponent0) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] bool is_confirmed_lady_pair(
+    const ResolvedScriptTrack& body) noexcept {
+    // Raw em034.pac closes bank4/actions3..5: body resources 403/404/405
+    // pair with component0 resource 400. Do not extend this table by action
+    // number until the corresponding controller/resource evidence is closed.
+    return body.role == Session::MotionScriptRole::LadyBody &&
+           body.bank == 4U && body.action >= 3U && body.action <= 5U;
 }
 
 [[nodiscard]] LadyComponentBinding* component0_binding(Session* session) noexcept {
@@ -760,6 +869,26 @@ void reset_lady_runtime(Session* session) noexcept {
         }
     }
 
+    // A confirmed synchronized component track owns slot20's independent
+    // MOT domain for the duration of this track set. Body state entry still
+    // applies its placement preset, but must not silently return the part to
+    // HostJointSkeleton or the component MOT would be overwritten by the
+    // generic attachment pass.
+    const bool component_track_active = std::any_of(
+        state.script_tracks.begin(), state.script_tracks.end(),
+        [](const MotionState::ActiveScriptTrack& track) {
+            return track.role == Session::MotionScriptRole::LadyComponent0;
+        });
+    if (component_track_active) {
+        if (auto* component = component0_binding(session);
+            component != nullptr &&
+            component->control_domain != LadyControlDomain::IndependentMotionScript) {
+            (void)set_lady_component_control_domain(
+                session, *component,
+                LadyControlDomain::IndependentMotionScript);
+        }
+    }
+
     advance_lady_dynamic_visuals(session, frame);
     sync_lady_actor_effects(session, state, frame);
     state.lady_runtime_frame = frame;
@@ -900,6 +1029,313 @@ MotionLoadReport load_motion(Session* session,
     } catch (...) {
         report = {};
         report.detail = "Motion: unexpected failure";
+        return report;
+    }
+}
+
+[[nodiscard]] MotionLoadReport load_synchronized_script_tracks(
+    Session* session,
+    std::span<const ResolvedScriptTrack> requested_tracks) noexcept {
+    MotionLoadReport report;
+    if (session == nullptr || requested_tracks.empty()) {
+        report.detail = "MotionScript: no synchronized tracks";
+        return report;
+    }
+
+    try {
+        clear_motion(session);
+        auto state = std::make_shared<MotionState>();
+        state->name = "synchronized-script-track-set";
+        state->script_driven = true;
+
+        std::vector<ResolvedScriptTrack> tracks;
+        tracks.reserve(requested_tracks.size());
+        std::vector<std::string> deferred;
+
+        // Enter independent component control before binding its own MOT. A
+        // body state entry may later rebuild the placement; the final runtime
+        // pass reasserts this domain while the component track is active.
+        for (const auto& track : requested_tracks) {
+            if (track.role != Session::MotionScriptRole::LadyComponent0) {
+                tracks.push_back(track);
+                continue;
+            }
+            auto* component = component0_binding(session);
+            if (component == nullptr) {
+                deferred.push_back("component0 binding unavailable");
+                continue;
+            }
+            const auto initial =
+                track.bank == 4U &&
+                        (track.action == 41U || track.action == 42U)
+                    ? LadyPlacementPreset::ActiveDeployed
+                    : LadyPlacementPreset::BodyStowed;
+            if (!set_lady_component_preset(session, *component, initial) ||
+                !set_lady_component_control_domain(
+                    session, *component,
+                    LadyControlDomain::IndependentMotionScript)) {
+                deferred.push_back("component0 independent domain unavailable");
+                continue;
+            }
+            tracks.push_back(track);
+        }
+
+        if (tracks.empty()) {
+            report.detail = "MotionScript: all synchronized tracks deferred";
+            report.deferred_tracks = requested_tracks.size();
+            reset_lady_runtime(session);
+            return report;
+        }
+
+        const std::size_t part_count = session->composite_parts.empty()
+            ? 1U
+            : session->composite_parts.size();
+        std::vector<int> owner(part_count, -1);
+        std::vector<bool> track_bound(tracks.size(), false);
+
+        const auto body_part = [&]() -> std::optional<std::size_t> {
+            if (session->composite_parts.empty()) return 0U;
+            if (const auto* component = component0_binding(session);
+                component != nullptr &&
+                component->host_part < session->composite_parts.size()) {
+                return component->host_part;
+            }
+            return std::nullopt;
+        };
+
+        const auto component_part = [&]() -> std::optional<std::size_t> {
+            if (session->composite_parts.empty()) return 0U;
+            if (const auto* component = component0_binding(session);
+                component != nullptr &&
+                component->part < session->composite_parts.size()) {
+                return component->part;
+            }
+            return std::nullopt;
+        };
+
+        // Reserve explicit Lady body/component ownership first. Primary or
+        // future profile tracks may still fan out to every compatible
+        // source-space part, matching the legacy single-MOT behavior.
+        for (std::size_t index = 0U; index < tracks.size(); ++index) {
+            const auto& track = tracks[index];
+            std::optional<std::size_t> explicit_part;
+            if (track.role == Session::MotionScriptRole::LadyBody) {
+                explicit_part = body_part();
+            } else if (track.role == Session::MotionScriptRole::LadyComponent0) {
+                explicit_part = component_part();
+            }
+            if (!explicit_part.has_value()) continue;
+            if (*explicit_part >= owner.size() || owner[*explicit_part] >= 0) {
+                deferred.push_back("duplicate synchronized part owner");
+                continue;
+            }
+            owner[*explicit_part] = static_cast<int>(index);
+        }
+
+        for (std::size_t index = 0U; index < tracks.size(); ++index) {
+            const auto& track = tracks[index];
+            if (track.role == Session::MotionScriptRole::LadyBody ||
+                track.role == Session::MotionScriptRole::LadyComponent0) {
+                continue;
+            }
+            for (std::size_t part = 0U; part < owner.size(); ++part) {
+                if (owner[part] >= 0 ||
+                    (!session->composite_parts.empty() &&
+                     session->composite_parts[part].placement.mode ==
+                         CompositePlacementMode::HostJointSkeleton)) {
+                    continue;
+                }
+                owner[part] = static_cast<int>(index);
+            }
+        }
+
+        std::string reasons;
+        std::size_t vertex_cursor = 0U;
+        std::size_t node_cursor = 0U;
+        for (std::size_t part_index = 0U; part_index < part_count; ++part_index) {
+            const RenderScene& scene = session->composite_parts.empty()
+                ? session->scene
+                : session->composite_parts[part_index].scene;
+            const std::size_t vertices = scene_vertex_count(scene);
+            const std::size_t nodes = scene.nodes.size();
+
+            if (owner[part_index] < 0) {
+                ++state->static_parts;
+                vertex_cursor += vertices;
+                node_cursor += nodes;
+                continue;
+            }
+
+            const auto track_index = static_cast<std::size_t>(owner[part_index]);
+            const auto& track = tracks[track_index];
+            const auto& payload = session->motion_library[track.motion_index];
+            const CompositePlacement* placement = session->composite_parts.empty()
+                ? nullptr
+                : &session->composite_parts[part_index].placement;
+            std::string reason;
+            auto part_motion = bind_part(
+                scene, vertex_cursor, node_cursor, placement,
+                std::span<const std::byte>{
+                    reinterpret_cast<const std::byte*>(payload.bytes.data()),
+                    payload.bytes.size()},
+                &reason);
+            if (part_motion.has_value()) {
+                state->parts.push_back(std::move(*part_motion));
+                track_bound[track_index] = true;
+            } else {
+                ++state->static_parts;
+                if (!reasons.empty()) reasons += "; ";
+                reasons += "track" + std::to_string(track_index) + ": " + reason;
+            }
+            vertex_cursor += vertices;
+            node_cursor += nodes;
+        }
+
+        for (std::size_t index = 0U; index < tracks.size(); ++index) {
+            if (!track_bound[index]) {
+                deferred.push_back(
+                    "track" + std::to_string(index) + " has no compatible part");
+            }
+        }
+
+        if (vertex_cursor != session->render_mesh.vertices.size() ||
+            node_cursor != session->scene.nodes.size()) {
+            report.detail = "MotionScript: synchronized projection mismatch";
+            reset_lady_runtime(session);
+            return report;
+        }
+        if (state->parts.empty()) {
+            report.detail = "MotionScript: synchronized tracks drive no part";
+            report.deferred_tracks = requested_tracks.size();
+            reset_lady_runtime(session);
+            return report;
+        }
+
+        const std::size_t primary_index = [&]() {
+            for (std::size_t index = 0U; index < tracks.size(); ++index) {
+                if (tracks[index].role == Session::MotionScriptRole::LadyBody ||
+                    tracks[index].role == Session::MotionScriptRole::Primary) {
+                    return index;
+                }
+            }
+            return std::size_t{0U};
+        }();
+        const auto& primary = tracks[primary_index];
+        const auto& primary_binding = session->motion_scripts[primary.controller];
+        const auto& primary_payload = session->motion_library[primary.motion_index];
+        state->script_role = primary.role;
+        state->script_slot = primary_binding.archive_slot;
+        state->script_controller = primary.controller;
+        state->script_motion_index = primary.motion_index;
+        state->script_bank = primary.bank;
+        state->script_action = primary.action;
+        state->script_signals = primary_binding.script->signals(
+            primary.bank, primary.action);
+        if (primary_payload.bank >= 0 && primary_payload.index >= 0) {
+            state->weapon_keys = primary_binding.script->weapon_states_for_motion(
+                static_cast<std::size_t>(primary_payload.bank),
+                static_cast<std::size_t>(primary_payload.index));
+        }
+
+        for (std::size_t index = 0U; index < tracks.size(); ++index) {
+            if (!track_bound[index]) continue;
+            state->script_tracks.push_back({
+                tracks[index].controller,
+                tracks[index].bank,
+                tracks[index].action,
+                tracks[index].motion_index,
+                tracks[index].role});
+        }
+
+        if (primary.role == Session::MotionScriptRole::LadyBody) {
+            std::optional<LadyBodyScriptState> mapped;
+            for (const auto& link : primary_payload.script_links) {
+                if (link.script_index == primary.controller &&
+                    link.bank == primary.bank && link.action == primary.action &&
+                    link.lady_state >= 0) {
+                    mapped = LadyBodyScriptState{
+                        static_cast<std::uint16_t>(link.lady_state),
+                        link.lady_lane_mask};
+                    break;
+                }
+            }
+            if (!mapped.has_value()) {
+                mapped = lady_state_for_body_script_action(
+                    primary.bank, primary.action);
+            }
+            if (mapped.has_value()) {
+                state->lady_state = mapped->state;
+                state->lady_lane_mask = mapped->lane_mask;
+                const auto starts = lady_body_state_scripts(mapped->state);
+                state->lady_lane_mask = 0U;
+                for (std::uint8_t lane = 0U; lane < 2U; ++lane) {
+                    const auto& start = starts.lanes[lane];
+                    if (!start.valid) continue;
+                    state->lady_lane_mask |=
+                        static_cast<std::uint8_t>(1U << lane);
+                    state->lady_lane_signals[lane] =
+                        primary_binding.script->signals(start.bank, start.action);
+                }
+                state->lady_entry_applied = false;
+                state->lady_runtime_frame = -1.0F;
+            }
+        }
+
+        state->source_vertices = session->render_mesh.vertices;
+        state->source_node_world.reserve(session->scene.nodes.size());
+        for (const auto& node : session->scene.nodes) {
+            state->source_node_world.push_back(node.world);
+        }
+        state->source_overlay = session->hierarchy_overlay;
+        state->end_frame = 0.0F;
+        state->loop_start_frame = 0.0F;
+        for (const auto& part : state->parts) {
+            state->end_frame = std::max(state->end_frame, part.clip.end_frame());
+            state->loop_start_frame = std::max(
+                state->loop_start_frame, part.clip.loop_start_frame());
+        }
+
+        session->motion = std::move(state);
+        if (session->script_effect_bridge.prepare != nullptr &&
+            !session->script_effect_bridge.prepare(session)) {
+            session->script_effect_bindings.clear();
+        }
+        (void)ensure_effect_runtime(session);
+
+        report.ok = true;
+        report.animated_parts = session->motion->parts.size();
+        report.static_parts = session->motion->static_parts;
+        report.synchronized_tracks = session->motion->script_tracks.size();
+        report.deferred_tracks = requested_tracks.size() -
+            std::min(requested_tracks.size(), report.synchronized_tracks);
+        report.end_frame = session->motion->end_frame;
+        report.detail = "MotionScript synchronized tracks=" +
+            std::to_string(report.synchronized_tracks) +
+            " deferred=" + std::to_string(report.deferred_tracks) +
+            " animatedParts=" + std::to_string(report.animated_parts) +
+            " staticParts=" + std::to_string(report.static_parts);
+        if (!deferred.empty()) {
+            report.detail += "\nDeferred: ";
+            for (std::size_t index = 0U; index < deferred.size(); ++index) {
+                if (index != 0U) report.detail += "; ";
+                report.detail += deferred[index];
+            }
+        }
+        if (!reasons.empty()) report.detail += "\nStatic parts: " + reasons;
+
+        if (!apply_motion_frame(session, 0.0F)) {
+            clear_motion(session);
+            report = {};
+            report.detail = "MotionScript: synchronized first frame failed";
+        }
+        return report;
+    } catch (const std::bad_alloc&) {
+        report = {};
+        report.detail = "MotionScript: synchronized allocation failed";
+        return report;
+    } catch (...) {
+        report = {};
+        report.detail = "MotionScript: synchronized playback failed";
         return report;
     }
 }
@@ -1178,8 +1614,42 @@ MotionLoadReport load_scripted_motion(Session* session,
         return report;
     }
     try {
-        clear_motion(session);
+        // The confirmed em034 body bank4/action3..5 pair has two independent
+        // controller tracks: the body MOT and component0 MOT. Keep the
+        // legacy public load entry point compatible with that contract so a
+        // UI/JNI Script Play call cannot silently drop the component track.
         const auto binding = session->motion_scripts[script_index];
+        if (binding.role == Session::MotionScriptRole::LadyBody) {
+            const auto body = resolve_script_track(
+                *session,
+                script_index,
+                ScriptActionId{
+                    std::numeric_limits<std::size_t>::max(),
+                    std::numeric_limits<std::size_t>::max(),
+                    motion_index});
+            if (body.has_value() && is_confirmed_lady_pair(*body)) {
+                if (const auto component_controller =
+                        lady_component_controller(*session);
+                    component_controller.has_value()) {
+                    const auto component = resolve_script_track(
+                        *session,
+                        *component_controller,
+                        ScriptActionId{
+                            body->bank,
+                            body->action,
+                            std::numeric_limits<std::size_t>::max()});
+                    if (component.has_value()) {
+                        const std::array<ResolvedScriptTrack, 2> pair{
+                            *body, *component};
+                        return load_synchronized_script_tracks(
+                            session, std::span<const ResolvedScriptTrack>{
+                                          pair.data(), pair.size()});
+                    }
+                }
+            }
+        }
+
+        clear_motion(session);
         const auto payload = session->motion_library[motion_index];
 
         const Session::MotionPayload::ScriptLink* materialized_link = nullptr;
@@ -1337,47 +1807,88 @@ RuntimeStepResult run_script_frame(Session* session,
                                    ScriptControllerId controller,
                                    ScriptActionId action,
                                    float frame) noexcept {
+    std::array<ScriptTrackAction, 2> tracks{
+        ScriptTrackAction{controller, action},
+        ScriptTrackAction{},
+    };
+    std::size_t track_count = 1U;
+
+    // The em034 body action owns a confirmed component0 continuation. Expose
+    // that pairing through the existing single-controller API so Android/JNI
+    // callers get the same synchronized path as native replay callers.
+    if (session != nullptr) {
+        if (const auto body = resolve_script_track(*session, controller, action);
+            body.has_value() && is_confirmed_lady_pair(*body)) {
+            if (const auto component_controller = lady_component_controller(*session);
+                component_controller.has_value()) {
+                tracks[track_count++] = ScriptTrackAction{
+                    *component_controller,
+                    ScriptActionId{
+                        body->bank,
+                        body->action,
+                        std::numeric_limits<std::size_t>::max(),
+                    }};
+            }
+        }
+    }
+    return run_synchronized_script_frame(
+        session, std::span<const ScriptTrackAction>{tracks.data(), track_count},
+        frame);
+}
+
+RuntimeStepResult run_synchronized_script_frame(
+    Session* session,
+    std::span<const ScriptTrackAction> requested_tracks,
+    float frame) noexcept {
     RuntimeStepResult result;
     try {
         if (session == nullptr || !std::isfinite(frame) ||
-            controller >= motion_script_count(session)) {
+            requested_tracks.empty()) {
             return result;
         }
 
-        std::size_t motion_index = action.motion_index;
-        if (motion_index >= session->motion_library.size() &&
-            session->motion != nullptr && session->motion->script_driven &&
-            session->motion->script_controller == controller &&
-            (action.bank == std::numeric_limits<std::size_t>::max() ||
-             session->motion->script_bank == action.bank) &&
-            (action.action == std::numeric_limits<std::size_t>::max() ||
-             session->motion->script_action == action.action)) {
-            // A bound Script Play action already owns its canonical MOT.
-            motion_index = session->motion->script_motion_index;
-        }
-        if (motion_index >= session->motion_library.size()) {
-            // Otherwise resolve the action against the controller's existing
-            // script links/group map. No filename or frame heuristic is used.
-            const auto& binding = session->motion_scripts[controller];
-            for (std::size_t candidate = 0U;
-                 candidate < session->motion_library.size(); ++candidate) {
-                const auto selection = pick_script_motion(
-                    *session, binding, session->motion_library[candidate]);
-                if (!selection.has_value() ||
-                    (action.bank != std::numeric_limits<std::size_t>::max() &&
-                     selection->bank != action.bank) ||
-                    (action.action != std::numeric_limits<std::size_t>::max() &&
-                     selection->action != action.action)) {
-                    continue;
-                }
-                motion_index = candidate;
-                break;
+        std::vector<ResolvedScriptTrack> resolved;
+        resolved.reserve(requested_tracks.size());
+        for (const auto& requested : requested_tracks) {
+            if (const auto track = resolve_script_track(
+                    *session, requested.controller, requested.action);
+                track.has_value()) {
+                resolved.push_back(*track);
+            } else {
+                ++result.deferred_tracks;
             }
         }
-        if (motion_index >= session->motion_library.size()) return result;
+        if (resolved.empty()) return result;
 
-        // Capture before the optional load as well: the first Script Play call
-        // may enter a new CEm034 placement/control domain at frame 0.
+        const auto same_track = [](const MotionState::ActiveScriptTrack& active,
+                                   const ResolvedScriptTrack& requested) {
+            return active.controller == requested.controller &&
+                   active.bank == requested.bank &&
+                   active.action == requested.action &&
+                   active.motion_index == requested.motion_index &&
+                   active.role == requested.role;
+        };
+        const auto is_bound = [&]() {
+            if (session->motion == nullptr ||
+                !session->motion->script_driven ||
+                session->motion->script_tracks.size() != resolved.size()) {
+                return false;
+            }
+            for (const auto& requested : resolved) {
+                const auto active = std::find_if(
+                    session->motion->script_tracks.begin(),
+                    session->motion->script_tracks.end(),
+                    [&requested, &same_track](
+                        const MotionState::ActiveScriptTrack& candidate) {
+                        return same_track(candidate, requested);
+                    });
+                if (active == session->motion->script_tracks.end()) return false;
+            }
+            return true;
+        };
+
+        // Capture before the optional load as well: the first synchronized
+        // Script Play call may enter a new CEm034 placement/control domain.
         const auto capture_components = [](const Session& source) {
             std::vector<ComponentTransition> snapshot;
             snapshot.reserve(source.lady_component_bindings.size());
@@ -1393,27 +1904,24 @@ RuntimeStepResult run_script_frame(Session* session,
         };
         const auto before_components = capture_components(*session);
 
-        bool bound = false;
-        if (session->motion != nullptr && session->motion->script_driven) {
-            bound = session->motion->script_controller == controller &&
-                    session->motion->script_motion_index == motion_index;
-        }
-        const bool loaded = !bound;
-        if (!bound) {
-            const auto report = load_scripted_motion(
-                session, controller, motion_index);
+        const bool loaded = !is_bound();
+        if (loaded) {
+            const auto report = load_synchronized_script_tracks(
+                session,
+                std::span<const ResolvedScriptTrack>{
+                    resolved.data(), resolved.size()});
+            result.synchronized_tracks = report.synchronized_tracks;
+            result.deferred_tracks += report.deferred_tracks;
             if (!report.ok) return result;
         }
-        if (session->motion == nullptr ||
-            (action.bank != std::numeric_limits<std::size_t>::max() &&
-             session->motion->script_bank != action.bank) ||
-            (action.action != std::numeric_limits<std::size_t>::max() &&
-             session->motion->script_action != action.action)) {
+        if (session->motion == nullptr || !session->motion->script_driven) {
             return result;
         }
-        // load_scripted_motion materializes frame 0 once. Preserve that step's
-        // spawn events when the generic caller asks for the same frame instead
-        // of clearing them with an identical second evaluation.
+        result.synchronized_tracks = session->motion->script_tracks.size();
+
+        // The load path materializes frame 0 once. Preserve its spawn/event
+        // stream when the caller asks for that same frame rather than clearing
+        // it with an identical second evaluation.
         if (!(loaded && frame == 0.0F) &&
             !apply_motion_frame(session, frame)) {
             return result;
