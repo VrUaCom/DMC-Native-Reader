@@ -1615,7 +1615,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     }
 
     // SHW footprint on a floor under the feet (lowest rest vertex).
-    if (!view.uv_layout && has_render_flag(flags, RenderFlag::Shadows)) {
+    if (!view.uv_layout && session.stage == nullptr && has_render_flag(flags, RenderFlag::Shadows)) {
         float floor_y = std::numeric_limits<float>::infinity();
         for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
         if (std::isfinite(floor_y)) {
@@ -1653,6 +1653,18 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     } else if (!view.uv_layout) {
         stage_room::clear_active_collision(&session);
     }
+    // A stage opened as its scene: its merged mesh is drawn by the room pass
+    // (near-plane clipped), turned about the floor spot by the twist gesture.
+    if (!view.uv_layout && session.stage != nullptr) {
+        const auto& stage = *session.stage;
+        view.room_mesh = &stage.mesh;
+        view.room_texture_slots = &stage.triangle_texture_slots;
+        view.room_textures = &stage.textures;
+        view.room_translucent_triangles = &stage.translucent_triangles;
+        view.room_pivot = stage.spots.empty() ? Vec3{} : stage.spots.front();
+        view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
+        view.room_offset = {};
+    }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
         out->collision_lines = collision::posed_collision_lines(session);
@@ -1662,6 +1674,13 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         has_render_flag(flags, RenderFlag::RoomCollision) &&
         !out->room->collision_lines.empty()) {
         out->room_collision_lines = out->room->collision_lines;
+        view.room_collision_lines = out->room_collision_lines;
+    }
+    // A stage opened as its scene shows its own HITS in place.
+    if (!view.uv_layout && session.stage != nullptr &&
+        has_render_flag(flags, RenderFlag::RoomCollision) &&
+        !session.stage->collision_lines.empty()) {
+        out->room_collision_lines = session.stage->collision_lines;
         view.room_collision_lines = out->room_collision_lines;
     }
 }

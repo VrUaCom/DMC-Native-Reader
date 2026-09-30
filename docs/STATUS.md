@@ -126,6 +126,14 @@ APK verifier.
   - the grenade bounces on the HITS (EXE raycast `0x1402C64F0` response);
   - EXE query `0x14005E880` and its category mask are documented;
   - [Details](research/dmc3-shell-effect-runtime-exe-v73.md#stage-collision-hits).
+- ✅ A stage archive (st*.pac) opens as its assembled scene instead of the
+  file gallery:
+  - it is the same build as the room: every SCM/MOD, the PNST objects at
+    their layout, and the stage textures;
+  - it is drawn by the near-clipped room pass, with the camera on the first
+    floor spot;
+  - ▦ shows the stage's own HITS;
+  - the files stay available from ⋮ → "Browse .PAC files…".
 
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current

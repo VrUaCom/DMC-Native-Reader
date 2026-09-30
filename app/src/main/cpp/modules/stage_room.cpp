@@ -670,6 +670,69 @@ std::optional<environment_collision::SegmentHit> segment_hit_model(
     return hit;
 }
 
+// Framing box of a stage scene: about one character on the floor spot.
+constexpr float kStageFrameHalf = 120.0F;
+constexpr float kStageFrameHeight = 200.0F;
+
+std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* bytes,
+                                    std::size_t size) noexcept {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto archive = open_session(name, bytes, size);
+        if (!archive || !is_stage_session(*archive)) return nullptr;
+        std::shared_ptr<const Room> room = build_room(name, bytes, size);
+        if (!room) return nullptr;
+        // The largest SCM gives the session its canonical identity
+        // (probe, inspection, capabilities); the drawn mesh is the room.
+        const ChildResource* main = nullptr;
+        const auto find = [&main](const auto& self, const std::vector<ChildResource>& children,
+                                  std::size_t depth) -> void {
+            for (const auto& child : children) {
+                if (!child.source_bytes.empty() && child.probe.format == Format::Scm &&
+                    (main == nullptr || child.source_bytes.size() > main->source_bytes.size())) {
+                    main = &child;
+                }
+                if (depth < 3U) self(self, child.children, depth + 1U);
+            }
+        };
+        find(find, archive->children, 0U);
+        if (main == nullptr) return nullptr;
+        auto stage = open_session(main->suggested_filename, main->source_bytes.data(), main->source_bytes.size());
+        if (!stage) return nullptr;
+        // The stage is drawn by the room pass (near-plane clipped, so the
+        // camera can stand inside it). The session mesh is only a
+        // character-sized framing box on the first floor spot, with one
+        // degenerate triangle: the camera starts where a model would stand.
+        Vec3 spot{};
+        if (!room->spots.empty()) {
+            spot = room->spots.front();
+        } else if (!room->mesh.vertices.empty()) {
+            spot = room->mesh.vertices.front();
+        }
+        Mesh anchor;
+        for (const float y : {0.0F, kStageFrameHeight}) {
+            for (const float x : {-kStageFrameHalf, kStageFrameHalf}) {
+                for (const float z : {-kStageFrameHalf, kStageFrameHalf}) {
+                    anchor.vertices.push_back({spot.x + x, spot.y + y, spot.z + z});
+                }
+            }
+        }
+        anchor.indices = {0U, 0U, 0U};
+        stage->render_mesh = std::move(anchor);
+        stage->render_triangle_texture_slots.clear();
+        stage->attached_textures.clear();
+        stage->hierarchy_overlay = {};
+        stage->renderable = true;
+        stage->archive_name = std::string{name};
+        stage->detail = room->detail;
+        stage->children = std::move(archive->children);
+        stage->stage = std::move(room);
+        return stage;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 bool is_stage_session(const Session& session) noexcept {
     if (session.probe.format == Format::Scm) return true;
     return std::any_of(session.children.begin(), session.children.end(),

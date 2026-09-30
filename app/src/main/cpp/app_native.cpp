@@ -771,9 +771,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const auto* session = from_handle(handle);
-    // SHW hulls, or the mesh fallback for any renderable model.
-    return session != nullptr && (session->renderable || !session->shadow_bindings.empty()) ? JNI_TRUE
-                                                                                              : JNI_FALSE;
+    // SHW hulls, or the mesh fallback for any renderable model (a stage
+    // scene is the floor itself).
+    return session != nullptr && session->stage == nullptr &&
+                   (session->renderable || !session->shadow_bindings.empty())
+               ? JNI_TRUE
+               : JNI_FALSE;
 }
 
 // Viewer room (stage_room.h): built from a file descriptor, kept natively and
@@ -792,6 +795,34 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
         dmcresource::stage_room::set_current(std::move(room));
         return env->NewStringUTF(detail.c_str());
     } catch (...) { return nullptr; }
+}
+
+// A stage archive opened as its assembled scene (stage_room::open_stage);
+// 0 when it is not a stage.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return 0;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return 0;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto stage = dmcresource::stage_room::open_stage(name, mapped.data(), mapped.size());
+        if (!stage) return 0;
+        const SessionLock jni_lock{session_mutex()};
+        return to_handle(stage.release());
+    } catch (...) { return 0; }
+}
+
+// HITS sources of a stage scene session (its own collision view).
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageCollisionSourceCount(
+        JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    return session != nullptr && session->stage != nullptr
+               ? static_cast<jint>(session->stage->collision_sources.size())
+               : 0;
 }
 
 extern "C" JNIEXPORT void JNICALL

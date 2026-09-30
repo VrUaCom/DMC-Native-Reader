@@ -141,6 +141,9 @@ public final class MainActivity extends Activity {
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
+    // Stage archive the root scene was assembled from (its files stay
+    // browsable from the menu).
+    private Uri stagePacUri;
     // Selected class inside a shared enemy archive (em000.pac); 0 = first.
     private int enemyVariant;
     // Position buttons under the title (one per enemy class / weapon / dress state).
@@ -305,11 +308,12 @@ public final class MainActivity extends Activity {
 
         // Stage collision (HITS of the room): the button appears once a stage
         // with collision is the room around the opened model.
+        final boolean stageScene = hasSession && NativeBridge.stageCollisionSourceCount(session) > 0;
         syncToggleButton(stageCollisionButton,
-                hasSession && roomLoaded && blackWidowState.canRender
-                        && NativeBridge.roomCollisionSourceCount() > 0
-                        && !NativeBridge.isStageSession(session)
-                        && !renderView.isUvLayoutVisible(),
+                !renderView.isUvLayoutVisible() && (stageScene
+                        || (hasSession && roomLoaded && blackWidowState.canRender
+                            && NativeBridge.roomCollisionSourceCount() > 0
+                            && !NativeBridge.isStageSession(session))),
                 renderView.isRoomCollisionVisible());
 
         syncToggleButton(uvButton,
@@ -594,13 +598,15 @@ public final class MainActivity extends Activity {
         // shots hit them.
         stageCollisionButton = makeSquareButton("\u25A6", "Stage collision (HITS)", 20f);
         stageCollisionButton.setOnClickListener(v -> {
-            if (!roomLoaded || NativeBridge.roomCollisionSourceCount() <= 0) return;
+            final int stageSources = session != 0 ? NativeBridge.stageCollisionSourceCount(session) : 0;
+            if (stageSources <= 0 && (!roomLoaded || NativeBridge.roomCollisionSourceCount() <= 0)) return;
             final boolean show = !renderView.isRoomCollisionVisible();
-            if (show && !roomShown()) {
+            if (show && stageSources <= 0 && !roomShown()) {
                 prefs().edit().putBoolean(PREF_ROOM_SHOWN, true).apply();
             }
             renderView.setRoomCollisionVisible(show);
-            notice(show ? "Stage collision shown: " + NativeBridge.roomCollisionSourceCount()
+            notice(show ? "Stage collision shown: "
+                            + (stageSources > 0 ? stageSources : NativeBridge.roomCollisionSourceCount())
                             + " HITS source(s)"
                          : "Stage collision hidden (still active)", Toast.LENGTH_SHORT);
             applyResourceUiState();
@@ -1110,6 +1116,9 @@ public final class MainActivity extends Activity {
             addRow.accept("Add weapon / .PAC…", this::chooseAdditionalPac);
             addRow.accept("Browse .PAC files…", this::browseAssembledPac);
         }
+        if (isRootScene() && stagePacUri != null) {
+            addRow.accept("Browse .PAC files…", () -> browsePac(stagePacUri));
+        }
         if (hasModCompositionContext()) addRow.accept("Add .MOD part(s)", this::chooseAdditionalMods);
         if (isRootScene() && canAttachPtx()) addRow.accept("Attach .PTX texture", this::choosePtxForCurrentSession);
         if (isRootScene() && blackWidowState.canStageCompanion) {
@@ -1541,10 +1550,14 @@ public final class MainActivity extends Activity {
     }
 
     private void browseAssembledPac() {
-        if (assembledPacUri == null) return;
-        final String name = displayName(assembledPacUri);
+        browsePac(assembledPacUri);
+    }
+
+    private void browsePac(Uri pac) {
+        if (pac == null) return;
+        final String name = displayName(pac);
         long archive = 0;
-        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(assembledPacUri)) {
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(pac)) {
             if (pfd != null) archive = NativeBridge.open(pfd.getFd(), name);
         } catch (Exception ignored) {
             archive = 0;
@@ -2053,6 +2066,7 @@ public final class MainActivity extends Activity {
         selectedMotionIndex = -1;
         selectedScriptIndex = -1;
         assembledPacUri = null;
+        stagePacUri = null;
         addedPacUris.clear();
     }
 
@@ -2191,6 +2205,22 @@ public final class MainActivity extends Activity {
             opened = assembled;
             assembledPacUri = uri;
             name = name + " · assembled";
+        } else if (NativeBridge.isStageSession(opened)
+                && NativeBridge.childResourceCount(opened) > 0) {
+            // A stage archive opens as its assembled scene (the same build as
+            // the room), not as the file gallery.
+            long stage = 0;
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+                if (pfd != null) stage = NativeBridge.openStage(pfd.getFd(), name);
+            } catch (Exception ignored) {
+                stage = 0;
+            }
+            if (stage != 0) {
+                NativeBridge.close(opened);
+                opened = stage;
+                stagePacUri = uri;
+                name = name + " · stage";
+            }
         }
 
         activateSession(opened, name);

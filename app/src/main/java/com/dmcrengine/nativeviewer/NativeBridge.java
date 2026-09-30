@@ -66,6 +66,10 @@ public final class NativeBridge {
 
     // Read-only PAC assembly: MODs in model space, slot-adjacent PTX, MOT library.
     public static native long assemblePac(long handle, String archiveName);
+    /** A stage archive (st*.pac) as its assembled scene; 0 when it is not a stage. */
+    public static native long openStage(int fd, String filename);
+    /** HITS sources of a stage scene session. */
+    public static native int stageCollisionSourceCount(long handle);
     // handles[0] = character PAC, the rest are added (plwp_*.pac weapons hang
     // from the body joint the game records for them).
     public static native long assemblePacs(long[] handles, String[] names, int variant);

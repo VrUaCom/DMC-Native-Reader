@@ -110,6 +110,13 @@ void clear_active_collision(const void* owner) noexcept;
     const ActiveCollision& collision, const Vec3& from, const Vec3& to,
     std::uint16_t skip_mask = 0U) noexcept;
 
+// A stage archive (st*.pac) opened as its assembled scene: the merged room
+// (every SCM/MOD, the PNST objects at their layout, the stage textures) as a
+// renderable session, its HITS kept in Session::stage for the collision view.
+// nullptr when the archive holds no SCM.
+[[nodiscard]] std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* bytes,
+                                                  std::size_t size) noexcept;
+
 // A stage itself (SCM, or a session holding SCM children) never gets a room.
 [[nodiscard]] bool is_stage_session(const Session& session) noexcept;
 

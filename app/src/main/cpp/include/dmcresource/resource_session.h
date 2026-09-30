@@ -31,6 +31,9 @@ struct MotionState;
 namespace collision {
 struct CollisionBinding;
 }
+namespace stage_room {
+struct Room;
+}
 
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
@@ -75,6 +78,9 @@ struct Session {
     // where available and deterministic corpus binding otherwise.
     std::string archive_name;
     bool renderable{};
+    // A stage archive opened as its assembled scene (stage_room::open_stage):
+    // the merged room it was built from, with its HITS collision.
+    std::shared_ptr<const stage_room::Room> stage;
 
     // Motions discovered while assembling a PAC (read-only copies of the
     // retained payloads). Played through motion::load_motion.
