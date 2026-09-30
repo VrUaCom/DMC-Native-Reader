@@ -421,6 +421,7 @@ void deactivate_lady_dynamic_visuals(Session* session) noexcept {
         visual.retire_frame = -1.0F;
         visual.velocity = {};
         visual.world = Matrix4{};
+        visual.effect_parent_world = Matrix4{};
     }
 }
 
@@ -432,9 +433,12 @@ void spawn_lady_dynamic_visual(
         const auto node0 = lady_component_node_world(*session, 0U, 0U);
         if (!node0.has_value()) return;
         const Matrix4 world_matrix = shl02_actor_matrix(*node0);
+        const Matrix4 effect_parent_world =
+            shl02_effect_parent_matrix(*node0);
         for (auto& visual : session->lady_dynamic_visuals) {
             if (visual.actor != 2U) continue;
             visual.world = world_matrix;
+            visual.effect_parent_world = effect_parent_world;
             // Exact post-spawn steering is world-context dependent:
             // Shl02 state1 calls 0x140244870 with a live gameplay target
             // selected through the global runtime manager. The standalone
@@ -459,6 +463,7 @@ void spawn_lady_dynamic_visual(
         for (auto& visual : session->lady_dynamic_visuals) {
             if (visual.actor != 3U) continue;
             visual.world = spawn->world;
+            visual.effect_parent_world = spawn->world;
             visual.velocity = spawn->velocity;
             visual.spawn_frame = event_frame;
             visual.last_update_frame = event_frame;
@@ -472,6 +477,16 @@ void spawn_lady_dynamic_visual(
     const Session& session, std::uint8_t actor) noexcept {
     for (const auto& visual : session.lady_dynamic_visuals) {
         if (visual.actor == actor && visual.active) return visual.world;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<Matrix4> lady_dynamic_actor_effect_parent_world(
+    const Session& session, std::uint8_t actor) noexcept {
+    for (const auto& visual : session.lady_dynamic_visuals) {
+        if (visual.actor == actor && visual.active) {
+            return actor == 2U ? visual.effect_parent_world : visual.world;
+        }
     }
     return std::nullopt;
 }
@@ -513,11 +528,13 @@ void emit_lady_actor_event(Session* session,
     event.actor_instance = instance;
     event.script_frame = frame;
     event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
-    if (const auto world = lady_dynamic_actor_world(*session, actor_index);
+    if (const auto world = lady_dynamic_actor_effect_parent_world(
+            *session, actor_index);
         world.has_value()) {
         event.world = *world;
-        // Shl02 and Shl03 transforms are the already-recovered exact Reader
-        // actor matrices. No other actor is promoted by identity fallback.
+        // The render mesh keeps the exact Shl02 actor basis. Retail passes
+        // V423 a separately normalized raw slot20 matrix, so the effect event
+        // must use the effect-parent domain instead of the actor visual world.
         event.world_authoritative = actor_index == 2U || actor_index == 3U;
     }
     // Shl02's spawn pose is canonical, but its post-spawn state calls the
@@ -535,7 +552,8 @@ void sync_lady_actor_effects(Session* session,
     for (std::uint8_t actor = 0U; actor < state.active_actor_instances.size(); ++actor) {
         const auto instance = state.active_actor_instances[actor];
         if (instance == 0U) continue;
-        const auto world = lady_dynamic_actor_world(*session, actor);
+        const auto world = lady_dynamic_actor_effect_parent_world(
+            *session, actor);
         if (world.has_value()) {
             // The spawn event already carries this exact matrix. Do not emit
             // a synthetic same-frame update; a seek/replay consumer should
@@ -757,6 +775,28 @@ void reset_lady_runtime(Session* session) noexcept {
 }
 
 }  // namespace
+
+Matrix4 shl02_effect_parent_matrix(const Matrix4& slot20_node0) noexcept {
+    Matrix4 out = slot20_node0;
+    // 0x1402e7ab0 copies the selected matrix, then normalizes row0..row2
+    // through 0x140330390. That helper normalizes xyz; the fourth lane is
+    // not written back. Translation row3 is preserved verbatim.
+    for (std::size_t row = 0U; row < 3U; ++row) {
+        const std::size_t base = row * 4U;
+        const float x = slot20_node0.values[base + 0U];
+        const float y = slot20_node0.values[base + 1U];
+        const float z = slot20_node0.values[base + 2U];
+        const float length_sq = x * x + y * y + z * z;
+        if (!(length_sq > 1.0e-15F) || !std::isfinite(length_sq)) {
+            continue;
+        }
+        const float inverse_length = 1.0F / std::sqrt(length_sq);
+        out.values[base + 0U] = x * inverse_length;
+        out.values[base + 1U] = y * inverse_length;
+        out.values[base + 2U] = z * inverse_length;
+    }
+    return out;
+}
 
 MotionLoadReport load_motion(Session* session,
                              std::string_view name,

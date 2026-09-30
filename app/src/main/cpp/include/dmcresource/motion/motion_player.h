@@ -58,6 +58,12 @@ void clear_motion(Session* session) noexcept;
 // same binding load_motion uses). Host-joint parts (coats) do not count.
 [[nodiscard]] bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept;
 
+// Retail 0x1402e7a90 mode=3 prepares the V423 parent by normalizing the
+// first three rows of the selected CEm034 slot20 world matrix. The actor's
+// render basis remains a separate transform.
+[[nodiscard]] Matrix4 shl02_effect_parent_matrix(
+    const Matrix4& slot20_node0) noexcept;
+
 // MotionScript playback is intentionally separate from raw MOT playback.
 // A PAC may retain multiple independent script controllers; each script button
 // can address only MOTs referenced by that script's resource table.

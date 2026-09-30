@@ -283,6 +283,26 @@ void generic_profile_effect_step(dmcresource::Session* session,
 int main() {
     namespace motion = dmcresource::motion;
 
+    // Retail 0x1402e7a90 mode=3 normalizes the selected slot20
+    // orientation rows for V423 independently of the Shl02 actor basis.
+    {
+        dmcresource::Matrix4 raw;
+        raw.values = {
+            0.0F, 2.0F, 0.0F, 0.0F,
+            -3.0F, 0.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, 4.0F, 0.0F,
+            11.0F, 12.0F, 13.0F, 1.0F,
+        };
+        const auto effect_parent = motion::shl02_effect_parent_matrix(raw);
+        assert(near(effect_parent.values[0], 0.0F));
+        assert(near(effect_parent.values[1], 1.0F));
+        assert(near(effect_parent.values[4], -1.0F));
+        assert(near(effect_parent.values[10], 1.0F));
+        assert(effect_parent.values[12] == 11.0F &&
+               effect_parent.values[13] == 12.0F &&
+               effect_parent.values[14] == 13.0F);
+    }
+
     // 16-bit angle wrap exactly as cvttss2si + word store.
     assert(near(motion::quantize_motion_angle(0.5F), 0.5F, 0.0002F));
     assert(near(motion::quantize_motion_angle(2.0F * std::numbers::pi_v<float> + 0.5F),

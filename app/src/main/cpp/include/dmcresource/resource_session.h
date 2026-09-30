@@ -190,6 +190,9 @@ struct Session {
         std::vector<std::uint32_t> texture_slots;
         std::vector<ImagePreview> textures;
         Matrix4 world{};
+        // Retail CEm034Shl02 passes a separately normalized copy of the
+        // selected slot20 matrix to V423. It is not the actor render basis.
+        Matrix4 effect_parent_world{};
         Vec3 velocity{};
         float spawn_frame{-1.0F};
         float last_update_frame{-1.0F};
