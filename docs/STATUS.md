@@ -82,6 +82,27 @@ APK verifier.
   `41358b89fb08ff9ec59284a267299bbfd52e51b7`; the FXBANK identity and local
   data remain unchanged. See [the detailed trace](reviews/NR_LUNA_V73_ANDROID_ACCEPTANCE_PASS01_2026-09-29.md).
 
+- ✅ v73 EXE effect runtime pass ([details](research/dmc3-shell-effect-runtime-exe-v73.md)):
+  - **Root cause of the vertical, one-frame rocket:**
+    - the Reader built the Shl02 direction from `(1,0,0,1)` × the full slot20
+      matrix, which included the hand translation;
+    - EXE `0x14016F610` drops the translation first;
+    - the Reader also froze the shell at spawn and retired it after 6 frames.
+  - **Shl02 now follows the EXE:**
+    - start at slot20 translation + (18.6,0,12), align-Z basis;
+    - flight at 30/tick for its 120-tick lifetime, then explode;
+    - V543 spawns on explode, and the shell retires 4 ticks later.
+  - **Effect roots:**
+    - V423 is CEm034's copied slot20 muzzle matrix;
+    - V377 follows the shell;
+    - V543 outlives the shell.
+  - **Clocks:** the V-local clock (entry at `floor(a)+1`) and the E lifetimes
+    (`+0x80`/`+0x84`) are bridged.
+  - **Shl03:** receives the same translation fix.
+  - **Gameplay-dependent parts:** the steering (from tick 10) and the
+    collision/proximity end need gameplay context, which the Reader doesn't
+    have: it holds the direction and flags the updates.
+
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive

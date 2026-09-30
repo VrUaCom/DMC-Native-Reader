@@ -895,28 +895,43 @@ struct PreparedView final {
     return true;
 }
 
+// V-local clock (0x140324A80): every update first adds dt (0x1403261B0,
+// 1.0 per 60 Hz tick at unit speed) to V+0xF0, then spawns each entry whose
+// signed i16 +0x04 threshold is below the accumulator. The spawn update is
+// state 0 (0x140324C50) and only zeroes the accumulator, so an entry with
+// threshold a appears at V age floor(a) + 1 (age 1 for a <= 0). Script frames
+// are the same 60 Hz ticks.
+[[nodiscard]] float effect_entry_spawn_age(std::int16_t activation) noexcept {
+    return static_cast<float>(activation < 0 ? 0 : activation) + 1.0F;
+}
+
 bool collect_effect_children(
     const Session& session, const motion::RuntimeEffectInstance& instance,
     const motion::EffectChildRef& child, const Matrix4& parent_world,
-    std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
+    float age, std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
     if (out == nullptr || depth >= 16U ||
         !effect_child_shape_is_valid(child) ||
         find_effect_record(session, child.effect_kind, child.effect_id,
                            child.resource_slot) == nullptr) {
         return false;
     }
-    // The signed V threshold is owned by the V-local update clock. The EXE
-    // reverse has not proven that clock equal to MotionScript frame/actor age,
-    // so only the canonical entry threshold (zero) is presentable here. A
-    // non-zero child remains in the runtime/resource graph until the generic V
-    // update bridge is closed; converting it to a guessed script-frame timer
-    // would create a false E/G/P event.
-    if (child.activation_offset != 0) {
-        return true;
-    }
+    // `age` is this entry's own age: not spawned yet below zero.
+    if (!(age >= 0.0F)) return true;
     Matrix4 world;
     if (!compose_effect_world(parent_world, child, &world)) return false;
     if (child.effect_kind == 'E') {
+        const auto* record = find_effect_record(
+            session, 'E', child.effect_id, child.resource_slot);
+        const auto descriptor = record == nullptr
+            ? std::optional<effect_bank::EffectDescriptor>{}
+            : effect_bank::effect_descriptor(*record);
+        // CEffect retires once its +0x80 countdown is negative: drawn for
+        // ages 0..lifetime. A +0x84 record is held until its V is retired.
+        if (descriptor.has_value() && descriptor->lifetime_known &&
+            !descriptor->held_by_parent &&
+            age > static_cast<float>(descriptor->lifetime_ticks)) {
+            return true;
+        }
         return append_effect_sprite(session, child, world, out);
     }
     if (child.effect_kind != 'V') {
@@ -957,7 +972,10 @@ bool collect_effect_children(
         }
     }
     for (const auto& nested : children) {
-        if (!collect_effect_children(session, instance, nested, world, out, depth + 1U)) {
+        if (!collect_effect_children(
+                session, instance, nested, world,
+                age - effect_entry_spawn_age(nested.activation_offset),
+                out, depth + 1U)) {
             return false;
         }
     }
@@ -974,9 +992,12 @@ bool collect_effect_children(
             const auto& source = instance.source;
             if (!source.world_authoritative) continue;
             if (!source.children.empty()) {
+                // The binding's child span is the root V's entry table.
                 for (const auto& child : source.children) {
                     if (!collect_effect_children(
                             session, instance, child, source.world,
+                            instance.age -
+                                effect_entry_spawn_age(child.activation_offset),
                             &staged, 0U)) {
                         return false;
                     }
@@ -994,7 +1015,7 @@ bool collect_effect_children(
             root.evidence = source.evidence;
             root.scale = {1.0F, 1.0F, 1.0F};
             if (!collect_effect_children(
-                    session, instance, root, source.world,
+                    session, instance, root, source.world, instance.age,
                     &staged, 0U)) {
                 return false;
             }

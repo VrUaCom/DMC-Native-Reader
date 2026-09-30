@@ -540,7 +540,7 @@ int main() {
     lady_profile.effect_bank_slots.push_back(28U);
     assert(!effect_profile_providers().empty());
     assert(install_effect_bindings(&lady_profile));
-    assert(lady_profile.script_effect_bindings.size() == 5U);
+    assert(lady_profile.script_effect_bindings.size() == 7U);
     assert(lady_profile.script_effect_bindings[0].effect_kind == 'V');
     assert(lady_profile.script_effect_bindings[0].effect_id == 463U);
 
@@ -651,6 +651,87 @@ int main() {
     assert(owned_session.effect_runtime->bindings().size() == 1U);
     assert(owned_session.effect_runtime->bindings()[0].children.size() == 1U);
     assert(owned_session.effect_runtime->bindings()[0].children[0].effect_id == 752U);
+
+    // CEm034Shl02 effect domains (EXE 0x140169937, 0x1401738F0, 0x140173800):
+    // V423 takes CEm034's copied slot20 matrix, V377 follows the live shell,
+    // V543 is spawned by the explode phase and outlives the shell's retire.
+    {
+        const std::array<EffectBinding, 3> shell_bindings{{
+            {2U, 'V', 423U, 28U, RuntimeEffectParent::RuntimeMatrix,
+             0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+             EffectLifetimeRule::EffectCallback, EvidenceStatus::EXE_CONFIRMED,
+             {}, 0U},
+            {2U, 'V', 377U, 28U, RuntimeEffectParent::ProjectileTransform,
+             0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+             EffectLifetimeRule::ParentActorRetire, EvidenceStatus::EXE_CONFIRMED,
+             {}, 0U},
+            {2U, 'V', 543U, 28U, RuntimeEffectParent::RuntimeMatrix,
+             0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+             EffectLifetimeRule::EffectCallback, EvidenceStatus::EXE_CONFIRMED,
+             {}, 2U},
+        }};
+        EffectRuntime shell(shell_bindings);
+        dmcresource::Matrix4 muzzle;
+        muzzle.values[12] = 1.0F;
+        dmcresource::Matrix4 rocket;
+        rocket.values[12] = 20.0F;
+
+        shell.begin_step();
+        shell.apply_actor_event(DynamicActorEvent{
+            .kind = DynamicActorEventKind::Spawn, .actor = 2U,
+            .lane = 1U, .channel = 0U, .signal_value = 1U,
+            .actor_instance = 9U, .script_frame = 4.0F,
+            .world = rocket, .world_authoritative = true,
+            .actor_phase = 0U,
+            .spawn_matrix = muzzle, .spawn_matrix_authoritative = true,
+            .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+        // Phase 0 spawns V423 and V377 only.
+        assert(shell.instances().size() == 2U);
+        assert(shell.instances()[0].source.effect_id == 423U &&
+               shell.instances()[0].source.world.values[12] == 1.0F);
+        assert(shell.instances()[1].source.effect_id == 377U &&
+               shell.instances()[1].source.world.values[12] == 20.0F);
+
+        rocket.values[12] = 320.0F;
+        shell.apply_actor_event(DynamicActorEvent{
+            .kind = DynamicActorEventKind::Update, .actor = 2U,
+            .actor_instance = 9U, .script_frame = 14.0F,
+            .world = rocket, .world_authoritative = true,
+            .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+        // The copied muzzle matrix is never tracked; the shell parent is.
+        assert(shell.instances()[0].source.world.values[12] == 1.0F);
+        assert(shell.instances()[0].age == 10.0F);
+        assert(shell.instances()[1].source.world.values[12] == 320.0F);
+
+        dmcresource::Matrix4 blast = rocket;
+        blast.values[13] += 2.0F;
+        shell.apply_actor_event(DynamicActorEvent{
+            .kind = DynamicActorEventKind::Spawn, .actor = 2U,
+            .lane = 1U, .channel = 0U, .signal_value = 1U,
+            .actor_instance = 9U, .script_frame = 125.0F,
+            .world = rocket, .world_authoritative = true,
+            .actor_phase = 2U,
+            .spawn_matrix = blast, .spawn_matrix_authoritative = true,
+            .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+        assert(shell.instances().size() == 3U);
+        assert(shell.instances()[2].source.effect_id == 543U &&
+               shell.instances()[2].source.world.values[13] == 2.0F);
+
+        shell.apply_actor_event(DynamicActorEvent{
+            .kind = DynamicActorEventKind::Retire, .actor = 2U,
+            .actor_instance = 9U, .script_frame = 129.0F,
+            .evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+        // Only the actor-owned V377 retires with the shell.
+        assert(shell.instances()[1].state == EffectRuntimeState::Retired);
+        assert(shell.instances()[0].state == EffectRuntimeState::Active);
+        assert(shell.instances()[2].state == EffectRuntimeState::Active);
+        assert(shell.active_instances().size() == 2U);
+
+        // The effect clock keeps running after the shell is gone.
+        shell.advance(140.0F);
+        assert(shell.instances()[2].age == 15.0F);
+        assert(shell.instances()[1].age == 10.0F);  // retired: frozen
+    }
 
     return 0;
 }

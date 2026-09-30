@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -193,7 +194,15 @@ struct Session {
         // Retail CEm034Shl02 passes a separately normalized copy of the
         // selected slot20 matrix to V423. It is not the actor render basis.
         Matrix4 effect_parent_world{};
+        // Shl03: velocity per tick. Shl02: unit flight direction (shell+0x140
+        // before the speed factor) and the init position (shell+0x80).
         Vec3 velocity{};
+        Vec3 origin{};
+        // CShell state byte (+0x08): 1 flight, 2 explode.
+        std::uint8_t shell_state{};
+        bool explode_emitted{};
+        // lane/channel/value of the MotionScript signal that spawned it.
+        std::array<std::uint8_t, 3> spawn_signal{0xFFU, 0xFFU, 0xFFU};
         float spawn_frame{-1.0F};
         float last_update_frame{-1.0F};
         float retire_frame{-1.0F};  // <0 = owner/state controlled

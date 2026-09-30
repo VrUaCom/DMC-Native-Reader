@@ -1,5 +1,11 @@
 # v72 MotionScript effect runtime bridge
 
+> v73 update: the V-local clock, E lifetimes, the spawn parent domains and
+> the CEm034Shl02 flight are closed in
+> [dmc3-shell-effect-runtime-exe-v73.md](dmc3-shell-effect-runtime-exe-v73.md).
+> Statements below about frozen Shl02 poses, `ParentActorRetire` for V423 and
+> non-zero activation thresholds being unpresentable are superseded there.
+
 This Reader slice keeps raw MOT playback separate from the MotionScript
 runtime. `EffectRuntime` consumes typed dynamic-actor events emitted by the
 character bridge; it does not infer an effect from a MOT name, frame guess or

@@ -559,13 +559,26 @@ int main() {
     }
     {
         const auto bindings = dmcresource::motion::em034_effect_bindings();
-        assert(bindings.size() == 5U);
+        namespace m = dmcresource::motion;
+        assert(bindings.size() == 7U);
         for (const auto& binding : bindings) {
+            // Copied-matrix V roots (CEm034's V423 muzzle matrix, the shell's
+            // V543 explode matrix) end through their own child graph; the
+            // others are retired with their actor.
+            const bool own_graph = binding.effect_id == 423U ||
+                                   binding.effect_id == 543U;
             assert(binding.lifetime ==
-                   dmcresource::motion::EffectLifetimeRule::ParentActorRetire);
-            assert(binding.lifetime_evidence ==
-                   dmcresource::motion::EvidenceStatus::EXE_CONFIRMED);
+                   (own_graph ? m::EffectLifetimeRule::EffectCallback
+                              : m::EffectLifetimeRule::ParentActorRetire));
+            assert(binding.lifetime_evidence == m::EvidenceStatus::EXE_CONFIRMED);
         }
+        assert(bindings[1].parent == m::RuntimeEffectParent::RuntimeMatrix);
+        assert(bindings[5].actor == 2U && bindings[5].effect_id == 377U &&
+               bindings[5].parent == m::RuntimeEffectParent::ProjectileTransform &&
+               bindings[5].actor_phase == 0U && bindings[5].children.empty());
+        assert(bindings[6].actor == 2U && bindings[6].effect_id == 543U &&
+               bindings[6].parent == m::RuntimeEffectParent::RuntimeMatrix &&
+               bindings[6].actor_phase == 2U);
         assert(bindings[0].effect_kind == 'V' && bindings[0].effect_id == 463U);
         assert(bindings[0].children.size() == 1U);
         assert(bindings[0].children[0].effect_kind == 'E' &&

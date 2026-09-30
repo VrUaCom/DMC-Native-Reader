@@ -356,6 +356,37 @@ int main() {
                effect_parent.values[14] == 13.0F);
     }
 
+    // CEm034Shl02: the flight direction is the slot20 X axis only. The old
+    // Reader multiplied (1,0,0,1) by the full matrix, adding the hand
+    // translation (~y 100) to the direction and pointing the shell upward.
+    {
+        dmcresource::Matrix4 slot20;
+        slot20.values = {
+            0.0F, 0.0F, 2.0F, 0.0F,   // X axis -> world +Z (scaled)
+            0.0F, 1.0F, 0.0F, 0.0F,
+            -1.0F, 0.0F, 0.0F, 0.0F,
+            5.0F, 100.0F, -7.0F, 1.0F,
+        };
+        const auto at0 = motion::shl02_shell_world(slot20, 0.0F);
+        // Init 0x1401738F0 adds (18.6,0,12) in world axes.
+        assert(near(at0.values[12], 23.6F) && near(at0.values[13], 100.0F) &&
+               near(at0.values[14], 5.0F));
+        // Align-Z: row2 = flight direction, row1 = up, row0 = up x dir.
+        assert(near(at0.values[8], 0.0F) && near(at0.values[9], 0.0F) &&
+               near(at0.values[10], 1.0F));
+        assert(near(at0.values[5], 1.0F));
+        assert(near(at0.values[0], 1.0F));
+        // 30 units per tick, straight until the first retarget.
+        const auto at9 = motion::shl02_shell_world(slot20, 9.0F);
+        assert(near(at9.values[14], 5.0F + 270.0F, 0.01F) &&
+               near(at9.values[13], 100.0F));
+        // Lifetime 120 ticks: the position holds from there (explode state).
+        const auto at120 = motion::shl02_shell_world(slot20, 120.0F);
+        const auto at200 = motion::shl02_shell_world(slot20, 200.0F);
+        assert(near(at120.values[14], 5.0F + 3600.0F, 0.05F));
+        assert(at200.values[14] == at120.values[14]);
+    }
+
     // 16-bit angle wrap exactly as cvttss2si + word store.
     assert(near(motion::quantize_motion_angle(0.5F), 0.5F, 0.0002F));
     assert(near(motion::quantize_motion_angle(2.0F * std::numbers::pi_v<float> + 0.5F),

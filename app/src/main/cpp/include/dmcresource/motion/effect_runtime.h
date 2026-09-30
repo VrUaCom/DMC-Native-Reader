@@ -122,10 +122,23 @@ struct DynamicActorEvent final {
     std::uint8_t signal_value{0xFFU};
     std::uint64_t actor_instance{};
     float script_frame{};
+    // Live actor world (for CShell actors the render/effect matrix at
+    // actor+0x1A0). Bindings whose parent follows the actor
+    // (DynamicActor/ProjectileTransform) keep tracking it on updates, as the
+    // EXE effect parent pointer effect+0xC0 does (resolver 0x1402E7DE0).
     Matrix4 world{};
     // Identity is never a spatial fallback. False means the event is retained
     // for replay/inspection but cannot materialize an effect instance yet.
     bool world_authoritative{};
+    // Profile-defined actor phase that spawns an effect. 0 is the actor's
+    // creation/init; CShell actors use their state byte (e.g. 2 = explode).
+    std::uint8_t actor_phase{};
+    // Matrix handed to the EXE spawn call (0x1402E7A90 / 0x1402E7CA0) after
+    // its prep mode was applied. It is copied at spawn and never tracked,
+    // e.g. CEm034's slot20 matrix (mode 3) for V423. RuntimeMatrix bindings
+    // use it instead of the live actor world.
+    Matrix4 spawn_matrix{};
+    bool spawn_matrix_authoritative{};
     // True when the EXE actor update needs a gameplay-world service (target,
     // collision or query manager) after the canonical spawn event. This is a
     // context requirement, not permission to synthesize a standalone path.
@@ -149,7 +162,18 @@ struct EffectBinding final {
     EffectLifetimeRule lifetime{EffectLifetimeRule::PreservedUndecoded};
     EvidenceStatus lifetime_evidence{EvidenceStatus::PRESERVED_UNDECODED};
     std::span<const EffectChildRef> children{};
+    // Actor phase that spawns this effect (DynamicActorEvent::actor_phase).
+    std::uint8_t actor_phase{};
 };
+
+// Parent-domain rules shared by the runtime and presentation:
+//   DynamicActor / ProjectileTransform  follow the live actor world;
+//   RuntimeMatrix                        copied spawn_matrix, never tracked.
+[[nodiscard]] constexpr bool effect_parent_follows_actor(
+    RuntimeEffectParent parent) noexcept {
+    return parent == RuntimeEffectParent::DynamicActor ||
+           parent == RuntimeEffectParent::ProjectileTransform;
+}
 
 // Generic profile registry. Each provider owns only evidence-backed
 // profile matching and binding data; the shared runtime owns execution.
@@ -256,6 +280,11 @@ public:
     void begin_step() noexcept;
     void reset() noexcept;
     void apply_actor_event(DynamicActorEvent event);
+    // Advances the effect-local clock of every live instance to the script
+    // frame (one frame = one 60 Hz game tick, the EXE delta 0x1403261B0 at
+    // unit speed). Effects outlive actor updates: V543 keeps ageing after
+    // its CEm034Shl02 is retired.
+    void advance(float script_frame) noexcept;
 
     void set_presentation_enabled(bool enabled) noexcept {
         presentation_enabled_ = enabled;

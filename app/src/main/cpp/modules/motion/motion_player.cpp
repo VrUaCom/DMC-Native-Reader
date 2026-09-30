@@ -449,30 +449,83 @@ struct Vec4f final {
     return normalize3(out, {1.0F, 0.0F, 0.0F});
 }
 
-[[nodiscard]] Matrix4 shl02_actor_matrix(
-    const Matrix4& slot20_node0) noexcept {
-    // 0x14016F610: (1,0,0,1) * slot20 node0 current world.
-    const auto d4 = transform_row4({1.0F, 0.0F, 0.0F, 1.0F}, slot20_node0);
-    const Vec3 direction = normalize3({d4.x, d4.y, d4.z}, {1.0F, 0.0F, 0.0F});
-    const Vec3 up = normalize3({0.0F, 1.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
-    // 0x14032FD90:
+[[nodiscard]] Matrix4 without_translation(Matrix4 m) noexcept {
+    // 0x14016F610 and 0x14016CBC8 copy the slot20 world and overwrite its
+    // row 3 with (0,0,0,1) from .rdata 0x14035D5B0 before transforming a
+    // (x,y,z,1) vector, so only the rotation rows take part.
+    m.values[12] = 0.0F;
+    m.values[13] = 0.0F;
+    m.values[14] = 0.0F;
+    m.values[15] = 1.0F;
+    return m;
+}
+
+[[nodiscard]] Matrix4 align_z_matrix(Vec3 direction, Vec3 position) noexcept {
+    // 0x14032FD90(out, dir, ref (0,1,0,1) from 0x1404C6440):
     // row0 = normalize(up x direction)
     // row1 = normalize(direction x row0)
     // row2 = normalize(direction)
+    direction = normalize3(direction, {1.0F, 0.0F, 0.0F});
+    const Vec3 up{0.0F, 1.0F, 0.0F};
     const Vec3 row0 = robust_cross(up, direction, true);
     const Vec3 row1 = normalize3(cross3(direction, row0), {0.0F, 1.0F, 0.0F});
-
     Matrix4 out;
     out.values = {
         row0.x, row0.y, row0.z, 0.0F,
         row1.x, row1.y, row1.z, 0.0F,
         direction.x, direction.y, direction.z, 0.0F,
-        slot20_node0.values[12],
-        slot20_node0.values[13],
-        slot20_node0.values[14],
-        1.0F,
+        position.x, position.y, position.z, 1.0F,
     };
     return out;
+}
+
+// CEm034Shl02 flight table 0x14057B4E0 loaded by 0x140244940 and the fixed
+// init offset .rdata 0x14057BB20.
+constexpr float kShl02Speed = 30.0F;          // shell+0x160 per tick
+constexpr float kShl02Lifetime = 120.0F;      // shell+0x17C
+constexpr float kShl02RetargetInterval = 10.0F;  // shell+0x180/+0x184
+constexpr Vec3 kShl02InitOffset{18.6F, 0.0F, 12.0F};
+// State 2 (0x140173800) arms shell+0xD68 = 3.0 and enters state 3 once the
+// countdown is negative (3->2->1->0->-1); the next update retires.
+constexpr float kShl02ExplodeTicks = 4.0F;
+
+struct Shl02Spawn final {
+    Vec3 origin{};
+    Vec3 direction{};  // unit, shell+0x140 after 0x140330390
+};
+
+[[nodiscard]] Shl02Spawn shl02_spawn(const Matrix4& slot20_node0) noexcept {
+    // CEm034 0x140169937: dir = 0x14016F610 = (1,0,0,1) * slot20 world with
+    // its translation removed, i.e. the slot20 X axis. The factory stores
+    // pos = slot20 translation; init 0x1401738F0 adds (18.6,0,12) in world
+    // axes (the constants are not rotated).
+    const auto d4 = transform_row4(
+        {1.0F, 0.0F, 0.0F, 1.0F}, without_translation(slot20_node0));
+    Shl02Spawn out;
+    out.direction = normalize3({d4.x, d4.y, d4.z}, {1.0F, 0.0F, 0.0F});
+    out.origin = {
+        slot20_node0.values[12] + kShl02InitOffset.x,
+        slot20_node0.values[13] + kShl02InitOffset.y,
+        slot20_node0.values[14] + kShl02InitOffset.z,
+    };
+    return out;
+}
+
+[[nodiscard]] Matrix4 shl02_world_at(const Session::LadyDynamicVisual& visual,
+                                     float age) noexcept {
+    // State 1 (0x140173C60 -> CShell::move 0x140244870, flags 3):
+    // dir = normalize(dir) * 30; pos += dir * dt; lifetime -= dt. Until the
+    // first retarget (timer 10 -> 0) the path needs no target. Afterwards the
+    // EXE steers toward the player joint (0x140244B50, max turn u16 1200);
+    // the standalone Reader has no player, so the direction is held and the
+    // update carries requires_gameplay_world_context.
+    const float flight = std::clamp(age, 0.0F, kShl02Lifetime);
+    const Vec3 position{
+        visual.origin.x + visual.velocity.x * kShl02Speed * flight,
+        visual.origin.y + visual.velocity.y * kShl02Speed * flight,
+        visual.origin.z + visual.velocity.z * kShl02Speed * flight,
+    };
+    return align_z_matrix(visual.velocity, position);
 }
 
 struct Shl03Spawn final {
@@ -489,7 +542,7 @@ struct Shl03Spawn final {
     // 0x14016CBB0..0x14016CC41:
     // spawn = (87.8,0,4.28,1) * node0World + node1World.translation.
     const auto offset = transform_row4(
-        {87.80000305F, 0.0F, 4.28000021F, 1.0F}, *node0);
+        {87.80000305F, 0.0F, 4.28000021F, 1.0F}, without_translation(*node0));
     const Vec3 spawn{
         offset.x + node1->values[12],
         offset.y + node1->values[13],
@@ -498,7 +551,7 @@ struct Shl03Spawn final {
 
     // Direction/velocity domain = 50 * ((1,0,0,1) * node0World).
     const auto d4 = transform_row4(
-        {1.0F, 0.0F, 0.0F, 1.0F}, *node0);
+        {1.0F, 0.0F, 0.0F, 1.0F}, without_translation(*node0));
     const Vec3 velocity{50.0F * d4.x, 50.0F * d4.y, 50.0F * d4.z};
     const Vec3 direction = normalize3(velocity, {1.0F, 0.0F, 0.0F});
     const Vec3 ref{0.0F, 1.0F, 0.0F};
@@ -529,6 +582,9 @@ void deactivate_lady_dynamic_visuals(Session* session) noexcept {
         visual.last_update_frame = -1.0F;
         visual.retire_frame = -1.0F;
         visual.velocity = {};
+        visual.origin = {};
+        visual.shell_state = 0U;
+        visual.explode_emitted = false;
         visual.world = Matrix4{};
         visual.effect_parent_world = Matrix4{};
     }
@@ -541,26 +597,23 @@ void spawn_lady_dynamic_visual(
     if (actor == 2) {
         const auto node0 = lady_component_node_world(*session, 0U, 0U);
         if (!node0.has_value()) return;
-        const Matrix4 world_matrix = shl02_actor_matrix(*node0);
+        const auto spawn = shl02_spawn(*node0);
         const Matrix4 effect_parent_world =
             shl02_effect_parent_matrix(*node0);
         for (auto& visual : session->lady_dynamic_visuals) {
             if (visual.actor != 2U) continue;
-            visual.world = world_matrix;
+            visual.origin = spawn.origin;
+            visual.velocity = spawn.direction;
+            visual.world = shl02_world_at(visual, 0.0F);
             visual.effect_parent_world = effect_parent_world;
-            // Exact post-spawn steering is world-context dependent:
-            // Shl02 state1 calls 0x140244870 with a live gameplay target
-            // selected through the global runtime manager. The standalone
-            // Reader has no authoritative target, so preserve the exact spawn
-            // pose instead of inventing a straight-line projectile path.
-            visual.velocity = {};
+            visual.shell_state = 1U;
+            visual.explode_emitted = false;
             visual.spawn_frame = event_frame;
             visual.last_update_frame = event_frame;
-            // Then state2 starts +0xD68=3.0 and only promotes to state3 after
-            // the subtraction becomes negative: 3->2->1->0->-1. The next
-            // actor update dispatches state3 through the retire path. With
-            // default delta1 this is six updates from spawn, not three.
-            visual.retire_frame = event_frame + 6.0F;
+            // Flight ends when shell+0x17C <= 0 (0x140244810 -> -1): state 2
+            // on the next update, then kShl02ExplodeTicks to the retire.
+            visual.retire_frame =
+                event_frame + kShl02Lifetime + 1.0F + kShl02ExplodeTicks;
             visual.active = true;
         }
         return;
@@ -586,7 +639,7 @@ void spawn_lady_dynamic_visual(
     const Session& session, std::uint8_t actor) noexcept {
     for (const auto& visual : session.lady_dynamic_visuals) {
         if (visual.actor == actor && visual.active) {
-            return actor == 2U ? visual.effect_parent_world : visual.world;
+            return visual.world;
         }
     }
     return std::nullopt;
@@ -629,20 +682,49 @@ void emit_lady_actor_event(Session* session,
     event.actor_instance = instance;
     event.script_frame = frame;
     event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
-    if (const auto world = lady_dynamic_actor_effect_parent_world(
-            *session, actor_index);
-        world.has_value()) {
-        event.world = *world;
-        // The render mesh keeps the exact Shl02 actor basis. Retail passes
-        // V423 a separately normalized raw slot20 matrix, so the effect event
-        // must use the effect-parent domain instead of the actor visual world.
+    for (auto& visual : session->lady_dynamic_visuals) {
+        if (visual.actor != actor_index || !visual.active) continue;
+        // Live shell matrix (V377 follows it through effect+0xC0) and, as a
+        // separate copied matrix, the spawn matrix CEm034 hands to
+        // 0x1402E7A90 (Shl02: normalized slot20 world for V423).
+        event.world = visual.world;
         event.world_authoritative = actor_index == 2U || actor_index == 3U;
+        event.spawn_matrix = actor_index == 2U ? visual.effect_parent_world
+                                               : visual.world;
+        event.spawn_matrix_authoritative = event.world_authoritative;
+        visual.spawn_signal = {lane, channel, value};
+        break;
     }
-    // Shl02's spawn pose is canonical, but its post-spawn state calls the
-    // shared gameplay target/query helper. The standalone Reader records this
-    // dependency and freezes at the exact recoverable pose; it never invents
-    // a target or a straight-line trajectory.
-    event.requires_gameplay_world_context = actor_index == 2U;
+    session->effect_runtime->apply_actor_event(event);
+}
+
+// CEm034Shl02 state 2 (0x140173800) spawns V543 with a copy of the shell
+// matrix; 0x1402E7CA0 adds 2.0 (.rdata 0x14035D570) to its translation y.
+void emit_shl02_explode_event(Session* session,
+                              const MotionState& state,
+                              Session::LadyDynamicVisual& visual) {
+    if (session == nullptr || session->effect_runtime == nullptr ||
+        visual.actor != 2U || state.active_actor_instances[2U] == 0U) {
+        return;
+    }
+    DynamicActorEvent event;
+    event.kind = DynamicActorEventKind::Spawn;
+    event.actor = 2U;
+    event.actor_phase = 2U;
+    event.lane = visual.spawn_signal[0];
+    event.channel = visual.spawn_signal[1];
+    event.signal_value = visual.spawn_signal[2];
+    event.actor_instance = state.active_actor_instances[2U];
+    event.script_frame = visual.spawn_frame + kShl02Lifetime + 1.0F;
+    event.world = shl02_world_at(visual, kShl02Lifetime);
+    event.world_authoritative = true;
+    event.spawn_matrix = event.world;
+    event.spawn_matrix.values[13] += 2.0F;
+    event.spawn_matrix_authoritative = true;
+    // The standalone flight reached its lifetime; a gameplay collision or
+    // the 100-unit player proximity (0x140244810) would end it earlier.
+    event.requires_gameplay_world_context = true;
+    event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
     session->effect_runtime->apply_actor_event(event);
 }
 
@@ -653,6 +735,17 @@ void sync_lady_actor_effects(Session* session,
     for (std::uint8_t actor = 0U; actor < state.active_actor_instances.size(); ++actor) {
         const auto instance = state.active_actor_instances[actor];
         if (instance == 0U) continue;
+        if (actor == 2U) {
+            // Also reached by a seek past the flight: the explode spawn
+            // precedes the retire of the same shell instance.
+            for (auto& visual : session->lady_dynamic_visuals) {
+                if (visual.actor == 2U && visual.spawn_frame >= 0.0F &&
+                    visual.shell_state == 2U && !visual.explode_emitted) {
+                    visual.explode_emitted = true;
+                    emit_shl02_explode_event(session, state, visual);
+                }
+            }
+        }
         const auto world = lady_dynamic_actor_effect_parent_world(
             *session, actor);
         if (world.has_value()) {
@@ -669,6 +762,11 @@ void sync_lady_actor_effects(Session* session,
             event.script_frame = frame;
             event.world = *world;
             event.world_authoritative = actor == 2U || actor == 3U;
+            // From the first retarget on, the shell path depends on the
+            // player target the standalone Reader does not have.
+            event.requires_gameplay_world_context =
+                actor == 2U && spawn_frame.has_value() &&
+                frame - *spawn_frame >= kShl02RetargetInterval;
             event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
             session->effect_runtime->apply_actor_event(event);
         } else if (actor == 2U || actor == 3U) {
@@ -693,10 +791,9 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
                 ? visual.last_update_frame
                 : visual.spawn_frame;
         if (visual.actor == 2U) {
-            // No standalone translation is applied. The EXE refreshes the
-            // direction from a live gameplay target before integrating state1;
-            // freezing at the exact spawn pose is evidence-safe, while a
-            // fabricated straight trajectory is not.
+            const float age = frame - visual.spawn_frame;
+            visual.world = shl02_world_at(visual, age);
+            if (age >= kShl02Lifetime + 1.0F) visual.shell_state = 2U;
         } else if (visual.actor == 3U) {
             const float dt = std::max(frame - previous, 0.0F);
             // Shl03 state1, 0x140174D39:
@@ -896,6 +993,14 @@ void reset_lady_runtime(Session* session) noexcept {
 }
 
 }  // namespace
+
+Matrix4 shl02_shell_world(const Matrix4& slot20_node0, float age) noexcept {
+    const auto spawn = shl02_spawn(slot20_node0);
+    Session::LadyDynamicVisual visual;
+    visual.origin = spawn.origin;
+    visual.velocity = spawn.direction;
+    return shl02_world_at(visual, std::isfinite(age) ? age : 0.0F);
+}
 
 Matrix4 shl02_effect_parent_matrix(const Matrix4& slot20_node0) noexcept {
     Matrix4 out = slot20_node0;
@@ -1489,6 +1594,9 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
             state.script_role != Session::MotionScriptRole::LadyBody &&
             session->script_effect_bridge.step != nullptr) {
             session->script_effect_bridge.step(session, frame);
+        }
+        if (session->effect_runtime != nullptr) {
+            session->effect_runtime->advance(frame);
         }
         (void)apply_part_attachments(session, cloth_steps);
         (void)apply_uv_scrolls(session, state.scroll_clock);

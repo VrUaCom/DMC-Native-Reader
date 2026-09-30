@@ -142,6 +142,13 @@ struct EffectDescriptor final {
     std::uint8_t animation_gate{};
     std::uint16_t animation{0xFFFFU};
     SpriteFrame rectangle{}; // direct x/y/width/height when A is inactive
+    // Lifetime in ticks (+0x80, 0x1402E4190 -> effect+0x8B0). The state-1
+    // update 0x1402E47F0 decrements it by dt and retires the effect once it
+    // is negative, unless +0x84 is set: then the effect lives until its
+    // parent retires it (0x1402E7A40 on parent+0x60).
+    std::int32_t lifetime_ticks{};
+    bool lifetime_known{};
+    bool held_by_parent{};
 };
 [[nodiscard]] std::optional<EffectDescriptor> effect_descriptor(const Record& record);
 

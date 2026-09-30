@@ -1190,6 +1190,33 @@ int main() {
                descriptor->rectangle.x == 128U && descriptor->rectangle.y == 64U &&
                descriptor->rectangle.w == 64U && descriptor->rectangle.h == 64U);
 
+        // E lifetime: +0x80 i32 ticks (0x1402E4190 -> effect+0x8B0) and the
+        // +0x84 hold flag the state-1 update 0x1402E47F0 checks.
+        {
+            std::vector<std::uint8_t> e_bytes(544U, 0U);
+            e_bytes[1U] = 1U;
+            put_u16(e_bytes, 4U, 5U);
+            e_bytes[0x80U] = 20U;
+            const fx::Record timed{'E', 752U, 0U,
+                                   std::span<const std::uint8_t>{e_bytes}, {}};
+            const auto timed_view = fx::effect_descriptor(timed);
+            assert(timed_view && timed_view->lifetime_known &&
+                   timed_view->lifetime_ticks == 20 &&
+                   !timed_view->held_by_parent);
+            e_bytes[0x80U] = 4U;
+            e_bytes[0x84U] = 1U;
+            const fx::Record held{'E', 669U, 0U,
+                                  std::span<const std::uint8_t>{e_bytes}, {}};
+            const auto held_view = fx::effect_descriptor(held);
+            assert(held_view && held_view->lifetime_ticks == 4 &&
+                   held_view->held_by_parent);
+            std::vector<std::uint8_t> short_bytes(0x20U, 0U);
+            const fx::Record truncated{
+                'E', 1U, 0U, std::span<const std::uint8_t>{short_bytes}, {}};
+            const auto short_view = fx::effect_descriptor(truncated);
+            assert(short_view && !short_view->lifetime_known);
+        }
+
         // V entry ABI: dispatch E, id752, threshold0, translation x60 and
         // unit scale. This guards the exact child graph fields consumed by
         // the resource-backed Script Play presentation adapter.

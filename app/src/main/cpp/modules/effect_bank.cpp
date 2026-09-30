@@ -248,6 +248,13 @@ std::optional<EffectDescriptor> effect_descriptor(const Record& record) {
     out.rectangle = {
         u16(b, 0x0CU), u16(b, 0x0EU),
         u16(b, 0x10U), u16(b, 0x12U)};
+    // CEffect 0x1402E4190 loads +0x80 (i32 -> float) into effect+0x8B0;
+    // the state-1 update 0x1402E47F0 subtracts dt unless +0x84 is set.
+    if (b.size() >= 0x85U) {
+        out.lifetime_ticks = i32(b, 0x80U);
+        out.lifetime_known = true;
+        out.held_by_parent = b[0x84U] != 0U;
+    }
     return out;
 }
 

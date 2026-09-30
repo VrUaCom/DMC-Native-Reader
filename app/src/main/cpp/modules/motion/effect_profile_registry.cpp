@@ -88,15 +88,19 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}, confirmed, 2,
          std::span<const EffectChildRef>{kV8Children}},
     }};
-    static constexpr std::array<EffectBinding, 5> kBindings{{
+    static constexpr std::array<EffectBinding, 7> kBindings{{
         {0U, 'V', 463U, 28U, RuntimeEffectParent::DynamicActor,
          0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
          EffectLifetimeRule::ParentActorRetire,
          EvidenceStatus::EXE_CONFIRMED,
          std::span<const EffectChildRef>{kV463Children}},
-        {2U, 'V', 423U, 28U, RuntimeEffectParent::DynamicActor,
+        // CEm034 spawns V423 next to CEm034Shl02 (0x140169937..0x1401699C5)
+        // through 0x1402E7A90(kind 3, 0x1A7, slot20 world, mode 3): a copied
+        // muzzle matrix, not the shell. Its E children end by their own
+        // record lifetime, independently of the shell's flight.
+        {2U, 'V', 423U, 28U, RuntimeEffectParent::RuntimeMatrix,
          0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
-         EffectLifetimeRule::ParentActorRetire,
+         EffectLifetimeRule::EffectCallback,
          EvidenceStatus::EXE_CONFIRMED,
          std::span<const EffectChildRef>{kV423Children}},
         {4U, 'V', 488U, 28U, RuntimeEffectParent::DynamicActor,
@@ -114,6 +118,22 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          EffectLifetimeRule::ParentActorRetire,
          EvidenceStatus::EXE_CONFIRMED,
          std::span<const EffectChildRef>{kV276Children}},
+        // CEm034Shl02 init 0x1401738F0: 0x1402E7CA0(3, 0x179, NULL, 0x10),
+        // then effect+0xC0 = &shell+0x1A0 and effect+0xD8 = 3, i.e. V377
+        // follows the flying shell matrix; state 3 retires it (0x1403261E0
+        // on shell+0xD60). Children are decoded from the FXBANK record.
+        {2U, 'V', 377U, 28U, RuntimeEffectParent::ProjectileTransform,
+         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+         EffectLifetimeRule::ParentActorRetire,
+         EvidenceStatus::EXE_CONFIRMED,
+         std::span<const EffectChildRef>{}, 0U},
+        // CEm034Shl02 state 2 0x140173800: 0x1402E7CA0(3, 0x21F, &shell+0x1A0,
+        // 0x10) copies the shell matrix (translation.y += 2.0).
+        {2U, 'V', 543U, 28U, RuntimeEffectParent::RuntimeMatrix,
+         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+         EffectLifetimeRule::EffectCallback,
+         EvidenceStatus::EXE_CONFIRMED,
+         std::span<const EffectChildRef>{}, 2U},
     }};
     return kBindings;
 }

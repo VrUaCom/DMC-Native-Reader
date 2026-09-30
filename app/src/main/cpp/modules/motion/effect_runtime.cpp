@@ -126,6 +126,7 @@ void EffectRuntime::reset() noexcept {
 bool EffectRuntime::matches(const EffectBinding& binding,
                             const DynamicActorEvent& event) const noexcept {
     if (binding.actor != event.actor) return false;
+    if (binding.actor_phase != event.actor_phase) return false;
     if (binding.actor_state != kAnyActorState &&
         binding.actor_state != event.actor_state) return false;
     if (binding.lane != kAnyByte && binding.lane != event.lane) return false;
@@ -211,6 +212,14 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
                 !resource_available(binding)) {
                 continue;
             }
+            // RuntimeMatrix bindings take the matrix the EXE spawn call
+            // copied (0x1402E7A90 prep modes 0..3); the others follow the
+            // live actor world.
+            const bool follows = effect_parent_follows_actor(binding.parent);
+            const Matrix4& world = follows ? event.world : event.spawn_matrix;
+            const bool world_authoritative = follows
+                ? event.world_authoritative
+                : event.spawn_matrix_authoritative;
             RuntimeEffectInstance instance;
             instance.instance_id = next_instance_id_++;
             instance.actor_instance = event.actor_instance;
@@ -219,8 +228,8 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
             instance.source.effect_id = binding.effect_id;
             instance.source.resource_slot = binding.resource_slot;
             instance.source.parent = binding.parent;
-            instance.source.world = event.world;
-            instance.source.world_authoritative = event.world_authoritative;
+            instance.source.world = world;
+            instance.source.world_authoritative = world_authoritative;
             instance.source.requires_gameplay_world_context =
                 event.requires_gameplay_world_context;
             instance.source.actor_state = event.actor_state;
@@ -234,12 +243,12 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
             instance.source.children = binding.children;
             instance.age = 0.0F;
             instance.current_frame = event.script_frame;
-            instance.active = event.world_authoritative;
-            instance.state = event.world_authoritative
+            instance.active = world_authoritative;
+            instance.state = world_authoritative
                 ? EffectRuntimeState::Active
                 : EffectRuntimeState::DeferredTransform;
             instances_.push_back(instance);
-            emit(event.world_authoritative
+            emit(world_authoritative
                      ? RuntimeEffectEvent::Kind::Spawn
                      : RuntimeEffectEvent::Kind::Deferred,
                  instance);
@@ -256,6 +265,12 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
 
         if (event.kind == DynamicActorEventKind::Retire) {
             if (instance.state == EffectRuntimeState::Retired) continue;
+            // A V spawned with a copied matrix is not owned by the actor: it
+            // ends through its own child graph (0x140324A80), e.g. V543
+            // keeps exploding after CEm034Shl02 state 3 retired the shell.
+            if (instance.source.lifetime == EffectLifetimeRule::EffectCallback) {
+                continue;
+            }
             instance.active = false;
             instance.state = EffectRuntimeState::Retired;
             emit(RuntimeEffectEvent::Kind::Retire, instance);
@@ -269,6 +284,12 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
 
         // Update is also the point at which a deferred actor-domain matrix may
         // become available. Until then it remains a non-presentable record.
+        if (!effect_parent_follows_actor(instance.source.parent)) {
+            const float age = event.script_frame - instance.source.script_frame;
+            instance.age = std::isfinite(age) && age > 0.0F ? age : 0.0F;
+            instance.current_frame = event.script_frame;
+            continue;
+        }
         if (event.world_authoritative) {
             const float age = event.script_frame - instance.source.script_frame;
             instance.source.world = event.world;
@@ -288,6 +309,27 @@ void EffectRuntime::apply_actor_event(DynamicActorEvent event) {
         }
     }
     rebuild_active_instances();
+}
+
+void EffectRuntime::advance(float script_frame) noexcept {
+    if (!std::isfinite(script_frame)) return;
+    bool changed = false;
+    for (auto& instance : instances_) {
+        // Deferred records keep their spawn record untouched; only a
+        // materialized instance has an effect-local clock.
+        if (instance.state != EffectRuntimeState::Active) continue;
+        if (script_frame < instance.current_frame) continue;
+        const float age = script_frame - instance.source.script_frame;
+        instance.age = std::isfinite(age) && age > 0.0F ? age : 0.0F;
+        instance.current_frame = script_frame;
+        changed = true;
+    }
+    if (changed) {
+        try {
+            rebuild_active_instances();
+        } catch (...) {
+        }
+    }
 }
 
 void EffectRuntime::rebuild_active_instances() {

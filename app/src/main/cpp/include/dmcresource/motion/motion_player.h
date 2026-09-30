@@ -66,6 +66,14 @@ void clear_motion(Session* session) noexcept;
 [[nodiscard]] Matrix4 shl02_effect_parent_matrix(
     const Matrix4& slot20_node0) noexcept;
 
+// CEm034Shl02 shell world `age` ticks after its spawn from the slot20 world:
+// direction = slot20 X axis (0x14016F610 drops the translation), origin =
+// slot20 translation + (18.6,0,12), align-Z basis 0x14032FD90, 30 units per
+// tick for at most the 120-tick lifetime. Target steering (from tick 10) is
+// gameplay context the standalone Reader does not have: the direction is held.
+[[nodiscard]] Matrix4 shl02_shell_world(
+    const Matrix4& slot20_node0, float age) noexcept;
+
 // MotionScript playback is intentionally separate from raw MOT playback.
 // A PAC may retain multiple independent script controllers; each script button
 // can address only MOTs referenced by that script's resource table.
