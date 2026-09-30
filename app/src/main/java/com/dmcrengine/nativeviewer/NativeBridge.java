@@ -122,6 +122,11 @@ public final class NativeBridge {
     public static native String pickView(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
             boolean follow, float dolly, float x, float y, boolean place);
+    /** Loads the stage's effect bank (st*_effect.pac); its summary, or null. */
+    public static native String loadRoomEffects(int fd, String filename);
+    public static native void clearRoomEffects();
+    /** The room drawn with the session has scrolling textures (clouds) or effects. */
+    public static native boolean roomAnimated(long handle);
     /**
      * Kinds (distinct record flags) of the HITS shown with the session, one
      * string each: "flags|records|floors|walls|ceilings|rgb".

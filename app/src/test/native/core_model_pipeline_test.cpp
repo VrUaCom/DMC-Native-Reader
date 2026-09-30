@@ -542,6 +542,26 @@ int main() {
             assert(thick_lines > lines * 2U);
         }
 
+        // Room normals are not trusted: a wall whose vertex normals point away
+        // from the camera is still drawn (whole far buildings did this).
+        {
+            dmcresource::Mesh wall;
+            wall.vertices = {{-300, 0, 400}, {300, 0, 400}, {300, 500, 400}, {-300, 500, 400}};
+            wall.normal0.assign(4U, {0.0F, 0.0F, 1.0F});  // away from the camera at z < 400
+            wall.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = 0.0F;
+            const auto bare = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            look.room_mesh = &wall;
+            const auto drawn = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lit = 0U;
+            for (std::size_t o = 0U; o < drawn.pixels.size(); o += 4U) {
+                if (drawn.pixels[o] != bare.pixels[o]) ++lit;
+            }
+            assert(lit > 96U * 96U / 8U);
+        }
+
         // Settings bits: background 2 (light) fills the corner.
         const auto light = dmcresource::render_session(model.get(), 64, 64, 0.0F, 0.0F, 1.0F,
             2U << dmcresource::kRenderBackgroundShift);

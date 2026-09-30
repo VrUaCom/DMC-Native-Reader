@@ -156,6 +156,18 @@ public final class DmcRenderView extends View {
     private int meshLineUnits = 1;
     private int collisionLineUnits = 1;
     private boolean softwareLayer;
+    private static final int RENDER_ROOM_ANIMATE = 1 << 15;
+    // Redraw about 15 times a second while a room with scrolling textures shows.
+    private final Runnable roomTick = new Runnable() {
+        @Override public void run() {
+            if ((settingsFlags & RENDER_ROOM_ANIMATE) == 0 || session == 0 || staticImagePreview) return;
+            if (!touching && !motionPlaying && spinYaw == 0.0f && spinPitch == 0.0f
+                    && (renderFlags & RENDER_UV_LAYOUT) == 0 && NativeBridge.roomAnimated(session)) {
+                renderNow();
+            }
+            postDelayed(this, 66);
+        }
+    };
     private java.util.function.IntConsumer resolutionListener;
     static final int[] RESOLUTION_STEPS = {7680, 6144, 5120, 3840, 2048, 1024, 720, 540, 360};
     private long motionMinFrameMs = 33;
@@ -413,6 +425,8 @@ public final class DmcRenderView extends View {
         motionMinFrameMs = Math.max(8, frameMs);
         motionSpeed = speed > 0.0f ? speed : 1.0f;
         settingsFlags = flags;
+        removeCallbacks(roomTick);
+        if ((flags & RENDER_ROOM_ANIMATE) != 0) postDelayed(roomTick, 66);
         shadowsAtOpen = shadows;
         if (!staticImagePreview) renderNow();
     }
@@ -880,7 +894,14 @@ public final class DmcRenderView extends View {
         requestFrame(Float.NaN);
     }
 
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        removeCallbacks(roomTick);
+        if ((settingsFlags & RENDER_ROOM_ANIMATE) != 0) postDelayed(roomTick, 66);
+    }
+
     @Override protected void onDetachedFromWindow() {
+        removeCallbacks(roomTick);
         pauseMotion();
         removeCallbacks(spinTick);
         removeCallbacks(fullFrame);

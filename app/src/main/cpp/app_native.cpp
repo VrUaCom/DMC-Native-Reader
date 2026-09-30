@@ -812,6 +812,44 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
     } catch (...) { return nullptr; }
 }
 
+// The stage's effect bank (st*_effect.pac): the layout's effects play from it.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoomEffects(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return nullptr;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return nullptr;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto host = dmcresource::stage_room::make_effect_host(name, mapped.data(), mapped.size());
+        if (!host) return nullptr;
+        std::string detail = std::to_string(host->effect_banks.front().bank.records.size()) + " effect records, " +
+                             std::to_string(host->effect_banks.front().textures.size()) + " textures";
+        dmcresource::stage_room::set_effect_host(std::move(host));
+        return env->NewStringUTF(detail.c_str());
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoomEffects(JNIEnv*, jclass) {
+    dmcresource::stage_room::set_effect_host(nullptr);
+}
+
+// True when the room drawn with the session has scrolling textures (a stage's
+// clouds): the viewer then redraws on a timer.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomAnimated(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return JNI_FALSE;
+    const bool has_host = dmcresource::stage_room::effect_host() != nullptr;
+    if (session->stage != nullptr) {
+        return !session->stage->uv_scrolls.empty() || (has_host && !session->stage->effects.empty()) ? JNI_TRUE : JNI_FALSE;
+    }
+    const auto room = dmcresource::stage_room::current();
+    return room && (!room->uv_scrolls.empty() || (has_host && !room->effects.empty())) ? JNI_TRUE : JNI_FALSE;
+}
+
 // Kinds (distinct flag values) of the HITS shown with the session: its own
 // file, its stage scene, or the room around it. One string per kind:
 // "flags|records|floors|walls|ceilings|rgb".

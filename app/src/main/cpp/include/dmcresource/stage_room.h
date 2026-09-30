@@ -52,6 +52,22 @@ struct Room final {
     // Joint hierarchy of every merged model, in room coordinates (layout
     // objects moved with their placement): the bones view of a stage scene.
     HierarchyOverlay hierarchy;
+    // Texture scrolls of the "# GAME" layout (`uv part, texture, U, V`): room
+    // texture index and rate per game frame (texture units).
+    struct UvScroll final {
+        std::uint32_t texture{};
+        float u_per_frame{};
+        float v_per_frame{};
+    };
+    std::vector<UvScroll> uv_scrolls;
+    // Effects the layout keeps on its objects (`eff V 98` + `epos`, e.g. the
+    // burning drums): kind, id and the room position of the effect root.
+    struct LayoutEffect final {
+        char kind{};
+        std::uint16_t id{};
+        Vec3 position{};
+    };
+    std::vector<LayoutEffect> effects;
     // Environment collision sources are preserved independently from the
     // visible room mesh. HITS source ordering and physical slots remain part
     // of provenance; only the first source is selected for the optional
@@ -134,6 +150,13 @@ void clear_active_collision(const void* owner) noexcept;
 // nullptr when the archive holds no SCM.
 [[nodiscard]] std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* bytes,
                                                   std::size_t size) noexcept;
+
+// The stage's effect bank (st*_effect.pac, an FXBANK) the layout effects play
+// from. It is held as a host Session that only carries the bank.
+[[nodiscard]] std::shared_ptr<Session> make_effect_host(std::string_view name, const std::uint8_t* bytes,
+                                                        std::size_t size) noexcept;
+void set_effect_host(std::shared_ptr<const Session> host) noexcept;
+[[nodiscard]] std::shared_ptr<const Session> effect_host() noexcept;
 
 // A stage itself (SCM, or a session holding SCM children) never gets a room.
 [[nodiscard]] bool is_stage_session(const Session& session) noexcept;

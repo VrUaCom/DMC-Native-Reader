@@ -543,6 +543,7 @@ struct RoomTri {
     float nearest{};  // smallest camera z, for the sort
     bool translucent{};
     bool colored{};
+    std::uint8_t blend{};  // 2 additive, 3 subtractive (vertex blend channel); 0 alpha / opaque
 };
 
 struct RoomFrame {
@@ -656,8 +657,10 @@ struct RoomFrame {
             const float pl = std::sqrt(poly[0].x * poly[0].x + poly[0].y * poly[0].y + poly[0].z * poly[0].z);
             if (nl > 0.0F && pl > 0.0F) {
                 const float d = (nr.x * poly[0].x + nr.y * poly[0].y + nr.z * poly[0].z) / (nl * pl);
-                if (d > 0.0F) continue;  // turned away from the camera
-                facing = -d;
+                // No back-face cull: stage normals are not reliable (whole
+                // buildings far away face "away" by them) and the depth
+                // buffer already hides what is behind. Only the light uses it.
+                facing = std::fabs(d);
             }
         }
 
@@ -686,18 +689,38 @@ struct RoomFrame {
         // Stages are prelit (COLOR0); a soft head light keeps unlit ones readable.
         const float light = colored && !neutral ? 1.0F : (neutral ? 0.45F + 0.55F * facing : 0.7F + 0.3F * facing);
         const bool translucent = soft != nullptr && (*soft)[t / 3U] != 0U && !neutral;
+        // Additive / subtractive geometry (light shafts): the vertex blend channel.
+        const std::uint8_t blend_mode = rm.has_blend0() && !neutral ? rm.blend0[idx[0]] : 0U;
+        const bool blended = blend_mode == 2U || blend_mode == 3U;
+        // Scrolling textures (the sky's clouds): an offset by the room clock.
+        float scroll_u = 0.0F, scroll_v = 0.0F;
+        if (view.room_time != 0.0F && textured) {
+            const auto slot = (*view.room_texture_slots)[t / 3U];
+            for (const auto& scroll : view.room_scrolls) {
+                if (scroll.texture != slot) continue;
+                scroll_u = std::fmod(scroll.u_per_frame * view.room_time, 1.0F);
+                scroll_v = std::fmod(scroll.v_per_frame * view.room_time, 1.0F);
+                break;
+            }
+        }
 
         RoomSv s[4];
         float nearest = std::numeric_limits<float>::max();
         for (int i = 0; i < count; ++i) {
             const auto& c = clipped[i];
             const float iz = 1.0F / c.z;
-            s[i] = {hw + focal * c.x * iz, hh - focal * c.y * iz, iz, c.u * iz, c.v * iz,
+            s[i] = {hw + focal * c.x * iz, hh - focal * c.y * iz, iz, (c.u + scroll_u) * iz, (c.v + scroll_v) * iz,
                     c.r * iz, c.g * iz, c.b * iz, c.a * iz};
             nearest = std::min(nearest, c.z);
         }
         for (int k = 1; k + 1 < count; ++k) {
-            RoomTri tri{s[0], s[k], s[k + 1], texture, light, nearest, translucent, colored && !neutral};
+            RoomTri tri{s[0], s[k], s[k + 1], texture, light, nearest, translucent || blended,
+                        colored && !neutral, static_cast<std::uint8_t>(blended ? blend_mode : 0U)};
+            if (blended) {
+                // Light shafts add to what is behind them and never hide it.
+                out.translucent.push_back(tri);
+                continue;
+            }
             // A soft-alpha texture also holds fully opaque texels (walls of a
             // distant tower, the solid part of a window): those belong to the
             // opaque pass; only its soft texels blend afterwards.
@@ -792,7 +815,7 @@ void raster_room(const RoomTri& tri, bool translucent_pass, bool smooth, float c
                 }
             }
             if (texel[3] < 8) continue;
-            const bool opaque = texel[3] >= 240 || !tri.translucent;
+            const bool opaque = tri.blend == 0U && (texel[3] >= 240 || !tri.translucent);
             if (opaque == translucent_pass) continue;
             if (!tri.translucent && texel[3] < 32) continue;  // alpha-tested cut-outs
             float cr = static_cast<float>(texel[0]), cg = static_cast<float>(texel[1]), cb = static_cast<float>(texel[2]);
@@ -803,6 +826,22 @@ void raster_room(const RoomTri& tri, bool translucent_pass, bool smooth, float c
                 cb *= at(a.bz, b.bz, c.bz) * (1.0F / 128.0F);
             }
             const auto o = pi * 4U;
+            if (!opaque && tri.blend != 0U) {
+                // Additive / subtractive: texel x vertex colour, scaled by the
+                // texel and vertex alpha (0x80 = 1), on top of the picture.
+                float k = static_cast<float>(texel[3]) * (1.0F / 255.0F);
+                if (tri.colored) k *= std::min(1.0F, at(a.az, b.az, c.az) * (1.0F / 128.0F));
+                const float sign = tri.blend == 3U ? -1.0F : 1.0F;
+                const auto add = [&](std::size_t ch, float value) {
+                    const float d = image.pixels[o + ch];
+                    image.pixels[o + ch] = static_cast<std::uint8_t>(
+                        std::clamp(static_cast<int>(d + sign * value * light * k), 0, 255));
+                };
+                add(0U, cr);
+                add(1U, cg);
+                add(2U, cb);
+                continue;
+            }
             if (!opaque) {
                 const float k = static_cast<float>(texel[3]) * (1.0F / 255.0F);
                 const auto mixc = [&](std::size_t ch, float value) {
@@ -1295,7 +1334,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const Mesh& rm = *view.room_mesh;
             const bool main_view = mesh.indices.size() < 3U || view.room_wire_main;
             const std::uint8_t level = main_view ? 235U : 150U;
-            const std::uint8_t alpha = main_view ? 190U : 120U;
+            const float faint = std::clamp(view.room_opacity, 0.05F, 1.0F);
+            const std::uint8_t alpha = static_cast<std::uint8_t>((main_view ? 190.0F : 120.0F) * faint);
             for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
                 const auto ia = rm.indices[t], ib = rm.indices[t + 1U], ic = rm.indices[t + 2U];
                 if (ia >= rm.vertices.size() || ib >= rm.vertices.size() || ic >= rm.vertices.size()) continue;
@@ -1319,17 +1359,42 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     } else {
         // Per band: opaque room (front to back), floor, model, soft room
         // texels (back to front), then the shadow footprint.
+        const float room_opacity = std::clamp(view.room_opacity, 0.0F, 1.0F);
+        const bool faint_room = room && room_opacity < 0.999F;
+        static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
+        const auto& background = kBackgrounds[view.background & 3U];
         for_row_bands(image.height, [&](int row_begin, int row_end) {
             for (const auto& tri : room_frame.opaque) {
                 raster_room(tri, false, smooth_room, cd, row_begin, row_end, image, depth);
+            }
+            if (faint_room) {
+                // A faint set: the whole room (soft texels included) fades
+                // into the background, then the model is drawn over it.
+                for (const auto& tri : room_frame.translucent) {
+                    raster_room(tri, true, smooth_room, cd, row_begin, row_end, image, depth);
+                }
+                for (int y = row_begin; y < row_end; ++y) {
+                    auto* row = image.pixels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(image.width) * 4U;
+                    for (int x = 0; x < image.width; ++x) {
+                        for (int k = 0; k < 3; ++k) {
+                            row[x * 4 + k] = static_cast<std::uint8_t>(
+                                background[k] + (row[x * 4 + k] - background[k]) * room_opacity);
+                        }
+                    }
+                }
+                std::fill(depth.begin() + static_cast<std::ptrdiff_t>(row_begin) * image.width,
+                          depth.begin() + static_cast<std::ptrdiff_t>(row_end) * image.width,
+                          std::numeric_limits<float>::infinity());
             }
             if (floor && !room) {
                 fill(floor_quad[0], floor_quad[1], floor_quad[2], row_begin, row_end, floor_pixel);
                 fill(floor_quad[0], floor_quad[2], floor_quad[3], row_begin, row_end, floor_pixel);
             }
             model_band(row_begin, row_end);
-            for (const auto& tri : room_frame.translucent) {
-                raster_room(tri, true, smooth_room, cd, row_begin, row_end, image, depth);
+            if (!faint_room) {
+                for (const auto& tri : room_frame.translucent) {
+                    raster_room(tri, true, smooth_room, cd, row_begin, row_end, image, depth);
+                }
             }
             for (std::size_t t = 0U; t + 2U < shadow.size(); t += 3U) {
                 fill(shadow[t], shadow[t + 1U], shadow[t + 2U], row_begin, row_end, shadow_pixel);

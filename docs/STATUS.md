@@ -184,6 +184,32 @@ APK verifier.
     While the view moves a preview of at most 1024 px is shown. If memory
     runs out the next lower size is chosen and stored.
 
+- ✅ Room effects and the faint room (Android, not device-tested yet):
+  - **Room opacity** (Settings → Room: 100 / 75 / 50 / 30 / 20 / 12 / 6 %): the room
+    fades into the background and the opened model is drawn over all of it.
+    The wireframe room fades with it.
+  - **Stage layout keywords** (`# GAME`, traced from the stage files):
+    - `uv part, texture, U, V` scrolls a texture: the sky's clouds move
+      (rates read as 1/4096 texture per game frame, an inference).
+    - `eff V 98` + `epos x, y, z` keeps an effect on an object (the burning
+      drums of st002).
+    - `beff` (effect when broken), `bmodel`, `item`, `vital`, `hit`,
+      `lockon`, `special`, `# SET LIGHT` and `# DOOR` are recorded but not used.
+  - **Stage effects:** choose `st*_effect.pac` (an FXBANK) in Settings → Room
+    or the ⋮ menu of a stage. Opening such a file also loads it. The layout
+    effects play from it in a loop (period from the E lifetimes).
+  - **Model numbers:** layout model k is the PNST entry in slot 10·k (st002
+    has slots 10, 30, 40, 50 only), no longer the k-th entry.
+  - **Additive / subtractive room geometry** (light shafts) follows the vertex
+    blend channel.
+  - P and G effect records are still not drawn.
+  - **Missing buildings in the render (the "LOD" report):** the room pass
+    dropped triangles whose vertex normals pointed away from the camera, and
+    stage normals are not reliable (whole far buildings faced "away"). There
+    is no back-face cull now; the depth buffer hides what is behind. A render
+    and the wireframe from the same view now agree on st001 and st002. The
+    dark gap at the far end of the st002 street is empty in the wireframe too.
+
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive

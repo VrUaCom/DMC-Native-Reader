@@ -16,6 +16,7 @@
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/effect_bank.h"
+#include "dmcresource/effect_host.h"
 #include "dmcresource/mod_bytes.h"
 #include "dmcresource/texture_set.h"
 #include "dmcresource/shadow_hull.h"
@@ -280,35 +281,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             }
             auto source = std::make_shared<std::vector<std::uint8_t>>(
                 child.source_bytes.begin(), child.source_bytes.end());
-            const auto parsed = effect_bank::parse_bank(
-                std::span<const std::uint8_t>{source->data(), source->size()});
-            if (!parsed.has_value()) continue;
-
-            Session::EffectBank retained;
-            retained.resource_slot = *slot;
-            retained.source = source;
-            retained.bank = *parsed;
-            // E resolves T through the bank's own texture manager. Decode only
-            // those exact T records once and retain their canonical ids; the
-            // live renderer never substitutes an attached model texture.
-            for (const auto& record : retained.bank.records) {
-                if (record.kind != 'T') continue;
-                const auto dds = effect_bank::texture_dds(record);
-                if (dds.empty()) continue;
-                const auto dds_bytes = std::span<const std::byte>{
-                    reinterpret_cast<const std::byte*>(dds.data()), dds.size()};
-                const auto parsed_textures = texture_set::parse_dds(dds_bytes);
-                if (!parsed_textures.ok()) continue;
-                const auto* texture_slot = texture_set::find_slot(parsed_textures, 0U);
-                if (texture_slot == nullptr) continue;
-                Session::EffectTexture texture;
-                texture.id = record.id;
-                if (texture_set::decode_base_mip(
-                        dds_bytes, *texture_slot, &texture.image) &&
-                    texture.image.available()) {
-                    retained.textures.push_back(std::move(texture));
-                }
-            }
+            auto loaded = dmcresource::load_effect_bank(source, *slot);
+            if (!loaded.has_value()) continue;
+            const auto parsed = std::optional<effect_bank::Bank>{loaded->bank};
+            Session::EffectBank retained = std::move(*loaded);
             effect_banks.push_back(std::move(retained));
             for (const auto& record : parsed->records) {
                 const motion::EffectResourceRef resource{
@@ -1358,4 +1334,42 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
     }
 }
 
+
 }  // namespace dmcresource::pac_assembly
+
+namespace dmcresource {
+
+std::optional<Session::EffectBank> load_effect_bank(
+    std::shared_ptr<const std::vector<std::uint8_t>> source, std::uint32_t slot) {
+    if (!source) return std::nullopt;
+    const auto parsed = effect_bank::parse_bank(
+        std::span<const std::uint8_t>{source->data(), source->size()});
+    if (!parsed.has_value()) return std::nullopt;
+    Session::EffectBank retained;
+    retained.resource_slot = slot;
+    retained.source = std::move(source);
+    retained.bank = *parsed;
+    // E resolves T through the bank's own texture manager. Decode only those
+    // exact T records once and retain their canonical ids; the live renderer
+    // never substitutes an attached model texture.
+    for (const auto& record : retained.bank.records) {
+        if (record.kind != 'T') continue;
+        const auto dds = effect_bank::texture_dds(record);
+        if (dds.empty()) continue;
+        const auto dds_bytes = std::span<const std::byte>{
+            reinterpret_cast<const std::byte*>(dds.data()), dds.size()};
+        const auto parsed_textures = texture_set::parse_dds(dds_bytes);
+        if (!parsed_textures.ok()) continue;
+        const auto* texture_slot = texture_set::find_slot(parsed_textures, 0U);
+        if (texture_slot == nullptr) continue;
+        Session::EffectTexture texture;
+        texture.id = record.id;
+        if (texture_set::decode_base_mip(dds_bytes, *texture_slot, &texture.image) &&
+            texture.image.available()) {
+            retained.textures.push_back(std::move(texture));
+        }
+    }
+    return retained;
+}
+
+}  // namespace dmcresource

@@ -47,6 +47,9 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
     private static final int REQUEST_ADD_PAC = 1011;
     private static final int REQUEST_ROOM = 1012;
+    private static final int REQUEST_ROOM_EFFECTS = 1014;
+    private static final String PREF_EFFECTS_NAME = "room.effects.name";
+    private static final String EFFECTS_FILE = "room_effects.bin";
     private static final int REQUEST_EXPORT_INFO = 1013;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
@@ -175,6 +178,7 @@ public final class MainActivity extends Activity {
         renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
         renderView.setResolutionListener(side -> prefs().edit().putInt(SET_MAX_SIDE, side).apply());
         restoreRoom();
+        restoreRoomEffects();
         handleIncomingIntent(getIntent());
     }
 
@@ -652,6 +656,93 @@ public final class MainActivity extends Activity {
     private boolean roomLoaded;
     private String roomName = "";
 
+    private String effectsName = "";
+    private String effectsDetail = "";
+
+    private File effectsFile() {
+        return new File(getFilesDir(), EFFECTS_FILE);
+    }
+
+    private void roomEffectsChoose() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_ROOM_EFFECTS);
+    }
+
+    private void roomEffectsRemove() {
+        NativeBridge.clearRoomEffects();
+        effectsName = "";
+        effectsDetail = "";
+        //noinspection ResultOfMethodCallIgnored
+        effectsFile().delete();
+        prefs().edit().remove(PREF_EFFECTS_NAME).apply();
+        renderView.refreshRoom();
+        notice("Stage effects removed", Toast.LENGTH_SHORT);
+    }
+
+    /** Copies the picked stage effect bank (st*_effect.pac) into app storage and loads it. */
+    private void chooseRoomEffects(Uri uri) {
+        final String name = displayName(uri);
+        new Thread(() -> {
+            final File target = effectsFile();
+            final File partial = new File(getFilesDir(), EFFECTS_FILE + ".part");
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new java.io.FileOutputStream(partial)) {
+                if (in != null) {
+                    byte[] buffer = new byte[1 << 16];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception ignored) {
+                copied = false;
+            }
+            final String detail = copied ? loadEffectsFile(partial, name) : null;
+            if (detail == null) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+                runOnUiThread(() -> notice("Stage effects: " + name + " is not an effect bank", Toast.LENGTH_LONG));
+                return;
+            }
+            //noinspection ResultOfMethodCallIgnored
+            target.delete();
+            //noinspection ResultOfMethodCallIgnored
+            partial.renameTo(target);
+            prefs().edit().putString(PREF_EFFECTS_NAME, name).apply();
+            runOnUiThread(() -> {
+                effectsName = name;
+                effectsDetail = detail;
+                renderView.refreshRoom();
+                notice("Stage effects: " + name + " (" + detail + ")", Toast.LENGTH_LONG);
+            });
+        }).start();
+    }
+
+    private void restoreRoomEffects() {
+        final File file = effectsFile();
+        final String name = prefs().getString(PREF_EFFECTS_NAME, null);
+        if (name == null || !file.isFile()) return;
+        new Thread(() -> {
+            final String detail = loadEffectsFile(file, name);
+            if (detail == null) return;
+            runOnUiThread(() -> {
+                effectsName = name;
+                effectsDetail = detail;
+                renderView.refreshRoom();
+            });
+        }).start();
+    }
+
+    private static String loadEffectsFile(File file, String name) {
+        try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            return NativeBridge.loadRoomEffects(pfd.getFd(), name);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private File roomFile() {
         return new File(getFilesDir(), ROOM_FILE);
     }
@@ -677,13 +768,19 @@ public final class MainActivity extends Activity {
     private static final String SET_SPEED = "set.speed";
     private static final String SET_FAST_PREVIEW = "set.fastPreview";
     private static final String SET_MESH_LINE = "set.meshLine";
+    // Room opacity in sixteenths (0 = fully drawn); bits 28-31 of the render flags.
+    private static final String SET_ROOM_FADE = "set.roomFade";
+    private static final String SET_ROOM_ANIM = "set.roomAnimate";
+    private static final int[] ROOM_FADE_CODES = {0, 12, 8, 5, 3, 2, 1};
     private static final String SET_COLLISION_LINE = "set.collisionLine";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
         final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
                 | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
-                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11);
+                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11)
+                | ((p.getInt(SET_ROOM_FADE, 0) & 15) << 28)
+                | (p.getBoolean(SET_ROOM_ANIM, true) ? 1 << 15 : 0);
         renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
                 p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
                 p.getBoolean(SET_FAST_PREVIEW, true),
@@ -955,6 +1052,13 @@ public final class MainActivity extends Activity {
         if (roomLoaded) {
             content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
                     i -> { if ((i == 0) != roomShown()) roomToggle(); }));
+            content.addView(choiceRow("Room animation (sky clouds, stage effects)", new String[]{"On", "Off"},
+                    p.getBoolean(SET_ROOM_ANIM, true) ? 0 : 1,
+                    i -> { p.edit().putBoolean(SET_ROOM_ANIM, i == 0).apply(); apply.run(); }));
+            content.addView(choiceRow("Room opacity (a faint set behind the opened file)",
+                    new String[]{"100%", "75%", "50%", "30%", "20%", "12%", "6%"},
+                    indexOf(ROOM_FADE_CODES, p.getInt(SET_ROOM_FADE, 0), 0),
+                    i -> { p.edit().putInt(SET_ROOM_FADE, ROOM_FADE_CODES[i]).apply(); apply.run(); }));
             if (NativeBridge.roomCollisionSourceCount() > 0) {
                 content.addView(choiceRow("HITS room collision", new String[]{"On", "Off"},
                         renderView.isRoomCollisionVisible() ? 0 : 1,
@@ -970,6 +1074,28 @@ public final class MainActivity extends Activity {
             addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
         }
         content.addView(roomActions);
+        // Stage effects: the layout's effects (burning drums) play from st*_effect.pac.
+        final TextView effectsStatus = new TextView(this);
+        effectsStatus.setTextColor(0xffc8ccd6);
+        effectsStatus.setTextSize(14f);
+        effectsStatus.setPadding(0, dp(12), 0, dp(4));
+        effectsStatus.setText(effectsName.isEmpty()
+                ? "Stage effects: none. Choose the stage's effect bank (st*_effect.pac) to play the effects its "
+                        + "layout keeps on objects."
+                : "Stage effects: " + effectsName + " (" + effectsDetail + ")");
+        content.addView(effectsStatus);
+        final LinearLayout effectsActions = new LinearLayout(this);
+        effectsActions.setOrientation(LinearLayout.VERTICAL);
+        final LinearLayout.LayoutParams effectsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        effectsParams.topMargin = dp(6);
+        effectsActions.addView(actionChip(effectsName.isEmpty() ? "Choose stage effects…" : "Replace stage effects…",
+                () -> { dialog.dismiss(); roomEffectsChoose(); }), effectsParams);
+        if (!effectsName.isEmpty()) {
+            effectsActions.addView(actionChip("Remove stage effects", () -> { roomEffectsRemove(); dialog.dismiss(); }),
+                    effectsParams);
+        }
+        content.addView(effectsActions);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
@@ -1209,6 +1335,7 @@ public final class MainActivity extends Activity {
         }
         if (isRootScene() && stagePacUri != null) {
             addRow.accept("Browse .PAC files…", () -> browsePac(stagePacUri));
+            addRow.accept("Stage effects (st*_effect.pac)…", this::roomEffectsChoose);
         }
         if (hasModCompositionContext()) addRow.accept("Add .MOD part(s)", this::chooseAdditionalMods);
         if (isRootScene() && canAttachPtx()) addRow.accept("Attach .PTX texture", this::choosePtxForCurrentSession);
@@ -2001,6 +2128,10 @@ public final class MainActivity extends Activity {
             if (data != null && data.getData() != null) chooseRoom(data.getData());
             return;
         }
+        if (requestCode == REQUEST_ROOM_EFFECTS) {
+            if (data != null && data.getData() != null) chooseRoomEffects(data.getData());
+            return;
+        }
         if (requestCode == REQUEST_ADD_PAC) {
             Uri uri = data.getData();
             if (uri == null) return;
@@ -2278,6 +2409,11 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
             notice("Could not read file", Toast.LENGTH_LONG);
             return;
+        }
+
+        // A stage's effect bank opened on its own is also the stage effects of the room.
+        if (opened != 0 && name.toLowerCase(java.util.Locale.ROOT).matches("st\\d+.*effect.*")) {
+            chooseRoomEffects(uri);
         }
 
         if (opened == 0) {

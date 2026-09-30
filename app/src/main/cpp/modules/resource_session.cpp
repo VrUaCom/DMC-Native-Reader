@@ -15,6 +15,7 @@
 #include "dmcresource/matrix_ops.h"
 
 #include <span>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -736,6 +737,7 @@ struct PreparedView final {
     std::vector<Vec3> room_collision_lines;
     std::vector<std::uint8_t> room_collision_kinds;
     HierarchyOverlay stage_hierarchy;
+    std::shared_ptr<const Session> effect_host;  // keeps the stage bank's textures alive
     std::shared_ptr<const stage_room::Room> room;
 };
 
@@ -1128,6 +1130,74 @@ bool collect_effect_children(
     } catch (...) {
         return false;
     }
+}
+
+// Longest time (game frames) an effect shows: E lifetimes (+0x80) added to
+// the V entry spawn ages; a record held by its parent counts 90.
+[[nodiscard]] float effect_extent(const Session& host, char kind, std::uint16_t id, std::uint32_t slot,
+                                  int depth) noexcept {
+    if (depth > 8) return 0.0F;
+    const auto* record = find_effect_record(host, kind, id, slot);
+    if (record == nullptr) return 0.0F;
+    if (kind == 'E') {
+        const auto descriptor = effect_bank::effect_descriptor(*record);
+        if (!descriptor.has_value()) return 0.0F;
+        if (descriptor->lifetime_known && !descriptor->held_by_parent) {
+            return static_cast<float>(descriptor->lifetime_ticks);
+        }
+        return 90.0F;
+    }
+    if (kind != 'V') return 0.0F;
+    const auto composite = effect_bank::composite_record(*record);
+    if (!composite.has_value()) return 0.0F;
+    float longest = 0.0F;
+    for (const auto& entry : composite->entries) {
+        const char child = effect_kind_for_dispatch(entry.dispatch_kind);
+        if (child == '\0') continue;
+        longest = std::max(longest, effect_entry_spawn_age(entry.activation_offset) +
+                                        effect_extent(host, child, entry.id, slot, depth + 1));
+    }
+    return longest;
+}
+
+// The effects the stage layout keeps on its objects, played in a loop from
+// the stage's effect bank, placed with the room.
+void append_room_effects(const stage_room::Room& room, const std::shared_ptr<const Session>& host,
+                         const stage_room::Placement& placement, float room_time, PreparedView* out) {
+    if (out == nullptr || !host || room.effects.empty() || !(room_time > 0.0F)) return;
+    {
+        const float cy = std::cos(out->view.yaw_radians);
+        const float sy = std::sin(out->view.yaw_radians);
+        const float cp = std::cos(out->view.pitch_radians);
+        const float sp = std::sin(out->view.pitch_radians);
+        g_effect_view_forward = {sy * cp, -cy * sp, -cy * cp};
+    }
+    motion::RuntimeEffectInstance instance;
+    std::vector<ViewState::EffectSprite> staged;
+    std::size_t index = 0U;
+    for (const auto& effect : room.effects) {
+        ++index;
+        if (effect.kind != 'V' && effect.kind != 'E') continue;
+        motion::EffectChildRef root;
+        root.effect_kind = effect.kind;
+        root.effect_id = effect.id;
+        root.resource_slot = 0U;
+        root.dispatch_kind = dispatch_kind_for_effect_kind(effect.kind);
+        root.evidence = motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+        root.scale = {1.0F, 1.0F, 1.0F};
+        const float period = std::clamp(effect_extent(*host, effect.kind, effect.id, 0U, 0) + 20.0F, 60.0F, 600.0F);
+        // Each effect keeps its own phase so neighbours do not pulse together.
+        const float age = std::fmod(room_time + static_cast<float>(index) * 17.0F, period);
+        Matrix4 world;
+        const Vec3 x = stage_room::room_direction_to_model(placement, {1.0F, 0.0F, 0.0F});
+        const Vec3 z = stage_room::room_direction_to_model(placement, {0.0F, 0.0F, 1.0F});
+        const Vec3 at = stage_room::room_to_model(placement, effect.position);
+        world.values = {x.x, x.y, x.z, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, z.x, z.y, z.z, 0.0F, at.x, at.y, at.z, 1.0F};
+        (void)collect_effect_children(*host, instance, root, world, age, &staged, 0U);
+    }
+    if (staged.empty()) return;
+    out->effect_host = host;
+    out->effect_sprites.insert(out->effect_sprites.end(), staged.begin(), staged.end());
 }
 
 [[nodiscard]] Vec3 transform_dynamic_vertex(
@@ -1568,9 +1638,29 @@ struct DynamicVertexInfluences final {
 }
 
 constexpr float kDollyMin = -2.0F;
+constexpr std::uint32_t kRoomAnimateBit = 1U << 15U;
 constexpr int kMaxRenderSide = 8192;
 constexpr std::uint32_t kMeshLineShift = 16U;
 constexpr std::uint32_t kCollisionLineShift = 22U;
+
+// Room texture scrolls run on a wall clock (game frames, 60 per second) while
+// the animate bit is set.
+void set_room_animation(ViewState* view, const std::vector<stage_room::Room::UvScroll>& scrolls,
+                        bool has_effects, std::uint32_t flags) {
+    static thread_local std::vector<ViewState::RoomScroll> converted;
+    converted.clear();
+    if ((flags & kRoomAnimateBit) == 0U || (scrolls.empty() && !has_effects)) {
+        view->room_scrolls = {};
+        view->room_time = 0.0F;
+        return;
+    }
+    for (const auto& scroll : scrolls) converted.push_back({scroll.texture, scroll.u_per_frame, scroll.v_per_frame});
+    view->room_scrolls = converted;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    // Wrapped, so the float keeps its precision over a long session.
+    view->room_time = static_cast<float>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now).count() % 3600000LL) * 0.06F + 1.0F;
+}
 
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
@@ -1599,6 +1689,11 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     out->height = std::clamp(requested_height, 64, kMaxRenderSide);
     // Line widths travel in the render flags: mesh lines in bits 16-21,
     // collision lines in bits 22-27 (image pixels, 0 = 1).
+    {
+        // Room opacity: bits 28-31, in sixteenths (0 = as drawn).
+        const auto sixteenths = (flags >> 28U) & 15U;
+        view.room_opacity = sixteenths == 0U ? 1.0F : static_cast<float>(sixteenths) / 16.0F;
+    }
     view.mesh_line_px = std::max(1, static_cast<int>((flags >> kMeshLineShift) & 63U));
     view.collision_line_px = std::max(1, static_cast<int>((flags >> kCollisionLineShift) & 63U));
     out->hierarchy = !view.uv_layout && has_render_flag(flags, RenderFlag::Hierarchy) &&
@@ -1662,6 +1757,9 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.room_texture_slots = &out->room->triangle_texture_slots;
         view.room_textures = &out->room->textures;
         view.room_translucent_triangles = &out->room->translucent_triangles;
+        set_room_animation(&view, out->room->uv_scrolls, !out->room->effects.empty() && stage_room::effect_host() != nullptr, flags);
+        append_room_effects(*out->room, stage_room::effect_host(), placement, view.room_time, out);
+        view.effect_sprites = out->effect_sprites;
         view.room_pivot = placement.pivot;
         view.room_yaw = placement.yaw;
         view.room_offset = placement.offset;
@@ -1682,6 +1780,9 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.room_texture_slots = &stage.triangle_texture_slots;
         view.room_textures = &stage.textures;
         view.room_translucent_triangles = &stage.translucent_triangles;
+        set_room_animation(&view, stage.uv_scrolls, !stage.effects.empty() && stage_room::effect_host() != nullptr, flags);
+        append_room_effects(stage, stage_room::effect_host(), stage_room::Placement{view.room_pivot, std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F, {}}, view.room_time, out);
+        view.effect_sprites = out->effect_sprites;
         view.room_pivot = stage.spots.empty() ? Vec3{} : stage.spots.front();
         view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
         view.room_offset = {};

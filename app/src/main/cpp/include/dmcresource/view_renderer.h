@@ -64,6 +64,18 @@ struct ViewState {
     std::span<const std::uint8_t> room_collision_kinds{};
     // Line widths in image pixels: meshes (wireframe, room wire, bones) and
     // collisions (HITS, attack shapes).
+    // How much of the room shows (1 = as drawn). Below 1 the room fades into
+    // the background and the model is drawn over all of it, like a faint set.
+    float room_opacity{1.0F};
+    // Texture scrolls of the room (texture index, rate per game frame) and the
+    // animation clock in game frames (60 per second; 0 = still).
+    struct RoomScroll final {
+        std::uint32_t texture{};
+        float u_per_frame{};
+        float v_per_frame{};
+    };
+    std::span<const RoomScroll> room_scrolls{};
+    float room_time{0.0F};
     int mesh_line_px{1};
     int collision_line_px{1};
     // Resource-backed EXE effect presentation. The runtime supplies explicit

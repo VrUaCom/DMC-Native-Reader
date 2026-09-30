@@ -1,6 +1,8 @@
 #include "dmcresource/stage_room.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <limits>
@@ -9,6 +11,7 @@
 #include <sstream>
 
 #include "dmcresource/archive_entry.h"
+#include "dmcresource/effect_host.h"
 #include "dmcresource/render_scene.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/session_actions.h"
@@ -120,6 +123,7 @@ void append(const Session& piece, Room* room, bool layout_object = false, std::s
     grow(dst.uv0, src.has_uv0(), Vec2{}, src.uv0);
     grow(dst.color0, src.has_color0(), std::array<std::uint8_t, 4>{0x80U, 0x80U, 0x80U, 0x80U}, src.color0);
     grow(dst.normal0, src.has_normal0(), Vec3{}, src.normal0);
+    grow(dst.blend0, src.has_blend0(), std::uint8_t{0U}, src.blend0);
     dst.vertices.insert(dst.vertices.end(), src.vertices.begin(), src.vertices.end());
     for (const auto i : src.indices) dst.indices.push_back(base + i);
 
@@ -146,6 +150,12 @@ struct GameSet final {
     Vec3 pos{};
     Vec3 rot{};
     Vec3 scale{1.0F, 1.0F, 1.0F};
+    // `uv part, texture, U, V`: texture scroll of the placed model.
+    std::vector<std::array<float, 4>> uv;
+    // `eff K ID` with `epos x, y, z`: an effect the object keeps.
+    char effect_kind{};
+    int effect_id{-1};
+    Vec3 effect_pos{};
 };
 
 struct GameLayout final {
@@ -217,6 +227,20 @@ struct GameLayout final {
             current->rot = {values[0], values[1], values[2]};
         } else if (key == "scale" && values.size() >= 3U) {
             current->scale = {values[0], values[1], values[2]};
+        } else if ((key == "eff") && current != nullptr) {
+            // "V 98": a kind letter and a decimal id.
+            const auto rest = line.substr(key_end);
+            std::size_t i = 0U;
+            while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+            if (i < rest.size() && std::isalpha(static_cast<unsigned char>(rest[i]))) {
+                current->effect_kind = rest[i];
+                const auto id = numbers(rest.substr(i + 1U));
+                if (!id.empty()) current->effect_id = static_cast<int>(id[0]);
+            }
+        } else if (key == "epos" && values.size() >= 3U) {
+            current->effect_pos = {values[0], values[1], values[2]};
+        } else if (key == "uv" && values.size() >= 4U) {
+            current->uv.push_back({values[0], values[1], values[2], values[3]});
         } else if (key == "cam_init" && values.size() >= 3U) {
             out.has_camera = true;
             out.camera = {values[0], values[1], values[2]};
@@ -293,6 +317,7 @@ std::optional<Vec3> g_placed;
 const void* g_collision_owner = nullptr;
 std::optional<ActiveCollision> g_collision;
 std::uint64_t g_collision_revision = 0U;
+std::shared_ptr<const Session> g_effect_host;
 
 }  // namespace
 
@@ -494,14 +519,26 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
             }
         }
         if (object_bank != nullptr && !layout.sets.empty()) {
+            // Layout model k is the PNST entry in slot 10 * k (slots 10 k + 1.. hold
+            // the model's companions, e.g. its motion PAC); a stage may skip numbers.
             std::vector<const ChildResource*> models;
             for (const auto& child : object_bank->children) {
                 if (child.source_bytes.empty()) continue;
                 const auto format = archive::classify_payload(child.source_bytes.data(), child.source_bytes.size()).format;
-                if (format == Format::Mod || format == Format::Scm) models.push_back(&child);
+                if (format != Format::Mod && format != Format::Scm) continue;
+                const auto slot = physical_slot(child);
+                if (slot == std::numeric_limits<std::uint32_t>::max() || slot % 10U != 0U) {
+                    models.push_back(&child);  // unnumbered: keep the order
+                    continue;
+                }
+                const auto index = static_cast<std::size_t>(slot / 10U);
+                if (index > 1024U) continue;
+                if (models.size() <= index) models.resize(index + 1U, nullptr);
+                models[index] = &child;
             }
             for (const auto& set : layout.sets) {
                 if (set.model < 0 || static_cast<std::size_t>(set.model) >= models.size()) continue;
+                if (models[static_cast<std::size_t>(set.model)] == nullptr) continue;
                 const auto& child = *models[static_cast<std::size_t>(set.model)];
                 auto piece = open_session(child.suggested_filename, child.source_bytes.data(), child.source_bytes.size());
                 if (!piece || !piece->renderable || piece->render_mesh.indices.size() < 3U) continue;
@@ -518,8 +555,25 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                 ++objects;
                 ++room->pieces;
                 merge_hierarchy(*piece, &set, room.get());
+                const auto texture_base = static_cast<std::uint32_t>(room->textures.size());
                 append(*piece, room.get(), true, child.suggested_filename);
+                for (const auto& uv : set.uv) {
+                    // Rates read as 1/4096 of the texture per game frame, the
+                    // unit family of CDrawUV (an inference: the layout reader
+                    // of the EXE is not traced for this key).
+                    if (uv[1] < 0.0F) continue;
+                    room->uv_scrolls.push_back({texture_base + static_cast<std::uint32_t>(uv[1]),
+                                                uv[2] / 4096.0F, uv[3] / 4096.0F});
+                }
             }
+        }
+        for (const auto& set : layout.sets) {
+            if (set.effect_id < 0 || set.effect_kind == '\0') continue;
+            GameSet place_set = set;
+            Mesh point;
+            point.vertices = {set.effect_pos};
+            place(point, place_set);
+            room->effects.push_back({set.effect_kind, static_cast<std::uint16_t>(set.effect_id), point.vertices[0]});
         }
         for (const auto& item : items) {
             if (item.format != Format::Hits || item.bytes == nullptr || item.bytes->empty()) continue;
@@ -780,6 +834,32 @@ std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* b
     } catch (...) {
         return nullptr;
     }
+}
+
+std::shared_ptr<Session> make_effect_host(std::string_view name, const std::uint8_t* bytes,
+                                          std::size_t size) noexcept {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto source = std::make_shared<std::vector<std::uint8_t>>(bytes, bytes + size);
+        auto loaded = load_effect_bank(source, 0U);
+        if (!loaded || loaded->bank.records.empty()) return nullptr;
+        auto host = std::make_shared<Session>();
+        host->archive_name = std::string{name};
+        host->effect_banks.push_back(std::move(*loaded));
+        return host;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void set_effect_host(std::shared_ptr<const Session> host) noexcept {
+    const std::lock_guard lock{g_mutex};
+    g_effect_host = std::move(host);
+}
+
+std::shared_ptr<const Session> effect_host() noexcept {
+    const std::lock_guard lock{g_mutex};
+    return g_effect_host;
 }
 
 bool is_stage_session(const Session& session) noexcept {
