@@ -165,6 +165,12 @@ struct EffectProfileProvider final {
 [[nodiscard]] std::span<const EffectProfileProvider>
 effect_profile_providers() noexcept;
 
+// Canonical CEm034 profile bindings exposed for native regression coverage
+// and profile-specific inspection. The shared runtime still consumes them
+// through the generic provider boundary.
+[[nodiscard]] std::span<const EffectBinding>
+em034_effect_bindings() noexcept;
+
 struct RuntimeEffectSpawn final {
     char effect_kind{};
     std::uint32_t effect_id{};

@@ -31,7 +31,7 @@ namespace {
     return false;
 }
 
-std::span<const EffectBinding> em034_effect_bindings() noexcept {
+std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
     // FXBANK source is em034.pac slot 28 / em034_028.pnst. The V ids are
     // runtime identities, not human effect names. Shl04 owns two distinct
     // bindings; E765 is deliberately not merged with V475 because its
@@ -151,7 +151,7 @@ bool install_effect_bindings(Session* session) noexcept {
     }
 
     try {
-        return set_script_effect_bindings(session, em034_effect_bindings());
+        return set_script_effect_bindings(session, em034_effect_bindings_impl());
     } catch (...) {
         return false;
     }
@@ -170,10 +170,14 @@ bool install_effect_bindings(Session* session) noexcept {
 }
 
 constexpr std::array<EffectProfileProvider, 1> kProviders{{
-    {"em034", &em034_profile_matches, &em034_effect_bindings},
+    {"em034", &em034_profile_matches, &em034_effect_bindings_impl},
 }};
 
 }  // namespace
+
+std::span<const EffectBinding> em034_effect_bindings() noexcept {
+    return em034_effect_bindings_impl();
+}
 
 std::span<const EffectProfileProvider> effect_profile_providers() noexcept {
     return kProviders;
