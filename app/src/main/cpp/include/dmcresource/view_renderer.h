@@ -60,6 +60,12 @@ struct ViewState {
     // Optional coloured line pairs drawn over the model (collision debug).
     std::span<const Vec3> overlay_lines{};
     std::span<const Vec3> room_collision_lines{};
+    // Kind of each line pair of room_collision_lines (collision_kind_color).
+    std::span<const std::uint8_t> room_collision_kinds{};
+    // Line widths in image pixels: meshes (wireframe, room wire, bones) and
+    // collisions (HITS, attack shapes).
+    int mesh_line_px{1};
+    int collision_line_px{1};
     // Resource-backed EXE effect presentation. The runtime supplies explicit
     // world transforms and atlas UVs; the renderer does not infer an effect
     // from an MOT name or from a body joint.
@@ -115,6 +121,9 @@ struct ViewState {
     float room_yaw{0.0F};
     Vec3 room_pivot{};
 };
+
+// Colour of a HITS record kind in the collision overlay and its legend.
+[[nodiscard]] std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept;
 
 // Framing distance (model units) of the camera at dolly 0 for these vertices.
 [[nodiscard]] float framing_camera_distance(std::span<const Vec3> vertices) noexcept;

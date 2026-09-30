@@ -151,6 +151,13 @@ public final class DmcRenderView extends View {
     // Viewer settings (SettingsDialog): render size, motion frame interval
     // and speed, quality flags (native RenderFlag bits 9-12), shadows at open.
     private int maxRenderSide = 720;
+    // Line widths the user chose (Settings), in pixels of a 720-pixel frame;
+    // the frame's real size scales them so they look the same at 8K.
+    private int meshLineUnits = 1;
+    private int collisionLineUnits = 1;
+    private boolean softwareLayer;
+    private java.util.function.IntConsumer resolutionListener;
+    static final int[] RESOLUTION_STEPS = {7680, 6144, 5120, 3840, 2048, 1024, 720, 540, 360};
     private long motionMinFrameMs = 33;
     private float motionSpeed = 1.0f;
     private int settingsFlags;
@@ -317,7 +324,8 @@ public final class DmcRenderView extends View {
         try {
             final Bitmap image = Bitmap.createBitmap(renderWidth(), renderHeight(), Bitmap.Config.ARGB_8888);
             if (NativeBridge.renderEx(session, image.getWidth(), image.getHeight(), yaw, pitch, zoom,
-                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly, image)) {
+                    renderFlags | settingsFlags | lineFlags(image.getWidth(), image.getHeight()),
+                    panX, panY, roomYaw, follow, dolly, image)) {
                 return image;
             }
             image.recycle();
@@ -392,14 +400,16 @@ public final class DmcRenderView extends View {
 
     /** Applies the viewer settings; a playing motion keeps its frame. */
     public void applySettings(int maxSide, long frameMs, float speed, int flags, boolean shadows,
-                              boolean preview) {
+                              boolean preview, int meshLine, int collisionLine) {
+        meshLineUnits = Math.max(1, Math.min(16, meshLine));
+        collisionLineUnits = Math.max(1, Math.min(16, collisionLine));
         fastPreview = preview;
         final long now = SystemClock.uptimeMillis();
         if (motionPlaying && speed > 0.0f && speed != motionSpeed) {
             final float frame = rawMotionFrame(now);
             motionStartMs = now - Math.round(frame * 1000.0f / (MOTION_FRAMES_PER_SECOND * speed));
         }
-        maxRenderSide = Math.max(128, Math.min(1024, maxSide));
+        maxRenderSide = Math.max(128, Math.min(7680, maxSide));
         motionMinFrameMs = Math.max(8, frameMs);
         motionSpeed = speed > 0.0f ? speed : 1.0f;
         settingsFlags = flags;
@@ -617,22 +627,60 @@ public final class DmcRenderView extends View {
         return !staticImagePreview && (renderFlags & RENDER_UV_LAYOUT) != 0;
     }
 
+    /** High resolutions (2K and up) render larger than the screen and are shown scaled down. */
+    private boolean supersampled() {
+        return maxRenderSide > 1024;
+    }
+
+    private float renderScale() {
+        final float w = Math.max(64, getWidth());
+        final float h = Math.max(64, getHeight());
+        final float longest = Math.max(w, h);
+        if (supersampled()) return maxRenderSide / longest;
+        return longest <= maxRenderSide ? 1.0f : maxRenderSide / longest;
+    }
+
     private int renderWidth() {
-        int w = Math.max(64, getWidth());
-        int h = Math.max(64, getHeight());
-        int max = maxRenderSide;
-        if (w <= max && h <= max) return w;
-        float s = Math.min((float) max / w, (float) max / h);
-        return Math.max(64, Math.round(w * s));
+        return Math.max(64, Math.round(Math.max(64, getWidth()) * renderScale()));
     }
 
     private int renderHeight() {
-        int w = Math.max(64, getWidth());
-        int h = Math.max(64, getHeight());
-        int max = maxRenderSide;
-        if (w <= max && h <= max) return h;
-        float s = Math.min((float) max / w, (float) max / h);
-        return Math.max(64, Math.round(h * s));
+        return Math.max(64, Math.round(Math.max(64, getHeight()) * renderScale()));
+    }
+
+    /** A frame while the view moves: half size, and never above about 1024 on the long side. */
+    private float previewScale() {
+        final float half = renderScale() * 0.5f;
+        final float longest = Math.max(64, Math.max(getWidth(), getHeight()));
+        return Math.min(half, Math.max(0.1f, 1024.0f / longest));
+    }
+
+    /** Render flags with the line widths (bits 16-21 meshes, 22-27 collisions) for a frame of this size. */
+    private int lineFlags(int width, int height) {
+        final float k = Math.max(width, height) / 720.0f;
+        final int mesh = Math.max(1, Math.min(63, Math.round(meshLineUnits * Math.max(1.0f, k))));
+        final int collision = Math.max(1, Math.min(63, Math.round(collisionLineUnits * Math.max(1.0f, k))));
+        return (mesh << 16) | (collision << 22);
+    }
+
+    /** One step down the resolution list (memory ran out); the listener stores it. */
+    private void lowerResolution() {
+        int next = 360;
+        for (final int step : RESOLUTION_STEPS) {
+            if (step < maxRenderSide) {
+                next = step;
+                break;
+            }
+        }
+        if (next == maxRenderSide) return;
+        maxRenderSide = next;
+        notice("Not enough memory: resolution lowered to " + next + " px");
+        if (resolutionListener != null) resolutionListener.accept(next);
+        renderNow();
+    }
+
+    void setResolutionListener(java.util.function.IntConsumer listener) {
+        resolutionListener = listener;
     }
 
     // ---- Render thread ----------------------------------------------------
@@ -701,7 +749,8 @@ public final class DmcRenderView extends View {
                                 frameBuffers.remove(k);
                             }
                         }
-                        if (frameBuffers.size() >= 4) {
+                        final boolean big = (long) request.width * request.height * 4L > 32L * 1024L * 1024L;
+                        if (frameBuffers.size() >= (big ? 2 : 4)) {
                             // Every buffer is still on its way to the screen:
                             // keep the request; releasing a buffer resumes it.
                             if (pendingRequest == null) pendingRequest = request;
@@ -711,7 +760,9 @@ public final class DmcRenderView extends View {
                         try {
                             target = new FrameBuffer(request.width, request.height);
                         } catch (OutOfMemoryError error) {
+                            frameBuffers.clear();
                             renderScheduled = false;
+                            post(() -> lowerResolution());
                             return;
                         }
                         frameBuffers.add(target);
@@ -743,8 +794,21 @@ public final class DmcRenderView extends View {
             releaseFrame(buffer);
             return;
         }
+        // A bitmap over 100 MB, or one the GPU cannot take as a texture, is
+        // drawn by the software canvas.
+        final boolean large = Math.max(request.width, request.height) > 4096
+                || (long) request.width * request.height * 4L > 90L * 1024L * 1024L;
+        if (large != softwareLayer) {
+            softwareLayer = large;
+            setLayerType(large ? LAYER_TYPE_SOFTWARE : LAYER_TYPE_NONE, null);
+        }
         final Bitmap target = request.preview ? previewTarget(request.width, request.height)
                 : writableBitmap(request.width, request.height);
+        if (target == null && !request.preview && supersampled()) {
+            releaseFrame(buffer);
+            lowerResolution();
+            return;
+        }
         if (target != null) {
             buffer.pixels.rewind();
             target.copyPixelsFromBuffer(buffer.pixels);
@@ -768,14 +832,15 @@ public final class DmcRenderView extends View {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0 || staticImagePreview) return;
         final FrameRequest request = new FrameRequest();
         request.preview = fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
-        request.width = request.preview ? Math.max(64, renderWidth() / 2) : renderWidth();
-        request.height = request.preview ? Math.max(64, renderHeight() / 2) : renderHeight();
+        request.width = request.preview ? Math.max(64, Math.round(getWidth() * previewScale())) : renderWidth();
+        request.height = request.preview ? Math.max(64, Math.round(getHeight() * previewScale())) : renderHeight();
         request.session = session;
         request.generation = generation;
         request.yaw = yaw;
         request.pitch = pitch;
         request.zoom = zoom;
-        request.flags = renderFlags | settingsFlags | (request.preview ? RENDER_PREVIEW : 0);
+        request.flags = renderFlags | settingsFlags | (request.preview ? RENDER_PREVIEW : 0)
+                | lineFlags(request.width, request.height);
         request.panX = panX;
         request.panY = panY;
         request.roomYaw = roomYaw;

@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "dmcresource/collision_debug.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/inspection_format.h"
@@ -807,6 +809,37 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
         const auto detail = room->detail;
         dmcresource::stage_room::set_current(std::move(room));
         return env->NewStringUTF(detail.c_str());
+    } catch (...) { return nullptr; }
+}
+
+// Kinds (distinct flag values) of the HITS shown with the session: its own
+// file, its stage scene, or the room around it. One string per kind:
+// "flags|records|floors|walls|ceilings|rgb".
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_collisionKinds(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    std::vector<dmcresource::environment_collision::Kind> kinds;
+    try {
+        if (session != nullptr && session->hits != nullptr) {
+            kinds = dmcresource::environment_collision::kinds(*session->hits);
+        } else if (session != nullptr && session->stage != nullptr) {
+            kinds = session->stage->collision_kinds;
+        } else if (const auto room = dmcresource::stage_room::current()) {
+            kinds = room->collision_kinds;
+        }
+        jclass string_class = env->FindClass("java/lang/String");
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(kinds.size()), string_class, nullptr);
+        for (std::size_t i = 0; i < kinds.size(); ++i) {
+            const auto color = dmcresource::collision_kind_color(i);
+            char text[128];
+            std::snprintf(text, sizeof text, "%u|%zu|%zu|%zu|%zu|%u", kinds[i].flags, kinds[i].count,
+                          kinds[i].floors, kinds[i].walls, kinds[i].ceilings,
+                          (static_cast<unsigned>(color[0]) << 16U) | (static_cast<unsigned>(color[1]) << 8U) |
+                              static_cast<unsigned>(color[2]));
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), env->NewStringUTF(text));
+        }
+        return out;
     } catch (...) { return nullptr; }
 }
 

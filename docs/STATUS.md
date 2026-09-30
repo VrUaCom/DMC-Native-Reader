@@ -166,6 +166,24 @@ APK verifier.
     outlined, in the viewer and as a gallery thumbnail, instead of only the
     info card.
 
+- ✅ Line widths, collision kinds and 2K-8K (Android, not device-tested yet):
+  - Settings → Render has a width row for mesh lines (wireframe, room
+    meshes, bones) and for collision lines (HITS, attack shapes). The widths
+    scale with the frame size, so they look the same at 8K.
+  - HITS records have kinds, one per distinct `flags` value. The overlay and
+    the .hits view colour each kind, and Settings lists them with their
+    record counts and floor/wall/ceiling split.
+    - st001 source 0: 6 kinds: `0x1`, `0x2`, `0x3`, `0x4`, `0x18000001`,
+      `0x18060001`.
+    - st000 source 0: 4 kinds: `0x1`, `0x9`, `0xA`, `0x18060001`.
+    - The coarse source 1 of both stages has one kind, `0x0`.
+    - Together that is 8 different values in the detailed sources, 9 with `0x0`.
+  - Resolution adds 2K (2048), 4K (3840), 5K (5120), 6K (6144) and 8K (7680)
+    px on the long side. They render larger than the screen, and are shown
+    by the software canvas (a bitmap over 100 MB or 4096 px cannot go to the GPU).
+    While the view moves a preview of at most 1024 px is shown. If memory
+    runs out the next lower size is chosen and stored.
+
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive

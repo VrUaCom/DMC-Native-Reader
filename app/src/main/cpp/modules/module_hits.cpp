@@ -91,6 +91,40 @@ PipelineResult run_hits_module(const NativeModule& module,
             out.scene.meshes.push_back(std::move(primitive));
         }
 
+        {
+            // Kinds: one per distinct `flags` value of the records.
+            const auto kinds = environment_collision::kinds(*parsed);
+            add("Kinds", std::to_string(kinds.size()) + " (distinct record flags)", EvidenceLevel::ExeConfirmed);
+            InspectionNode table;
+            table.id = "kinds";
+            table.title = "Record kinds";
+            table.kind = InspectionKind::Collection;
+            for (std::size_t i = 0U; i < kinds.size(); ++i) {
+                InspectionNode node;
+                node.id = "kind-" + std::to_string(i);
+                std::ostringstream flags;
+                flags << "0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(8) << kinds[i].flags;
+                node.title = "Kind " + std::to_string(i + 1) + " \u00b7 flags " + flags.str();
+                node.kind = InspectionKind::Object;
+                node.properties.push_back({"Records", std::to_string(kinds[i].count), EvidenceLevel::ExeConfirmed});
+                node.properties.push_back({"Floors / walls / ceilings",
+                    std::to_string(kinds[i].floors) + " / " + std::to_string(kinds[i].walls) + " / " +
+                        std::to_string(kinds[i].ceilings), EvidenceLevel::DataConfirmed});
+                node.properties.push_back({"Type bits (flags & 0xFFFF)", [&] {
+                    std::ostringstream bits;
+                    bits << "0x" << std::hex << std::uppercase << (kinds[i].flags & 0xFFFFU);
+                    return bits.str();
+                }(), EvidenceLevel::PreservedUndecoded});
+                node.properties.push_back({"Category bits (flags >> 16, tested against the caller's skip mask)", [&] {
+                    std::ostringstream bits;
+                    bits << "0x" << std::hex << std::uppercase << (kinds[i].flags >> 16U);
+                    return bits.str();
+                }(), EvidenceLevel::ExeConfirmed});
+                table.children.push_back(std::move(node));
+            }
+            out.inspection.root.children.push_back(std::move(table));
+        }
+
         InspectionNode triangles;
         triangles.id = "triangles";
         triangles.title = "Triangle-plane records";

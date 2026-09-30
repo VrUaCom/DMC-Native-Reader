@@ -6,6 +6,7 @@
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/format_views.h"
@@ -553,6 +554,11 @@ std::unique_ptr<Session> open_session(std::string_view name,
             ": texture descriptors were written by a community tool; the canonical "
             "validator rejects them, the viewer reads header, sector spans and DDS only");
     }
+    if (session && session->probe.format == Format::Hits && bytes != nullptr) {
+        if (auto parsed = environment_collision::parse(name, 0U, std::span<const std::uint8_t>{bytes, size})) {
+            session->hits = std::make_shared<const environment_collision::Source>(std::move(*parsed));
+        }
+    }
     retain_lazy_child_sources(session.get(), bytes, size);
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     return session;
@@ -728,6 +734,7 @@ struct PreparedView final {
     std::vector<Vec3> floor_shadow;
     std::vector<Vec3> collision_lines;
     std::vector<Vec3> room_collision_lines;
+    std::vector<std::uint8_t> room_collision_kinds;
     HierarchyOverlay stage_hierarchy;
     std::shared_ptr<const stage_room::Room> room;
 };
@@ -1561,6 +1568,9 @@ struct DynamicVertexInfluences final {
 }
 
 constexpr float kDollyMin = -2.0F;
+constexpr int kMaxRenderSide = 8192;
+constexpr std::uint32_t kMeshLineShift = 16U;
+constexpr std::uint32_t kCollisionLineShift = 22U;
 
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
@@ -1583,8 +1593,14 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.dolly = std::isfinite(controls.dolly)
         ? std::clamp(controls.dolly, kDollyMin, session_dolly_limit(&session)) : 0.0F;
 
-    out->width = std::clamp(requested_width, 64, 1024);
-    out->height = std::clamp(requested_height, 64, 1024);
+    // Up to 8K (7680 x 4320); the viewer asks for the size its Resolution
+    // setting chose.
+    out->width = std::clamp(requested_width, 64, kMaxRenderSide);
+    out->height = std::clamp(requested_height, 64, kMaxRenderSide);
+    // Line widths travel in the render flags: mesh lines in bits 16-21,
+    // collision lines in bits 22-27 (image pixels, 0 = 1).
+    view.mesh_line_px = std::max(1, static_cast<int>((flags >> kMeshLineShift) & 63U));
+    view.collision_line_px = std::max(1, static_cast<int>((flags >> kCollisionLineShift) & 63U));
     out->hierarchy = !view.uv_layout && has_render_flag(flags, RenderFlag::Hierarchy) &&
             session.hierarchy_overlay.available()
         ? &session.hierarchy_overlay
@@ -1688,21 +1704,16 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         !out->room->collision_lines.empty()) {
         out->room_collision_lines = out->room->collision_lines;
         view.room_collision_lines = out->room_collision_lines;
+        view.room_collision_kinds = out->room->collision_line_kinds;
     }
     // A HITS file opened on its own: the record edges outline its surfaces.
-    if (!view.uv_layout && session.probe.format == Format::Hits && session.renderable &&
+    if (!view.uv_layout && session.hits != nullptr && session.renderable &&
         out->room_collision_lines.empty()) {
-        const auto& mesh = session.render_mesh;
-        out->room_collision_lines.reserve(mesh.indices.size() * 2U);
-        for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
-            for (std::size_t k = 0U; k < 3U; ++k) {
-                const auto a = mesh.indices[t + k], b = mesh.indices[t + (k + 1U) % 3U];
-                if (a >= mesh.vertices.size() || b >= mesh.vertices.size()) continue;
-                out->room_collision_lines.push_back(mesh.vertices[a]);
-                out->room_collision_lines.push_back(mesh.vertices[b]);
-            }
-        }
+        out->room_collision_lines = environment_collision::debug_lines(*session.hits);
+        const auto kinds = environment_collision::kinds(*session.hits);
+        out->room_collision_kinds = environment_collision::debug_line_kinds(*session.hits, kinds);
         view.room_collision_lines = out->room_collision_lines;
+        view.room_collision_kinds = out->room_collision_kinds;
     }
     // A stage opened as its scene shows its own HITS in place.
     if (!view.uv_layout && session.stage != nullptr &&
@@ -1710,6 +1721,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         !session.stage->collision_lines.empty()) {
         out->room_collision_lines = session.stage->collision_lines;
         view.room_collision_lines = out->room_collision_lines;
+        view.room_collision_kinds = session.stage->collision_line_kinds;
     }
 }
 
@@ -1738,8 +1750,8 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
         *session->uv_map_index < session->uv_gallery->maps.size()) {
         return render_uv_map(session->uv_gallery->coordinates,
             session->uv_gallery->maps[*session->uv_map_index].indices,
-            std::clamp(requested_width, 64, 1024),
-            std::clamp(requested_height, 64, 1024), zoom);
+            std::clamp(requested_width, 64, kMaxRenderSide),
+            std::clamp(requested_height, 64, kMaxRenderSide), zoom);
     }
     if (!session->renderable) return {};
     PreparedView prepared;

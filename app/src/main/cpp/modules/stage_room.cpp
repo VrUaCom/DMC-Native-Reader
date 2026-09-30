@@ -534,6 +534,9 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
             // records and are not merged or reinterpreted.
             room->collision_lines = environment_collision::debug_lines(
                 room->collision_sources.front());
+            room->collision_kinds = environment_collision::kinds(room->collision_sources.front());
+            room->collision_line_kinds = environment_collision::debug_line_kinds(
+                room->collision_sources.front(), room->collision_kinds);
         }
         if (room->mesh.indices.size() < 3U) return nullptr;
         // Soft-alpha textures: more than 2 % of texels between 8 and 239.

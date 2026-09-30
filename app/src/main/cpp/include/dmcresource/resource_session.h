@@ -34,6 +34,9 @@ struct CollisionBinding;
 namespace stage_room {
 struct Room;
 }
+namespace environment_collision {
+struct Source;
+}
 
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
@@ -81,6 +84,8 @@ struct Session {
     // A stage archive opened as its assembled scene (stage_room::open_stage):
     // the merged room it was built from, with its HITS collision.
     std::shared_ptr<const stage_room::Room> stage;
+    // A HITS file opened on its own: the parsed records, for the kind colours.
+    std::shared_ptr<const environment_collision::Source> hits;
 
     // Motions discovered while assembling a PAC (read-only copies of the
     // retained payloads). Played through motion::load_motion.

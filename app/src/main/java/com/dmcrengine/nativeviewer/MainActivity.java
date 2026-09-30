@@ -173,6 +173,7 @@ public final class MainActivity extends Activity {
                     .putBoolean(PREF_GESTURE_DOLLY, true).apply();
         }
         renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
+        renderView.setResolutionListener(side -> prefs().edit().putInt(SET_MAX_SIDE, side).apply());
         restoreRoom();
         handleIncomingIntent(getIntent());
     }
@@ -675,6 +676,8 @@ public final class MainActivity extends Activity {
     private static final String SET_SHADOWS = "set.shadows";
     private static final String SET_SPEED = "set.speed";
     private static final String SET_FAST_PREVIEW = "set.fastPreview";
+    private static final String SET_MESH_LINE = "set.meshLine";
+    private static final String SET_COLLISION_LINE = "set.collisionLine";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
@@ -683,7 +686,8 @@ public final class MainActivity extends Activity {
                 | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11);
         renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
                 p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
-                p.getBoolean(SET_FAST_PREVIEW, true));
+                p.getBoolean(SET_FAST_PREVIEW, true),
+                p.getInt(SET_MESH_LINE, 1), p.getInt(SET_COLLISION_LINE, 1));
     }
 
     private void roomToggle() {
@@ -731,10 +735,19 @@ public final class MainActivity extends Activity {
         title.setTextColor(0xffc8ccd6);
         title.setTextSize(14f);
         block.addView(title);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+        // Many choices wrap onto rows of at most five.
+        final int perRow = names.length > 5 ? 5 : names.length;
         final TextView[] chips = new TextView[names.length];
+        LinearLayout row = null;
         for (int i = 0; i < names.length; ++i) {
+            if (i % perRow == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                final LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                if (i > 0) rowParams.topMargin = dp(6);
+                block.addView(row, rowParams);
+            }
             final int index = i;
             TextView chip = new TextView(this);
             chip.setText(names[i]);
@@ -752,8 +765,13 @@ public final class MainActivity extends Activity {
             params.setMarginEnd(dp(6));
             row.addView(chip, params);
         }
-        block.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        // Keep the last row's chips the width of the others.
+        while (names.length % perRow != 0 && row != null && row.getChildCount() < perRow) {
+            final View spacer = new View(this);
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, 1, 1f);
+            params.setMarginEnd(dp(6));
+            row.addView(spacer, params);
+        }
         return block;
     }
 
@@ -788,6 +806,58 @@ public final class MainActivity extends Activity {
         return fallback;
     }
 
+    private TextView hint(String text) {
+        final TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextColor(0xff8c909c);
+        view.setTextSize(12f);
+        view.setPadding(0, dp(2), 0, dp(4));
+        return view;
+    }
+
+    /**
+     * The kinds of collision record (distinct flag values) of the HITS shown
+     * now, each in the colour it is drawn with.
+     */
+    private void addCollisionKinds(LinearLayout content) {
+        final String[] kinds = NativeBridge.collisionKinds(session);
+        final TextView title = new TextView(this);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        title.setPadding(0, dp(12), 0, dp(4));
+        if (kinds == null || kinds.length == 0) {
+            title.setText("Collision kinds: none shown. Open a stage, a .hits file or choose a room with collision.");
+            content.addView(title);
+            return;
+        }
+        title.setText("Collision kinds in the HITS shown now: " + kinds.length
+                + " (one per distinct record flags value)");
+        content.addView(title);
+        for (int i = 0; i < kinds.length; ++i) {
+            final String[] part = kinds[i].split("\\|");
+            if (part.length < 6) continue;
+            final long flags = Long.parseLong(part[0]);
+            final int color = 0xff000000 | Integer.parseInt(part[5]);
+            final LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(3), 0, dp(3));
+            final View swatch = new View(this);
+            swatch.setBackgroundColor(color);
+            row.addView(swatch, new LinearLayout.LayoutParams(dp(26), dp(6)));
+            final TextView text = new TextView(this);
+            text.setTextColor(0xffe0e3ea);
+            text.setTextSize(13f);
+            text.setTypeface(Typeface.MONOSPACE);
+            text.setPadding(dp(10), 0, 0, 0);
+            text.setText(String.format(java.util.Locale.US,
+                    "%d  0x%08X  %s records  (floor %s / wall %s / ceiling %s)",
+                    i + 1, flags, part[1], part[2], part[3], part[4]));
+            row.addView(text);
+            content.addView(row);
+        }
+    }
+
     /** Full-screen settings window: render quality, animation, room. */
     private void showSettingsDialog() {
         final android.app.Dialog dialog = new android.app.Dialog(this,
@@ -813,10 +883,23 @@ public final class MainActivity extends Activity {
 
         final Runnable apply = this::applyViewerSettings;
         content.addView(sectionTitle("Render"));
-        final int[] sides = {360, 540, 720, 1024};
-        content.addView(choiceRow("Resolution (longest side, px)", new String[]{"360", "540", "720", "1024"},
+        final int[] sides = {360, 540, 720, 1024, 2048, 3840, 5120, 6144, 7680};
+        content.addView(choiceRow("Resolution (longest side, px; 2K-8K render larger than the screen)",
+                new String[]{"360", "540", "720", "1024", "2K", "4K", "5K", "6K", "8K"},
                 indexOf(sides, p.getInt(SET_MAX_SIDE, 720), 2),
                 i -> { p.edit().putInt(SET_MAX_SIDE, sides[i]).apply(); apply.run(); }));
+        content.addView(hint("2K = 2048, 4K = 3840, 5K = 5120, 6K = 6144, 8K = 7680 px. They need a lot of memory "
+                + "and time per frame; while the view moves a small preview is shown. If memory runs out the "
+                + "next lower size is chosen."));
+        final int[] widths = {1, 2, 3, 4, 6};
+        final String[] widthNames = {"1", "2", "3", "4", "6"};
+        content.addView(choiceRow("Mesh line width (wireframe, room meshes, bones; px at 720)", widthNames,
+                indexOf(widths, p.getInt(SET_MESH_LINE, 1), 0),
+                i -> { p.edit().putInt(SET_MESH_LINE, widths[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Collision line width (HITS, attack shapes; px at 720)", widthNames,
+                indexOf(widths, p.getInt(SET_COLLISION_LINE, 1), 0),
+                i -> { p.edit().putInt(SET_COLLISION_LINE, widths[i]).apply(); apply.run(); }));
+        addCollisionKinds(content);
         final int[] frames = {50, 33, 16};
         content.addView(choiceRow("While moving (drag, flick, animation)",
                 new String[]{"Fast preview (half size)", "Full quality"},

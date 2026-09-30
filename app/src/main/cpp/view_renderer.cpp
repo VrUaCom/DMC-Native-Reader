@@ -216,11 +216,45 @@ void line_rgba(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
     }
 }
 
-// Screen-clipped line (Liang-Barsky) with optional alpha: a segment may have
-// one end far outside the image after the near-plane clip.
+// Fills a convex quad by scanlines: every covered pixel is written once, so a
+// translucent thick line does not darken where its parts overlap.
+void fill_convex_quad(RgbaImage& image, const P2 (&v)[4], std::uint8_t r, std::uint8_t g, std::uint8_t bl,
+                      std::uint8_t alpha) {
+    float y_min = v[0].y, y_max = v[0].y;
+    for (const auto& p : v) {
+        y_min = std::min(y_min, p.y);
+        y_max = std::max(y_max, p.y);
+    }
+    const int y0 = std::max(0, static_cast<int>(std::ceil(y_min - 0.5F)));
+    const int y1 = std::min(image.height - 1, static_cast<int>(std::floor(y_max - 0.5F)));
+    for (int y = y0; y <= y1; ++y) {
+        const float yc = static_cast<float>(y) + 0.5F;
+        float x_left = std::numeric_limits<float>::infinity();
+        float x_right = -std::numeric_limits<float>::infinity();
+        for (int i = 0; i < 4; ++i) {
+            const P2& p = v[i];
+            const P2& q = v[(i + 1) % 4];
+            if ((p.y <= yc && q.y > yc) || (q.y <= yc && p.y > yc)) {
+                const float x = p.x + (yc - p.y) / (q.y - p.y) * (q.x - p.x);
+                x_left = std::min(x_left, x);
+                x_right = std::max(x_right, x);
+            }
+        }
+        if (!(x_left <= x_right)) continue;
+        const int x0 = std::max(0, static_cast<int>(std::ceil(x_left - 0.5F)));
+        const int x1 = std::min(image.width - 1, static_cast<int>(std::floor(x_right - 0.5F)));
+        for (int x = x0; x <= x1; ++x) put_rgba(image, x, y, r, g, bl, alpha);
+    }
+}
+
+// Screen-clipped line (Liang-Barsky) of `width` image pixels with optional
+// alpha: a segment may have one end far outside the image after the
+// near-plane clip. Width 1 is a Bresenham line; wider ones are a rectangle.
 void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
-               std::uint8_t alpha = 255U) {
+               std::uint8_t alpha = 255U, int width = 1) {
     if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) return;
+    const float half = 0.5F * static_cast<float>(std::max(1, width));
+    const float margin = width > 1 ? half + 1.0F : 0.0F;
     const float dx = b.x - a.x, dy = b.y - a.y;
     float t0 = 0.0F, t1 = 1.0F;
     const auto clip = [&](float p, float q) {
@@ -235,12 +269,31 @@ void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
         }
         return true;
     };
-    const float max_x = static_cast<float>(image.width - 1), max_y = static_cast<float>(image.height - 1);
-    if (!clip(-dx, a.x) || !clip(dx, max_x - a.x) || !clip(-dy, a.y) || !clip(dy, max_y - a.y)) return;
-    int x0 = static_cast<int>(std::lround(a.x + dx * t0));
-    int y0 = static_cast<int>(std::lround(a.y + dy * t0));
-    const int x1 = static_cast<int>(std::lround(a.x + dx * t1));
-    const int y1 = static_cast<int>(std::lround(a.y + dy * t1));
+    const float max_x = static_cast<float>(image.width - 1) + margin;
+    const float max_y = static_cast<float>(image.height - 1) + margin;
+    if (!clip(-dx, a.x + margin) || !clip(dx, max_x - a.x) || !clip(-dy, a.y + margin) || !clip(dy, max_y - a.y)) return;
+    const P2 p0{a.x + dx * t0, a.y + dy * t0, 0.0F};
+    const P2 p1{a.x + dx * t1, a.y + dy * t1, 0.0F};
+    if (width > 1) {
+        const float len = std::hypot(p1.x - p0.x, p1.y - p0.y);
+        float ux = 1.0F, uy = 0.0F;
+        if (len > 1.0e-4F) {
+            ux = (p1.x - p0.x) / len;
+            uy = (p1.y - p0.y) / len;
+        }
+        // Square caps, so joints between edges stay closed.
+        const P2 s{p0.x - ux * half, p0.y - uy * half, 0.0F};
+        const P2 e{p1.x + ux * half, p1.y + uy * half, 0.0F};
+        const float nx = -uy * half, ny = ux * half;
+        const P2 quad[4] = {{s.x + nx, s.y + ny, 0.0F}, {e.x + nx, e.y + ny, 0.0F},
+                            {e.x - nx, e.y - ny, 0.0F}, {s.x - nx, s.y - ny, 0.0F}};
+        fill_convex_quad(image, quad, r, g, bl, alpha);
+        return;
+    }
+    int x0 = static_cast<int>(std::lround(p0.x));
+    int y0 = static_cast<int>(std::lround(p0.y));
+    const int x1 = static_cast<int>(std::lround(p1.x));
+    const int y1 = static_cast<int>(std::lround(p1.y));
     const int ex = std::abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     const int ey = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = ex + ey;
@@ -253,12 +306,18 @@ void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
     }
 }
 
-void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
+void marker(RgbaImage& image, P2 point, std::uint8_t shade, int width = 1) {
     const int x = static_cast<int>(std::lround(point.x));
     const int y = static_cast<int>(std::lround(point.y));
-    for (int d = -2; d <= 2; ++d) {
-        put_pixel(image, x + d, y, shade);
-        put_pixel(image, x, y + d, shade);
+    // A cross of arms 2 + width pixels, `width` thick.
+    const int reach = 1 + std::max(1, width);
+    const int low = -(std::max(1, width) - 1) / 2;
+    const int high = low + std::max(1, width) - 1;
+    for (int d = -reach; d <= reach; ++d) {
+        for (int k = low; k <= high; ++k) {
+            put_pixel(image, x + d, y + k, shade);
+            put_pixel(image, x + k, y + d, shade);
+        }
     }
 }
 
@@ -364,8 +423,8 @@ RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
     static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
     const auto& bg = kBackgrounds[background & 3U];
     RgbaImage image;
-    image.width = std::clamp(width, 1, 2048);
-    image.height = std::clamp(height, 1, 2048);
+    image.width = std::clamp(width, 1, 8192);
+    image.height = std::clamp(height, 1, 8192);
     image.pixels.assign(
         static_cast<std::size_t>(image.width * image.height * 4), 0U);
     for (std::size_t i = 0U; i < image.pixels.size(); i += 4U) {
@@ -447,6 +506,15 @@ RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
 }
 
 }  // namespace
+
+std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept {
+    static constexpr std::array<std::array<std::uint8_t, 3>, 12> kPalette{{
+        {90, 190, 255}, {255, 170, 60}, {120, 230, 120}, {255, 100, 140},
+        {190, 140, 255}, {255, 230, 90}, {80, 230, 210}, {255, 130, 80},
+        {170, 200, 90}, {205, 205, 215}, {130, 150, 255}, {240, 110, 220},
+    }};
+    return kPalette[kind % kPalette.size()];
+}
 
 float framing_camera_distance(std::span<const Vec3> vertices) noexcept {
     return compute_camera_frame(vertices, 1, 1).camera_distance;
@@ -893,13 +961,15 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
     };
     const float line_near = std::max(0.5F, frame.radius * 0.02F);
+    const int mesh_px = std::clamp(view.mesh_line_px, 1, 63);
+    const int collision_px = std::clamp(view.collision_line_px, 1, 63);
     const auto cam_point = [&](const Vec3& c) {
         const float inv = 1.0F / c.z;
         return P2{static_cast<float>(image.width) * 0.5F + zoom * frame.focal_px * c.x * inv,
                   static_cast<float>(image.height) * 0.5F - zoom * frame.focal_px * c.y * inv, c.z};
     };
     const auto line3 = [&](const Vec3& world_a, const Vec3& world_b, std::uint8_t r, std::uint8_t g,
-                           std::uint8_t bl, std::uint8_t alpha) {
+                           std::uint8_t bl, std::uint8_t alpha, int width) {
         Vec3 a = to_cam(world_a), b = to_cam(world_b);
         if (a.z < line_near && b.z < line_near) return;
         if (a.z < line_near) {
@@ -909,7 +979,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const float t = (line_near - b.z) / (a.z - b.z);
             b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, line_near};
         }
-        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha);
+        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha, width);
     };
 
     std::vector<P2> p;
@@ -1232,9 +1302,9 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 const Vec3 a = room_place(view, rm.vertices[ia]);
                 const Vec3 b = room_place(view, rm.vertices[ib]);
                 const Vec3 c = room_place(view, rm.vertices[ic]);
-                line3(a, b, level, level, 255U, alpha);
-                line3(b, c, level, level, 255U, alpha);
-                line3(c, a, level, level, 255U, alpha);
+                line3(a, b, level, level, 255U, alpha, mesh_px);
+                line3(b, c, level, level, 255U, alpha, mesh_px);
+                line3(c, a, level, level, 255U, alpha, mesh_px);
             }
         }
         for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
@@ -1242,9 +1312,9 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const auto ib = mesh.indices[t + 1U];
             const auto ic = mesh.indices[t + 2U];
             if (ia >= p.size() || ib >= p.size() || ic >= p.size()) continue;
-            line(image, p[ia], p[ib]);
-            line(image, p[ib], p[ic]);
-            line(image, p[ic], p[ia]);
+            line_clip(image, p[ia], p[ib], 235U, 235U, 245U, 255U, mesh_px);
+            line_clip(image, p[ib], p[ic], 235U, 235U, 245U, 255U, mesh_px);
+            line_clip(image, p[ic], p[ia], 235U, 235U, 245U, 255U, mesh_px);
         }
     } else {
         // Per band: opaque room (front to back), floor, model, soft room
@@ -1277,21 +1347,24 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     }
 
     for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
-        line3(view.overlay_lines[i], view.overlay_lines[i + 1U], 255U, 90U, 60U, 255U);
+        line3(view.overlay_lines[i], view.overlay_lines[i + 1U], 255U, 90U, 60U, 255U, collision_px);
     }
     for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
+        const auto kind = i / 2U < view.room_collision_kinds.size() ? view.room_collision_kinds[i / 2U] : 0U;
+        const auto color = collision_kind_color(kind);
         line3(room_place(view, view.room_collision_lines[i]), room_place(view, view.room_collision_lines[i + 1U]),
-              90U, 190U, 255U, 255U);
+              color[0], color[1], color[2], 255U, collision_px);
     }
 
     if (hierarchy != nullptr && hierarchy->available()) {
         for (const auto& edge_value : hierarchy->edges) {
             if (edge_value.parent >= hierarchy->points.size() || edge_value.child >= hierarchy->points.size()) continue;
-            line3(hierarchy->points[edge_value.parent], hierarchy->points[edge_value.child], 255U, 255U, 255U, 255U);
+            line3(hierarchy->points[edge_value.parent], hierarchy->points[edge_value.child], 255U, 255U, 255U, 255U,
+                  mesh_px);
         }
         for (const auto& point : hierarchy->points) {
             const Vec3 c = to_cam(point);
-            if (c.z >= line_near) marker(image, cam_point(c), 255U);
+            if (c.z >= line_near) marker(image, cam_point(c), 255U, mesh_px);
         }
     }
 
@@ -1302,8 +1375,8 @@ ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& vie
                    const HierarchyOverlay* hierarchy, float max_joint_px) {
     ViewPick out;
     if (mesh.vertices.empty()) return out;
-    const int w = std::clamp(width, 1, 2048);
-    const int h = std::clamp(height, 1, 2048);
+    const int w = std::clamp(width, 1, 8192);
+    const int h = std::clamp(height, 1, 8192);
     const auto frame = view_frame(mesh, view, w, h);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
     const float focal = zoom * frame.focal_px;
@@ -1409,8 +1482,8 @@ std::vector<HierarchyScreenPoint> project_hierarchy_points(const Mesh& mesh,
     std::vector<HierarchyScreenPoint> out;
     if (mesh.vertices.empty() || !hierarchy.available()) return out;
 
-    const int clamped_width = std::clamp(width, 1, 2048);
-    const int clamped_height = std::clamp(height, 1, 2048);
+    const int clamped_width = std::clamp(width, 1, 8192);
+    const int clamped_height = std::clamp(height, 1, 8192);
     const auto frame = view_frame(mesh, view, clamped_width, clamped_height);
     const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
 

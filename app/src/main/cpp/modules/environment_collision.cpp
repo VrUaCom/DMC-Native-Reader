@@ -90,6 +90,41 @@ std::vector<Vec3> debug_lines(const Source& source) {
     return out;
 }
 
+std::vector<Kind> kinds(const Source& source) {
+    std::vector<Kind> out;
+    for (const auto& t : source.triangles) {
+        auto it = std::find_if(out.begin(), out.end(), [&](const Kind& k) { return k.flags == t.flags; });
+        if (it == out.end()) {
+            out.push_back({t.flags, 0U, 0U, 0U, 0U});
+            it = out.end() - 1;
+        }
+        ++it->count;
+        if (t.normal.y >= kWallNormalY) ++it->floors;
+        else if (t.normal.y <= -kWallNormalY) ++it->ceilings;
+        else ++it->walls;
+    }
+    std::sort(out.begin(), out.end(), [](const Kind& a, const Kind& b) { return a.flags < b.flags; });
+    return out;
+}
+
+std::vector<std::uint8_t> triangle_kinds(const Source& source, const std::vector<Kind>& list) {
+    std::vector<std::uint8_t> out;
+    out.reserve(source.triangles.size());
+    for (const auto& t : source.triangles) {
+        const auto it = std::find_if(list.begin(), list.end(), [&](const Kind& k) { return k.flags == t.flags; });
+        out.push_back(static_cast<std::uint8_t>(it == list.end() ? 0U : std::min<std::size_t>(it - list.begin(), 255U)));
+    }
+    return out;
+}
+
+std::vector<std::uint8_t> debug_line_kinds(const Source& source, const std::vector<Kind>& list) {
+    const auto per_triangle = triangle_kinds(source, list);
+    std::vector<std::uint8_t> out;
+    out.reserve(per_triangle.size() * 3U);
+    for (const auto kind : per_triangle) out.insert(out.end(), 3U, kind);
+    return out;
+}
+
 namespace {
 
 [[nodiscard]] Vec3 sub(const Vec3& a, const Vec3& b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }

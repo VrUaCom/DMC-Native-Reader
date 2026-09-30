@@ -59,6 +59,25 @@ struct Source final {
                                            std::uint32_t resource_slot,
                                            std::span<const std::uint8_t> bytes) noexcept;
 
+// One kind of record: a distinct `flags` value (+0x00 of the triangle-plane
+// record). The low byte holds type bits, the high word (flags >> 16) the
+// category bits that 0x14005E880 tests against the caller's skip mask.
+// Numbering follows ascending flag value, so it is stable for a source.
+struct Kind final {
+    std::uint32_t flags{};
+    std::size_t count{};
+    std::size_t floors{};    // normal.y >= kWallNormalY
+    std::size_t walls{};
+    std::size_t ceilings{};  // normal.y <= -kWallNormalY
+};
+[[nodiscard]] std::vector<Kind> kinds(const Source& source);
+// Kind index (into kinds(source)) of every triangle record.
+[[nodiscard]] std::vector<std::uint8_t> triangle_kinds(const Source& source,
+                                                        const std::vector<Kind>& kinds);
+// Kind index of every line pair of debug_lines (3 per triangle).
+[[nodiscard]] std::vector<std::uint8_t> debug_line_kinds(const Source& source,
+                                                          const std::vector<Kind>& kinds);
+
 // Room-local line pairs for the optional collision inspection overlay.  The
 // renderer applies the same room pivot/yaw/offset as the visible stage mesh.
 [[nodiscard]] std::vector<Vec3> debug_lines(const Source& source);

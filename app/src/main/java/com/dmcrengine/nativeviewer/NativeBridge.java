@@ -122,6 +122,11 @@ public final class NativeBridge {
     public static native String pickView(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
             boolean follow, float dolly, float x, float y, boolean place);
+    /**
+     * Kinds (distinct record flags) of the HITS shown with the session, one
+     * string each: "flags|records|floors|walls|ceilings|rgb".
+     */
+    public static native String[] collisionKinds(long handle);
     /** {framing distance at dolly 0 (model units), largest dolly} of the session. */
     public static native float[] cameraMetrics(long handle);
     /** Builds the viewer room from a stage archive; its summary, or null. */

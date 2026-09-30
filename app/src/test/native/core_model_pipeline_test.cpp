@@ -352,6 +352,16 @@ int main() {
         source.triangles.push_back({0x00020000U, {100.0F, 500.0F, -500.0F}, {100.0F, 500.0F, 500.0F},
                                     {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
 
+        // Kinds: one per distinct flags value, ascending; floors/walls counted.
+        {
+            const auto kinds = ec::kinds(source);
+            assert(kinds.size() == 2U && kinds[0].flags == 0U && kinds[0].count == 2U &&
+                   kinds[0].floors == 2U && kinds[1].flags == 0x00020000U && kinds[1].walls == 2U);
+            const auto line_kinds = ec::debug_line_kinds(source, kinds);
+            assert(line_kinds.size() == 12U && line_kinds[0] == 0U && line_kinds[6] == 1U);
+            assert(dmcresource::collision_kind_color(0) != dmcresource::collision_kind_color(1));
+        }
+
         // Nearest hit wins: a diagonal shot meets the wall before the floor.
         const auto wall = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, -100.0F, 0.0F});
         assert(wall && wall->triangle >= 2U);
@@ -522,6 +532,14 @@ int main() {
                 if (wired.pixels[o] > 120U && wired.pixels[o + 2U] > 200U) ++lines;
             }
             assert(lines > 20U);
+            // A wider mesh line covers more pixels.
+            look.mesh_line_px = 4;
+            const auto thick = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t thick_lines = 0U;
+            for (std::size_t o = 0U; o < thick.pixels.size(); o += 4U) {
+                if (thick.pixels[o] > 120U && thick.pixels[o + 2U] > 200U) ++thick_lines;
+            }
+            assert(thick_lines > lines * 2U);
         }
 
         // Settings bits: background 2 (light) fills the corner.
