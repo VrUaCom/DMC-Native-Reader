@@ -105,10 +105,16 @@ struct ViewState {
     // about room_pivot (room coordinates) before room_offset moves it.
     float pan_x{0.0F};
     float pan_y{0.0F};
+    // Dolly: the camera moves along its view axis by this fraction of the
+    // framing distance (>0 toward the orbit centre, <0 away; 1 = at it).
+    float dolly{0.0F};
     Vec3 frame_shift{};
     float room_yaw{0.0F};
     Vec3 room_pivot{};
 };
+
+// Framing distance (model units) of the camera at dolly 0 for these vertices.
+[[nodiscard]] float framing_camera_distance(std::span<const Vec3> vertices) noexcept;
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
     std::span<const std::uint32_t> indices, int width, int height, float zoom);

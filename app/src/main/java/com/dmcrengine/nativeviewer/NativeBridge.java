@@ -110,18 +110,20 @@ public final class NativeBridge {
     /** Render with gesture controls: pan (framing radii), room twist, follow. */
     public static native boolean renderEx(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
-            boolean follow, android.graphics.Bitmap target);
+            boolean follow, float dolly, android.graphics.Bitmap target);
     /**
      * Worker-thread frame: pose the MOT at motionFrame (NaN: keep the pose),
      * render and write RGBA8 into a direct buffer; 0 failed, 1 ok, 2 pose failed.
      */
     public static native int renderToBuffer(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
-            boolean follow, float motionFrame, java.nio.ByteBuffer out);
+            boolean follow, float dolly, float motionFrame, java.nio.ByteBuffer out);
     /** "model|joint", "room|joint", "placed|joint" or "none|joint" under (x, y). */
     public static native String pickView(long handle, int width, int height, float yaw,
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
-            boolean follow, float x, float y, boolean place);
+            boolean follow, float dolly, float x, float y, boolean place);
+    /** {framing distance at dolly 0 (model units), largest dolly} of the session. */
+    public static native float[] cameraMetrics(long handle);
     /** Builds the viewer room from a stage archive; its summary, or null. */
     public static native String loadRoom(int fd, String filename);
     public static native void clearRoom();

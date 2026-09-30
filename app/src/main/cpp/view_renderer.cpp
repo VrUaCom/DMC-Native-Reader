@@ -104,6 +104,8 @@ CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int h
     frame.center.z += view.frame_shift.z;
     frame.pan_x = view.pan_x * frame.radius;
     frame.pan_y = view.pan_y * frame.radius;
+    // Dolly: a camera move along the view axis.
+    if (std::isfinite(view.dolly)) frame.camera_distance *= 1.0F - view.dolly;
     return frame;
 }
 
@@ -408,6 +410,10 @@ RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
 }
 
 }  // namespace
+
+float framing_camera_distance(std::span<const Vec3> vertices) noexcept {
+    return compute_camera_frame(vertices, 1, 1).camera_distance;
+}
 
 namespace {
 

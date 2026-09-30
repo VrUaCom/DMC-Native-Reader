@@ -166,6 +166,12 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         buildUi();
         applyViewerSettings();
+        // A gesture added later is on for a mask stored before it existed.
+        if (!prefs().getBoolean(PREF_GESTURE_DOLLY, false)) {
+            prefs().edit()
+                    .putInt(PREF_GESTURES, prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL) | DmcRenderView.G_DOLLY)
+                    .putBoolean(PREF_GESTURE_DOLLY, true).apply();
+        }
         renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
         restoreRoom();
         handleIncomingIntent(getIntent());
@@ -897,6 +903,7 @@ public final class MainActivity extends Activity {
     // ---- Gestures (DmcRenderView): the activity side and the Gestures window.
 
     private static final String PREF_GESTURES = "gestures.mask";
+    private static final String PREF_GESTURE_DOLLY = "gestures.dollyAdded";
 
     private final DmcRenderView.GestureListener gestureListener = new DmcRenderView.GestureListener() {
         @Override public void onStepMotion(int direction) {
@@ -1034,7 +1041,8 @@ public final class MainActivity extends Activity {
                 i -> renderView.setFollow(i == 0)));
 
         final Object[][] list = {
-                {DmcRenderView.G_PAN, "Two fingers drag — pan the camera"},
+                {DmcRenderView.G_PAN, "Two fingers drag — pan the camera; pinch — zoom (zoom and lens shown)"},
+                {DmcRenderView.G_DOLLY, "Hold one finger, slide another up / down on the other half — move the camera (distance shown)"},
                 {DmcRenderView.G_TWIST, "Two fingers twist — turn the model in the room (the view when there is no room)"},
                 {DmcRenderView.G_DOUBLE_TAP, "Double tap — reset the view; on the room floor: stand the model there"},
                 {DmcRenderView.G_TAP_PAUSE, "Tap the model — pause / resume the animation"},

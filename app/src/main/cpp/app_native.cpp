@@ -528,12 +528,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderEx(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jobject target) {
+        jboolean follow, jfloat dolly, jobject target) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
     if (session == nullptr) return JNI_FALSE;
     try {
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
         const auto image = dmcresource::render_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
@@ -550,7 +550,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat motion_frame, jobject buffer) {
+        jboolean follow, jfloat dolly, jfloat motion_frame, jobject buffer) {
     const SessionLock jni_lock{session_mutex()};
     Session* session = from_handle(handle);
     if (session == nullptr || buffer == nullptr) return 0;
@@ -560,7 +560,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
             !dmcresource::motion::apply_motion_frame(session, motion_frame)) {
             status = 2;
         }
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
         const auto image = dmcresource::render_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
@@ -576,6 +576,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
     } catch (...) { return 0; }
 }
 
+// Camera distance (model units) at dolly 0, for the gesture readout; 0 when
+// nothing is framed. The limit is the session's largest dolly.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraMetrics(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    const jfloat values[2] = {dmcresource::session_camera_distance(session),
+                              dmcresource::session_dolly_limit(session)};
+    jfloatArray out = env->NewFloatArray(2);
+    if (out != nullptr) env->SetFloatArrayRegion(out, 0, 2, values);
+    return out;
+}
+
 // What is under image pixel (x, y): "model|<joint>", "room|<joint>",
 // "placed|<joint>" (place = true and an upward room surface was hit: the model now
 // stands there) or "none|<joint>"; <joint> is empty when no joint is near.
@@ -584,12 +597,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_pickView(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat x, jfloat y, jboolean place) {
+        jboolean follow, jfloat dolly, jfloat x, jfloat y, jboolean place) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
     if (session == nullptr) return nullptr;
     try {
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
         const auto pick = dmcresource::pick_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls, x, y);

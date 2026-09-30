@@ -135,6 +135,20 @@ APK verifier.
   - ▦ shows the stage's own HITS;
   - the files stay available from ⋮ → "Browse .PAC files…".
 
+- ✅ Camera gestures with read-outs (Android, not device-tested yet):
+  - **Pinch** shows the zoom (×) and the 35 mm-equivalent lens, with a log
+    zoom track.
+  - **Dolly:** hold one finger on one half of the screen and slide another up
+    or down on the other half. The camera moves along its view axis;
+    `ViewControls::dolly` is a fraction of the framing distance.
+    - A model/room view shows the distance to the target.
+    - A stage scene has no target, so it shows how far the camera moved.
+    - Models cannot be passed through. A stage scene can be entered.
+  - Model units are read as centimetres.
+  - The lens assumes the renderer's 0.5 rad half-FOV on the short side and a
+    43.27 mm full-frame diagonal.
+  - Settings → gestures has an on/off row for the dolly.
+
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive

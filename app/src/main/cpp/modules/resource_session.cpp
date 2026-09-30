@@ -1559,6 +1559,8 @@ struct DynamicVertexInfluences final {
     return out->dynamic_presentation;
 }
 
+constexpr float kDollyMin = -2.0F;
+
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
                   PreparedView* out) {
@@ -1577,6 +1579,8 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.background = static_cast<std::uint8_t>((flags >> kRenderBackgroundShift) & 3U);
     view.pan_x = std::isfinite(controls.pan_x) ? std::clamp(controls.pan_x, -20.0F, 20.0F) : 0.0F;
     view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;
+    view.dolly = std::isfinite(controls.dolly)
+        ? std::clamp(controls.dolly, kDollyMin, session_dolly_limit(&session)) : 0.0F;
 
     out->width = std::clamp(requested_width, 64, 1024);
     out->height = std::clamp(requested_height, 64, 1024);
@@ -1686,6 +1690,16 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
 }
 
 }  // namespace
+
+float session_camera_distance(const Session* session) noexcept {
+    if (session == nullptr) return 0.0F;
+    const auto rest = motion::motion_rest_vertices(session);
+    return framing_camera_distance(rest.empty() ? std::span<const Vec3>{session->render_mesh.vertices} : rest);
+}
+
+float session_dolly_limit(const Session* session) noexcept {
+    return session != nullptr && session->stage != nullptr ? 4.0F : 0.9F;
+}
 
 RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags) {

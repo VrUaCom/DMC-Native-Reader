@@ -278,7 +278,17 @@ struct ViewControls final {
     float pan_y{};
     float room_yaw{};  // room turned about the model's spot (radians)
     bool follow{};     // camera follows the model as its motion moves it
+    // Camera dolly as a fraction of the framing distance (session_camera_distance):
+    // >0 moves the camera toward the model, <0 away.
+    float dolly{};
 };
+
+// Model-unit distance of the camera from the framed model at dolly 0 (0 when
+// the session has nothing to frame).
+[[nodiscard]] float session_camera_distance(const Session* session) noexcept;
+// Dolly range of a session: a stage scene can be entered, a model cannot be
+// passed through.
+[[nodiscard]] float session_dolly_limit(const Session* session) noexcept;
 
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
