@@ -63,4 +63,42 @@ struct Source final {
 // renderer applies the same room pivot/yaw/offset as the visible stage mesh.
 [[nodiscard]] std::vector<Vec3> debug_lines(const Source& source);
 
+// Segment query of the stage collision manager, 0x14005E880 (reached through
+// 0x14005E7A0 on [global+0x28]+0x710): the triangle-plane records of the
+// cells the segment crosses are tested once each; a triangle whose
+// (flags >> 16) shares a bit with `skip_mask` is ignored (the caller's
+// category mask, e.g. 0x10 for the CEm034 line-of-sight test 0x140168ED0,
+// 0x02/0x10/0x20/0x40 by object type in 0x1402C64F0, 0 without an object).
+// Every accepted hit shortens the segment, so the nearest hit wins; the hit
+// triangle record is copied out.
+struct SegmentHit final {
+    Vec3 point{};
+    Vec3 normal{};
+    float fraction{};  // 0 at `from`, 1 at `to`
+    std::size_t triangle{};
+    std::uint32_t flags{};
+};
+[[nodiscard]] std::optional<SegmentHit> segment_hit(const Source& source,
+                                                    const Vec3& from,
+                                                    const Vec3& to,
+                                                    std::uint16_t skip_mask = 0U) noexcept;
+
+// Closest point of a triangle record to `point` (for sphere push-out).
+[[nodiscard]] Vec3 closest_point(const Triangle& triangle, const Vec3& point) noexcept;
+
+// Records steeper than this |normal.y| are walls; flatter-up ones floors.
+inline constexpr float kWallNormalY = 0.7F;
+
+// Reader character proxy (the retail character-vs-HITS response is not
+// decoded yet): a sphere of `radius` moved from `from` to `to` in sub-steps
+// of at most radius/2, pushed horizontally out of every wall record it
+// overlaps, so it slides along walls and cannot tunnel through them.
+[[nodiscard]] Vec3 slide_sphere(const Source& source, const Vec3& from, const Vec3& to,
+                                float radius) noexcept;
+
+// Height of the highest floor record (normal.y >= kWallNormalY) under the
+// vertical line through `point`, between point.y and point.y - depth.
+[[nodiscard]] std::optional<float> floor_below(const Source& source, const Vec3& point,
+                                               float depth) noexcept;
+
 }  // namespace dmcresource::environment_collision

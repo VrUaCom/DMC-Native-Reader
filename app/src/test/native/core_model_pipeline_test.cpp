@@ -332,6 +332,55 @@ int main() {
     assert(collision->cell_reference_count == 1U);
     assert(dmcresource::environment_collision::debug_lines(*collision).size() == 6U);
 
+    // Stage collision queries (0x14005E880 segment test and the Reader's
+    // character proxy) on a floor y = 0 and a wall x = 100 facing -x.
+    {
+        namespace ec = dmcresource::environment_collision;
+        using dmcresource::Vec3;
+        ec::Source source;
+        source.bounds_min = {-500.0F, -10.0F, -500.0F};
+        source.bounds_max = {500.0F, 500.0F, 500.0F};
+        // Floor (normal +y, plane y = 0), two triangles.
+        source.triangles.push_back({0U, {-500.0F, 0.0F, -500.0F}, {-500.0F, 0.0F, 500.0F},
+                                    {500.0F, 0.0F, 500.0F}, {0.0F, 1.0F, 0.0F}, 0.0F});
+        source.triangles.push_back({0U, {-500.0F, 0.0F, -500.0F}, {500.0F, 0.0F, 500.0F},
+                                    {500.0F, 0.0F, -500.0F}, {0.0F, 1.0F, 0.0F}, 0.0F});
+        // Wall x = 100 (normal -x: n.p + d = 0 with d = 100), category 0x0002.
+        source.triangles.push_back({0x00020000U, {100.0F, 0.0F, -500.0F}, {100.0F, 500.0F, -500.0F},
+                                    {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
+        source.triangles.push_back({0x00020000U, {100.0F, 500.0F, -500.0F}, {100.0F, 500.0F, 500.0F},
+                                    {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
+
+        // Nearest hit wins: a diagonal shot meets the wall before the floor.
+        const auto wall = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, -100.0F, 0.0F});
+        assert(wall && wall->triangle >= 2U);
+        assert(std::fabs(wall->point.x - 100.0F) < 1.0e-3F && std::fabs(wall->point.y) < 1.0e-3F + 1.0F);
+        assert(std::fabs(wall->fraction - 0.5F) < 1.0e-4F);
+        // A category mask skips the wall records.
+        const auto masked = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, 50.0F, 0.0F}, 0x0002U);
+        assert(!masked);
+        const auto floor = ec::segment_hit(source, {0.0F, 50.0F, 0.0F}, {0.0F, -50.0F, 0.0F});
+        assert(floor && std::fabs(floor->point.y) < 1.0e-4F && floor->normal.y == 1.0F);
+        assert(!ec::segment_hit(source, {0.0F, 50.0F, 0.0F}, {50.0F, 60.0F, 0.0F}));
+
+        // The sphere stops `radius` short of the wall and slides along it.
+        const auto slid = ec::slide_sphere(source, {0.0F, 90.0F, 0.0F}, {300.0F, 90.0F, 40.0F}, 50.0F);
+        assert(std::fabs(slid.x - 50.0F) < 0.5F && std::fabs(slid.z - 40.0F) < 0.5F);
+        const auto free_move = ec::slide_sphere(source, {0.0F, 90.0F, 0.0F}, {-200.0F, 90.0F, 0.0F}, 50.0F);
+        assert(std::fabs(free_move.x + 200.0F) < 1.0e-3F);
+        const auto height = ec::floor_below(source, {10.0F, 90.0F, 10.0F}, 1000.0F);
+        assert(height && std::fabs(*height) < 1.0e-4F);
+        assert(!ec::floor_below(source, {10.0F, -5.0F, 10.0F}, 1000.0F));
+
+        // Room <-> model placement round trip (view_renderer's room pass).
+        namespace room = dmcresource::stage_room;
+        const room::Placement placement{{10.0F, 2.0F, -4.0F}, 0.7F, {3.0F, -1.0F, 5.0F}};
+        const Vec3 p{123.0F, 45.0F, -67.0F};
+        const auto back = room::model_to_room(placement, room::room_to_model(placement, p));
+        assert(std::fabs(back.x - p.x) < 1.0e-3F && std::fabs(back.y - p.y) < 1.0e-3F &&
+               std::fabs(back.z - p.z) < 1.0e-3F);
+    }
+
     // Both canonical adapters must preserve slots through render materialization
     // and expose the native companion action (including MOD's nonzero slot 5).
     for (const auto* result : {&scm_result, &mod_result}) {

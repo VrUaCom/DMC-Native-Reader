@@ -114,6 +114,19 @@ APK verifier.
     arena and remain deferred.
   - [Details](research/dmc3-shell-effect-runtime-exe-v73.md).
 
+- ✅ CEffect sprite geometry follows the EXE draw paths (mode 1 camera
+  quad, mode 2 oriented quad, modes 3/4 not drawn); the slot23 shotgun hangs
+  from body joint 13; Kalina no longer flashes to the back on a loop.
+- ✅ Stage collision (HITS of the room):
+  - a toolbar button ▦ shows the room's HITS walls and floors;
+  - the collision is active whenever the room is drawn;
+  - characters stop at walls and follow floors (Reader proxy: sphere r = 50);
+  - the Shl02 rocket explodes where it meets the stage;
+  - bullets stop there with their EXE hit effect (Shl00 V473, Shl05 V277);
+  - the grenade bounces on the HITS (EXE raycast `0x1402C64F0` response);
+  - EXE query `0x14005E880` and its category mask are documented;
+  - [Details](research/dmc3-shell-effect-runtime-exe-v73.md#stage-collision-hits).
+
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive

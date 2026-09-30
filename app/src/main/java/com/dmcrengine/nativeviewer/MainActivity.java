@@ -105,6 +105,7 @@ public final class MainActivity extends Activity {
     private Button uvButton;
     private Button shadowButton;
     private Button collisionButton;
+    private Button stageCollisionButton;
     // Position in the collision cycle: -1 all attacks, then each used id.
     private int collisionCursor = -2;
     private Button infoButton;
@@ -301,6 +302,15 @@ public final class MainActivity extends Activity {
         syncToggleButton(collisionButton,
                 hasSession && NativeBridge.hasCollision(session) && !renderView.isUvLayoutVisible(),
                 renderView.isCollisionVisible());
+
+        // Stage collision (HITS of the room): the button appears once a stage
+        // with collision is the room around the opened model.
+        syncToggleButton(stageCollisionButton,
+                hasSession && roomLoaded && blackWidowState.canRender
+                        && NativeBridge.roomCollisionSourceCount() > 0
+                        && !NativeBridge.isStageSession(session)
+                        && !renderView.isUvLayoutVisible(),
+                renderView.isRoomCollisionVisible());
 
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
@@ -579,6 +589,24 @@ public final class MainActivity extends Activity {
         });
         addToolButton(bar, collisionButton);
 
+        // Stage collision: shows the HITS walls and floors of the room. They
+        // are always active: characters stop at walls and follow floors,
+        // shots hit them.
+        stageCollisionButton = makeSquareButton("\u25A6", "Stage collision (HITS)", 20f);
+        stageCollisionButton.setOnClickListener(v -> {
+            if (!roomLoaded || NativeBridge.roomCollisionSourceCount() <= 0) return;
+            final boolean show = !renderView.isRoomCollisionVisible();
+            if (show && !roomShown()) {
+                prefs().edit().putBoolean(PREF_ROOM_SHOWN, true).apply();
+            }
+            renderView.setRoomCollisionVisible(show);
+            notice(show ? "Stage collision shown: " + NativeBridge.roomCollisionSourceCount()
+                            + " HITS source(s)"
+                         : "Stage collision hidden (still active)", Toast.LENGTH_SHORT);
+            applyResourceUiState();
+        });
+        addToolButton(bar, stageCollisionButton);
+
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {
             if (!blackWidowState.canShowUv) return;
@@ -650,6 +678,7 @@ public final class MainActivity extends Activity {
         final boolean shown = !roomShown();
         prefs().edit().putBoolean(PREF_ROOM_SHOWN, shown).apply();
         renderView.setRoomVisible(shown && roomLoaded);
+        applyResourceUiState();
         notice(shown ? "Room shown: " + roomName : "Room hidden", Toast.LENGTH_SHORT);
     }
 
@@ -675,6 +704,7 @@ public final class MainActivity extends Activity {
         roomFile().delete();
         prefs().edit().remove(PREF_ROOM_NAME).apply();
         renderView.setRoomVisible(false);
+        applyResourceUiState();
         notice("Room removed: plain floor", Toast.LENGTH_SHORT);
     }
 
@@ -838,6 +868,7 @@ public final class MainActivity extends Activity {
                                 prefs().edit().putBoolean(PREF_ROOM_SHOWN, true).apply();
                             }
                             renderView.setRoomCollisionVisible(i == 0);
+                            applyResourceUiState();
                         }));
             }
             if (NativeBridge.roomSpotCount() > 1) addAction.accept("Next floor spot", this::roomNextSpot);
@@ -1134,6 +1165,7 @@ public final class MainActivity extends Activity {
                 roomName = name;
                 roomDetail = detail;
                 renderView.setRoomVisible(true);
+                applyResourceUiState();
                 notice("Room: " + detail, Toast.LENGTH_LONG);
             });
         }).start();
@@ -1151,6 +1183,7 @@ public final class MainActivity extends Activity {
                 roomName = name;
                 roomDetail = detail;
                 renderView.setRoomVisible(roomShown());
+                applyResourceUiState();
             });
         }).start();
     }

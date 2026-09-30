@@ -201,6 +201,8 @@ struct Session {
         // CShell state byte (+0x08): 1 flight, 2 explode.
         std::uint8_t shell_state{};
         bool explode_emitted{};
+        // Shl02: flight age at which the shell met the stage HITS (<0 none).
+        float hit_age{-1.0F};
         // lane/channel/value of the MotionScript signal that spawned it.
         std::array<std::uint8_t, 3> spawn_signal{0xFFU, 0xFFU, 0xFFU};
         float spawn_frame{-1.0F};

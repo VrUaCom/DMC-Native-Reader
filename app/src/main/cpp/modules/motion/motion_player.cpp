@@ -19,6 +19,8 @@
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/scene_projection.h"
+#include "dmcresource/environment_collision.h"
+#include "dmcresource/stage_room.h"
 
 namespace dmcresource::motion {
 
@@ -157,12 +159,26 @@ struct MotionState final {
         bool warn_emitted{};
         bool explode_emitted{};
         bool retired{};
+        // Stage HITS hit of a straight shell: flight age of the hit (<0 none),
+        // the age tested so far, and whether the hit effect was spawned.
+        float hit_age{-1.0F};
+        float checked_age{};
+        bool hit_emitted{};
     };
     std::vector<LadyShell> lady_shells;
     // State 0x85 SMG trigger (+0x57DD): lane1/ch0 1 starts, 2 stops.
     float smg_fire_start{-1.0F};
     float smg_fire_end{std::numeric_limits<float>::infinity()};
     float smg_last_tick{-1.0F};
+
+    // Stage collision (stage_room::active_collision): translation added to
+    // the motion-driven parts so the character stays out of HITS walls and
+    // on HITS floors. Restarts with the motion (a loop or seek back).
+    bool stage_active{};
+    std::uint64_t stage_revision{};
+    Vec3 stage_shift{};
+    Vec3 stage_centre{};  // corrected vertex centre of the previous frame
+    std::optional<float> stage_floor0;  // HITS floor under the start
 };
 
 namespace {
@@ -561,14 +577,23 @@ struct Shl02Spawn final {
     // first retarget (timer 10 -> 0) the path needs no target. Afterwards the
     // EXE steers toward the player joint (0x140244B50, max turn u16 1200);
     // the standalone Reader has no player, so the direction is held and the
-    // update carries requires_gameplay_world_context.
-    const float flight = std::clamp(age, 0.0F, kShl02Lifetime);
+    // update carries requires_gameplay_world_context. A stage hit stops the
+    // shell where it met the HITS.
+    const float flight = std::clamp(
+        age, 0.0F, visual.hit_age >= 0.0F ? std::min(visual.hit_age, kShl02Lifetime) : kShl02Lifetime);
     const Vec3 position{
         visual.origin.x + visual.velocity.x * kShl02Speed * flight,
         visual.origin.y + visual.velocity.y * kShl02Speed * flight,
         visual.origin.z + visual.velocity.z * kShl02Speed * flight,
     };
     return align_z_matrix(visual.velocity, position);
+}
+
+// State 2 entry age: the lifetime end (0x140244810 -> -1 on the update
+// after +0x17C <= 0), or the update after a stage hit, when state 1 reads the
+// collision result (+0x278) before moving (0x140173D14).
+[[nodiscard]] float shl02_explode_age(const Session::LadyDynamicVisual& visual) noexcept {
+    return visual.hit_age >= 0.0F ? std::ceil(visual.hit_age) + 1.0F : kShl02Lifetime + 1.0F;
 }
 
 struct Shl03Spawn final {
@@ -628,6 +653,7 @@ void deactivate_lady_dynamic_visuals(Session* session) noexcept {
         visual.origin = {};
         visual.shell_state = 0U;
         visual.explode_emitted = false;
+        visual.hit_age = -1.0F;
         visual.world = Matrix4{};
         visual.effect_parent_world = Matrix4{};
     }
@@ -651,6 +677,7 @@ void spawn_lady_dynamic_visual(
             visual.effect_parent_world = effect_parent_world;
             visual.shell_state = 1U;
             visual.explode_emitted = false;
+            visual.hit_age = -1.0F;
             visual.spawn_frame = event_frame;
             visual.last_update_frame = event_frame;
             // Flight ends when shell+0x17C <= 0 (0x140244810 -> -1): state 2
@@ -758,14 +785,14 @@ void emit_shl02_explode_event(Session* session,
     event.channel = visual.spawn_signal[1];
     event.signal_value = visual.spawn_signal[2];
     event.actor_instance = state.active_actor_instances[2U];
-    event.script_frame = visual.spawn_frame + kShl02Lifetime + 1.0F;
-    event.world = shl02_world_at(visual, kShl02Lifetime);
+    event.script_frame = visual.spawn_frame + shl02_explode_age(visual);
+    event.world = shl02_world_at(visual, shl02_explode_age(visual));
     event.world_authoritative = true;
     event.spawn_matrix = event.world;
     event.spawn_matrix.values[13] += 2.0F;
     event.spawn_matrix_authoritative = true;
-    // The standalone flight reached its lifetime; a gameplay collision or
-    // the 100-unit player proximity (0x140244810) would end it earlier.
+    // The standalone flight ends at its lifetime or at a hit of the room's
+    // stage HITS; the 100-unit player proximity (0x140244810) needs gameplay.
     event.requires_gameplay_world_context = true;
     event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
     session->effect_runtime->apply_actor_event(event);
@@ -839,17 +866,42 @@ struct ShellPose final {
     bool resting{};
 };
 
-// Shl04 flight, one EXE update per tick. The stage raycast 0x1402C64F0 has
-// no standalone counterpart; the Reader's room floor (actor y = 0) stands in
-// for it with the same mirror/restitution response.
-[[nodiscard]] ShellPose grenade_pose(const MotionState::LadyShell& shell,
-                                     float age) noexcept {
+// Shl04 flight, one EXE update per tick. The stage raycast 0x1402C64F0
+// (0x14005E7A0 from the previous to the new position, no object: category
+// mask 0) runs on the room's HITS when one is active: the rest of the move is
+// mirrored about the hit plane and the velocity reflected and halved. Without
+// a room the Reader's floor (actor y = 0) stands in for it.
+[[nodiscard]] ShellPose grenade_pose(const MotionState::LadyShell& shell, float age,
+                                     const stage_room::ActiveCollision* collision) noexcept {
     ShellPose pose{shell.origin, false};
     Vec3 velocity = shell.velocity;
     const float flight_end = std::floor(shell.lifetime) + 1.0F;  // state 2
     const float limit = std::clamp(age, 0.0F, flight_end);
     const auto whole = static_cast<int>(std::floor(limit));
     Vec3 previous = pose.position;
+    const auto bounce = [&](const Vec3& from) {
+        if (collision != nullptr) {
+            const auto hit = stage_room::segment_hit_model(*collision, from, pose.position);
+            if (!hit) return;
+            const Vec3 n = normalize3(hit->normal, {0.0F, 1.0F, 0.0F});
+            const float over = (pose.position.x - hit->point.x) * n.x +
+                               (pose.position.y - hit->point.y) * n.y +
+                               (pose.position.z - hit->point.z) * n.z;
+            pose.position = {pose.position.x - 2.0F * over * n.x, pose.position.y - 2.0F * over * n.y,
+                             pose.position.z - 2.0F * over * n.z};
+            const float vn = velocity.x * n.x + velocity.y * n.y + velocity.z * n.z;
+            velocity = {kGrenadeRestitution * (velocity.x - 2.0F * vn * n.x),
+                        kGrenadeRestitution * (velocity.y - 2.0F * vn * n.y),
+                        kGrenadeRestitution * (velocity.z - 2.0F * vn * n.z)};
+        } else {
+            if (!(pose.position.y < 0.0F && from.y >= 0.0F)) return;
+            pose.position.y = -pose.position.y;
+            velocity = {kGrenadeRestitution * velocity.x,
+                        -kGrenadeRestitution * velocity.y,
+                        kGrenadeRestitution * velocity.z};
+        }
+        if (std::sqrt(length_sq3(velocity)) < kGrenadeRestSpeed) pose.resting = true;
+    };
     for (int tick = 1; tick <= whole; ++tick) {
         previous = pose.position;
         if (pose.resting) continue;
@@ -857,43 +909,51 @@ struct ShellPose final {
         pose.position.y += velocity.y;
         pose.position.z += velocity.z;
         velocity.y = std::min(velocity.y - kGrenadeGravity, kGrenadeMaxRise);
-        if (pose.position.y < 0.0F && previous.y >= 0.0F) {
-            pose.position.y = -pose.position.y;
-            velocity = {kGrenadeRestitution * velocity.x,
-                        -kGrenadeRestitution * velocity.y,
-                        kGrenadeRestitution * velocity.z};
-            if (std::sqrt(length_sq3(velocity)) < kGrenadeRestSpeed) {
-                pose.resting = true;
-            }
-        }
+        bounce(previous);
     }
     const float fraction = limit - static_cast<float>(whole);
     if (fraction > 0.0F && !pose.resting && whole < flight_end) {
-        pose.position.x += velocity.x * fraction;
-        pose.position.y = std::max(pose.position.y + velocity.y * fraction, 0.0F);
-        pose.position.z += velocity.z * fraction;
+        const Vec3 from = pose.position;
+        const Vec3 to{from.x + velocity.x * fraction, from.y + velocity.y * fraction,
+                      from.z + velocity.z * fraction};
+        if (collision != nullptr) {
+            const auto hit = stage_room::segment_hit_model(*collision, from, to);
+            pose.position = hit ? hit->point : to;
+        } else {
+            pose.position = {to.x, std::max(to.y, 0.0F), to.z};
+        }
     }
     return pose;
 }
 
-[[nodiscard]] Matrix4 lady_shell_world(const MotionState::LadyShell& shell,
-                                       float age) noexcept {
+[[nodiscard]] Vec3 straight_shell_position(const MotionState::LadyShell& shell, float age) noexcept {
+    const float end = shell.hit_age >= 0.0F ? std::min(shell.hit_age, kStraightShellLifetime)
+                                            : kStraightShellLifetime;
+    const float flight = std::clamp(age, 0.0F, end);
+    return {shell.origin.x + shell.velocity.x * flight, shell.origin.y + shell.velocity.y * flight,
+            shell.origin.z + shell.velocity.z * flight};
+}
+
+[[nodiscard]] Matrix4 lady_shell_world(const MotionState::LadyShell& shell, float age,
+                                       const stage_room::ActiveCollision* collision) noexcept {
     if (shell.actor == 4U) {
         // Shl04 rebuilds a rotation from its spin angles; its only visual is
         // the camera-facing E765 sprite, so the basis is left unrotated.
-        const auto pose = grenade_pose(shell, age);
+        const auto pose = grenade_pose(shell, age, collision);
         Matrix4 out;
         out.values[12] = pose.position.x;
         out.values[13] = pose.position.y;
         out.values[14] = pose.position.z;
         return out;
     }
-    const float flight = std::clamp(age, 0.0F, kStraightShellLifetime);
-    return align_z_matrix(
-        shell.velocity,
-        {shell.origin.x + shell.velocity.x * flight,
-         shell.origin.y + shell.velocity.y * flight,
-         shell.origin.z + shell.velocity.z * flight});
+    return align_z_matrix(shell.velocity, straight_shell_position(shell, age));
+}
+
+// A straight shell's stage hit is read by the update after the move that
+// met the HITS (Shl00 0x1401726A5 / Shl05 0x140175FE5 read the collider
+// results after moving): state 2 and the hit effect there, retire next.
+[[nodiscard]] float straight_shell_hit_tick(const MotionState::LadyShell& shell) noexcept {
+    return std::ceil(shell.hit_age) + 1.0F;
 }
 
 [[nodiscard]] float lady_shell_retire_age(
@@ -901,8 +961,9 @@ struct ShellPose final {
     // Grenade: state 2 at fuse+1, explode update at +2, 3.0 countdown to
     // state 3 at +5, retire at +6. Straight shells: state 3 once +0x52C is
     // negative (tick 121), retire on the next update.
-    return shell.actor == 4U ? std::floor(shell.lifetime) + 6.0F
-                             : kStraightShellLifetime + 2.0F;
+    if (shell.actor == 4U) return std::floor(shell.lifetime) + 6.0F;
+    if (shell.hit_age >= 0.0F) return straight_shell_hit_tick(shell) + 1.0F;
+    return kStraightShellLifetime + 2.0F;
 }
 
 void emit_lady_shell_event(Session* session,
@@ -925,7 +986,8 @@ void emit_lady_shell_event(Session* session,
     event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
     event.requires_gameplay_world_context = shell.gameplay_context;
     if (kind != DynamicActorEventKind::Retire) {
-        event.world = lady_shell_world(shell, age);
+        const auto collision = stage_room::active_collision(session);
+        event.world = lady_shell_world(shell, age, collision ? &*collision : nullptr);
         event.world_authoritative = true;
         event.spawn_matrix = spawn_matrix != nullptr ? *spawn_matrix : event.world;
         event.spawn_matrix_authoritative = true;
@@ -1043,10 +1105,33 @@ void fire_lady_smg(Session* session, MotionState& state, float frame) {
 
 void sync_lady_shells(Session* session, MotionState& state, float frame) {
     if (session == nullptr) return;
+    const auto collision = stage_room::active_collision(session);
     for (auto& shell : state.lady_shells) {
         if (shell.retired) continue;
         const float age = frame - shell.spawn_frame;
         if (!(age > 0.0F)) continue;
+        if (shell.actor != 4U && shell.hit_age < 0.0F && collision) {
+            // Straight flight against the room's HITS, from the last tested
+            // age to this one.
+            const float to = std::min(age, kStraightShellLifetime);
+            if (to > shell.checked_age) {
+                const auto hit = stage_room::segment_hit_model(
+                    *collision, straight_shell_position(shell, shell.checked_age),
+                    straight_shell_position(shell, to));
+                if (hit) shell.hit_age = shell.checked_age + hit->fraction * (to - shell.checked_age);
+                shell.checked_age = to;
+            }
+        }
+        if (shell.hit_age >= 0.0F && !shell.hit_emitted && age >= straight_shell_hit_tick(shell)) {
+            // Stage hit: 0x1402E7A80(3, id, &shell+0x1A0) copies the shell
+            // matrix with y + 2 (Shl00 V473 0x14017273B, Shl05 V277
+            // 0x14017607A: the collider branch whose flags & 3 is set).
+            shell.hit_emitted = true;
+            const float hit_tick = straight_shell_hit_tick(shell);
+            Matrix4 spot = lady_shell_world(shell, hit_tick, nullptr);
+            spot.values[13] += 2.0F;
+            emit_lady_shell_event(session, shell, DynamicActorEventKind::Spawn, 2U, hit_tick, &spot);
+        }
         if (shell.actor == 4U) {
             const float fuse = std::floor(shell.lifetime);
             const float warn_age = fuse - (kGrenadeWarnFuse - 1.0F);
@@ -1059,7 +1144,7 @@ void sync_lady_shells(Session* session, MotionState& state, float frame) {
             if (!shell.explode_emitted && age >= explode_age) {
                 shell.explode_emitted = true;
                 // 0x1402E7CA0 copies the shell matrix and adds 2.0 to y.
-                Matrix4 blast = lady_shell_world(shell, explode_age);
+                Matrix4 blast = lady_shell_world(shell, explode_age, collision ? &*collision : nullptr);
                 blast.values[13] += 2.0F;
                 emit_lady_shell_event(session, shell, DynamicActorEventKind::Spawn,
                                       2U, explode_age, &blast);
@@ -1141,8 +1226,28 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
                 : visual.spawn_frame;
         if (visual.actor == 2U) {
             const float age = frame - visual.spawn_frame;
+            // The shell's collider (+0x278) against the stage: the flown
+            // segment of this update is tested on the room's HITS.
+            if (visual.hit_age < 0.0F && visual.shell_state == 1U) {
+                if (const auto collision = stage_room::active_collision(session)) {
+                    const float from = std::clamp(previous - visual.spawn_frame, 0.0F, kShl02Lifetime);
+                    const float to = std::clamp(age, 0.0F, kShl02Lifetime);
+                    if (to > from) {
+                        const auto a = shl02_world_at(visual, from);
+                        const auto b = shl02_world_at(visual, to);
+                        const auto hit = stage_room::segment_hit_model(
+                            *collision, {a.values[12], a.values[13], a.values[14]},
+                            {b.values[12], b.values[13], b.values[14]});
+                        if (hit) {
+                            visual.hit_age = from + hit->fraction * (to - from);
+                            visual.retire_frame =
+                                visual.spawn_frame + shl02_explode_age(visual) + kShl02ExplodeTicks;
+                        }
+                    }
+                }
+            }
             visual.world = shl02_world_at(visual, age);
-            if (age >= kShl02Lifetime + 1.0F) visual.shell_state = 2U;
+            if (age >= shl02_explode_age(visual)) visual.shell_state = 2U;
         } else if (visual.actor == 3U) {
             const float dt = std::max(frame - previous, 0.0F);
             // Shl03 state1, 0x140174D39:
@@ -1208,6 +1313,99 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
         part.placed = true;
     }
     return part;
+}
+
+// Stage collision of the character (Reader proxy; the retail
+// character-vs-HITS response is not decoded): the motion-driven vertex centre
+// is a sphere of kStageCharacterRadius moved along the frame's root motion
+// through the room's HITS walls (environment_collision::slide_sphere), and it
+// follows the HITS floor heights relative to the floor it started on. Falls
+// are limited to kStageFallPerFrame per frame.
+constexpr float kStageCharacterRadius = 50.0F;
+constexpr float kStageFloorDepth = 3000.0F;
+constexpr float kStageFallPerFrame = 30.0F;
+
+[[nodiscard]] std::optional<Vec3> motion_parts_centre(const Session& session,
+                                                      const MotionState& state) noexcept {
+    double x = 0.0, y = 0.0, z = 0.0;
+    std::size_t count = 0U;
+    const auto& vertices = session.render_mesh.vertices;
+    for (const auto& part : state.parts) {
+        const std::size_t end = part.vertex_begin + part.rest_vertices.size();
+        if (end > vertices.size()) continue;
+        for (std::size_t i = part.vertex_begin; i < end; ++i) {
+            x += vertices[i].x;
+            y += vertices[i].y;
+            z += vertices[i].z;
+        }
+        count += part.rest_vertices.size();
+    }
+    if (count == 0U) return std::nullopt;
+    const auto n = static_cast<double>(count);
+    return Vec3{static_cast<float>(x / n), static_cast<float>(y / n), static_cast<float>(z / n)};
+}
+
+void solve_stage_collision(Session* session, MotionState& state, bool restart) noexcept {
+    const auto collision = stage_room::active_collision(session);
+    if (!collision) {
+        state.stage_active = false;
+        state.stage_shift = {};
+        return;
+    }
+    const auto centre = motion_parts_centre(*session, state);
+    if (!centre) return;
+    const auto& source = *collision->source();
+    const auto& placement = collision->placement;
+    if (restart || !state.stage_active || state.stage_revision != collision->revision) {
+        state.stage_active = true;
+        state.stage_revision = collision->revision;
+        const Vec3 here = stage_room::model_to_room(placement, *centre);
+        state.stage_floor0 = environment_collision::floor_below(source, here, kStageFloorDepth);
+        // Standing inside a wall: step out of it.
+        const Vec3 out = stage_room::room_to_model(
+            placement, environment_collision::slide_sphere(source, here, here, kStageCharacterRadius));
+        state.stage_shift = {out.x - centre->x, 0.0F, out.z - centre->z};
+        state.stage_centre = {out.x, centre->y, out.z};
+        return;
+    }
+    const Vec3 wanted{centre->x + state.stage_shift.x, centre->y + state.stage_shift.y,
+                      centre->z + state.stage_shift.z};
+    const Vec3 from{state.stage_centre.x, wanted.y, state.stage_centre.z};
+    const Vec3 moved = environment_collision::slide_sphere(
+        source, stage_room::model_to_room(placement, from), stage_room::model_to_room(placement, wanted),
+        kStageCharacterRadius);
+    float shift_y = state.stage_shift.y;
+    if (state.stage_floor0) {
+        if (const auto floor = environment_collision::floor_below(source, moved, kStageFloorDepth)) {
+            const float target = *floor - *state.stage_floor0;
+            shift_y = std::max(target, state.stage_shift.y - kStageFallPerFrame);
+        }
+    }
+    const Vec3 at = stage_room::room_to_model(placement, moved);
+    state.stage_shift = {at.x - centre->x, shift_y, at.z - centre->z};
+    state.stage_centre = {at.x, centre->y + shift_y, at.z};
+}
+
+void apply_stage_shift(Session* session, const MotionState& state) noexcept {
+    const Vec3 d = state.stage_shift;
+    if (d.x == 0.0F && d.y == 0.0F && d.z == 0.0F) return;
+    auto& vertices = session->render_mesh.vertices;
+    for (const auto& part : state.parts) {
+        const std::size_t end = part.vertex_begin + part.rest_vertices.size();
+        if (end <= vertices.size()) {
+            for (std::size_t i = part.vertex_begin; i < end; ++i) {
+                vertices[i] = {vertices[i].x + d.x, vertices[i].y + d.y, vertices[i].z + d.z};
+            }
+        }
+        const std::size_t node_end = part.node_begin + part.inverse_rest.size();
+        if (node_end > session->scene.nodes.size()) continue;
+        for (std::size_t node = part.node_begin; node < node_end; ++node) {
+            auto& world = session->scene.nodes[node].world.values;
+            world[12] += d.x;
+            world[13] += d.y;
+            world[14] += d.z;
+        }
+    }
 }
 
 void reset_lady_runtime(Session* session) noexcept {
@@ -1366,7 +1564,7 @@ Vec3 shl04_grenade_position(Vec3 origin, Vec3 velocity, float fuse,
     shell.origin = origin;
     shell.velocity = velocity;
     shell.lifetime = fuse;
-    return grenade_pose(shell, std::isfinite(age) ? age : 0.0F).position;
+    return grenade_pose(shell, std::isfinite(age) ? age : 0.0F, nullptr).position;
 }
 
 Matrix4 shl02_shell_world(const Matrix4& slot20_node0, float age) noexcept {
@@ -1935,6 +2133,10 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
         return true;
         };
         if (!evaluate_parts()) return false;
+        // The room's stage HITS hold the character out of walls and on its
+        // floors (a loop or seek back restarts from the placed spot).
+        solve_stage_collision(session, state, rewinding || state.last_frame < 0.0F);
+        apply_stage_shift(session, state);
         // Parts hanging from a host joint follow the freshly posed host; chain
         // nodes advance by the frames elapsed (dt 1 per 60 fps frame, at most
         // 6 so a seek does not explode the solver; a loop restart is 1).
@@ -1976,7 +2178,10 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
         // first, then the entry's domain). Re-evaluate the MOT-driven parts
         // so an independent component does not show its reset pose for one
         // frame on a loop or seek back.
-        if (lady_replay && !evaluate_parts()) return false;
+        if (lady_replay) {
+            if (!evaluate_parts()) return false;
+            apply_stage_shift(session, state);
+        }
         if (state.script_driven &&
             state.script_role != Session::MotionScriptRole::LadyBody &&
             session->script_effect_bridge.step != nullptr) {

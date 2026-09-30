@@ -1636,22 +1636,22 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         out->room = stage_room::current();
     }
     if (out->room && !rest.empty()) {
-        double sx = 0.0, sz = 0.0;
-        float low = std::numeric_limits<float>::infinity();
-        for (const auto& v : rest) {
-            sx += v.x;
-            sz += v.z;
-            low = std::min(low, v.y);
-        }
-        const auto n = static_cast<double>(rest.size());
-        const Vec3 spot = stage_room::spot_position();
+        const auto placement = stage_room::placement_for(rest, controls.room_yaw);
         view.room_mesh = &out->room->mesh;
         view.room_texture_slots = &out->room->triangle_texture_slots;
         view.room_textures = &out->room->textures;
         view.room_translucent_triangles = &out->room->translucent_triangles;
-        view.room_pivot = spot;
-        view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
-        view.room_offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+        view.room_pivot = placement.pivot;
+        view.room_yaw = placement.yaw;
+        view.room_offset = placement.offset;
+        // The drawn room is the collision world of this session's runtime.
+        if (!view.uv_layout && !out->room->collision_sources.empty()) {
+            stage_room::set_active_collision(&session, out->room, placement);
+        } else {
+            stage_room::clear_active_collision(&session);
+        }
+    } else if (!view.uv_layout) {
+        stage_room::clear_active_collision(&session);
     }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {

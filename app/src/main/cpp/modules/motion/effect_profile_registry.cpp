@@ -88,7 +88,7 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}, confirmed, 2,
          std::span<const EffectChildRef>{kV8Children}},
     }};
-    static constexpr std::array<EffectBinding, 8> kBindings{{
+    static constexpr std::array<EffectBinding, 10> kBindings{{
         // CEm034Shl00 init 0x140172380: V463 follows the bullet (+0xC0, mode 3).
         {0U, 'V', 463U, 28U, RuntimeEffectParent::ProjectileTransform,
          0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
@@ -147,6 +147,20 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          EffectLifetimeRule::ParentActorRetire,
          EvidenceStatus::EXE_CONFIRMED,
          std::span<const EffectChildRef>{}, 0U},
+        // Stage hit of a straight shell: its collider branch with flags & 3
+        // (+0x270) enters state 2 and spawns 0x1402E7A80(3, id, &shell+0x1A0),
+        // a copy of the shell matrix. Shl00 0x14017273B: V473 (0x1D9).
+        {0U, 'V', 473U, 28U, RuntimeEffectParent::RuntimeMatrix,
+         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+         EffectLifetimeRule::EffectCallback,
+         EvidenceStatus::EXE_CONFIRMED,
+         std::span<const EffectChildRef>{}, 2U},
+        // Shl05 0x14017607A: V277 (0x115).
+        {5U, 'V', 277U, 28U, RuntimeEffectParent::RuntimeMatrix,
+         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+         EffectLifetimeRule::EffectCallback,
+         EvidenceStatus::EXE_CONFIRMED,
+         std::span<const EffectChildRef>{}, 2U},
     }};
     return kBindings;
 }

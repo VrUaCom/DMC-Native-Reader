@@ -245,8 +245,9 @@ Shl04 flight (`0x1401756E0`):
 - fuse < 0 → state 2 (`0x1401753A0`): V488, blast radius 200, 3.0 countdown,
   retire.
 
-The Reader's room floor (y = 0) stands in for the stage raycast, and those
-events carry `requires_gameplay_world_context`.
+With a stage room loaded, the raycast runs on the room's HITS (see
+[Stage collision](#stage-collision-hits)). Without one, the Reader's floor
+(y = 0) stands in for it. Those events carry `requires_gameplay_world_context`.
 
 Not materialized standalone:
 
@@ -255,6 +256,73 @@ Not materialized standalone:
 - **Shl01 Kalina missiles:** they orbit 16 arena points around (2500, 2400)
   (tables `0x14057B530` / `0x14057B5F0`, radii ≈ 1274/677). They home in on
   the player after three laps; V474 is the trail, V484 the explosion.
+
+## Stage collision (HITS)
+
+### EXE query contract
+
+`0x14005E7A0(manager = [global+0x28]+0x710, from, to, hit_out, record_out, mask)`:
+
+- calls the stage query `0x14005E880`, then two dynamic-object queries
+  `0x14005BCF0` (categories 0x0E and 0x11);
+- on a stage hit the segment end becomes the hit point (`hit_out`).
+
+`0x14005E880` works on the HITS record list:
+
+- `0x1402D2A10` lists the grid cells the segment crosses;
+- each triangle-plane record (stride 0x38) is tested once, deduplicated with a
+  bitset;
+- a record whose `flags >> 16` shares a bit with `mask` is skipped;
+- `0x1402D0F30` intersects the segment with the triangle;
+- every hit shortens the segment, so the nearest hit wins;
+- the hit record (0x38 bytes) is copied to `record_out`.
+
+Masks used by callers:
+
+| Caller | Mask |
+| --- | --- |
+| CEm034 line of sight `0x140168ED0` | 0x10 |
+| `0x1402C64F0` by object type `+0x74` | 0 → 0x40, 2 → 0x02, 3 → 0x10, 4 → 0x20 |
+| `0x1402C64F0` with no object (Shl04) | 0 |
+
+### Shell responses
+
+| Shell | EXE response | Reader |
+| --- | --- | --- |
+| Shl02 rocket | state 1 reads collider `+0x278` (count `+0x10`) before moving (`0x140173D14`) → state 2 | segment of each update tested on HITS; state 2 on the update after the hit; V543 at the hit point |
+| Shl00 bullet | collider `+0x268` → V10 (`0x1401726D5`); collider `+0x270` with `flags & 3` → V473 (`0x14017273B`); both → state 2 | HITS hit → V473 (actor 0, phase 2), copy of the shell matrix with y + 2 |
+| Shl05 shot | collider `+0x268` → V435 if `flags & 0x11040`, else V277; collider `+0x270` with `flags & 3` → V277 (`0x14017607A`) | HITS hit → V277 (actor 5, phase 2) |
+| Shl04 grenade | stage raycast `0x1402C64F0` (mask 0) | HITS raycast with the mirror/restitution response |
+
+The Reader maps the stage to the `flags & 3` collider branch. This is an
+inference: the collider categories of `+0x268`/`+0x270` are not decoded.
+Stage-hit shells stop at the hit point, spawn the hit effect on the next
+update and retire one update later.
+
+### Characters
+
+The retail character-versus-HITS response is not decoded. The Reader uses a
+documented proxy:
+
+- the vertex centre of the motion-driven parts is a sphere of radius 50;
+- each frame it is moved along the root motion through the wall records
+  (|normal.y| < 0.7) in sub-steps of r/2, and pushed out horizontally, so it
+  slides along walls;
+- it follows the floor records (normal.y ≥ 0.7) under it, relative to the
+  floor it started on; falls are limited to 30 units per frame;
+- a loop or seek back restarts from the placed spot.
+
+### Room placement
+
+The room drawn around the model is its collision world. The room is placed
+by `stage_room::placement_for`:
+
+- `room → model = Ry(yaw)·(p − spot) + spot + offset`;
+- offset = rest centre − spot (x, z) and rest low − spot.y;
+- the same transform is used by the renderer, the overlay and the runtime.
+
+The first HITS source (source 0, detailed) is used. st001 has 294 records:
+79 floors, 213 walls, 2 ceilings.
 
 ## em034 FXBANK data used
 
@@ -299,7 +367,10 @@ local Z is the flight direction.
   shown.
 - The composition of a `0x1402E7CA0(NULL)` local matrix (identity, y+2) with a
   live `+0xC0` parent: V377 is presented directly on the shell matrix.
-- Shl02 steering and collision, which need gameplay context.
+- Shl02 steering and the player proximity end, which need gameplay context.
+- The collider categories of `+0x268`/`+0x270`/`+0x278` and the retail
+  character-versus-HITS response (the Reader uses a proxy, see Stage
+  collision).
 - The exact manager order within one frame (±1 tick on spawn/retire ages).
 
 ## Verification

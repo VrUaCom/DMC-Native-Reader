@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,6 +69,46 @@ void set_spot(std::size_t index) noexcept;
 void place_at(const Vec3& point) noexcept;
 // Where the model stands now: the placed point, else the current spot.
 [[nodiscard]] Vec3 spot_position() noexcept;
+
+// Room -> model space of the session drawn in it (the room pass of
+// view_renderer): turned by `yaw` about `pivot` (the floor spot), then moved
+// by `offset`, so the spot lands under the model's rest centre and feet.
+struct Placement final {
+    Vec3 pivot{};
+    float yaw{};
+    Vec3 offset{};
+};
+// The placement for a model whose rest vertices are `rest`, standing on the
+// current spot, with the room turned by `yaw` radians.
+[[nodiscard]] Placement placement_for(std::span<const Vec3> rest, float yaw) noexcept;
+[[nodiscard]] Vec3 room_to_model(const Placement& placement, const Vec3& point) noexcept;
+[[nodiscard]] Vec3 model_to_room(const Placement& placement, const Vec3& point) noexcept;
+[[nodiscard]] Vec3 room_direction_to_model(const Placement& placement, const Vec3& direction) noexcept;
+
+// Live stage collision. While a room with HITS is drawn around a session, its
+// first HITS source (the detailed source 0) is the collision world of that
+// session's runtime: characters are held out of walls and follow floors,
+// shells hit walls and floors. The owner is the Session address.
+struct ActiveCollision final {
+    std::shared_ptr<const Room> room;
+    Placement placement;
+    // Changes whenever the room or its placement changes.
+    std::uint64_t revision{};
+
+    [[nodiscard]] const environment_collision::Source* source() const noexcept {
+        return room && !room->collision_sources.empty() ? &room->collision_sources.front() : nullptr;
+    }
+};
+void set_active_collision(const void* owner, std::shared_ptr<const Room> room,
+                          const Placement& placement) noexcept;
+void clear_active_collision(const void* owner) noexcept;
+[[nodiscard]] std::optional<ActiveCollision> active_collision(const void* owner) noexcept;
+
+// 0x14005E880 on the active HITS, in the owner's model space: the nearest hit
+// of the segment, its point and normal in model space.
+[[nodiscard]] std::optional<environment_collision::SegmentHit> segment_hit_model(
+    const ActiveCollision& collision, const Vec3& from, const Vec3& to,
+    std::uint16_t skip_mask = 0U) noexcept;
 
 // A stage itself (SCM, or a session holding SCM children) never gets a room.
 [[nodiscard]] bool is_stage_session(const Session& session) noexcept;

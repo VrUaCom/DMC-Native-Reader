@@ -246,6 +246,10 @@ std::mutex g_mutex;
 std::shared_ptr<const Room> g_room;
 std::size_t g_spot = 0U;
 std::optional<Vec3> g_placed;
+// Active collision (owner = Session address) and its revision counter.
+const void* g_collision_owner = nullptr;
+std::optional<ActiveCollision> g_collision;
+std::uint64_t g_collision_revision = 0U;
 
 }  // namespace
 
@@ -582,6 +586,88 @@ Vec3 spot_position() noexcept {
 std::size_t spot() noexcept {
     const std::lock_guard lock{g_mutex};
     return g_spot;
+}
+
+Placement placement_for(std::span<const Vec3> rest, float yaw) noexcept {
+    Placement out;
+    const Vec3 spot = spot_position();
+    out.pivot = spot;
+    out.yaw = std::isfinite(yaw) ? yaw : 0.0F;
+    if (rest.empty()) return out;
+    double sx = 0.0, sz = 0.0;
+    float low = std::numeric_limits<float>::infinity();
+    for (const auto& v : rest) {
+        sx += v.x;
+        sz += v.z;
+        low = std::min(low, v.y);
+    }
+    const auto n = static_cast<double>(rest.size());
+    out.offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+    return out;
+}
+
+Vec3 room_to_model(const Placement& placement, const Vec3& v) noexcept {
+    // Same as view_renderer's room vertex placement.
+    const float c = std::cos(placement.yaw), s = std::sin(placement.yaw);
+    const float x = v.x - placement.pivot.x, z = v.z - placement.pivot.z;
+    return {c * x + s * z + placement.pivot.x + placement.offset.x, v.y + placement.offset.y,
+            -s * x + c * z + placement.pivot.z + placement.offset.z};
+}
+
+Vec3 model_to_room(const Placement& placement, const Vec3& v) noexcept {
+    const float c = std::cos(placement.yaw), s = std::sin(placement.yaw);
+    const float x = v.x - placement.pivot.x - placement.offset.x;
+    const float z = v.z - placement.pivot.z - placement.offset.z;
+    return {c * x - s * z + placement.pivot.x, v.y - placement.offset.y, s * x + c * z + placement.pivot.z};
+}
+
+Vec3 room_direction_to_model(const Placement& placement, const Vec3& d) noexcept {
+    const float c = std::cos(placement.yaw), s = std::sin(placement.yaw);
+    return {c * d.x + s * d.z, d.y, -s * d.x + c * d.z};
+}
+
+void set_active_collision(const void* owner, std::shared_ptr<const Room> room,
+                          const Placement& placement) noexcept {
+    const std::lock_guard lock{g_mutex};
+    const bool same = g_collision && g_collision_owner == owner && g_collision->room == room &&
+                      g_collision->placement.yaw == placement.yaw &&
+                      g_collision->placement.pivot.x == placement.pivot.x &&
+                      g_collision->placement.pivot.y == placement.pivot.y &&
+                      g_collision->placement.pivot.z == placement.pivot.z &&
+                      g_collision->placement.offset.x == placement.offset.x &&
+                      g_collision->placement.offset.y == placement.offset.y &&
+                      g_collision->placement.offset.z == placement.offset.z;
+    if (same) return;
+    g_collision_owner = owner;
+    g_collision = ActiveCollision{std::move(room), placement, ++g_collision_revision};
+}
+
+void clear_active_collision(const void* owner) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (g_collision_owner != owner || !g_collision) return;
+    g_collision.reset();
+    g_collision_owner = nullptr;
+    ++g_collision_revision;
+}
+
+std::optional<ActiveCollision> active_collision(const void* owner) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (owner == nullptr || g_collision_owner != owner || !g_collision || g_collision->source() == nullptr) {
+        return std::nullopt;
+    }
+    return g_collision;
+}
+
+std::optional<environment_collision::SegmentHit> segment_hit_model(
+    const ActiveCollision& collision, const Vec3& from, const Vec3& to, std::uint16_t skip_mask) noexcept {
+    const auto* source = collision.source();
+    if (source == nullptr) return std::nullopt;
+    auto hit = environment_collision::segment_hit(source[0], model_to_room(collision.placement, from),
+                                                  model_to_room(collision.placement, to), skip_mask);
+    if (!hit) return std::nullopt;
+    hit->point = room_to_model(collision.placement, hit->point);
+    hit->normal = room_direction_to_model(collision.placement, hit->normal);
+    return hit;
 }
 
 bool is_stage_session(const Session& session) noexcept {
