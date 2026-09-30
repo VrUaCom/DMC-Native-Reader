@@ -473,14 +473,6 @@ void spawn_lady_dynamic_visual(
     }
 }
 
-[[nodiscard]] std::optional<Matrix4> lady_dynamic_actor_world(
-    const Session& session, std::uint8_t actor) noexcept {
-    for (const auto& visual : session.lady_dynamic_visuals) {
-        if (visual.actor == actor && visual.active) return visual.world;
-    }
-    return std::nullopt;
-}
-
 [[nodiscard]] std::optional<Matrix4> lady_dynamic_actor_effect_parent_world(
     const Session& session, std::uint8_t actor) noexcept {
     for (const auto& visual : session.lady_dynamic_visuals) {
