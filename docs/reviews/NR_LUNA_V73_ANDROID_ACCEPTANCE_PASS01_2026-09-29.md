@@ -10,7 +10,9 @@ APK identity: `android-v72-1.0.45`, ABI `arm64-v8a`
 ## Scope
 
 Це перший фізичний Android pass для тестової debug-збірки. Цей запис
-відділяє фактичну device behavior від статичних і exact-head claims. У першому фізичному проході код не змінювався. Цей follow-up code pass містить окрему точкову правку на NR-Luna-v73.
+відділяє фактичну device behavior від статичних і exact-head claims.
+У першому фізичному проході код не змінювався. Цей follow-up code pass
+містить окрему точкову правку на NR-Luna-v73.
 
 ## Passed
 

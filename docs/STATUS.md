@@ -21,7 +21,7 @@ evidence/tooling are merged into `main`. The current Lady/LEDi/FX and
 MotionScript continuation is kept in `NR-Luna-v73` until exact-head CI and
 physical Android acceptance are complete.
 
-Current v73 review head: `dd66fe62a47dc9c924ce0b38cb2c81642fc8b92b`.
+Current v73 review head: `41358b89fb08ff9ec59284a267299bbfd52e51b7`.
 This head contains the Pass 01 runtime ownership/lifecycle base, the Pass 02
 exact P/E/G/V child-graph presentation gate, and the targeted Shl02/V423
 parent-basis correction described below. Pass 01 remains historical evidence;
@@ -79,7 +79,7 @@ APK verifier.
   separately normalized copy of the selected slot20 matrix (EXE
   `0x1402e7a90`, mode 3), while the Shl02 render actor keeps its own
   direction basis. The Reader now mirrors that separation in
-  `dd66fe62a47dc9c924ce0b38cb2c81642fc8b92b`; the FXBANK identity and local
+  `41358b89fb08ff9ec59284a267299bbfd52e51b7`; the FXBANK identity and local
   data remain unchanged. See [the detailed trace](reviews/NR_LUNA_V73_ANDROID_ACCEPTANCE_PASS01_2026-09-29.md).
 
 Acceptance disposition: APK installation and baseline opening are green, but
