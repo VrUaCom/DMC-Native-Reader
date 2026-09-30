@@ -321,7 +321,8 @@ int main() {
     const auto hits = make_hits();
     const auto hits_result = run_decode_pipeline(
         "stage.hits", hits.data(), hits.size());
-    assert(hits_result.accepted && !hits_result.renderable);
+    assert(hits_result.accepted && hits_result.renderable);  // drawn as a 3D surface
+    assert(hits_result.scene.meshes.size() == 1U && hits_result.scene.meshes[0].mesh.indices.size() == 3U);
     assert(hits_result.probe.format == Format::Hits);
     assert(hits_result.inspection.format == "HITS");
     assert(has_capability(hits_result.capabilities, ResourceCapability::Collision));
@@ -482,6 +483,45 @@ int main() {
             look.room_yaw = 0.8F;
             const auto after = dmcresource::render_view(square, 96, 96, look);
             assert(before.pixels != after.pixels);
+        }
+
+        // A soft-alpha texture also holds opaque texels: a triangle flagged
+        // translucent still draws them (a distant tower's walls), and the
+        // wireframe view outlines the room's meshes.
+        {
+            dmcresource::Mesh wall;
+            wall.vertices = {{-300, 0, 400}, {300, 0, 400}, {300, 500, 400}, {-300, 500, 400}};
+            wall.uv0 = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+            wall.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ImagePreview solid;
+            solid.width = 2U;
+            solid.height = 2U;
+            solid.rgba8.assign(16U, 255U);  // opaque white
+            const std::vector<std::uint32_t> slots(2U, 0U);
+            const std::vector<dmcresource::ImagePreview> textures{solid};
+            const std::vector<std::uint8_t> soft(2U, 1U);  // flagged translucent
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = 0.0F;
+            const auto bare = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            look.room_mesh = &wall;
+            look.room_texture_slots = &slots;
+            look.room_textures = &textures;
+            look.room_translucent_triangles = &soft;
+            const auto drawn = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lit = 0U;
+            for (std::size_t o = 0U; o < drawn.pixels.size(); o += 4U) {
+                if (drawn.pixels[o] != bare.pixels[o]) ++lit;
+            }
+            assert(lit > 96U * 96U / 8U);
+            look.wireframe = true;
+            look.room_wire_main = true;
+            const auto wired = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lines = 0U;
+            for (std::size_t o = 0U; o < wired.pixels.size(); o += 4U) {
+                if (wired.pixels[o] > 120U && wired.pixels[o + 2U] > 200U) ++lines;
+            }
+            assert(lines > 20U);
         }
 
         // Settings bits: background 2 (light) fills the corner.

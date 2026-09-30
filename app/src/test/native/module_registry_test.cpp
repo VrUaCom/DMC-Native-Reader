@@ -25,7 +25,7 @@ int main() {
            !event_tbl->renderable);
 
     const auto* hits = NativeModuleRegistry::find("HITS");
-    assert(hits != nullptr && hits->format == Format::Hits && !hits->renderable &&
+    assert(hits != nullptr && hits->format == Format::Hits && hits->renderable &&
            has_capability(hits->capabilities, ResourceCapability::Collision));
     const std::array<std::uint8_t, 4> hits_magic{'H', 'I', 'T', 'S'};
     const auto hits_probe = probe("renamed.bin", hits_magic.data(), hits_magic.size());

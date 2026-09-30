@@ -95,6 +95,9 @@ struct ViewState {
     const std::vector<ImagePreview>* room_textures{nullptr};
     const std::vector<std::uint8_t>* room_translucent_triangles{nullptr};
     Vec3 room_offset{};
+    // The room is the subject of the view (a stage scene): its wireframe is
+    // drawn at full strength, not as a dim backdrop.
+    bool room_wire_main{false};
     // Viewer settings: bilinear model textures, no model light, background.
     bool smooth_textures{false};
     bool unlit{false};

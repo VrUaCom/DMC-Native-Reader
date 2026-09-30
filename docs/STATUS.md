@@ -149,6 +149,23 @@ APK verifier.
     43.27 mm full-frame diagonal.
   - Settings → gestures has an on/off row for the dolly.
 
+- ✅ Stage scene fixes from the device report:
+  - **Far geometry looked transparent:**
+    - triangles of a soft-alpha texture were drawn only in the blend pass,
+      which skips fully opaque texels;
+    - a distant tower kept only its faint soft texels;
+    - they now also go through the opaque pass.
+  - **Wireframe (W)** draws the stage scene's meshes. Around a model it draws
+    the room dimly behind it.
+  - **Bones** show the joint hierarchy of every merged model (layout objects
+    placed).
+  - **Near-plane clipping** covers the wireframe, the HITS lines and the
+    bones, so a camera inside the stage no longer streaks lines across the
+    view.
+  - **A .hits file** is a renderable 3D surface with its record edges
+    outlined, in the viewer and as a gallery thumbnail, instead of only the
+    info card.
+
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive

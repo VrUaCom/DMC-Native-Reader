@@ -85,9 +85,24 @@ void walk(const Session& container,
     return out;
 }
 
-void append(const Session& piece, Room* room) {
+void append(const Session& piece, Room* room, bool layout_object = false, std::string name = {}) {
     const auto& src = piece.render_mesh;
     auto& dst = room->mesh;
+    {
+        Room::Piece info;
+        info.name = std::move(name);
+        info.first_triangle = dst.indices.size() / 3U;
+        info.triangle_count = src.indices.size() / 3U;
+        info.layout_object = layout_object;
+        Vec3 lo{1.0e30F, 1.0e30F, 1.0e30F}, hi{-1.0e30F, -1.0e30F, -1.0e30F};
+        for (const auto& v : src.vertices) {
+            lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)};
+            hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)};
+        }
+        info.bounds_min = lo;
+        info.bounds_max = hi;
+        room->piece_info.push_back(std::move(info));
+    }
     const auto base = static_cast<std::uint32_t>(dst.vertices.size());
     const auto count = src.vertices.size();
     const bool had = base > 0U;
@@ -227,6 +242,34 @@ void place(Mesh& mesh, const GameSet& set) {
         v = {r.x + set.pos.x, r.y + set.pos.y, r.z + set.pos.z};
     }
     for (auto& n : mesh.normal0) n = turn(n);
+}
+
+// Joint hierarchy of a merged model, optionally moved by its layout placement
+// (the same turn as place()).
+void merge_hierarchy(const Session& piece, const GameSet* set, Room* room) {
+    const auto& src = piece.hierarchy_overlay;
+    if (!src.available()) return;
+    constexpr float kRad = 3.14159265358979F / 180.0F;
+    auto& dst = room->hierarchy;
+    const auto base = dst.points.size();
+    for (std::size_t i = 0U; i < src.points.size(); ++i) {
+        Vec3 v = src.points[i];
+        if (set != nullptr) {
+            const float cx = std::cos(set->rot.x * kRad), sx = std::sin(set->rot.x * kRad);
+            const float cy = std::cos(set->rot.y * kRad), sy = std::sin(set->rot.y * kRad);
+            const float cz = std::cos(set->rot.z * kRad), sz = std::sin(set->rot.z * kRad);
+            v = {v.x * set->scale.x, v.y * set->scale.y, v.z * set->scale.z};
+            v = {v.x, cx * v.y - sx * v.z, sx * v.y + cx * v.z};
+            v = {cy * v.x + sy * v.z, v.y, -sy * v.x + cy * v.z};
+            v = {cz * v.x - sz * v.y + set->pos.x, sz * v.x + cz * v.y + set->pos.y, v.z + set->pos.z};
+        }
+        dst.points.push_back(v);
+        dst.kinds.push_back(i < src.kinds.size() ? src.kinds[i] : RenderNodeKind{});
+    }
+    for (const auto& edge : src.edges) {
+        dst.edges.push_back({edge.parent + static_cast<std::uint32_t>(base), edge.child + static_cast<std::uint32_t>(base)});
+    }
+    dst.spatial = true;
 }
 
 [[nodiscard]] Vec3 sub(const Vec3& a, const Vec3& b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
@@ -411,6 +454,7 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
         if (items.empty() && root->renderable && !root->render_mesh.vertices.empty()) {
             // A lone .scm / .mod: the file itself is the room.
             ++room->pieces;
+            merge_hierarchy(*root, nullptr, room.get());
             append(*root, room.get());
         }
         for (std::size_t i = 0U; i < items.size(); ++i) {
@@ -429,7 +473,8 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
             }
             (items[i].format == Format::Scm ? scm : mod) += 1U;
             ++room->pieces;
-            append(*piece, room.get());
+            merge_hierarchy(*piece, nullptr, room.get());
+            append(*piece, room.get(), false, items[i].name);
         }
         // Stage objects: the "# GAME" layout places model k (k-th model entry
         // of the top-level PNST, EFM / SCM / MOD in order, MOT PACs skipped)
@@ -472,7 +517,8 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                 place(piece->render_mesh, set);
                 ++objects;
                 ++room->pieces;
-                append(*piece, room.get());
+                merge_hierarchy(*piece, &set, room.get());
+                append(*piece, room.get(), true, child.suggested_filename);
             }
         }
         for (const auto& item : items) {
@@ -721,7 +767,7 @@ std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* b
         stage->render_mesh = std::move(anchor);
         stage->render_triangle_texture_slots.clear();
         stage->attached_textures.clear();
-        stage->hierarchy_overlay = {};
+        stage->hierarchy_overlay = room->hierarchy;
         stage->renderable = true;
         stage->archive_name = std::string{name};
         stage->detail = room->detail;

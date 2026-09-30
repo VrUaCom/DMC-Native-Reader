@@ -11,6 +11,7 @@
 
 #include "dmcresource/image_preview.h"
 #include "dmcresource/mesh.h"
+#include "dmcresource/scene_projection.h"
 #include "dmcresource/environment_collision.h"
 
 // Viewer "room": a stage archive (st*.pac, a lone .scm, or any PAC with
@@ -38,6 +39,19 @@ struct Room final {
     std::vector<Vec3> spots;
     std::size_t pieces{};
     std::size_t textured_pieces{};
+    // One record per merged model: its triangle range in `mesh` and bounds.
+    struct Piece final {
+        std::string name;
+        std::size_t first_triangle{};
+        std::size_t triangle_count{};
+        Vec3 bounds_min{};
+        Vec3 bounds_max{};
+        bool layout_object{};  // placed by the "# GAME" layout
+    };
+    std::vector<Piece> piece_info;
+    // Joint hierarchy of every merged model, in room coordinates (layout
+    // objects moved with their placement): the bones view of a stage scene.
+    HierarchyOverlay hierarchy;
     // Environment collision sources are preserved independently from the
     // visible room mesh. HITS source ordering and physical slots remain part
     // of provenance; only the first source is selected for the optional

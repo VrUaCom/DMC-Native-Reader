@@ -216,6 +216,43 @@ void line_rgba(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
     }
 }
 
+// Screen-clipped line (Liang-Barsky) with optional alpha: a segment may have
+// one end far outside the image after the near-plane clip.
+void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
+               std::uint8_t alpha = 255U) {
+    if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) return;
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    float t0 = 0.0F, t1 = 1.0F;
+    const auto clip = [&](float p, float q) {
+        if (p == 0.0F) return q >= 0.0F;
+        const float t = q / p;
+        if (p < 0.0F) {
+            if (t > t1) return false;
+            t0 = std::max(t0, t);
+        } else {
+            if (t < t0) return false;
+            t1 = std::min(t1, t);
+        }
+        return true;
+    };
+    const float max_x = static_cast<float>(image.width - 1), max_y = static_cast<float>(image.height - 1);
+    if (!clip(-dx, a.x) || !clip(dx, max_x - a.x) || !clip(-dy, a.y) || !clip(dy, max_y - a.y)) return;
+    int x0 = static_cast<int>(std::lround(a.x + dx * t0));
+    int y0 = static_cast<int>(std::lround(a.y + dy * t0));
+    const int x1 = static_cast<int>(std::lround(a.x + dx * t1));
+    const int y1 = static_cast<int>(std::lround(a.y + dy * t1));
+    const int ex = std::abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    const int ey = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = ex + ey;
+    for (;;) {
+        put_rgba(image, x0, y0, r, g, bl, alpha);
+        if (x0 == x1 && y0 == y1) break;
+        const int e2 = 2 * err;
+        if (e2 >= ey) { err += ey; x0 += sx; }
+        if (e2 <= ex) { err += ex; y0 += sy; }
+    }
+}
+
 void marker(RgbaImage& image, P2 point, std::uint8_t shade) {
     const int x = static_cast<int>(std::lround(point.x));
     const int y = static_cast<int>(std::lround(point.y));
@@ -593,7 +630,11 @@ struct RoomFrame {
         }
         for (int k = 1; k + 1 < count; ++k) {
             RoomTri tri{s[0], s[k], s[k + 1], texture, light, nearest, translucent, colored && !neutral};
-            (translucent ? out.translucent : out.opaque).push_back(tri);
+            // A soft-alpha texture also holds fully opaque texels (walls of a
+            // distant tower, the solid part of a window): those belong to the
+            // opaque pass; only its soft texels blend afterwards.
+            out.opaque.push_back(tri);
+            if (translucent) out.translucent.push_back(tri);
         }
     }
     std::sort(out.opaque.begin(), out.opaque.end(),
@@ -842,6 +883,33 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     const auto project = [&](const Vec3& world) -> P2 {
         return project_in_frame(frame, world, view.yaw_radians, view.pitch_radians, zoom,
                                 image.width, image.height);
+    };
+
+    // World -> camera space, and near-clipped 3D lines / points for overlays
+    // (a camera inside a stage has geometry behind it).
+    const auto to_cam = [&](const Vec3& world) {
+        const auto r = rotate({world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z},
+                              view.yaw_radians, view.pitch_radians);
+        return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
+    };
+    const float line_near = std::max(0.5F, frame.radius * 0.02F);
+    const auto cam_point = [&](const Vec3& c) {
+        const float inv = 1.0F / c.z;
+        return P2{static_cast<float>(image.width) * 0.5F + zoom * frame.focal_px * c.x * inv,
+                  static_cast<float>(image.height) * 0.5F - zoom * frame.focal_px * c.y * inv, c.z};
+    };
+    const auto line3 = [&](const Vec3& world_a, const Vec3& world_b, std::uint8_t r, std::uint8_t g,
+                           std::uint8_t bl, std::uint8_t alpha) {
+        Vec3 a = to_cam(world_a), b = to_cam(world_b);
+        if (a.z < line_near && b.z < line_near) return;
+        if (a.z < line_near) {
+            const float t = (line_near - a.z) / (b.z - a.z);
+            a = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, line_near};
+        } else if (b.z < line_near) {
+            const float t = (line_near - b.z) / (a.z - b.z);
+            b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, line_near};
+        }
+        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha);
     };
 
     std::vector<P2> p;
@@ -1152,6 +1220,23 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     };
 
     if (view.wireframe) {
+        // The room's meshes (a stage scene, or the room around a model).
+        if (view.room_mesh != nullptr) {
+            const Mesh& rm = *view.room_mesh;
+            const bool main_view = mesh.indices.size() < 3U || view.room_wire_main;
+            const std::uint8_t level = main_view ? 235U : 150U;
+            const std::uint8_t alpha = main_view ? 190U : 120U;
+            for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
+                const auto ia = rm.indices[t], ib = rm.indices[t + 1U], ic = rm.indices[t + 2U];
+                if (ia >= rm.vertices.size() || ib >= rm.vertices.size() || ic >= rm.vertices.size()) continue;
+                const Vec3 a = room_place(view, rm.vertices[ia]);
+                const Vec3 b = room_place(view, rm.vertices[ib]);
+                const Vec3 c = room_place(view, rm.vertices[ic]);
+                line3(a, b, level, level, 255U, alpha);
+                line3(b, c, level, level, 255U, alpha);
+                line3(c, a, level, level, 255U, alpha);
+            }
+        }
         for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
             const auto ia = mesh.indices[t + 0U];
             const auto ib = mesh.indices[t + 1U];
@@ -1192,25 +1277,22 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     }
 
     for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
-        line_rgba(image, project(view.overlay_lines[i]), project(view.overlay_lines[i + 1U]), 255U, 90U, 60U);
+        line3(view.overlay_lines[i], view.overlay_lines[i + 1U], 255U, 90U, 60U, 255U);
     }
     for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
-        line_rgba(image, project(room_place(view, view.room_collision_lines[i])),
-                  project(room_place(view, view.room_collision_lines[i + 1U])),
-                  90U, 190U, 255U);
+        line3(room_place(view, view.room_collision_lines[i]), room_place(view, view.room_collision_lines[i + 1U]),
+              90U, 190U, 255U, 255U);
     }
 
     if (hierarchy != nullptr && hierarchy->available()) {
-        std::vector<P2> hp;
-        hp.reserve(hierarchy->points.size());
-        for (const auto& point : hierarchy->points) {
-            hp.push_back(project(point));
-        }
         for (const auto& edge_value : hierarchy->edges) {
-            if (edge_value.parent >= hp.size() || edge_value.child >= hp.size()) continue;
-            line(image, hp[edge_value.parent], hp[edge_value.child], 255U);
+            if (edge_value.parent >= hierarchy->points.size() || edge_value.child >= hierarchy->points.size()) continue;
+            line3(hierarchy->points[edge_value.parent], hierarchy->points[edge_value.child], 255U, 255U, 255U, 255U);
         }
-        for (const auto& point : hp) marker(image, point, 255U);
+        for (const auto& point : hierarchy->points) {
+            const Vec3 c = to_cam(point);
+            if (c.z >= line_near) marker(image, cam_point(c), 255U);
+        }
     }
 
     return image;

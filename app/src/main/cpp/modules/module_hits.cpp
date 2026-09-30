@@ -30,7 +30,9 @@ PipelineResult run_hits_module(const NativeModule& module,
 
         PipelineResult out;
         out.accepted = true;
-        out.renderable = false;
+        // The triangle-plane records are drawn as a 3D surface (one flat
+        // triangle each, lit by the record normal); the viewer outlines them.
+        out.renderable = !parsed->triangles.empty();
         out.probe = probe;
         out.modules.push_back({"identity-probe", true});
         out.modules.push_back({"bounded-read-guard", true});
@@ -72,6 +74,23 @@ PipelineResult run_hits_module(const NativeModule& module,
         add("Semantics", "raw flags and surface meanings preserved/undecoded",
             EvidenceLevel::PreservedUndecoded);
 
+        if (!parsed->triangles.empty()) {
+            MeshPrimitive primitive;
+            primitive.name = "HITS triangle-plane records";
+            auto& mesh = primitive.mesh;
+            mesh.vertices.reserve(parsed->triangles.size() * 3U);
+            mesh.normal0.reserve(parsed->triangles.size() * 3U);
+            mesh.indices.reserve(parsed->triangles.size() * 3U);
+            for (const auto& triangle : parsed->triangles) {
+                for (const auto& point : {triangle.point_a, triangle.point_b, triangle.point_c}) {
+                    mesh.indices.push_back(static_cast<std::uint32_t>(mesh.vertices.size()));
+                    mesh.vertices.push_back(point);
+                    mesh.normal0.push_back(triangle.normal);
+                }
+            }
+            out.scene.meshes.push_back(std::move(primitive));
+        }
+
         InspectionNode triangles;
         triangles.id = "triangles";
         triangles.title = "Triangle-plane records";
@@ -99,8 +118,9 @@ PipelineResult run_hits_module(const NativeModule& module,
 
 NativeModule hits_module() noexcept {
     return {"formats.hits.environment-collision-reader", "HITS", Format::Hits,
-            ModuleKind::Structural, false, run_hits_module,
-            capability(ResourceCapability::Inspection) | ResourceCapability::Collision};
+            ModuleKind::Mesh, true, run_hits_module,
+            capability(ResourceCapability::Inspection) | ResourceCapability::Collision |
+                ResourceCapability::Geometry | ResourceCapability::Wireframe};
 }
 
 }  // namespace dmcresource

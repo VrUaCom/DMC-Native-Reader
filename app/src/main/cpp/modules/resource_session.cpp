@@ -728,6 +728,7 @@ struct PreparedView final {
     std::vector<Vec3> floor_shadow;
     std::vector<Vec3> collision_lines;
     std::vector<Vec3> room_collision_lines;
+    HierarchyOverlay stage_hierarchy;
     std::shared_ptr<const stage_room::Room> room;
 };
 
@@ -1635,7 +1636,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     // Room (stage_room.h): the chosen stage around the model, its floor spot
     // (or the point placed by a double tap) under the model's feet, turned
     // about that spot by the twist gesture; a stage itself has no room.
-    if (!view.uv_layout && !view.wireframe && has_render_flag(flags, RenderFlag::Room) &&
+    if (!view.uv_layout && has_render_flag(flags, RenderFlag::Room) &&
         !stage_room::is_stage_session(session)) {
         out->room = stage_room::current();
     }
@@ -1668,6 +1669,14 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.room_pivot = stage.spots.empty() ? Vec3{} : stage.spots.front();
         view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
         view.room_offset = {};
+        view.room_wire_main = true;
+        // The joint hierarchy follows the twist like the meshes.
+        if (out->hierarchy != nullptr && &session.hierarchy_overlay == out->hierarchy) {
+            out->stage_hierarchy = session.hierarchy_overlay;
+            const stage_room::Placement turn{view.room_pivot, view.room_yaw, {}};
+            for (auto& point : out->stage_hierarchy.points) point = stage_room::room_to_model(turn, point);
+            out->hierarchy = &out->stage_hierarchy;
+        }
     }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
@@ -1678,6 +1687,21 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         has_render_flag(flags, RenderFlag::RoomCollision) &&
         !out->room->collision_lines.empty()) {
         out->room_collision_lines = out->room->collision_lines;
+        view.room_collision_lines = out->room_collision_lines;
+    }
+    // A HITS file opened on its own: the record edges outline its surfaces.
+    if (!view.uv_layout && session.probe.format == Format::Hits && session.renderable &&
+        out->room_collision_lines.empty()) {
+        const auto& mesh = session.render_mesh;
+        out->room_collision_lines.reserve(mesh.indices.size() * 2U);
+        for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+            for (std::size_t k = 0U; k < 3U; ++k) {
+                const auto a = mesh.indices[t + k], b = mesh.indices[t + (k + 1U) % 3U];
+                if (a >= mesh.vertices.size() || b >= mesh.vertices.size()) continue;
+                out->room_collision_lines.push_back(mesh.vertices[a]);
+                out->room_collision_lines.push_back(mesh.vertices[b]);
+            }
+        }
         view.room_collision_lines = out->room_collision_lines;
     }
     // A stage opened as its scene shows its own HITS in place.
