@@ -224,6 +224,11 @@ struct ResolvedScriptTrack final {
     if (binding.script == nullptr || motion.mot_slot < 0) return std::nullopt;
 
     auto groups = lady_groups_for_pack(session, binding, motion);
+    // em034_013's only resource group is the EXE-bound PAC slot 11.
+    if (groups.empty() && is_em034(session) &&
+        binding.role == Session::MotionScriptRole::LadyComponent0) {
+        return std::nullopt;
+    }
     if (groups.empty() && motion.pack_slot >= 0) {
         const auto packs = session_motion_packs(session);
         for (const auto& g : bind_motion_groups(
@@ -297,6 +302,10 @@ struct ResolvedScriptTrack final {
             controller, requested, bank, action, motion_index, binding.role};
     };
 
+    // Materialized ScriptLinks are the resource authority: search all of
+    // them before the structural fallback, otherwise an earlier MOT of
+    // another controller's pack that shares the resource id (em034 body
+    // slot6 id 430 vs component slot11 id 430) would be picked first.
     for (std::size_t candidate = 0U;
          candidate < session.motion_library.size(); ++candidate) {
         if (requested.motion_index < session.motion_library.size() &&
@@ -317,7 +326,15 @@ struct ResolvedScriptTrack final {
                 return resolved;
             }
         }
+    }
 
+    for (std::size_t candidate = 0U;
+         candidate < session.motion_library.size(); ++candidate) {
+        if (requested.motion_index < session.motion_library.size() &&
+            candidate != requested.motion_index) {
+            continue;
+        }
+        const auto& motion = session.motion_library[candidate];
         if (auto selection = pick_script_motion(session, binding, motion);
             selection.has_value()) {
             if (auto resolved = accept(
@@ -341,13 +358,16 @@ struct ResolvedScriptTrack final {
     return std::nullopt;
 }
 
-[[nodiscard]] bool is_confirmed_lady_pair(
+[[nodiscard]] std::optional<LadyBodyLaneAction> lady_component_pair(
     const ResolvedScriptTrack& body) noexcept {
-    // Raw em034.pac closes bank4/actions3..5: body resources 403/404/405
-    // pair with component0 resource 400. Do not extend this table by action
-    // number until the corresponding controller/resource evidence is closed.
-    return body.role == Session::MotionScriptRole::LadyBody &&
-           body.bank == 4U && body.action >= 3U && body.action <= 5U;
+    // The component0 controller runs only where the CEm034 entry dispatcher
+    // starts it and clears +0x4020 (lady_component_action_for_state).
+    // Bank4/actions 3..5 (states 0x56..0x58) keep Kalina in the hands through
+    // the CCnsMatrix (0x1401713F0(0, 1), +0x4020 = 1): no component track.
+    if (body.role != Session::MotionScriptRole::LadyBody) return std::nullopt;
+    const auto mapped = lady_state_for_body_script_action(body.bank, body.action);
+    if (!mapped.has_value()) return std::nullopt;
+    return lady_component_action_for_state(mapped->state);
 }
 
 [[nodiscard]] LadyComponentBinding* component0_binding(Session* session) noexcept {
@@ -966,25 +986,10 @@ void reset_lady_runtime(Session* session) noexcept {
         }
     }
 
-    // A confirmed synchronized component track owns slot20's independent
-    // MOT domain for the duration of this track set. Body state entry still
-    // applies its placement preset, but must not silently return the part to
-    // HostJointSkeleton or the component MOT would be overwritten by the
-    // generic attachment pass.
-    const bool component_track_active = std::any_of(
-        state.script_tracks.begin(), state.script_tracks.end(),
-        [](const MotionState::ActiveScriptTrack& track) {
-            return track.role == Session::MotionScriptRole::LadyComponent0;
-        });
-    if (component_track_active) {
-        if (auto* component = component0_binding(session);
-            component != nullptr &&
-            component->control_domain != LadyControlDomain::IndependentMotionScript) {
-            (void)set_lady_component_control_domain(
-                session, *component,
-                LadyControlDomain::IndependentMotionScript);
-        }
-    }
+    // The component0 domain follows the EXE: the state entry clears +0x4020
+    // for the paired states, and a lane0 signal (e.g. state 0x7B) may
+    // re-enable the hand constraint mid-action. It is not forced back to the
+    // independent domain here.
 
     advance_lady_dynamic_visuals(session, frame);
     sync_lady_actor_effects(session, state, frame);
@@ -1722,8 +1727,8 @@ MotionLoadReport load_scripted_motion(Session* session,
         return report;
     }
     try {
-        // The confirmed em034 body bank4/action3..5 pair has two independent
-        // controller tracks: the body MOT and component0 MOT. Keep the
+        // An em034 body state that starts the component0 controller has two
+        // independent controller tracks: the body MOT and component0 MOT. Keep the
         // legacy public load entry point compatible with that contract so a
         // UI/JNI Script Play call cannot silently drop the component track.
         const auto binding = session->motion_scripts[script_index];
@@ -1735,7 +1740,10 @@ MotionLoadReport load_scripted_motion(Session* session,
                     std::numeric_limits<std::size_t>::max(),
                     std::numeric_limits<std::size_t>::max(),
                     motion_index});
-            if (body.has_value() && is_confirmed_lady_pair(*body)) {
+            const auto pair = body.has_value()
+                ? lady_component_pair(*body)
+                : std::optional<LadyBodyLaneAction>{};
+            if (pair.has_value()) {
                 if (const auto component_controller =
                         lady_component_controller(*session);
                     component_controller.has_value()) {
@@ -1743,8 +1751,8 @@ MotionLoadReport load_scripted_motion(Session* session,
                         *session,
                         *component_controller,
                         ScriptActionId{
-                            body->bank,
-                            body->action,
+                            pair->bank,
+                            pair->action,
                             std::numeric_limits<std::size_t>::max()});
                     if (component.has_value()) {
                         const std::array<ResolvedScriptTrack, 2> pair{
@@ -1921,19 +1929,22 @@ RuntimeStepResult run_script_frame(Session* session,
     };
     std::size_t track_count = 1U;
 
-    // The em034 body action owns a confirmed component0 continuation. Expose
+    // An em034 body state may start the component0 controller. Expose
     // that pairing through the existing single-controller API so Android/JNI
     // callers get the same synchronized path as native replay callers.
     if (session != nullptr) {
-        if (const auto body = resolve_script_track(*session, controller, action);
-            body.has_value() && is_confirmed_lady_pair(*body)) {
+        const auto body = resolve_script_track(*session, controller, action);
+        if (const auto pair = body.has_value()
+                ? lady_component_pair(*body)
+                : std::optional<LadyBodyLaneAction>{};
+            pair.has_value()) {
             if (const auto component_controller = lady_component_controller(*session);
                 component_controller.has_value()) {
                 tracks[track_count++] = ScriptTrackAction{
                     *component_controller,
                     ScriptActionId{
-                        body->bank,
-                        body->action,
+                        pair->bank,
+                        pair->action,
                         std::numeric_limits<std::size_t>::max(),
                     }};
             }

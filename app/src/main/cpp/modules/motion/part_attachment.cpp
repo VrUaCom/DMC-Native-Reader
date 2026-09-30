@@ -667,11 +667,19 @@ bool set_lady_component_control_domain(Session* session,
     // +0x4020 selects em034_013. Never collapse these into one scalar state.
     auto& part = session->composite_parts[binding.part];
     if (domain == LadyControlDomain::IndependentMotionScript) {
-        // Freeze the currently resolved equipment world as the root for its
-        // own 3-node MOT domain. HostJointSkeleton must be disabled, otherwise
-        // the generic motion player correctly treats the part as host-driven
-        // and refuses to animate it independently.
+        // Clearing +0x4020 disables the slot20 node0 CCnsMatrix (+0x4000,
+        // enable byte +0x20): node0 then takes the em034_013 MOT in the same
+        // actor space as the body MOT, not a copy of the stowed or held
+        // equipment matrix. The Lady body part defines that space.
         if (!part.placement.resolved) return false;
+        Matrix4 actor_space;
+        if (binding.host_part < session->composite_parts.size()) {
+            const auto& host = session->composite_parts[binding.host_part].placement;
+            if (host.resolved) actor_space = host.root_matrix;
+        }
+        part.placement.root_matrix = actor_space;
+        // HostJointSkeleton must be disabled, otherwise the generic motion
+        // player treats the part as host-driven and refuses to animate it.
         part.placement.mode = CompositePlacementMode::HostJoint;
         binding.control_domain = domain;
         return true;

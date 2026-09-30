@@ -594,6 +594,26 @@ struct LadyBodyStateScripts final {
     return out;
 }
 
+// em034_013 action that the CEm034 entry dispatcher 0x14016A410 starts on the
+// component0 controller (+0x52B0) for `state`. Only the entries that reach
+// 0x14016AA73 do so: states 0x5A..0x5D and 0x64..0x73 (case 0x14016AA3D),
+// 0x7B (0x14016A509) and 0x7C/0x7D (0x14016A52F). That block starts bank 4,
+// action state - 0x53 and clears +0x4020, the enable byte of the slot20 node0
+// CCnsMatrix at +0x4000: component0 then follows its own MOT in actor space.
+// Every other entry keeps (or re-enables) the constraint through 0x1401713F0,
+// which always writes +0x4020 = 1, so no component track runs there.
+// States 0x59/0x61 start the same controller later, from their lane0 signal
+// (0x14016988B); that delayed start is not a state-entry pairing.
+[[nodiscard]] constexpr std::optional<LadyBodyLaneAction>
+lady_component_action_for_state(std::uint16_t state) noexcept {
+    const bool independent = (state >= 0x5AU && state <= 0x5DU) ||
+                             (state >= 0x64U && state <= 0x73U) ||
+                             (state >= 0x7BU && state <= 0x7DU);
+    if (!independent) return std::nullopt;
+    return LadyBodyLaneAction{
+        true, 4U, static_cast<std::uint8_t>(state - 0x53U)};
+}
+
 // Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.
 // lane is 0/1 for the two em034_012 controllers; channel is 0..4.
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_signal(

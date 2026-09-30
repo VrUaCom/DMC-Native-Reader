@@ -586,10 +586,11 @@ int main() {
         assert(lady->effect_runtime->instances()[0].current_frame == 0.0F);
     }
 
-    // Confirmed synchronized Lady pair: the body controller and component0
-    // controller own separate MOD parts but are evaluated at one Script Play
-    // frame. This is the bounded em034 bank4/action3..5 integration slice;
-    // no unverified controller/resource pairing is introduced here.
+    // Synchronized Lady pair: the body controller and component0 controller
+    // own separate MOD parts but are evaluated at one Script Play frame.
+    // Bank4/action30 is state 0x71: the entry dispatcher 0x14016A410 starts
+    // em034_013 (4,30) and clears +0x4020, so both tracks run. Bank4/action3
+    // (state 0x56) keeps Kalina on the hand constraint: no component track.
     {
         const auto lady_body_mod = make_lady_body_mod();
         auto body_source = dmcresource::open_session(
@@ -632,11 +633,18 @@ int main() {
         lady_pair->motion_library[0].name = "synthetic-lady-body.mot";
         lady_pair->motion_library[0].bytes = body_mot23;
         lady_pair->motion_library[0].script_links.push_back({
-            0U, 4U, 3U, -1, 0U});
+            0U, 4U, 30U, -1, 0U});
         lady_pair->motion_library[1].name = "synthetic-lady-component0.mot";
         lady_pair->motion_library[1].bytes = make_translation_mot();
         lady_pair->motion_library[1].script_links.push_back({
-            1U, 4U, 3U, -1, 0U});
+            1U, 4U, 30U, -1, 0U});
+        lady_pair->motion_library.push_back(lady_pair->motion_library[0]);
+        lady_pair->motion_library[2].name = "synthetic-lady-body-held.mot";
+        lady_pair->motion_library[2].script_links = {{0U, 4U, 3U, -1, 0U}};
+        const auto held = motion::load_scripted_motion(lady_pair.get(), 0U, 2U);
+        assert(held.ok && held.synchronized_tracks == 0U);
+        assert(component_binding.control_domain ==
+               motion::LadyControlDomain::BodyConstraint);
 
         // The legacy load entry used by the JNI/UI shell must promote the
         // same confirmed pair; this guards the integration boundary separately
@@ -648,14 +656,14 @@ int main() {
         assert(direct.deferred_tracks == 0U);
 
         const auto legacy_step = motion::run_script_frame(
-            lady_pair.get(), 0U, motion::ScriptActionId{4U, 3U, 0U}, 0.0F);
+            lady_pair.get(), 0U, motion::ScriptActionId{4U, 30U, 0U}, 0.0F);
         assert(legacy_step.synchronized_tracks == 2U);
         assert(legacy_step.deferred_tracks == 0U);
 
         const std::array<motion::ScriptTrackAction, 2> tracks{{
-            {0U, motion::ScriptActionId{4U, 3U, 0U}},
+            {0U, motion::ScriptActionId{4U, 30U, 0U}},
             {1U, motion::ScriptActionId{
-                4U, 3U, std::numeric_limits<std::size_t>::max()}},
+                4U, 30U, std::numeric_limits<std::size_t>::max()}},
         }};
         const auto first = motion::run_synchronized_script_frame(
             lady_pair.get(), tracks, 0.0F);
@@ -671,6 +679,9 @@ int main() {
             lady_pair->scene.nodes[0].world.values[12];
         const float component_root_at_zero =
             lady_pair->scene.nodes[23].world.values[12];
+        // With +0x4020 cleared the component MOT runs in actor space (the
+        // body part's space), not relative to the stowed equipment matrix.
+        assert(near(component_root_at_zero, 10.0F));
         const auto forward = motion::run_synchronized_script_frame(
             lady_pair.get(), tracks, 5.0F);
         assert(forward.synchronized_tracks == 2U);
