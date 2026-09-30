@@ -320,11 +320,10 @@ public final class MainActivity extends Activity {
         // Stage collision (HITS of the room): the button appears once a stage
         // with collision is the room around the opened model.
         final boolean stageScene = hasSession && NativeBridge.stageCollisionSourceCount(session) > 0;
+        // Only a stage has its collision button; a model seen in a room does not
+        // (the room's HITS stay switchable in Settings).
         syncToggleButton(stageCollisionButton,
-                !renderView.isUvLayoutVisible() && (stageScene
-                        || (hasSession && roomLoaded && blackWidowState.canRender
-                            && NativeBridge.roomCollisionSourceCount() > 0
-                            && !NativeBridge.isStageSession(session))),
+                !renderView.isUvLayoutVisible() && stageScene,
                 renderView.isRoomCollisionVisible());
 
         syncToggleButton(uvButton,
