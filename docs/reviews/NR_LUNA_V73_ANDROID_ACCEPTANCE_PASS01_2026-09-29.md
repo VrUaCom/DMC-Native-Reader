@@ -10,8 +10,7 @@ APK identity: `android-v72-1.0.45`, ABI `arm64-v8a`
 ## Scope
 
 Це перший фізичний Android pass для тестової debug-збірки. Цей запис
-відділяє фактичну device behavior від статичних і exact-head claims. У цьому
-проході код не змінювався.
+відділяє фактичну device behavior від статичних і exact-head claims. У першому фізичному проході код не змінювався. Цей follow-up code pass містить окрему точкову правку на NR-Luna-v73.
 
 ## Passed
 
@@ -115,25 +114,50 @@ The parent chain is also resolved:
 - In the active-deployed state used by actions 3/4/5, slot 20 is attached to
   body joint 9 with local translation `(-8.4,-1.0,-1.3)` and
   XYZ rotation `(0,0,3.1415925)` radians.
-- The final E752 center is composed as
-  `local(T=(60,0,0)) * shl02_actor_matrix(slot20.node0.world)`.
-  The current actor basis derives direction from slot20 node 0, puts
-  `up x direction` in row 0, `direction x row0` in row 1 and direction
-  in row 2. Thus the V423 local +X offset is applied along row 0, not along
-  the stored direction row.
+- Retail constructs the Shl02 actor render basis from the selected matrix
+  direction, but the subsequent V423 spawn receives a separate mode-3
+  normalized copy of the raw slot20 matrix.
+- The visible E752 center therefore belongs to
+  `local(T=(60,0,0)) * shl02_effect_parent_matrix(slot20.node0.world)`.
+  The actor mesh and the V423 child no longer share a guessed single basis.
 
 ### Trace conclusion
 
 The FXBANK identity and V423 local data are not guessed and do not point to a
-wrong resource ID. The high-confidence code-level suspect is the parent/basis
-composition at the Shl02 actor root: the canonical resource supplies a +X
-offset, while the current parent matrix maps the motion direction to row 2.
-That is consistent with the repeated handle/body placement and the
-near-vertical orientation observed in the video.
+wrong resource ID. The confirmed mismatch was the reuse of one matrix for two
+different retail domains: the actor render basis and the V423 effect parent.
+The targeted fix now preserves the actor basis while passing V423 a normalized
+raw slot20 parent, matching the retail mode-3 preparation. This is consistent
+with the repeated handle/body placement observed in the video, but the
+near-vertical rocket-like visual remains unclassified until the separate
+P337/E887 presentation and gameplay-world domains are validated on device.
 
-No code was changed in this trace. The next implementation pass can now be
-limited to the Shl02 parent-basis/muzzle alignment and its regression test;
-the FXBANK resource mapping must remain unchanged.
+The FXBANK resource mapping remains unchanged. Exact-head build and the next
+APK/device pass are still required before calling the effect-placement issue
+closed.
+
+## Follow-up implementation pass — Shl02/V423 parent domain
+
+Після першого device pass виконано точкову перевірку canonical dmc3.exe
+та внесено правку в NR-Luna-v73 (dd66fe62a47dc9c924ce0b38cb2c81642fc8b92b).
+
+- ✅ Retail callsite 0x14016998e запускає V423 через
+  0x1402e7a90 з mode=3, передаючи raw matrix вибраного
+  CEm034 slot20 object.
+- ✅ Retail 0x1402e7ab0 копіює цю matrix, нормалізує перші три рядки
+  через 0x140330390 і зберігає translation row без зміни.
+- ✅ Reader тепер розділяє два домени: world динамічного Shl02 залишається
+  actor-render basis, а effect_parent_world для V423 бере окрему
+  normalized copy raw slot20 matrix.
+- ✅ E752 local T=(60,0,0), V423 graph, FXBANK slot 28 та всі resource
+  identities не змінювалися.
+- ✅ Додано native regression assertion для row-wise normalization і
+  збереження translation.
+- 🟡 Exact-head build/CTest та APK/device retest ще не виконані в цьому
+  follow-up pass.
+
+Це не є доказом фінального pixel-perfect результату до нового APK і
+повторення фізичного сценарію S12 act 5/4/3.
 
 ## Acceptance disposition
 

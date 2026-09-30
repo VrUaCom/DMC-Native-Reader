@@ -1,6 +1,6 @@
 # DMC Native Reader — Status
 
-Last updated: **2026-09-29**.
+Last updated: **2026-09-30**.
 
 ## Product target
 
@@ -21,11 +21,11 @@ evidence/tooling are merged into `main`. The current Lady/LEDi/FX and
 MotionScript continuation is kept in `NR-Luna-v73` until exact-head CI and
 physical Android acceptance are complete.
 
-Current v73 Pass 02 code checkpoint: `6cae2e1df5906236228a32d051358e71074c72b4`.
-This checkpoint contains the Pass 01 runtime ownership/lifecycle base plus the
-Pass 02 exact P/E/G/V child-graph presentation gate. Pass 01 remains the
-historical ownership checkpoint; the active v73 implementation surface is now
-the Pass 02 checkpoint.
+Current v73 review head: `dd66fe62a47dc9c924ce0b38cb2c81642fc8b92b`.
+This head contains the Pass 01 runtime ownership/lifecycle base, the Pass 02
+exact P/E/G/V child-graph presentation gate, and the targeted Shl02/V423
+parent-basis correction described below. Pass 01 remains historical evidence;
+the active v73 implementation surface is the current branch head.
 
 ## Phase 1 baseline review
 
@@ -70,19 +70,24 @@ APK verifier.
   repeats around the weapon handle/body area rather than the muzzle during
   `S12` acts 5, 4 and 3 (`slot_0005.mot`, `slot_0004.mot`,
   `slot_0003.mot`). A separate rocket-like visual is briefly near-vertical.
-  This is classified as an attachment/orientation regression.
-- ✅ Exact trace is now closed on `NR-Luna-v73`: actions 3/4/5 resolve to
+  This remains classified as an attachment/orientation regression.
+- ✅ Exact trace is closed on `NR-Luna-v73`: actions 3/4/5 resolve to
   `CEm034Shl02 -> V423` from `em034.pac` FXBANK slot 28; the visible
   presentable child is `E752`, with local `T=(60,0,0)`. The parent chain
   resolves through Lady slot20 node0, with active placement on body joint 9
-  and local `T=(-8.4,-1.0,-1.3), Rz=pi`. The remaining implementation
-  suspect is the Shl02 parent-basis/muzzle alignment, not the FXBANK ID. See
-  [the detailed trace](reviews/NR_LUNA_V73_ANDROID_ACCEPTANCE_PASS01_2026-09-29.md).
+  and local `T=(-8.4,-1.0,-1.3), Rz=pi`. Retail then passes V423 a
+  separately normalized copy of the selected slot20 matrix (EXE
+  `0x1402e7a90`, mode 3), while the Shl02 render actor keeps its own
+  direction basis. The Reader now mirrors that separation in
+  `dd66fe62a47dc9c924ce0b38cb2c81642fc8b92b`; the FXBANK identity and local
+  data remain unchanged. See [the detailed trace](reviews/NR_LUNA_V73_ANDROID_ACCEPTANCE_PASS01_2026-09-29.md).
 
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
 Native Reader session, selected resource and selected costume/slot survive
-configuration change. No code was changed in this report.
+configuration change. The Shl02/V423 parent-basis fix is now committed, but
+still needs exact-head build plus APK/device retest. No APK/device validation
+is claimed for this code pass.
 
 ## Phase 2 evidence integration
 
