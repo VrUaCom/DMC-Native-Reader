@@ -173,6 +173,89 @@ Reader bindings (`em034_effect_bindings`, actor 2):
 | V377 | 0 | ProjectileTransform (shell) | ParentActorRetire |
 | V543 | 2 | RuntimeMatrix (shell, y+2) | EffectCallback |
 
+## Kalina (component0) control domain
+
+The entry dispatcher `0x14016A410` is a jump table:
+
+- byte table `0x14016ACAC`;
+- rel32 table `0x14016AC48`.
+
+The Kalina (slot20) domain is decided by `em+0x4020`. That byte is the enable
+flag (`+0x20`) of the slot20 node0 CCnsMatrix at `em+0x4000`:
+
+- `0x1401713F0(em, component, preset)` rebuilds that constraint for
+  component 0 and always writes `+0x4020 = 1`;
+- the update `0x140170FB0` advances the em034_013 controller (`em+0x52B0`)
+  only while `+0x4020 == 0` (`0x140171072`).
+
+Only one block clears it: `0x14016AA73`. It starts `+0x52B0` with bank 4,
+action state − 0x53, and writes `+0x4020 = 0`. It is reached from these
+states:
+
+| States | Case | Body actions |
+| --- | --- | --- |
+| 0x5A..0x5D, 0x64..0x73 | `0x14016AA3D` | 7..10, 17..32 |
+| 0x7B | `0x14016A509` | 40 |
+| 0x7C/0x7D | `0x14016A52F` | 41/42 |
+
+Bank-4 actions 0..6 (states 0x53..0x59, including the Kalina shots 3/4/5)
+keep Kalina on the hand constraint (`0x1401713F0(0, 1)`).
+
+States 0x59/0x61 start the controller later, from their lane0 signal
+(`0x14016988B`: stow preset, then action (4, 6)/(4, 14) and
+`+0x4020 = 0`). That start is not paired yet.
+
+In the independent domain the component MOT runs in actor space: the
+Reader's body part space. Renders of acts 10, 30, 31 and 40..42 put Kalina in
+Lady's hands.
+
+## Model-less shells (Shl00, Shl01, Shl04, Shl05)
+
+Their draw slots [2]/[3] are the null stub `0x14024EA30`: they have no model
+and are visible only through their effects. Factories:
+
+| Shell | Factory | Spawn sites |
+| --- | --- | --- |
+| Shl00 | `0x140172240` | pistol states (bank 3), state 0x7F, SMG `0x140171C70` |
+| Shl01 | `0x1401729D0` | Kalina states |
+| Shl04 | `0x140175210` | state 0x8F |
+| Shl05 | `0x140175B10` | state 0x81 |
+
+Common constants:
+
+- body joints are `em+0x7E8 + 8*joint` (`+0x830` = joint 9, `+0x850` =
+  joint 13);
+- component node pointers are `em+0x8E8` (slot20 × 3), `+0x900` (slot21),
+  `+0x908` (slot22), `+0x910` (slot23 × 4), `+0x930` (slot24);
+- pistol/Shl05 speed `em+0x59F0` = 35 (init `0x14016FEC2`);
+- straight lifetime `+0x52C` = 120.
+
+| Act (state) | Shell | Standalone path from the EXE | Effects |
+| --- | --- | --- | --- |
+| 44 (0x7F) | Shl00 | no player in the `0x1402C6870` cone → axis (−1,0,0) of slot21 (lane1 ch1 = 0) or slot22; muzzle joint 9; speed 35 | V463 (E741, held) follows |
+| 46 (0x81) | Shl05 | no player → slot23 axis (1,0,0); muzzle joint 9 (+0x5A27 = 1); speed 35; hit → V435/V277 | V276 follows |
+| 50 (0x85) | Shl00 | lane1 ch0 1/2 toggles `+0x57DD`; 0.9 timer → one shot per tick via `0x140171C70(em, 1)`: slot24 axis (−1,0,0), speed 45, muzzle joint 13; `dl = 1` never aims at the player | V463 |
+| 60 (0x8F) | Shl04 | count `[1,2,3,6,3,2][em+0x5A1C]` (Reader: entry 0); velocity (0,0,10) × Ry(yaw) × Rx(pitch), pitch −(rand%30)°, yaw ((rand%100)−50)° + actor yaw (Reader: means −14.5°/−0.5°); joint 9; fuse 120 + 30·i | E765 grenade sprite (held) from init; V475 when fuse < 60; V488 on explode (copy, y + 2) |
+
+Shl04 flight (`0x1401756E0`):
+
+- per tick: pos += vel; vel.y = min(vel.y − 1, 30);
+- stage raycast `0x1402C64F0`: mirror about the hit plane,
+  v' = 0.5·reflect(v); at rest below |v| = 10;
+- fuse < 0 → state 2 (`0x1401753A0`): V488, blast radius 200, 3.0 countdown,
+  retire.
+
+The Reader's room floor (y = 0) stands in for the stage raycast, and those
+events carry `requires_gameplay_world_context`.
+
+Not materialized standalone:
+
+- **Bank-3 pistol states (0x34..0x52):** they always aim at the player joint
+  (`0x14016FC30`) and stay deferred.
+- **Shl01 Kalina missiles:** they orbit 16 arena points around (2500, 2400)
+  (tables `0x14057B530` / `0x14057B5F0`, radii ≈ 1274/677). They home in on
+  the player after three laps; V474 is the trail, V484 the explosion.
+
 ## em034 FXBANK data used
 
 Entry format: `activation / local T / R / S`.

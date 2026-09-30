@@ -88,8 +88,9 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}, confirmed, 2,
          std::span<const EffectChildRef>{kV8Children}},
     }};
-    static constexpr std::array<EffectBinding, 7> kBindings{{
-        {0U, 'V', 463U, 28U, RuntimeEffectParent::DynamicActor,
+    static constexpr std::array<EffectBinding, 8> kBindings{{
+        // CEm034Shl00 init 0x140172380: V463 follows the bullet (+0xC0, mode 3).
+        {0U, 'V', 463U, 28U, RuntimeEffectParent::ProjectileTransform,
          0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
          EffectLifetimeRule::ParentActorRetire,
          EvidenceStatus::EXE_CONFIRMED,
@@ -103,17 +104,22 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          EffectLifetimeRule::EffectCallback,
          EvidenceStatus::EXE_CONFIRMED,
          std::span<const EffectChildRef>{kV423Children}},
-        {4U, 'V', 488U, 28U, RuntimeEffectParent::DynamicActor,
+        // CEm034Shl04 explode 0x1401753A0: 0x1402E7CA0(3, 0x1E8, &shell+0x1A0,
+        // 0x10) copies the grenade matrix (y + 2).
+        {4U, 'V', 488U, 28U, RuntimeEffectParent::RuntimeMatrix,
+         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+         EffectLifetimeRule::EffectCallback,
+         EvidenceStatus::EXE_CONFIRMED,
+         std::span<const EffectChildRef>{kV488Children}, 2U},
+        // CEm034Shl04 flight 0x140175785: V475 once the fuse is below 60,
+        // following the grenade (mode 3), retired with it.
+        {4U, 'V', 475U, 28U, RuntimeEffectParent::ProjectileTransform,
          0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
          EffectLifetimeRule::ParentActorRetire,
          EvidenceStatus::EXE_CONFIRMED,
-         std::span<const EffectChildRef>{kV488Children}},
-        {4U, 'V', 475U, 28U, RuntimeEffectParent::DynamicActor,
-         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
-         EffectLifetimeRule::ParentActorRetire,
-         EvidenceStatus::EXE_CONFIRMED,
-         std::span<const EffectChildRef>{kV475Children}},
-        {5U, 'V', 276U, 28U, RuntimeEffectParent::DynamicActor,
+         std::span<const EffectChildRef>{kV475Children}, 1U},
+        // CEm034Shl05 init 0x140175CC0: V276 follows the shot (mode 3).
+        {5U, 'V', 276U, 28U, RuntimeEffectParent::ProjectileTransform,
          0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
          EffectLifetimeRule::ParentActorRetire,
          EvidenceStatus::EXE_CONFIRMED,
@@ -134,6 +140,13 @@ std::span<const EffectBinding> em034_effect_bindings_impl() noexcept {
          EffectLifetimeRule::EffectCallback,
          EvidenceStatus::EXE_CONFIRMED,
          std::span<const EffectChildRef>{}, 2U},
+        // CEm034Shl04 init 0x1401754F0: 0x1402E7A80(1, 0x2FD) is the grenade
+        // sprite E765 (+0x84 held), following the grenade matrix (mode 3).
+        {4U, 'E', 765U, 28U, RuntimeEffectParent::ProjectileTransform,
+         0xFFFFU, 1U, 0U, 1U, EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+         EffectLifetimeRule::ParentActorRetire,
+         EvidenceStatus::EXE_CONFIRMED,
+         std::span<const EffectChildRef>{}, 0U},
     }};
     return kBindings;
 }

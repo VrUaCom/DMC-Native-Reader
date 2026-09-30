@@ -540,7 +540,7 @@ int main() {
     lady_profile.effect_bank_slots.push_back(28U);
     assert(!effect_profile_providers().empty());
     assert(install_effect_bindings(&lady_profile));
-    assert(lady_profile.script_effect_bindings.size() == 7U);
+    assert(lady_profile.script_effect_bindings.size() == 8U);
     assert(lady_profile.script_effect_bindings[0].effect_kind == 'V');
     assert(lady_profile.script_effect_bindings[0].effect_id == 463U);
 

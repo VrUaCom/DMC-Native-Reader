@@ -560,13 +560,14 @@ int main() {
     {
         const auto bindings = dmcresource::motion::em034_effect_bindings();
         namespace m = dmcresource::motion;
-        assert(bindings.size() == 7U);
+        assert(bindings.size() == 8U);
         for (const auto& binding : bindings) {
-            // Copied-matrix V roots (CEm034's V423 muzzle matrix, the shell's
-            // V543 explode matrix) end through their own child graph; the
-            // others are retired with their actor.
+            // Copied-matrix V roots (CEm034's V423 muzzle matrix, the shells'
+            // V543/V488 explode matrices) end through their own child graph;
+            // the others are retired with their actor.
             const bool own_graph = binding.effect_id == 423U ||
-                                   binding.effect_id == 543U;
+                                   binding.effect_id == 543U ||
+                                   binding.effect_id == 488U;
             assert(binding.lifetime ==
                    (own_graph ? m::EffectLifetimeRule::EffectCallback
                               : m::EffectLifetimeRule::ParentActorRetire));
@@ -576,6 +577,13 @@ int main() {
         assert(bindings[5].actor == 2U && bindings[5].effect_id == 377U &&
                bindings[5].parent == m::RuntimeEffectParent::ProjectileTransform &&
                bindings[5].actor_phase == 0U && bindings[5].children.empty());
+        assert(bindings[2].actor == 4U && bindings[2].actor_phase == 2U &&
+               bindings[2].parent == m::RuntimeEffectParent::RuntimeMatrix);
+        assert(bindings[3].actor == 4U && bindings[3].effect_id == 475U &&
+               bindings[3].actor_phase == 1U &&
+               bindings[3].parent == m::RuntimeEffectParent::ProjectileTransform);
+        assert(bindings[7].actor == 4U && bindings[7].effect_kind == 'E' &&
+               bindings[7].effect_id == 765U && bindings[7].actor_phase == 0U);
         assert(bindings[6].actor == 2U && bindings[6].effect_id == 543U &&
                bindings[6].parent == m::RuntimeEffectParent::RuntimeMatrix &&
                bindings[6].actor_phase == 2U);

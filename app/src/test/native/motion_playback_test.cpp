@@ -387,6 +387,19 @@ int main() {
         assert(at200.values[14] == at120.values[14]);
     }
 
+    // CEm034Shl04 grenade: ballistic toss, one mirrored 0.5 bounce on the
+    // floor, then at rest (|v| < 10) until the fuse runs out.
+    {
+        const dmcresource::Vec3 hand{0.0F, 82.0F, 0.0F};
+        const dmcresource::Vec3 toss{0.0F, 2.5F, 9.68F};
+        const auto at1 = motion::shl04_grenade_position(hand, toss, 120.0F, 1.0F);
+        assert(near(at1.y, 84.5F) && near(at1.z, 9.68F));
+        const auto at40 = motion::shl04_grenade_position(hand, toss, 120.0F, 40.0F);
+        const auto at100 = motion::shl04_grenade_position(hand, toss, 120.0F, 100.0F);
+        assert(at40.y >= 0.0F && at40.z > 100.0F);
+        assert(at100.x == at40.x && at100.y == at40.y && at100.z == at40.z);
+    }
+
     // 16-bit angle wrap exactly as cvttss2si + word store.
     assert(near(motion::quantize_motion_angle(0.5F), 0.5F, 0.0002F));
     assert(near(motion::quantize_motion_angle(2.0F * std::numbers::pi_v<float> + 0.5F),

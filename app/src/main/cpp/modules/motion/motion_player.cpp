@@ -140,6 +140,29 @@ struct MotionState final {
     std::uint64_t next_actor_instance{1U};
     std::array<std::uint64_t, 6> active_actor_instances{};
     std::vector<ActiveScriptTrack> script_tracks;
+
+    // Model-less CEm034 CShell actors (Shl00 bullets, Shl04 grenades,
+    // Shl05 shots). They are visible only through their FXBANK effects, and
+    // several can live at once (SMG bursts), so each keeps its own instance.
+    struct LadyShell final {
+        std::uint8_t actor{};
+        std::uint64_t instance{};
+        float spawn_frame{};
+        Vec3 origin{};
+        Vec3 velocity{};   // units per tick (shell+0x140)
+        float lifetime{};  // straight: +0x52C; grenade: fuse +0x530
+        std::array<std::uint8_t, 3> signal{0xFFU, 0xFFU, 0xFFU};
+        std::uint16_t lady_state{};
+        bool gameplay_context{};
+        bool warn_emitted{};
+        bool explode_emitted{};
+        bool retired{};
+    };
+    std::vector<LadyShell> lady_shells;
+    // State 0x85 SMG trigger (+0x57DD): lane1/ch0 1 starts, 2 stops.
+    float smg_fire_start{-1.0F};
+    float smg_fire_end{std::numeric_limits<float>::infinity()};
+    float smg_last_tick{-1.0F};
 };
 
 namespace {
@@ -748,6 +771,312 @@ void emit_shl02_explode_event(Session* session,
     session->effect_runtime->apply_actor_event(event);
 }
 
+// ---------------------------------------------------------------------------
+// Model-less CEm034 shells. Every constant below is read from dmc3.exe; see
+// docs/research/dmc3-shell-effect-runtime-exe-v73.md.
+
+// Shl00/Shl05 straight flight (0x140172590 / 0x140175ED0): pos += vel * dt,
+// +0x52C = 120 counts down; below zero the state becomes 3 and the next update
+// retires the shell together with its trail effect.
+constexpr float kStraightShellLifetime = 120.0F;
+// CEm034 init 0x14016FEC2: em+0x59F0 = 35.0 (pistol and Shl05 speed).
+constexpr float kLadyGunSpeed = 35.0F;
+// 0x140171C70: SMG shots use a fixed 45.0 (.rdata 0x14057B428).
+constexpr float kLadySmgSpeed = 45.0F;
+// Shl04 (0x1401756E0): gravity 1.0/tick^2, upward speed capped at 30,
+// bounce restitution 0.5 (0x1402C64F0), resting below |v| = 10, warning V475
+// once the fuse is below 60, explode countdown 3.0 (0x1401753A0).
+constexpr float kGrenadeGravity = 1.0F;
+constexpr float kGrenadeMaxRise = 30.0F;
+constexpr float kGrenadeRestitution = 0.5F;
+constexpr float kGrenadeRestSpeed = 10.0F;
+constexpr float kGrenadeWarnFuse = 60.0F;
+
+[[nodiscard]] std::optional<Matrix4> lady_body_joint_world(
+    const Session& session, std::size_t joint) noexcept {
+    // CEm034 +0x7E8 + joint*8 are the body joints; Reader's body part is the
+    // component host part.
+    const LadyComponentBinding* binding = nullptr;
+    for (const auto& candidate : session.lady_component_bindings) {
+        if (candidate.component == 0U) {
+            binding = &candidate;
+            break;
+        }
+    }
+    if (binding == nullptr || binding->host_part >= session.composite_parts.size()) {
+        return std::nullopt;
+    }
+    std::size_t begin = 0U;
+    for (std::size_t i = 0U; i < binding->host_part; ++i) {
+        begin += session.composite_parts[i].scene.nodes.size();
+    }
+    if (joint >= session.composite_parts[binding->host_part].scene.nodes.size() ||
+        begin + joint >= session.scene.nodes.size()) {
+        return std::nullopt;
+    }
+    return session.scene.nodes[begin + joint].world;
+}
+
+[[nodiscard]] std::optional<Vec3> lady_joint_translation(
+    const Session& session, std::size_t joint) noexcept {
+    const auto world = lady_body_joint_world(session, joint);
+    if (!world.has_value()) return std::nullopt;
+    return Vec3{world->values[12], world->values[13], world->values[14]};
+}
+
+// 0x14016F780: (axis, 1) * component node world with row 3 = (0,0,0,1).
+[[nodiscard]] std::optional<Vec3> lady_gun_axis(
+    const Session& session, std::uint8_t component, Vec3 axis) noexcept {
+    const auto node = lady_component_node_world(session, component, 0U);
+    if (!node.has_value()) return std::nullopt;
+    const auto d = transform_row4({axis.x, axis.y, axis.z, 1.0F},
+                                  without_translation(*node));
+    return normalize3({d.x, d.y, d.z}, {0.0F, 0.0F, 1.0F});
+}
+
+struct ShellPose final {
+    Vec3 position{};
+    bool resting{};
+};
+
+// Shl04 flight, one EXE update per tick. The stage raycast 0x1402C64F0 has
+// no standalone counterpart; the Reader's room floor (actor y = 0) stands in
+// for it with the same mirror/restitution response.
+[[nodiscard]] ShellPose grenade_pose(const MotionState::LadyShell& shell,
+                                     float age) noexcept {
+    ShellPose pose{shell.origin, false};
+    Vec3 velocity = shell.velocity;
+    const float flight_end = std::floor(shell.lifetime) + 1.0F;  // state 2
+    const float limit = std::clamp(age, 0.0F, flight_end);
+    const auto whole = static_cast<int>(std::floor(limit));
+    Vec3 previous = pose.position;
+    for (int tick = 1; tick <= whole; ++tick) {
+        previous = pose.position;
+        if (pose.resting) continue;
+        pose.position.x += velocity.x;
+        pose.position.y += velocity.y;
+        pose.position.z += velocity.z;
+        velocity.y = std::min(velocity.y - kGrenadeGravity, kGrenadeMaxRise);
+        if (pose.position.y < 0.0F && previous.y >= 0.0F) {
+            pose.position.y = -pose.position.y;
+            velocity = {kGrenadeRestitution * velocity.x,
+                        -kGrenadeRestitution * velocity.y,
+                        kGrenadeRestitution * velocity.z};
+            if (std::sqrt(length_sq3(velocity)) < kGrenadeRestSpeed) {
+                pose.resting = true;
+            }
+        }
+    }
+    const float fraction = limit - static_cast<float>(whole);
+    if (fraction > 0.0F && !pose.resting && whole < flight_end) {
+        pose.position.x += velocity.x * fraction;
+        pose.position.y = std::max(pose.position.y + velocity.y * fraction, 0.0F);
+        pose.position.z += velocity.z * fraction;
+    }
+    return pose;
+}
+
+[[nodiscard]] Matrix4 lady_shell_world(const MotionState::LadyShell& shell,
+                                       float age) noexcept {
+    if (shell.actor == 4U) {
+        // Shl04 rebuilds a rotation from its spin angles; its only visual is
+        // the camera-facing E765 sprite, so the basis is left unrotated.
+        const auto pose = grenade_pose(shell, age);
+        Matrix4 out;
+        out.values[12] = pose.position.x;
+        out.values[13] = pose.position.y;
+        out.values[14] = pose.position.z;
+        return out;
+    }
+    const float flight = std::clamp(age, 0.0F, kStraightShellLifetime);
+    return align_z_matrix(
+        shell.velocity,
+        {shell.origin.x + shell.velocity.x * flight,
+         shell.origin.y + shell.velocity.y * flight,
+         shell.origin.z + shell.velocity.z * flight});
+}
+
+[[nodiscard]] float lady_shell_retire_age(
+    const MotionState::LadyShell& shell) noexcept {
+    // Grenade: state 2 at fuse+1, explode update at +2, 3.0 countdown to
+    // state 3 at +5, retire at +6. Straight shells: state 3 once +0x52C is
+    // negative (tick 121), retire on the next update.
+    return shell.actor == 4U ? std::floor(shell.lifetime) + 6.0F
+                             : kStraightShellLifetime + 2.0F;
+}
+
+void emit_lady_shell_event(Session* session,
+                           const MotionState::LadyShell& shell,
+                           DynamicActorEventKind kind,
+                           std::uint8_t phase,
+                           float age,
+                           const Matrix4* spawn_matrix) {
+    if (session == nullptr || session->effect_runtime == nullptr) return;
+    DynamicActorEvent event;
+    event.kind = kind;
+    event.actor = shell.actor;
+    event.actor_state = shell.lady_state;
+    event.actor_phase = phase;
+    event.lane = shell.signal[0];
+    event.channel = shell.signal[1];
+    event.signal_value = shell.signal[2];
+    event.actor_instance = shell.instance;
+    event.script_frame = shell.spawn_frame + age;
+    event.evidence = EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+    event.requires_gameplay_world_context = shell.gameplay_context;
+    if (kind != DynamicActorEventKind::Retire) {
+        event.world = lady_shell_world(shell, age);
+        event.world_authoritative = true;
+        event.spawn_matrix = spawn_matrix != nullptr ? *spawn_matrix : event.world;
+        event.spawn_matrix_authoritative = true;
+    }
+    session->effect_runtime->apply_actor_event(event);
+}
+
+void spawn_lady_shell(Session* session, MotionState& state,
+                      MotionState::LadyShell shell) {
+    if (session == nullptr) return;
+    shell.instance = state.next_actor_instance++;
+    state.lady_shells.push_back(shell);
+    emit_lady_shell_event(session, shell, DynamicActorEventKind::Spawn,
+                          0U, 0.0F, nullptr);
+}
+
+// Spawns the shell a CEm034 signal consumer creates when the EXE path does
+// not need the player. Returns false when the retail shot aims at the player
+// (bank-3 pistol states): those stay deferred actor events.
+[[nodiscard]] bool spawn_lady_signal_shell(Session* session,
+                                           MotionState& state,
+                                           std::int8_t actor,
+                                           std::uint16_t lady_state,
+                                           std::uint8_t lane,
+                                           std::uint8_t channel,
+                                           std::uint8_t value,
+                                           const std::array<std::uint8_t, 5>& channels,
+                                           float frame) {
+    if (session == nullptr) return false;
+    MotionState::LadyShell shell;
+    shell.actor = static_cast<std::uint8_t>(actor);
+    shell.spawn_frame = frame;
+    shell.signal = {lane, channel, value};
+    shell.lady_state = lady_state;
+    if (actor == 0 && lady_state == 0x7FU) {
+        // 0x140169B90: without a player in the 0x1402C6870 cone the shot uses
+        // the pistol axis (-1,0,0) of slot21 (lane1/ch1 == 0) or slot22.
+        // The muzzle is 0x14016F5E0 (joint 9 unless +0x5A27 is cleared;
+        // state 0x7F leaves it as set by the previous entry: joint 9 here).
+        const std::uint8_t component = channels[1] == 0U ? 1U : 2U;
+        const auto axis = lady_gun_axis(*session, component, {-1.0F, 0.0F, 0.0F});
+        const auto muzzle = lady_joint_translation(*session, 9U);
+        if (!axis.has_value() || !muzzle.has_value()) return false;
+        shell.origin = *muzzle;
+        shell.velocity = {axis->x * kLadyGunSpeed, axis->y * kLadyGunSpeed,
+                          axis->z * kLadyGunSpeed};
+        shell.lifetime = kStraightShellLifetime;
+        shell.gameplay_context = true;
+        spawn_lady_shell(session, state, shell);
+        return true;
+    }
+    if (actor == 5) {
+        // 0x140169D7C: no player in the cone -> slot23 axis (1,0,0);
+        // dispatcher 0x14016AB5A sets +0x5A27 = 1 -> muzzle joint 9.
+        const auto axis = lady_gun_axis(*session, 3U, {1.0F, 0.0F, 0.0F});
+        const auto muzzle = lady_joint_translation(*session, 9U);
+        if (!axis.has_value() || !muzzle.has_value()) return false;
+        shell.origin = *muzzle;
+        shell.velocity = {axis->x * kLadyGunSpeed, axis->y * kLadyGunSpeed,
+                          axis->z * kLadyGunSpeed};
+        shell.lifetime = kStraightShellLifetime;
+        shell.gameplay_context = true;
+        spawn_lady_shell(session, state, shell);
+        return true;
+    }
+    if (actor == 4) {
+        // 0x14016A095: count = [1,2,3,6,3,2][em+0x5A1C] (fight phase; the
+        // standalone Reader uses entry 0). Each shell: (0,0,10,1) rotated by
+        // pitch -(rand%30) deg and yaw ((rand%100)-50) deg + actor yaw, from
+        // joint 9 (em+0x830), fuse 120 + 30*i. The Reader uses the means of
+        // the retail uniform draws: pitch -14.5 deg, yaw -0.5 deg.
+        const auto hand = lady_joint_translation(*session, 9U);
+        if (!hand.has_value()) return false;
+        constexpr float kDeg = 0.017453292519943295F;
+        const float pitch = -14.5F * kDeg;
+        const float yaw = -0.5F * kDeg;
+        // v * Ry * Rx (0x140330450 composes Rz*Ry*Rx; z angle is 0).
+        const Vec3 yawed{10.0F * std::sin(yaw), 0.0F, 10.0F * std::cos(yaw)};
+        shell.velocity = {yawed.x,
+                          -yawed.z * std::sin(pitch),
+                          yawed.z * std::cos(pitch)};
+        shell.origin = *hand;
+        shell.lifetime = 120.0F;
+        shell.gameplay_context = true;
+        spawn_lady_shell(session, state, shell);
+        return true;
+    }
+    return false;
+}
+
+// State 0x85 fire loop (0x140169F98..0x14016A090): while +0x57DD is set the
+// 0.9 timer expires every tick and 0x140171C70(em, 1) fires one Shl00: SMG
+// axis (-1,0,0) of slot24 node0, speed 45, muzzle joint 13 (the 0x85 entry
+// clears +0x5A27). dl = 1 skips the player aim entirely.
+void fire_lady_smg(Session* session, MotionState& state, float frame) {
+    if (session == nullptr || state.smg_fire_start < 0.0F) return;
+    float tick = std::max(state.smg_last_tick + 1.0F, state.smg_fire_start);
+    for (; tick <= frame && tick < state.smg_fire_end; tick += 1.0F) {
+        const auto axis = lady_gun_axis(*session, 4U, {-1.0F, 0.0F, 0.0F});
+        const auto muzzle = lady_joint_translation(*session, 13U);
+        state.smg_last_tick = tick;
+        if (!axis.has_value() || !muzzle.has_value()) continue;
+        MotionState::LadyShell shell;
+        shell.actor = 0U;
+        shell.spawn_frame = tick;
+        shell.signal = {1U, 0U, 1U};
+        shell.lady_state = 0x85U;
+        shell.origin = *muzzle;
+        shell.velocity = {axis->x * kLadySmgSpeed, axis->y * kLadySmgSpeed,
+                          axis->z * kLadySmgSpeed};
+        shell.lifetime = kStraightShellLifetime;
+        spawn_lady_shell(session, state, shell);
+    }
+}
+
+void sync_lady_shells(Session* session, MotionState& state, float frame) {
+    if (session == nullptr) return;
+    for (auto& shell : state.lady_shells) {
+        if (shell.retired) continue;
+        const float age = frame - shell.spawn_frame;
+        if (!(age > 0.0F)) continue;
+        if (shell.actor == 4U) {
+            const float fuse = std::floor(shell.lifetime);
+            const float warn_age = fuse - (kGrenadeWarnFuse - 1.0F);
+            if (!shell.warn_emitted && age >= warn_age) {
+                shell.warn_emitted = true;
+                emit_lady_shell_event(session, shell, DynamicActorEventKind::Spawn,
+                                      1U, warn_age, nullptr);
+            }
+            const float explode_age = fuse + 2.0F;
+            if (!shell.explode_emitted && age >= explode_age) {
+                shell.explode_emitted = true;
+                // 0x1402E7CA0 copies the shell matrix and adds 2.0 to y.
+                Matrix4 blast = lady_shell_world(shell, explode_age);
+                blast.values[13] += 2.0F;
+                emit_lady_shell_event(session, shell, DynamicActorEventKind::Spawn,
+                                      2U, explode_age, &blast);
+            }
+        }
+        const float retire_age = lady_shell_retire_age(shell);
+        if (age >= retire_age) {
+            shell.retired = true;
+            emit_lady_shell_event(session, shell, DynamicActorEventKind::Retire,
+                                  0U, retire_age, nullptr);
+            continue;
+        }
+        emit_lady_shell_event(session, shell, DynamicActorEventKind::Update,
+                              0U, age, nullptr);
+    }
+}
+
 void sync_lady_actor_effects(Session* session,
                              MotionState& state,
                              float frame) {
@@ -914,6 +1243,10 @@ void reset_lady_runtime(Session* session) noexcept {
         deactivate_lady_dynamic_visuals(session);
         state.active_actor_instances.fill(0U);
         state.next_actor_instance = 1U;
+        state.lady_shells.clear();
+        state.smg_fire_start = -1.0F;
+        state.smg_fire_end = std::numeric_limits<float>::infinity();
+        state.smg_last_tick = -1.0F;
         if (session->effect_runtime != nullptr) session->effect_runtime->reset();
         const auto entry = apply_lady_state_entry(session, *state.lady_state);
         state.lady_entry_applied = true;
@@ -956,7 +1289,31 @@ void reset_lady_runtime(Session* session) noexcept {
                 }
                 const auto applied = apply_lady_signal(
                     session, *state.lady_state, lane, channel, value);
-                if (applied.dynamic_actor >= 0) {
+                const float signal_frame = std::max(signal.after_frame, 0.0F);
+                if (*state.lady_state == 0x85U && lane == 1U && channel == 0U) {
+                    if (value == 1U) {
+                        state.smg_fire_start = signal_frame;
+                        state.smg_fire_end = std::numeric_limits<float>::infinity();
+                        state.smg_last_tick = signal_frame - 1.0F;
+                    } else if (value == 2U) {
+                        state.smg_fire_end = signal_frame;
+                    }
+                }
+                if (applied.dynamic_actor == 0 || applied.dynamic_actor == 4 ||
+                    applied.dynamic_actor == 5) {
+                    state.last_dynamic_actor = applied.dynamic_actor;
+                    if (!spawn_lady_signal_shell(
+                            session, state, applied.dynamic_actor,
+                            *state.lady_state, lane, channel, value,
+                            signal.channels, signal_frame)) {
+                        // The retail shot needs the player: keep the event
+                        // deferred (no world matrix), as before.
+                        emit_lady_actor_event(
+                            session, state, applied.dynamic_actor,
+                            *state.lady_state, lane, channel, value,
+                            signal_frame);
+                    }
+                } else if (applied.dynamic_actor >= 0) {
                     state.last_dynamic_actor = applied.dynamic_actor;
                     spawn_lady_dynamic_visual(
                         session, applied.dynamic_actor,
@@ -991,13 +1348,26 @@ void reset_lady_runtime(Session* session) noexcept {
     // re-enable the hand constraint mid-action. It is not forced back to the
     // independent domain here.
 
+    if (*state.lady_state == 0x85U) fire_lady_smg(session, state, frame);
+
     advance_lady_dynamic_visuals(session, frame);
     sync_lady_actor_effects(session, state, frame);
+    sync_lady_shells(session, state, frame);
     state.lady_runtime_frame = frame;
     return true;
 }
 
 }  // namespace
+
+Vec3 shl04_grenade_position(Vec3 origin, Vec3 velocity, float fuse,
+                            float age) noexcept {
+    MotionState::LadyShell shell;
+    shell.actor = 4U;
+    shell.origin = origin;
+    shell.velocity = velocity;
+    shell.lifetime = fuse;
+    return grenade_pose(shell, std::isfinite(age) ? age : 0.0F).position;
+}
 
 Matrix4 shl02_shell_world(const Matrix4& slot20_node0, float age) noexcept {
     const auto spawn = shl02_spawn(slot20_node0);

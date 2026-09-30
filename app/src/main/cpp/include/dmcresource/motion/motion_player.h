@@ -74,6 +74,14 @@ void clear_motion(Session* session) noexcept;
 [[nodiscard]] Matrix4 shl02_shell_world(
     const Matrix4& slot20_node0, float age) noexcept;
 
+// CEm034Shl04 grenade position `age` ticks after its spawn (0x1401756E0):
+// pos += vel, vel.y = min(vel.y - 1, 30) per tick, the Reader's room floor
+// (y = 0) standing in for the stage raycast 0x1402C64F0 with its mirror /
+// 0.5 restitution response; at rest below |v| = 10; frozen once the fuse
+// runs out.
+[[nodiscard]] Vec3 shl04_grenade_position(Vec3 origin, Vec3 velocity,
+                                          float fuse, float age) noexcept;
+
 // MotionScript playback is intentionally separate from raw MOT playback.
 // A PAC may retain multiple independent script controllers; each script button
 // can address only MOTs referenced by that script's resource table.

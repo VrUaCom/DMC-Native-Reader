@@ -102,6 +102,17 @@ APK verifier.
   - **Gameplay-dependent parts:** the steering (from tick 10) and the
     collision/proximity end need gameplay context, which the Reader doesn't
     have: it holds the direction and flags the updates.
+- ✅ Kalina control domain follows the CEm034 entry dispatcher:
+  - the component track plays with the body for acts 10, 17..32 and 40..42,
+    in actor space;
+  - acts 0..6 keep Kalina on the hand constraint.
+- ✅ Lady model-less shells:
+  - SMG burst (act 50), dual pistols (act 44), Shl05 shots (act 46) and
+    the grenade (act 60) now spawn their FXBANK effects from the EXE's
+    no-player paths.
+  - Bank-3 pistol states and the Shl01 Kalina missiles need the player or
+    arena and remain deferred.
+  - [Details](research/dmc3-shell-effect-runtime-exe-v73.md).
 
 Acceptance disposition: APK installation and baseline opening are green, but
 rotation/state restoration is NO-GO for Android acceptance until the current
