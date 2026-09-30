@@ -1690,9 +1690,9 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     // Line widths travel in the render flags: mesh lines in bits 16-21,
     // collision lines in bits 22-27 (image pixels, 0 = 1).
     {
-        // Room opacity: bits 28-31, in sixteenths (0 = as drawn).
-        const auto sixteenths = (flags >> 28U) & 15U;
-        view.room_opacity = sixteenths == 0U ? 1.0F : static_cast<float>(sixteenths) / 16.0F;
+        // Room wire opacity: bits 28-31 hold tenths + 1 (0 = not set).
+        const auto coded = (flags >> 28U) & 15U;
+        if (coded != 0U) view.room_wire_opacity = static_cast<float>(std::min(coded - 1U, 10U)) / 10.0F;
     }
     view.mesh_line_px = std::max(1, static_cast<int>((flags >> kMeshLineShift) & 63U));
     view.collision_line_px = std::max(1, static_cast<int>((flags >> kCollisionLineShift) & 63U));

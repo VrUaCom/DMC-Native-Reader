@@ -216,10 +216,27 @@ void line_rgba(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
     }
 }
 
+// Translucent line pixel that never gets stronger than one layer of the line:
+// crossing lines keep the same tone instead of piling up to solid colour.
+void put_rgba_capped(RgbaImage& image, int x, int y, std::uint8_t r, std::uint8_t g, std::uint8_t b,
+                     std::uint8_t a, const std::uint8_t* background) {
+    if (x < 0 || y < 0 || x >= image.width || y >= image.height || a == 0U) return;
+    const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
+    const std::uint8_t color[3] = {r, g, b};
+    for (std::size_t k = 0U; k < 3U; ++k) {
+        const int target = background[k] + (static_cast<int>(color[k]) - background[k]) * a / 255;
+        const int old = image.pixels[o + k];
+        // Toward the line colour only: a brighter line lightens, a darker darkens.
+        const bool lighter = color[k] >= background[k];
+        image.pixels[o + k] = static_cast<std::uint8_t>(lighter ? std::max(old, target) : std::min(old, target));
+    }
+    image.pixels[o + 3U] = 255U;
+}
+
 // Fills a convex quad by scanlines: every covered pixel is written once, so a
 // translucent thick line does not darken where its parts overlap.
 void fill_convex_quad(RgbaImage& image, const P2 (&v)[4], std::uint8_t r, std::uint8_t g, std::uint8_t bl,
-                      std::uint8_t alpha) {
+                      std::uint8_t alpha, const std::uint8_t* cap_background = nullptr) {
     float y_min = v[0].y, y_max = v[0].y;
     for (const auto& p : v) {
         y_min = std::min(y_min, p.y);
@@ -243,7 +260,10 @@ void fill_convex_quad(RgbaImage& image, const P2 (&v)[4], std::uint8_t r, std::u
         if (!(x_left <= x_right)) continue;
         const int x0 = std::max(0, static_cast<int>(std::ceil(x_left - 0.5F)));
         const int x1 = std::min(image.width - 1, static_cast<int>(std::floor(x_right - 0.5F)));
-        for (int x = x0; x <= x1; ++x) put_rgba(image, x, y, r, g, bl, alpha);
+        for (int x = x0; x <= x1; ++x) {
+            if (cap_background != nullptr) put_rgba_capped(image, x, y, r, g, bl, alpha, cap_background);
+            else put_rgba(image, x, y, r, g, bl, alpha);
+        }
     }
 }
 
@@ -251,7 +271,7 @@ void fill_convex_quad(RgbaImage& image, const P2 (&v)[4], std::uint8_t r, std::u
 // alpha: a segment may have one end far outside the image after the
 // near-plane clip. Width 1 is a Bresenham line; wider ones are a rectangle.
 void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
-               std::uint8_t alpha = 255U, int width = 1) {
+               std::uint8_t alpha = 255U, int width = 1, const std::uint8_t* cap_background = nullptr) {
     if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) return;
     const float half = 0.5F * static_cast<float>(std::max(1, width));
     const float margin = width > 1 ? half + 1.0F : 0.0F;
@@ -287,7 +307,7 @@ void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
         const float nx = -uy * half, ny = ux * half;
         const P2 quad[4] = {{s.x + nx, s.y + ny, 0.0F}, {e.x + nx, e.y + ny, 0.0F},
                             {e.x - nx, e.y - ny, 0.0F}, {s.x - nx, s.y - ny, 0.0F}};
-        fill_convex_quad(image, quad, r, g, bl, alpha);
+        fill_convex_quad(image, quad, r, g, bl, alpha, cap_background);
         return;
     }
     int x0 = static_cast<int>(std::lround(p0.x));
@@ -298,7 +318,8 @@ void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std
     const int ey = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = ex + ey;
     for (;;) {
-        put_rgba(image, x0, y0, r, g, bl, alpha);
+        if (cap_background != nullptr) put_rgba_capped(image, x0, y0, r, g, bl, alpha, cap_background);
+        else put_rgba(image, x0, y0, r, g, bl, alpha);
         if (x0 == x1 && y0 == y1) break;
         const int e2 = 2 * err;
         if (e2 >= ey) { err += ey; x0 += sx; }
@@ -1008,7 +1029,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                   static_cast<float>(image.height) * 0.5F - zoom * frame.focal_px * c.y * inv, c.z};
     };
     const auto line3 = [&](const Vec3& world_a, const Vec3& world_b, std::uint8_t r, std::uint8_t g,
-                           std::uint8_t bl, std::uint8_t alpha, int width) {
+                           std::uint8_t bl, std::uint8_t alpha, int width, const std::uint8_t* cap_background = nullptr) {
         Vec3 a = to_cam(world_a), b = to_cam(world_b);
         if (a.z < line_near && b.z < line_near) return;
         if (a.z < line_near) {
@@ -1018,7 +1039,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const float t = (line_near - b.z) / (a.z - b.z);
             b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, line_near};
         }
-        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha, width);
+        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha, width, cap_background);
     };
 
     std::vector<P2> p;
@@ -1334,17 +1355,20 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const Mesh& rm = *view.room_mesh;
             const bool main_view = mesh.indices.size() < 3U || view.room_wire_main;
             const std::uint8_t level = main_view ? 235U : 150U;
-            const float faint = std::clamp(view.room_opacity, 0.05F, 1.0F);
-            const std::uint8_t alpha = static_cast<std::uint8_t>((main_view ? 190.0F : 120.0F) * faint);
-            for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
+            // The room seen around a model: its own opacity setting (0 hides the lines).
+            const float backdrop = std::clamp(view.room_wire_opacity, 0.0F, 1.0F);
+            const std::uint8_t alpha = static_cast<std::uint8_t>(main_view ? 190.0F : 255.0F * backdrop);
+            static constexpr std::uint8_t kBackdrops[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
+            const std::uint8_t* backdrop_rgb = main_view ? nullptr : kBackdrops[view.background & 3U];
+            for (std::size_t t = 0U; alpha > 0U && t + 2U < rm.indices.size(); t += 3U) {
                 const auto ia = rm.indices[t], ib = rm.indices[t + 1U], ic = rm.indices[t + 2U];
                 if (ia >= rm.vertices.size() || ib >= rm.vertices.size() || ic >= rm.vertices.size()) continue;
                 const Vec3 a = room_place(view, rm.vertices[ia]);
                 const Vec3 b = room_place(view, rm.vertices[ib]);
                 const Vec3 c = room_place(view, rm.vertices[ic]);
-                line3(a, b, level, level, 255U, alpha, mesh_px);
-                line3(b, c, level, level, 255U, alpha, mesh_px);
-                line3(c, a, level, level, 255U, alpha, mesh_px);
+                line3(a, b, level, level, 255U, alpha, mesh_px, backdrop_rgb);
+                line3(b, c, level, level, 255U, alpha, mesh_px, backdrop_rgb);
+                line3(c, a, level, level, 255U, alpha, mesh_px, backdrop_rgb);
             }
         }
         for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
@@ -1359,42 +1383,17 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     } else {
         // Per band: opaque room (front to back), floor, model, soft room
         // texels (back to front), then the shadow footprint.
-        const float room_opacity = std::clamp(view.room_opacity, 0.0F, 1.0F);
-        const bool faint_room = room && room_opacity < 0.999F;
-        static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
-        const auto& background = kBackgrounds[view.background & 3U];
         for_row_bands(image.height, [&](int row_begin, int row_end) {
             for (const auto& tri : room_frame.opaque) {
                 raster_room(tri, false, smooth_room, cd, row_begin, row_end, image, depth);
-            }
-            if (faint_room) {
-                // A faint set: the whole room (soft texels included) fades
-                // into the background, then the model is drawn over it.
-                for (const auto& tri : room_frame.translucent) {
-                    raster_room(tri, true, smooth_room, cd, row_begin, row_end, image, depth);
-                }
-                for (int y = row_begin; y < row_end; ++y) {
-                    auto* row = image.pixels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(image.width) * 4U;
-                    for (int x = 0; x < image.width; ++x) {
-                        for (int k = 0; k < 3; ++k) {
-                            row[x * 4 + k] = static_cast<std::uint8_t>(
-                                background[k] + (row[x * 4 + k] - background[k]) * room_opacity);
-                        }
-                    }
-                }
-                std::fill(depth.begin() + static_cast<std::ptrdiff_t>(row_begin) * image.width,
-                          depth.begin() + static_cast<std::ptrdiff_t>(row_end) * image.width,
-                          std::numeric_limits<float>::infinity());
             }
             if (floor && !room) {
                 fill(floor_quad[0], floor_quad[1], floor_quad[2], row_begin, row_end, floor_pixel);
                 fill(floor_quad[0], floor_quad[2], floor_quad[3], row_begin, row_end, floor_pixel);
             }
             model_band(row_begin, row_end);
-            if (!faint_room) {
-                for (const auto& tri : room_frame.translucent) {
-                    raster_room(tri, true, smooth_room, cd, row_begin, row_end, image, depth);
-                }
+            for (const auto& tri : room_frame.translucent) {
+                raster_room(tri, true, smooth_room, cd, row_begin, row_end, image, depth);
             }
             for (std::size_t t = 0U; t + 2U < shadow.size(); t += 3U) {
                 fill(shadow[t], shadow[t + 1U], shadow[t + 2U], row_begin, row_end, shadow_pixel);

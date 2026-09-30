@@ -532,6 +532,21 @@ int main() {
                 if (wired.pixels[o] > 120U && wired.pixels[o + 2U] > 200U) ++lines;
             }
             assert(lines > 20U);
+            // The backdrop opacity of the room lines: 0 hides them, more is brighter.
+            {
+                dmcresource::ViewState backdrop = look;
+                backdrop.room_wire_main = false;
+                backdrop.mesh_line_px = 1;
+                const auto total = [&](float opacity) {
+                    backdrop.room_wire_opacity = opacity;
+                    const auto image = dmcresource::render_view(model->render_mesh, 96, 96, backdrop);
+                    std::uint64_t sum = 0U;
+                    for (std::size_t o = 2U; o < image.pixels.size(); o += 4U) sum += image.pixels[o];
+                    return sum;
+                };
+                const auto hidden = total(0.0F), faint = total(0.3F), solid = total(1.0F);
+                assert(hidden < faint && faint < solid);
+            }
             // A wider mesh line covers more pixels.
             look.mesh_line_px = 4;
             const auto thick = dmcresource::render_view(model->render_mesh, 96, 96, look);

@@ -768,10 +768,10 @@ public final class MainActivity extends Activity {
     private static final String SET_SPEED = "set.speed";
     private static final String SET_FAST_PREVIEW = "set.fastPreview";
     private static final String SET_MESH_LINE = "set.meshLine";
-    // Room opacity in sixteenths (0 = fully drawn); bits 28-31 of the render flags.
-    private static final String SET_ROOM_FADE = "set.roomFade";
+    // Opacity of the room's wireframe lines behind a model, in tenths (0-10);
+    // bits 28-31 of the render flags hold it + 1.
+    private static final String SET_ROOM_LINES = "set.roomLines";
     private static final String SET_ROOM_ANIM = "set.roomAnimate";
-    private static final int[] ROOM_FADE_CODES = {0, 12, 8, 5, 3, 2, 1};
     private static final String SET_COLLISION_LINE = "set.collisionLine";
 
     private void applyViewerSettings() {
@@ -779,7 +779,7 @@ public final class MainActivity extends Activity {
         final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
                 | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
                 | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11)
-                | ((p.getInt(SET_ROOM_FADE, 0) & 15) << 28)
+                | ((Math.max(0, Math.min(10, p.getInt(SET_ROOM_LINES, 5))) + 1) << 28)
                 | (p.getBoolean(SET_ROOM_ANIM, true) ? 1 << 15 : 0);
         renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
                 p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
@@ -903,6 +903,36 @@ public final class MainActivity extends Activity {
         return fallback;
     }
 
+    /** A labelled slider from `min` to `max`; the label shows `format(value)`. */
+    private LinearLayout sliderRow(String label, int min, int max, int step, int value,
+                                   java.util.function.IntFunction<String> format,
+                                   java.util.function.IntConsumer onChange) {
+        final LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(10), 0, dp(4));
+        final TextView title = new TextView(this);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        final int clamped = Math.max(min, Math.min(max, value));
+        title.setText(label + ": " + format.apply(clamped));
+        block.addView(title);
+        final android.widget.SeekBar bar = new android.widget.SeekBar(this);
+        bar.setMax(max - min);
+        bar.setProgress(clamped - min);
+        bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar seekBar, int progress, boolean fromUser) {
+                final int v = min + progress;
+                title.setText(label + ": " + format.apply(v));
+                if (fromUser) onChange.accept(v);
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar seekBar) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar seekBar) { }
+        });
+        block.addView(bar, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return block;
+    }
+
     private TextView hint(String text) {
         final TextView view = new TextView(this);
         view.setText(text);
@@ -996,6 +1026,9 @@ public final class MainActivity extends Activity {
         content.addView(choiceRow("Collision line width (HITS, attack shapes; px at 720)", widthNames,
                 indexOf(widths, p.getInt(SET_COLLISION_LINE, 1), 0),
                 i -> { p.edit().putInt(SET_COLLISION_LINE, widths[i]).apply(); apply.run(); }));
+        content.addView(sliderRow("Room mesh lines behind a model (wireframe mode): opacity", 0, 10, 10,
+                p.getInt(SET_ROOM_LINES, 5), value -> value * 10 + "%  " + (value == 0 ? "(hidden)" : ""),
+                value -> { p.edit().putInt(SET_ROOM_LINES, value).apply(); apply.run(); }));
         addCollisionKinds(content);
         final int[] frames = {50, 33, 16};
         content.addView(choiceRow("While moving (drag, flick, animation)",
@@ -1055,10 +1088,6 @@ public final class MainActivity extends Activity {
             content.addView(choiceRow("Room animation (sky clouds, stage effects)", new String[]{"On", "Off"},
                     p.getBoolean(SET_ROOM_ANIM, true) ? 0 : 1,
                     i -> { p.edit().putBoolean(SET_ROOM_ANIM, i == 0).apply(); apply.run(); }));
-            content.addView(choiceRow("Room opacity (a faint set behind the opened file)",
-                    new String[]{"100%", "75%", "50%", "30%", "20%", "12%", "6%"},
-                    indexOf(ROOM_FADE_CODES, p.getInt(SET_ROOM_FADE, 0), 0),
-                    i -> { p.edit().putInt(SET_ROOM_FADE, ROOM_FADE_CODES[i]).apply(); apply.run(); }));
             if (NativeBridge.roomCollisionSourceCount() > 0) {
                 content.addView(choiceRow("HITS room collision", new String[]{"On", "Off"},
                         renderView.isRoomCollisionVisible() ? 0 : 1,

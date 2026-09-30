@@ -185,9 +185,10 @@ APK verifier.
     runs out the next lower size is chosen and stored.
 
 - ✅ Room effects and the faint room (Android, not device-tested yet):
-  - **Room opacity** (Settings → Room: 100 / 75 / 50 / 30 / 20 / 12 / 6 %): the room
-    fades into the background and the opened model is drawn over all of it.
-    The wireframe room fades with it.
+  - **Room mesh lines behind a model** (wireframe mode, the purple lines):
+    Settings → Render has an opacity slider from 0 % (hidden) to 100 %
+    (opaque) in 10 % steps, default 50 %. A stage opened on its own keeps its
+    white wireframe.
   - **Stage layout keywords** (`# GAME`, traced from the stage files):
     - `uv part, texture, U, V` scrolls a texture: the sky's clouds move
       (rates read as 1/4096 texture per game frame, an inference).
