@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 #include <span>
@@ -71,6 +72,15 @@ struct ViewState {
         float v0{};
         float u1{1.0F};
         float v1{1.0F};
+        // CEffect mode 1 (0x1402E5D00): camera-plane extents around the world
+        // anchor, already scaled to world units: x in [left, right], y in
+        // [bottom, top]. When unset the centred width/height is used.
+        bool extents{};
+        float left{}, right{}, bottom{}, top{};
+        // CEffect mode 2 (0x1402E69E0): an oriented quad whose world corners
+        // are resolved by the caller (order: -B, -B+U, -B+U+V, -B+V).
+        bool oriented{};
+        std::array<Vec3, 4> corners{};
     };
     std::span<const EffectSprite> effect_sprites{};
     // Texture for triangles without one (neutral_texture.h); lit by a

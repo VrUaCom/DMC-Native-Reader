@@ -942,8 +942,55 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         const Vec3 right{-cy, 0.0F, -sy};
         const Vec3 up{0.0F, cp, -sp};
         for (const auto& sprite : view.effect_sprites) {
-            if (sprite.texture == nullptr || !sprite.texture->available() ||
-                !std::isfinite(sprite.width) || !std::isfinite(sprite.height) ||
+            if (sprite.texture == nullptr || !sprite.texture->available()) continue;
+            const float uv[4][2] = {
+                {sprite.u0, sprite.v1}, {sprite.u1, sprite.v1},
+                {sprite.u1, sprite.v0}, {sprite.u0, sprite.v0},
+            };
+            const auto emit_quad = [&](const Vec3 (&corners)[4]) {
+                EffectQuad quad;
+                quad.texture = sprite.texture;
+                for (std::size_t i = 0U; i < 4U; ++i) {
+                    const auto projected = project(corners[i]);
+                    if (!std::isfinite(projected.x) || !std::isfinite(projected.y) ||
+                        !std::isfinite(projected.z)) {
+                        return;
+                    }
+                    quad.vertices[i] = {projected.x, projected.y, projected.z,
+                                        uv[i][0], uv[i][1]};
+                }
+                effect_quads.push_back(quad);
+            };
+            if (sprite.oriented) {
+                const Vec3 corners[4] = {sprite.corners[0], sprite.corners[1],
+                                         sprite.corners[2], sprite.corners[3]};
+                bool finite = true;
+                for (const auto& c : corners) {
+                    finite = finite && std::isfinite(c.x) && std::isfinite(c.y) &&
+                             std::isfinite(c.z);
+                }
+                if (finite) emit_quad(corners);
+                continue;
+            }
+            if (sprite.extents) {
+                Vec3 anchor;
+                if (!matrix_ops::is_finite_affine(sprite.world) ||
+                    !matrix_ops::transform_point({0.0F, 0.0F, 0.0F}, sprite.world, &anchor)) {
+                    continue;
+                }
+                const auto at = [&](float x, float y) {
+                    return Vec3{anchor.x + right.x * x + up.x * y,
+                                anchor.y + right.y * x + up.y * y,
+                                anchor.z + right.z * x + up.z * y};
+                };
+                const Vec3 corners[4] = {
+                    at(sprite.left, sprite.bottom), at(sprite.right, sprite.bottom),
+                    at(sprite.right, sprite.top), at(sprite.left, sprite.top),
+                };
+                emit_quad(corners);
+                continue;
+            }
+            if (!std::isfinite(sprite.width) || !std::isfinite(sprite.height) ||
                 !(sprite.width > 0.0F) || !(sprite.height > 0.0F) ||
                 !matrix_ops::is_finite_affine(sprite.world)) {
                 continue;
@@ -972,23 +1019,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                  center.y - right.y * hx + up.y * hy,
                  center.z - right.z * hx + up.z * hy},
             };
-            EffectQuad quad;
-            quad.texture = sprite.texture;
-            const float uv[4][2] = {
-                {sprite.u0, sprite.v1}, {sprite.u1, sprite.v1},
-                {sprite.u1, sprite.v0}, {sprite.u0, sprite.v0},
-            };
-            bool valid = true;
-            for (std::size_t i = 0U; i < 4U; ++i) {
-                const auto projected = project(corners[i]);
-                if (!std::isfinite(projected.x) || !std::isfinite(projected.y) ||
-                    !std::isfinite(projected.z)) {
-                    valid = false;
-                    break;
-                }
-                quad.vertices[i] = {projected.x, projected.y, projected.z, uv[i][0], uv[i][1]};
-            }
-            if (valid) effect_quads.push_back(quad);
+            emit_quad(corners);
         }
     }
 

@@ -1879,6 +1879,7 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
         auto& vertices = session->render_mesh.vertices;
         const Matrix4f identity = world::identity_matrix();
 
+        const auto evaluate_parts = [&]() -> bool {
         for (auto& part : state.parts) {
             if (!part.clip.evaluate_locals(frame, part.locals)) return false;
             const auto current = animation::build_animated_world_matrices(
@@ -1931,6 +1932,9 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 session->scene.nodes[part.node_begin + node].world = placed_world;
             }
         }
+        return true;
+        };
+        if (!evaluate_parts()) return false;
         // Parts hanging from a host joint follow the freshly posed host; chain
         // nodes advance by the frames elapsed (dt 1 per 60 fps frame, at most
         // 6 so a seek does not explode the solver; a loop restart is 1).
@@ -1964,7 +1968,15 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
         if (!session->lady_component_bindings.empty()) {
             (void)apply_part_attachments(session, 0U);
         }
+        const bool lady_replay =
+            state.lady_state.has_value() &&
+            (!state.lady_entry_applied || frame < state.lady_runtime_frame);
         if (!apply_lady_script_runtime(session, state, frame)) return false;
+        // A state-entry replay rebuilds component placements (stowed preset
+        // first, then the entry's domain). Re-evaluate the MOT-driven parts
+        // so an independent component does not show its reset pose for one
+        // frame on a loop or seek back.
+        if (lady_replay && !evaluate_parts()) return false;
         if (state.script_driven &&
             state.script_role != Session::MotionScriptRole::LadyBody &&
             session->script_effect_bridge.step != nullptr) {

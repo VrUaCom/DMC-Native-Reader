@@ -1210,6 +1210,27 @@ int main() {
             const auto held_view = fx::effect_descriptor(held);
             assert(held_view && held_view->lifetime_ticks == 4 &&
                    held_view->held_by_parent);
+            // Geometry (0x1402E42EA): size mode 0 -> A (+0x3C/+0x44/+0x4C),
+            // B (+0x30..); scale +0xA8; D from +0x150 flag/min/max; +0x1F5.
+            put_f32(e_bytes, 0x30U, 10.0F);
+            put_f32(e_bytes, 0x34U, 10.0F);
+            put_f32(e_bytes, 0x3CU, 20.0F);
+            put_f32(e_bytes, 0x44U, 20.0F);
+            put_f32(e_bytes, 0xA8U, 1.0F);
+            put_f32(e_bytes, 0xACU, -1.0F);
+            put_f32(e_bytes, 0xB0U, 1.0F);
+            e_bytes[0x150U] = 1U;
+            put_f32(e_bytes, 0x154U, -90.0F);
+            put_f32(e_bytes, 0x158U, -90.0F);
+            e_bytes[0x1F5U] = 3U;
+            const fx::Record shaped{'E', 765U, 0U,
+                                    std::span<const std::uint8_t>{e_bytes}, {}};
+            const auto shape = fx::effect_descriptor(shaped);
+            assert(shape && shape->geometry_known &&
+                   shape->size[0] == 20.0F && shape->size[1] == 20.0F &&
+                   shape->pivot[0] == 10.0F && shape->scale[1] == -1.0F &&
+                   shape->rotation_degrees[0] == -90.0F &&
+                   shape->rotation_degrees[1] == 0.0F && shape->orientation == 3U);
             std::vector<std::uint8_t> short_bytes(0x20U, 0U);
             const fx::Record truncated{
                 'E', 1U, 0U, std::span<const std::uint8_t>{short_bytes}, {}};

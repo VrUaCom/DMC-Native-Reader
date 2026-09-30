@@ -255,6 +255,37 @@ std::optional<EffectDescriptor> effect_descriptor(const Record& record) {
         out.lifetime_known = true;
         out.held_by_parent = b[0x84U] != 0U;
     }
+    if (b.size() >= 0x1F6U) {
+        const auto mean = [&b](std::size_t o) {
+            return 0.5F * (f32(b, o) + f32(b, o + 4U));
+        };
+        const auto size_mode = b[0x2CU];
+        if (size_mode == 0U) {
+            out.size = {f32(b, 0x3CU), f32(b, 0x44U), f32(b, 0x4CU)};
+            out.pivot = {f32(b, 0x30U), f32(b, 0x34U), f32(b, 0x38U)};
+        } else {
+            if (size_mode == 1U) {
+                out.size = {mean(0x3CU), mean(0x44U), mean(0x4CU)};
+            } else {
+                const float uniform = mean(0x3CU);
+                out.size = {uniform, uniform, uniform};
+            }
+            // 0x1402E44FD: B = A * 0.5 (a zero extent keeps a zero pivot).
+            for (std::size_t i = 0U; i < 3U; ++i) out.pivot[i] = 0.5F * out.size[i];
+        }
+        out.scale = {f32(b, 0xA8U), f32(b, 0xACU), f32(b, 0xB0U)};
+        for (std::size_t i = 0U; i < 3U; ++i) {
+            const std::size_t o = 0x150U + 12U * i;
+            out.rotation_degrees[i] = b[o] == 1U ? mean(o + 4U) : 0.0F;
+        }
+        out.orientation = b[0x1F5U];
+        bool finite = true;
+        for (std::size_t i = 0U; i < 3U; ++i) {
+            finite = finite && std::isfinite(out.size[i]) && std::isfinite(out.pivot[i]) &&
+                     std::isfinite(out.scale[i]) && std::isfinite(out.rotation_degrees[i]);
+        }
+        out.geometry_known = finite;
+    }
     return out;
 }
 

@@ -617,13 +617,12 @@ bool set_lady_component_preset(Session* session,
     if (index >= contract->presets.size()) return false;
     const auto& record = contract->presets[index];
 
-    // CEm034 component3/preset1 deliberately bypasses serialized node13 and
-    // points CCnsMatrix at CEm034+0x43C0. Canonical EXE reconstruction:
-    //   +0x43C0 = bodyManager(+0x850)->currentWorld(+0x110)
-    //   effective parent = S(+0x4400) * bodyRoot
-    // Both retail Lady bodies (slots1/32) have node0 identity at rest, so the
-    // same result is materialized as (local * S) * hostRootWorld.
-    if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+    // CEm034 component3/preset1 points its CCnsMatrix at CEm034+0x43C0.
+    // Update 0x140171240 copies [em+0x850]->world (+0x110) there - body
+    // joint 13 of the +0x7E8 joint table - and 0x1401712A6 scales it by
+    // +0x4400: effective parent = S * joint13 world, so the shotgun sits in
+    // the hand, not at the body root.
+    if (record.effective_parent == LadyEffectiveParent::RuntimeJointScaled) {
         world::Matrix4f local{};
         local.values =
             attach_local_matrix(record.translation, record.rotation_xyz_radians).values;
@@ -635,7 +634,8 @@ bool set_lady_component_preset(Session* session,
         Matrix4 offset;
         offset.values = local_scaled.values;
         if (!attach_part_skeleton(
-                session, binding.host_part, binding.part, 0U, false, offset)) {
+                session, binding.host_part, binding.part, record.serialized_node,
+                false, offset)) {
             return false;
         }
         binding.preset = preset;
@@ -723,7 +723,7 @@ namespace {
     if (binding == nullptr) return false;
     const bool materialized = set_lady_component_preset(session, *binding, preset);
     // Runtime state remains known even when the preview lacks the special
-    // RuntimeBodyRootScaled materialization bridge.
+    // RuntimeJointScaled materialization bridge.
     binding->preset = preset;
     ++out.changed_components;
     if (!materialized) out.fully_materialized = false;

@@ -344,7 +344,7 @@ enum class LadyControlDomain : std::uint8_t {
 
 enum class LadyEffectiveParent : std::uint8_t {
     BodyJoint = 0,
-    RuntimeBodyRootScaled = 1,  // CEm034+0x43C0, scale source +0x4400
+    RuntimeJointScaled = 1,  // CEm034+0x43C0 = joint13 world * S(+0x4400)
 };
 
 struct LadyPlacementRecord final {
@@ -386,7 +386,7 @@ inline constexpr std::array<LadyComponentContract, 5> kCEm034LadyComponents{{
          {0.0F, 0.0F, -1.6580626964569092F}},
         {13U, {7.199999809265137F, -1.2000000476837158F, 2.700000047683716F},
          {0.0F, -0.1745329201221466F, 0.0F},
-         LadyEffectiveParent::RuntimeBodyRootScaled, 0x43C0U, 0x4400U},
+         LadyEffectiveParent::RuntimeJointScaled, 0x43C0U, 0x4400U},
     }}},
     {4U, 24U, {{
         {14U, {17.0F, -5.0F, -16.0F},
@@ -439,7 +439,7 @@ inline constexpr std::array<LadyDynamicActorContract, 6> kCEm034LadyDynamicActor
 }
 
 // Apply an EXE-confirmed CEm034 placement preset to an assembled persistent
-// component. RuntimeBodyRootScaled is represented exactly in the contract and
+// component. RuntimeJointScaled is represented exactly in the contract and
 // is not approximated as serialized node 13; if the live body-root/scale bridge
 // is unavailable this function returns false instead of guessing.
 bool set_lady_component_preset(Session* session,
@@ -454,7 +454,7 @@ bool set_lady_component_control_domain(Session* session,
                                        LadyControlDomain domain) noexcept;
 
 // Exact CEm034 component3 active-parent scalar (+0x4400). Re-materializes
-// RuntimeBodyRootScaled when component3 is currently ActiveDeployed.
+// RuntimeJointScaled when component3 is currently ActiveDeployed.
 bool set_lady_component_runtime_scale(Session* session,
                                       LadyComponentBinding& binding,
                                       float uniform_scale) noexcept;
@@ -470,7 +470,7 @@ struct LadyRuntimeApplyResult final {
 
 // Apply the recovered CEm034 state-entry baseline/overrides. The binding state
 // is updated even if an exact preview cannot be materialized (currently only
-// component3 ActiveDeployed's RuntimeBodyRootScaled parent).
+// component3 ActiveDeployed's RuntimeJointScaled parent).
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
     Session* session, std::uint16_t state) noexcept;
 

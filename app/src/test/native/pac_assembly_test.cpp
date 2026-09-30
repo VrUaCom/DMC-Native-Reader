@@ -422,8 +422,8 @@ int main() {
     }
 
     // Exact preset switching works for body-joint components and for
-    // component3's RuntimeBodyRootScaled parent. The latter materializes on
-    // body root node0 and never uses the raw serialized node13 as its parent.
+    // component3's RuntimeJointScaled parent: CEm034+0x43C0 is the body
+    // joint13 world (update 0x140171240), scaled by +0x4400.
     assert(dmcresource::motion::set_lady_component_preset(
         lady_first.get(), lady_first->lady_component_bindings[0],
         dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
@@ -435,7 +435,7 @@ int main() {
     assert(lady_first->lady_component_bindings[3].preset ==
            dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
     assert(lady_first->composite_parts[
-        lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+        lady_first->lady_component_bindings[3].part].placement.attachment_selector == 13U);
     assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
 
     // State-entry and signal bridge regressions from the canonical CEm034
@@ -467,7 +467,7 @@ int main() {
         assert(enlarge.recognized && enlarge.fully_materialized);
         assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.5F);
         assert(lady_first->composite_parts[
-            lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+            lady_first->lady_component_bindings[3].part].placement.attachment_selector == 13U);
 
         const auto normalize = dmcresource::motion::apply_lady_signal(
             lady_first.get(), 0x81U, 1U, 1U, 0U);

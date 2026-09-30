@@ -149,6 +149,18 @@ struct EffectDescriptor final {
     std::int32_t lifetime_ticks{};
     bool lifetime_known{};
     bool held_by_parent{};
+    // Geometry (init 0x1402E42EA, draw 0x1402E5D00 / 0x1402E69E0). Size A and
+    // pivot B in effect-local units: size mode +0x2C = 0 takes
+    // A = (+0x3C, +0x44, +0x4C), B = (+0x30, +0x34, +0x38); modes 1/2 draw A
+    // from [min, max] pairs at +0x3C (per axis / uniform) with B = A * 0.5.
+    // Reader uses the mean of retail random draws.
+    bool geometry_known{};
+    std::array<float, 3> size{};
+    std::array<float, 3> pivot{};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};   // +0xA8
+    // Initial rotation D in degrees (+0x150 + 12*i: flag, min, max).
+    std::array<float, 3> rotation_degrees{};
+    std::uint8_t orientation{};                      // +0x1F5 (mode 2)
 };
 [[nodiscard]] std::optional<EffectDescriptor> effect_descriptor(const Record& record);
 

@@ -728,8 +728,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     assembled->inspection.root.properties.push_back({
                         "LadyComponentRuntime",
                         "slots20..24 default to BodyStowed; preset1 is ActiveDeployed. "
-                        "component3 preset1 uses RuntimeBodyRootScaled "
-                        "(CEm034+0x43C0, scale source +0x4400), not body joint13.",
+                        "component3 preset1 uses CEm034+0x43C0 = body joint13 "
+                        "world scaled by +0x4400 (update 0x140171240).",
                         EvidenceLevel::ExeConfirmed});
                 }
             }

@@ -844,6 +844,18 @@ struct PreparedView final {
     return true;
 }
 
+// Camera forward of the view being prepared (same mirrored basis as the
+// renderer). Mode-2 axial billboards turn their width toward it.
+thread_local Vec3 g_effect_view_forward{0.0F, 0.0F, 1.0F};
+
+[[nodiscard]] Vec3 effect_row_transform(const Vec3& p, const Matrix4& m) noexcept {
+    return {
+        p.x * m.values[0] + p.y * m.values[4] + p.z * m.values[8] + m.values[12],
+        p.x * m.values[1] + p.y * m.values[5] + p.z * m.values[9] + m.values[13],
+        p.x * m.values[2] + p.y * m.values[6] + p.z * m.values[10] + m.values[14],
+    };
+}
+
 [[nodiscard]] bool append_effect_sprite(
     const Session& session, const motion::EffectChildRef& child,
     const Matrix4& world,
@@ -854,10 +866,9 @@ struct PreparedView final {
     if (record == nullptr) return false;
     const auto descriptor = effect_bank::effect_descriptor(*record);
     if (!descriptor.has_value()) return false;
-    // The portable presentation boundary is closed for the EXE mode paths
-    // whose resource rectangle/atlas contract is decoded. Mode 5 intentionally
-    // stays undecoded; it has no safe texture fallback.
-    if (descriptor->mode < 1U || descriptor->mode > 3U) return true;
+    // CEffect draw 0x1402E5C70 dispatches modes 0/1/2/5; modes 3 and 4 draw
+    // nothing. Modes 0 and 5 keep their undecoded resource contracts.
+    if (descriptor->mode != 1U && descriptor->mode != 2U) return true;
 
     effect_bank::SpriteFrame frame = descriptor->rectangle;
     std::uint16_t texture_id = descriptor->texture;
@@ -883,7 +894,7 @@ struct PreparedView final {
     if (texture == nullptr || !texture->available()) return false;
     const float inv_w = 1.0F / static_cast<float>(texture->width);
     const float inv_h = 1.0F / static_cast<float>(texture->height);
-    out->push_back({
+    ViewState::EffectSprite sprite{
         world,
         texture,
         static_cast<float>(frame.w),
@@ -891,7 +902,81 @@ struct PreparedView final {
         static_cast<float>(frame.x) * inv_w,
         static_cast<float>(frame.y) * inv_h,
         static_cast<float>(frame.x + frame.w) * inv_w,
-        static_cast<float>(frame.y + frame.h) * inv_h});
+        static_cast<float>(frame.y + frame.h) * inv_h};
+    if (!descriptor->geometry_known) {
+        out->push_back(sprite);
+        return true;
+    }
+    const auto& a = descriptor->size;
+    const auto& b = descriptor->pivot;
+    const auto& scale = descriptor->scale;
+    if (descriptor->mode == 1U) {
+        // 0x1402E5D00: camera-facing, extents x in [-Bx, Ax-Bx], y in
+        // [-By, Ay-By], scaled by |row i| of the effect world times the
+        // record scale (0x1402E5FC2 loop).
+        const auto row_length = [&world](std::size_t row) {
+            const float* r = &world.values[row * 4U];
+            return std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        };
+        const float sx = row_length(0U) * std::fabs(scale[0]);
+        const float sy = row_length(1U) * std::fabs(scale[1]);
+        if (!(sx > 0.0F) || !(sy > 0.0F) || !(a[0] > 0.0F) || !(a[1] > 0.0F)) {
+            return true;
+        }
+        sprite.extents = true;
+        sprite.left = -b[0] * sx;
+        sprite.right = (a[0] - b[0]) * sx;
+        sprite.bottom = -b[1] * sy;
+        sprite.top = (a[1] - b[1]) * sy;
+        if (scale[0] < 0.0F) std::swap(sprite.u0, sprite.u1);
+        if (scale[1] < 0.0F) std::swap(sprite.v0, sprite.v1);
+        out->push_back(sprite);
+        return true;
+    }
+    // 0x1402E69E0: quad -B, -B+U, -B+U+V, -B+V with U = (Ax,0,Az),
+    // V = (0,Ay,0), transformed by S (record scale), R(D) (0x1403304A0,
+    // Rz*Ry*Rx) and the effect world.
+    constexpr float kDegreesToRadians = 0.017453292519943295769F;
+    const Matrix4 rotation = motion::attach_local_matrix_zyx(
+        {0.0F, 0.0F, 0.0F},
+        {descriptor->rotation_degrees[0] * kDegreesToRadians,
+         descriptor->rotation_degrees[1] * kDegreesToRadians,
+         descriptor->rotation_degrees[2] * kDegreesToRadians});
+    Matrix4 local_to_world;
+    if (!matrix_ops::multiply(rotation, world, &local_to_world)) return true;
+    const auto place = [&](float x, float y, float z) {
+        return effect_row_transform(
+            {x * scale[0], y * scale[1], z * scale[2]}, local_to_world);
+    };
+    Vec3 c0 = place(-b[0], -b[1], -b[2]);
+    Vec3 c1 = place(a[0] - b[0], -b[1], a[2] - b[2]);
+    Vec3 c2 = place(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    Vec3 c3 = place(-b[0], a[1] - b[1], -b[2]);
+    if (descriptor->orientation != 0U) {
+        // Variants 1..3 rebuild the width axis from the camera (cross
+        // products at 0x1402E6CB8): keep the U edge, turn V to face the view.
+        const Vec3 axis{c1.x - c0.x, c1.y - c0.y, c1.z - c0.z};
+        const Vec3 width_edge{c3.x - c0.x, c3.y - c0.y, c3.z - c0.z};
+        const float width = std::sqrt(width_edge.x * width_edge.x +
+                                      width_edge.y * width_edge.y +
+                                      width_edge.z * width_edge.z);
+        const auto& f = g_effect_view_forward;
+        Vec3 side{axis.y * f.z - axis.z * f.y, axis.z * f.x - axis.x * f.z,
+                  axis.x * f.y - axis.y * f.x};
+        const float side_length = std::sqrt(side.x * side.x + side.y * side.y + side.z * side.z);
+        if (side_length > 1.0e-6F && width > 0.0F) {
+            const float k = width / side_length;
+            side = {side.x * k, side.y * k, side.z * k};
+            const Vec3 mid{0.5F * (c0.x + c3.x), 0.5F * (c0.y + c3.y), 0.5F * (c0.z + c3.z)};
+            c0 = {mid.x - 0.5F * side.x, mid.y - 0.5F * side.y, mid.z - 0.5F * side.z};
+            c3 = {mid.x + 0.5F * side.x, mid.y + 0.5F * side.y, mid.z + 0.5F * side.z};
+            c1 = {c0.x + axis.x, c0.y + axis.y, c0.z + axis.z};
+            c2 = {c3.x + axis.x, c3.y + axis.y, c3.z + axis.z};
+        }
+    }
+    sprite.oriented = true;
+    sprite.corners = {c0, c1, c2, c3};
+    out->push_back(sprite);
     return true;
 }
 
@@ -987,6 +1072,14 @@ bool collect_effect_children(
     if (out == nullptr || session.effect_runtime == nullptr ||
         session.effect_banks.empty()) return false;
     try {
+        {
+            const float cy = std::cos(out->view.yaw_radians);
+            const float sy = std::sin(out->view.yaw_radians);
+            const float cp = std::cos(out->view.pitch_radians);
+            const float sp = std::sin(out->view.pitch_radians);
+            // forward = right x up of the renderer's mirrored camera basis.
+            g_effect_view_forward = {sy * cp, -cy * sp, -cy * cp};
+        }
         std::vector<ViewState::EffectSprite> staged;
         for (const auto& instance : session.effect_runtime->presentation_instances()) {
             const auto& source = instance.source;
