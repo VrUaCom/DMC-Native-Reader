@@ -97,6 +97,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/module_model.cpp
     modules/module_texture.cpp
     modules/module_evt.cpp
+    modules/dds_bcn.cpp
     modules/ptx_framing_compat.cpp
     modules/ptx_runtime_compat.cpp
     modules/texture_companion.cpp
@@ -286,7 +287,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
-        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level
+        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level bcn_formats
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)
