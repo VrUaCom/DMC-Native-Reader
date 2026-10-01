@@ -377,8 +377,8 @@ void Simulation::step_track(const Track& track, TrackState* state,
     // (table 1: group 0 to all, table 2: group 3 = 0, group 2 = 1).
     constexpr std::array<std::size_t, 3> kEaseGroups{1U, 2U, 4U};  // 0x1405CED70
     const std::size_t table = track.ease < kEaseGroups.size() ? kEaseGroups[track.ease] : 0U;
-    const std::size_t lerped = std::min(groups_, table);
-    for (std::size_t c = 0U; c < lerped * 4U; ++c) {
+    const std::size_t lerped = std::min({groups_, table, std::size_t{4}});
+    for (std::size_t c = 0U; c < lerped * 4U && c < color->size(); ++c) {
         const float v = static_cast<float>(a.color[c]) +
                         (static_cast<float>(b.color[c]) - static_cast<float>(a.color[c])) * p;
         (*color)[c] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(v), 0, 255));
