@@ -1725,6 +1725,28 @@ public final class MainActivity extends Activity {
             params.setMarginEnd(dp(TOOL_GAP_DP));
             variantBar.addView(button, params);
         }
+        // Class events of the assembled enemy (em000 family: Death = control
+        // code 0x3E7). They run on top of the playing Script Play action.
+        final String[] events = session == 0 ? null : NativeBridge.classEventNames(session);
+        for (int index = 0; events != null && index < events.length; ++index) {
+            final int event = index;
+            final String name = events[index];
+            Button button = makeSquareButton("\u2620 " + name, "Send class event " + name, 13f);
+            button.setPadding(dp(10), 0, dp(10), 0);
+            button.setAlpha(0.85f);
+            button.setOnClickListener(v -> {
+                if (session == 0) return;
+                final boolean sent = NativeBridge.triggerClassEvent(session, event);
+                if (sent && !renderView.isMotionPlaying()) renderView.startMotion();
+                notice(sent ? name + " ▶" : "Play an action through Script Play first",
+                        Toast.LENGTH_SHORT);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+            params.setMarginStart(dp(TOOL_GAP_DP * 4));
+            params.setMarginEnd(dp(TOOL_GAP_DP));
+            variantBar.addView(button, params);
+        }
         variantScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
     }
 

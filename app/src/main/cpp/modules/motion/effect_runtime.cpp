@@ -115,6 +115,7 @@ void EffectRuntime::begin_step() noexcept {
 }
 
 void EffectRuntime::reset() noexcept {
+    ++reset_count_;
     actor_events_.clear();
     effect_events_.clear();
     instances_.clear();

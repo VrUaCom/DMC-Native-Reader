@@ -145,4 +145,8 @@ public final class NativeBridge {
     public static native boolean hasCollision(long handle);
     public static native int[] collisionAttackIds(long handle);
     public static native String selectCollisionAttack(long handle, int attack);
+    /** Class events the playing enemy accepts (em000 family: "Death"). */
+    public static native String[] classEventNames(long handle);
+    /** Sends class event {@code index}; false unless a Script Play action runs. */
+    public static native boolean triggerClassEvent(long handle, int index);
 }

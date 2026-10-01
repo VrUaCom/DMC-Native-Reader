@@ -592,6 +592,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         host = part;
                     }
                 }
+                if (host) assembled->enemy_body_part = *host;
                 for (std::size_t part = 0U; host && part < model_entry.size(); ++part) {
                     const auto& entry = entries[model_entry[part]];
                     if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;

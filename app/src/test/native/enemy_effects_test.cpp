@@ -24,9 +24,26 @@ int main() {
     assert(hits.empty());
 
     const auto bindings = em000_effect_bindings();
-    assert(bindings.size() == 2U);
+    assert(bindings.size() == 2U + 28U);
     assert(bindings[0].effect_kind == 'E' && bindings[0].effect_id == 42U && bindings[0].resource_slot == 41U);
     assert(bindings[1].effect_kind == 'V' && bindings[1].effect_id == 42U);
+
+    // Death schedule: 28 spawns at ticks 0..25 on body joints 1..21.
+    const auto death = em000_death_spawns();
+    assert(death.size() == 28U);
+    std::size_t at0 = 0U, p32 = 0U;
+    for (std::size_t i = 0U; i < death.size(); ++i) {
+        const auto& d = death[i];
+        assert(d.joint >= 1U && d.joint <= 21U && d.mode <= 1U);
+        assert((d.kind == 'P') == (d.mode == 1U));
+        if (d.tick == 0.0F) ++at0;
+        if (d.kind == 'P') { ++p32; assert(d.id == 32U); }
+        const auto& b = bindings[2U + i];
+        assert(b.actor == kEm000DeathActor && b.actor_state == i && b.effect_kind == d.kind && b.effect_id == d.id);
+        if (i > 0U) assert(death[i - 1U].tick <= d.tick);
+    }
+    assert(at0 == 4U && p32 == 20U && death.back().tick == 25.0F && death.front().code == 0x69U);
+    assert(class_event_names(nullptr).empty() && !trigger_class_event(nullptr, 0U));
 
     EffectRuntime runtime(bindings);
     const std::vector<EffectResourceRef> resources{

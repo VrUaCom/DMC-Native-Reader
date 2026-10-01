@@ -279,6 +279,9 @@ public:
     // events up to a sought frame into this step's event stream.
     void begin_step() noexcept;
     void reset() noexcept;
+    // Number of reset() calls so far; producers that remember spawned actor
+    // instances compare it to drop their records after a reset.
+    [[nodiscard]] std::uint64_t reset_count() const noexcept { return reset_count_; }
     void apply_actor_event(DynamicActorEvent event);
     // Advances the effect-local clock of every live instance to the script
     // frame (one frame = one 60 Hz game tick, the EXE delta 0x1403261B0 at
@@ -325,6 +328,7 @@ private:
     std::vector<EffectBinding> bindings_;
     std::vector<EffectResourceRef> resources_;
     std::vector<DynamicActorEvent> actor_events_;
+    std::uint64_t reset_count_{};
     std::vector<RuntimeEffectInstance> instances_;
     std::vector<RuntimeEffectInstance> active_instances_;
     std::vector<RuntimeEffectEvent> effect_events_;

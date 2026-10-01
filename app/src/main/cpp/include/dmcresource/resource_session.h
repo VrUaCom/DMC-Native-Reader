@@ -144,6 +144,19 @@ struct Session {
     // composite part its weapon model was attached as (script object 1).
     std::string enemy_class;
     std::optional<std::size_t> enemy_weapon_part;
+    // Composite part of the enemy body model. Its joints are the entries of
+    // the CEm000 joint array obj+0x6D8 (0x14030F850: entry k +0x110 = joint k
+    // world), which the event handler 0x1401C3130 attaches effects to.
+    std::optional<std::size_t> enemy_body_part;
+    // Class event "death" (control code 0x3E7 -> obj+0x2EF4): the Script Play
+    // frame it was triggered at, and the last frame the bridge saw.
+    std::optional<float> enemy_death_start;
+    float enemy_script_frame{};
+    // Actor instances the enemy bridge spawned, keyed by (actor << 16 |
+    // actor_state), valid for effect runtime reset generation
+    // enemy_effect_generation.
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> enemy_effect_actors;
+    std::uint64_t enemy_effect_generation{};
 
     // Boss-Lady CEm034 uses a different runtime: five persistent component
     // managers with two placement presets, plus separate dynamic CShell actors.

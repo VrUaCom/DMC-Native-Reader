@@ -25,6 +25,7 @@
 #include "dmcresource/stage_room.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/enemy_effects.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/session_inspection.h"
@@ -974,6 +975,35 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_selectCollisionAttack(
         if (!dmcresource::collision::select_collision_attack(session, attack)) return env->NewStringUTF("");
         return env->NewStringUTF(dmcresource::collision::describe_collision_selection(*session).c_str());
     } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_classEventNames(
+        JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto names = dmcresource::motion::class_event_names(from_handle(handle));
+        jclass string_class = env->FindClass("java/lang/String");
+        if (string_class == nullptr) return nullptr;
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t index = 0U; index < names.size(); ++index) {
+            jstring value = env->NewStringUTF(names[index]);
+            if (value == nullptr) return nullptr;
+            env->SetObjectArrayElement(out, static_cast<jsize>(index), value);
+            env->DeleteLocalRef(value);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_triggerClassEvent(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    if (index < 0) return JNI_FALSE;
+    return dmcresource::motion::trigger_class_event(from_handle(handle), static_cast<std::size_t>(index))
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL
