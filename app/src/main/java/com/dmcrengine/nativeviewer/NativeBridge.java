@@ -163,4 +163,9 @@ public final class NativeBridge {
     /** Draws breakable stage objects broken (bmodel + one-shot beff) or intact. */
     public static native void setRoomBroken(boolean broken);
     public static native boolean roomBroken();
+
+    /** Draws the view on the graphics chip (OpenGL ES 3) when true, else on the CPU. */
+    public static native void setGpuRendering(boolean enabled);
+    /** What draws the frames ("GPU: OpenGL ES 3.2 / Adreno ...") and the frame counts. */
+    public static native String rendererInfo();
 }

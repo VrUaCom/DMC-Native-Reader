@@ -793,9 +793,11 @@ public final class MainActivity extends Activity {
     private static final String SET_ROOM_LINES = "set.roomLines";
     private static final String SET_ROOM_ANIM = "set.roomAnimate";
     private static final String SET_COLLISION_LINE = "set.collisionLine";
+    private static final String SET_GPU = "set.gpu";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
+        NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
         final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
                 | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
                 | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11)
@@ -1030,6 +1032,12 @@ public final class MainActivity extends Activity {
 
         final Runnable apply = this::applyViewerSettings;
         content.addView(sectionTitle("Render"));
+        content.addView(choiceRow("Renderer", new String[]{"GPU (graphics chip)", "CPU (software)"},
+                p.getBoolean(SET_GPU, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_GPU, i == 0).apply(); apply.run(); }));
+        content.addView(hint("GPU draws the model, the room, the floor, shadows and effects with OpenGL ES 3 "
+                + "(4x anti-aliasing, smooth textures with mipmaps); lines and bones are drawn on top. "
+                + "Wireframe and UV views always use the CPU. Now: " + NativeBridge.rendererInfo()));
         final int[] sides = {360, 540, 720, 1024, 2048, 3840, 5120, 6144, 7680};
         content.addView(choiceRow("Resolution (longest side, px; 2K-8K render larger than the screen)",
                 new String[]{"360", "540", "720", "1024", "2K", "4K", "5K", "6K", "8K"},

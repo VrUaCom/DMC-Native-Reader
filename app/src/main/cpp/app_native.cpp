@@ -32,6 +32,8 @@
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/view_gpu.h"
+#include "android/gles_view_backend.h"
 
 namespace {
 
@@ -1221,4 +1223,31 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_writeSource(JNIEnv*, jclass, jlong
         written += static_cast<std::size_t>(n);
     }
     return ::ftruncate(fd, static_cast<off_t>(bytes.size())) == 0 || written == bytes.size() ? JNI_TRUE : JNI_FALSE;
+}
+
+// ---- Renderer: GPU (OpenGL ES 3 on the device's graphics chip) or CPU.
+
+namespace {
+// The backend is registered when the library loads; its EGL context is made
+// on the first frame drawn.
+const bool g_gles_backend_installed = (dmcviewer::install_gles_view_backend(), true);
+}  // namespace
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, jboolean enabled) {
+    dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
+}
+
+// "GPU: OpenGL ES 3.2 / Adreno (TM) ...", "CPU (software)", ... plus the
+// frame counts so far.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_rendererInfo(JNIEnv* env, jclass) {
+    try {
+        (void)g_gles_backend_installed;
+        const auto stats = dmcresource::gpu_view_stats();
+        const auto text = dmcresource::view_renderer_description() + "\nFrames: " +
+            std::to_string(stats.gpu_frames) + " GPU, " + std::to_string(stats.cpu_frames) + " CPU" +
+            (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "");
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
 }

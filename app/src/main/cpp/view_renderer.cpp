@@ -1,5 +1,6 @@
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/matrix_ops.h"
+#include "dmcresource/view_gpu.h"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <new>
 #include <vector>
 
@@ -969,6 +971,214 @@ void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv
     }
 }
 
+// Camera-facing / oriented / line quads of the effect sprites, projected
+// into image space (the effect pass of render_view and the GPU frame).
+struct EffectQuad final {
+    std::array<EffectSv, 4> vertices{};
+    const ImagePreview* texture{};
+    bool additive{false};
+};
+
+template <class Project>
+[[nodiscard]] std::vector<EffectQuad> build_effect_quads(const ViewState& view, Project&& project, int image_height) {
+    std::vector<EffectQuad> effect_quads;
+    if (view.effect_sprites.empty()) return effect_quads;
+    const float cy = std::cos(view.yaw_radians);
+    const float sy = std::sin(view.yaw_radians);
+    const float cp = std::cos(view.pitch_radians);
+    const float sp = std::sin(view.pitch_radians);
+    // Inverse camera basis for the same mirrored DMC3 camera used by
+    // project_in_frame(): camera-right, camera-up in world coordinates.
+    const Vec3 right{-cy, 0.0F, -sy};
+    const Vec3 up{0.0F, cp, -sp};
+    for (const auto& sprite : view.effect_sprites) {
+        if (!sprite.solid && (sprite.texture == nullptr || !sprite.texture->available())) continue;
+        const float uv[4][2] = {
+            {sprite.u0, sprite.v1}, {sprite.u1, sprite.v1},
+            {sprite.u1, sprite.v0}, {sprite.u0, sprite.v0},
+        };
+        const auto emit_quad = [&](const Vec3 (&corners)[4]) {
+            EffectQuad quad;
+            quad.texture = sprite.texture;
+            quad.additive = sprite.additive;
+            for (std::size_t i = 0U; i < 4U; ++i) {
+                const auto projected = project(corners[i]);
+                if (!std::isfinite(projected.x) || !std::isfinite(projected.y) ||
+                    !std::isfinite(projected.z)) {
+                    return;
+                }
+                const auto& tint = sprite.per_vertex ? sprite.corner_tint[i] : sprite.tint;
+                quad.vertices[i] = {projected.x, projected.y, projected.z, uv[i][0], uv[i][1],
+                                    static_cast<float>(tint[0]), static_cast<float>(tint[1]),
+                                    static_cast<float>(tint[2]), static_cast<float>(tint[3])};
+            }
+            effect_quads.push_back(quad);
+        };
+        if (sprite.line) {
+            // Two projected end points, widened to a screen-space quad.
+            const auto p0 = project(sprite.corners[0]);
+            const auto p1 = project(sprite.corners[1]);
+            if (std::isfinite(p0.x) && std::isfinite(p0.y) && std::isfinite(p0.z) && std::isfinite(p1.x) &&
+                std::isfinite(p1.y) && std::isfinite(p1.z)) {
+                float dx = p1.x - p0.x, dy = p1.y - p0.y;
+                const float len = std::sqrt(dx * dx + dy * dy);
+                const float half = std::max(0.75F, static_cast<float>(image_height) / 720.0F);
+                if (len > 1.0e-4F) {
+                    dx = dx / len * half;
+                    dy = dy / len * half;
+                } else {
+                    dx = half;
+                    dy = 0.0F;
+                }
+                const float nx = -dy, ny = dx;
+                const auto& t0 = sprite.per_vertex ? sprite.corner_tint[0] : sprite.tint;
+                const auto& t1 = sprite.per_vertex ? sprite.corner_tint[1] : sprite.tint;
+                const auto make = [](float x, float y, float z, const std::array<std::uint8_t, 4>& t) {
+                    return EffectSv{x, y, z, 0.0F, 0.0F, static_cast<float>(t[0]), static_cast<float>(t[1]),
+                                    static_cast<float>(t[2]), static_cast<float>(t[3])};
+                };
+                EffectQuad quad;
+                quad.texture = nullptr;
+                quad.additive = sprite.additive;
+                quad.vertices[0] = make(p0.x + nx, p0.y + ny, p0.z, t0);
+                quad.vertices[1] = make(p0.x - nx, p0.y - ny, p0.z, t0);
+                quad.vertices[2] = make(p1.x - nx, p1.y - ny, p1.z, t1);
+                quad.vertices[3] = make(p1.x + nx, p1.y + ny, p1.z, t1);
+                effect_quads.push_back(quad);
+            }
+            continue;
+        }
+        if (sprite.oriented) {
+            const Vec3 corners[4] = {sprite.corners[0], sprite.corners[1],
+                                     sprite.corners[2], sprite.corners[3]};
+            bool finite = true;
+            for (const auto& c : corners) {
+                finite = finite && std::isfinite(c.x) && std::isfinite(c.y) &&
+                         std::isfinite(c.z);
+            }
+            if (finite) emit_quad(corners);
+            continue;
+        }
+        if (sprite.extents) {
+            Vec3 anchor;
+            if (!matrix_ops::is_finite_affine(sprite.world) ||
+                !matrix_ops::transform_point({0.0F, 0.0F, 0.0F}, sprite.world, &anchor)) {
+                continue;
+            }
+            const auto at = [&](float x, float y) {
+                return Vec3{anchor.x + right.x * x + up.x * y,
+                            anchor.y + right.y * x + up.y * y,
+                            anchor.z + right.z * x + up.z * y};
+            };
+            const Vec3 corners[4] = {
+                at(sprite.left, sprite.bottom), at(sprite.right, sprite.bottom),
+                at(sprite.right, sprite.top), at(sprite.left, sprite.top),
+            };
+            emit_quad(corners);
+            continue;
+        }
+        if (!std::isfinite(sprite.width) || !std::isfinite(sprite.height) ||
+            !(sprite.width > 0.0F) || !(sprite.height > 0.0F) ||
+            !matrix_ops::is_finite_affine(sprite.world)) {
+            continue;
+        }
+        Vec3 center;
+        if (!matrix_ops::transform_point({0.0F, 0.0F, 0.0F}, sprite.world, &center)) continue;
+        const auto axis_length = [](float x, float y, float z) {
+            return std::sqrt(std::max(0.0F, x * x + y * y + z * z));
+        };
+        const float sx = axis_length(sprite.world.values[0], sprite.world.values[1], sprite.world.values[2]);
+        const float sy_world = axis_length(sprite.world.values[4], sprite.world.values[5], sprite.world.values[6]);
+        if (!(sx > 1.0e-6F) || !(sy_world > 1.0e-6F)) continue;
+        const float hx = 0.5F * sprite.width * sx;
+        const float hy = 0.5F * sprite.height * sy_world;
+        const Vec3 corners[4] = {
+            {center.x - right.x * hx - up.x * hy,
+             center.y - right.y * hx - up.y * hy,
+             center.z - right.z * hx - up.z * hy},
+            {center.x + right.x * hx - up.x * hy,
+             center.y + right.y * hx - up.y * hy,
+             center.z + right.z * hx - up.z * hy},
+            {center.x + right.x * hx + up.x * hy,
+             center.y + right.y * hx + up.y * hy,
+             center.z + right.z * hx + up.z * hy},
+            {center.x - right.x * hx + up.x * hy,
+             center.y - right.y * hx + up.y * hy,
+             center.z - right.z * hx + up.z * hy},
+        };
+        emit_quad(corners);
+    }
+    return effect_quads;
+}
+
+// World -> camera space, and near-clipped 3D lines / points for overlays
+// (a camera inside a stage has geometry behind it).
+struct OverlayPen final {
+    RgbaImage& image;
+    const CameraFrame& frame;
+    const ViewState& view;
+    float zoom;
+    float line_near;
+    int mesh_px;
+    int collision_px;
+
+    OverlayPen(RgbaImage& target, const CameraFrame& camera, const ViewState& state)
+        : image(target), frame(camera), view(state), zoom(std::clamp(state.zoom, 0.15F, 8.0F)),
+          line_near(std::max(0.5F, camera.radius * 0.02F)), mesh_px(std::clamp(state.mesh_line_px, 1, 63)),
+          collision_px(std::clamp(state.collision_line_px, 1, 63)) {}
+
+    [[nodiscard]] Vec3 to_cam(const Vec3& world) const {
+        const auto r = rotate({world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z},
+                              view.yaw_radians, view.pitch_radians);
+        return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
+    }
+    [[nodiscard]] P2 cam_point(const Vec3& c) const {
+        const float inv = 1.0F / c.z;
+        return P2{static_cast<float>(image.width) * 0.5F + zoom * frame.focal_px * c.x * inv,
+                  static_cast<float>(image.height) * 0.5F - zoom * frame.focal_px * c.y * inv, c.z};
+    }
+    void line3(const Vec3& world_a, const Vec3& world_b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
+               std::uint8_t alpha, int width, const std::uint8_t* cap_background = nullptr) const {
+        Vec3 a = to_cam(world_a), b = to_cam(world_b);
+        if (a.z < line_near && b.z < line_near) return;
+        if (a.z < line_near) {
+            const float t = (line_near - a.z) / (b.z - a.z);
+            a = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, line_near};
+        } else if (b.z < line_near) {
+            const float t = (line_near - b.z) / (a.z - b.z);
+            b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, line_near};
+        }
+        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha, width, cap_background);
+    }
+};
+
+// Attack shapes, room HITS and the bone hierarchy over the finished picture
+// (no depth test: they stay visible through the model).
+void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
+    const ViewState& view = pen.view;
+    for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
+        pen.line3(view.overlay_lines[i], view.overlay_lines[i + 1U], 255U, 90U, 60U, 255U, pen.collision_px);
+    }
+    for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
+        const auto kind = i / 2U < view.room_collision_kinds.size() ? view.room_collision_kinds[i / 2U] : 0U;
+        const auto color = collision_kind_color(kind);
+        pen.line3(room_place(view, view.room_collision_lines[i]), room_place(view, view.room_collision_lines[i + 1U]),
+                  color[0], color[1], color[2], 255U, pen.collision_px);
+    }
+
+    if (hierarchy != nullptr && hierarchy->available()) {
+        for (const auto& edge_value : hierarchy->edges) {
+            if (edge_value.parent >= hierarchy->points.size() || edge_value.child >= hierarchy->points.size()) continue;
+            pen.line3(hierarchy->points[edge_value.parent], hierarchy->points[edge_value.child], 255U, 255U, 255U,
+                      255U, pen.mesh_px);
+        }
+        for (const auto& point : hierarchy->points) {
+            const Vec3 c = pen.to_cam(point);
+            if (c.z >= pen.line_near) marker(pen.image, pen.cam_point(c), 255U, pen.mesh_px);
+        }
+    }
+}
+
 // Runs band(row_begin, row_end) over the image rows on several cores (row
 // chunks handed out in order; every pixel belongs to exactly one band, so
 // the result is the same as a single-threaded pass).
@@ -1010,11 +1220,13 @@ RgbaImage render_uv_map(std::span<const Vec2> coordinates,
     return image;
 }
 
-RgbaImage render_view(const Mesh& mesh, int width, int height,
-                      const ViewState& view,
-                      const HierarchyOverlay* hierarchy,
-                      const std::vector<std::uint32_t>* triangle_texture_slots,
-                      const std::vector<ImagePreview>* textures) {
+namespace {
+
+RgbaImage render_view_software(const Mesh& mesh, int width, int height,
+                               const ViewState& view,
+                               const HierarchyOverlay* hierarchy,
+                               const std::vector<std::uint32_t>* triangle_texture_slots,
+                               const std::vector<ImagePreview>* textures) {
     auto image = make_canvas(width, height, view.background);
     if (mesh.vertices.empty() || mesh.indices.size() < 3U) return image;
 
@@ -1039,33 +1251,11 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                                 image.width, image.height);
     };
 
-    // World -> camera space, and near-clipped 3D lines / points for overlays
-    // (a camera inside a stage has geometry behind it).
-    const auto to_cam = [&](const Vec3& world) {
-        const auto r = rotate({world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z},
-                              view.yaw_radians, view.pitch_radians);
-        return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
-    };
-    const float line_near = std::max(0.5F, frame.radius * 0.02F);
-    const int mesh_px = std::clamp(view.mesh_line_px, 1, 63);
-    const int collision_px = std::clamp(view.collision_line_px, 1, 63);
-    const auto cam_point = [&](const Vec3& c) {
-        const float inv = 1.0F / c.z;
-        return P2{static_cast<float>(image.width) * 0.5F + zoom * frame.focal_px * c.x * inv,
-                  static_cast<float>(image.height) * 0.5F - zoom * frame.focal_px * c.y * inv, c.z};
-    };
-    const auto line3 = [&](const Vec3& world_a, const Vec3& world_b, std::uint8_t r, std::uint8_t g,
-                           std::uint8_t bl, std::uint8_t alpha, int width, const std::uint8_t* cap_background = nullptr) {
-        Vec3 a = to_cam(world_a), b = to_cam(world_b);
-        if (a.z < line_near && b.z < line_near) return;
-        if (a.z < line_near) {
-            const float t = (line_near - a.z) / (b.z - a.z);
-            a = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, line_near};
-        } else if (b.z < line_near) {
-            const float t = (line_near - b.z) / (a.z - b.z);
-            b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, line_near};
-        }
-        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha, width, cap_background);
+    OverlayPen pen{image, frame, view};
+    const int mesh_px = pen.mesh_px;
+    const auto line3 = [&pen](const Vec3& a, const Vec3& b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
+                              std::uint8_t alpha, int line_px, const std::uint8_t* cap_background = nullptr) {
+        pen.line3(a, b, r, g, bl, alpha, line_px, cap_background);
     };
 
     std::vector<P2> p;
@@ -1157,139 +1347,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     const bool colored = mesh.has_color0();
     const bool smooth_model = view.smooth_textures && !view.fast_preview;
 
-    struct EffectQuad final {
-        std::array<EffectSv, 4> vertices{};
-        const ImagePreview* texture{};
-        bool additive{false};
-    };
     std::vector<EffectQuad> effect_quads;
-    if (!view.wireframe && !view.effect_sprites.empty()) {
-        const float cy = std::cos(view.yaw_radians);
-        const float sy = std::sin(view.yaw_radians);
-        const float cp = std::cos(view.pitch_radians);
-        const float sp = std::sin(view.pitch_radians);
-        // Inverse camera basis for the same mirrored DMC3 camera used by
-        // project_in_frame(): camera-right, camera-up in world coordinates.
-        const Vec3 right{-cy, 0.0F, -sy};
-        const Vec3 up{0.0F, cp, -sp};
-        for (const auto& sprite : view.effect_sprites) {
-            if (!sprite.solid && (sprite.texture == nullptr || !sprite.texture->available())) continue;
-            const float uv[4][2] = {
-                {sprite.u0, sprite.v1}, {sprite.u1, sprite.v1},
-                {sprite.u1, sprite.v0}, {sprite.u0, sprite.v0},
-            };
-            const auto emit_quad = [&](const Vec3 (&corners)[4]) {
-                EffectQuad quad;
-                quad.texture = sprite.texture;
-                quad.additive = sprite.additive;
-                for (std::size_t i = 0U; i < 4U; ++i) {
-                    const auto projected = project(corners[i]);
-                    if (!std::isfinite(projected.x) || !std::isfinite(projected.y) ||
-                        !std::isfinite(projected.z)) {
-                        return;
-                    }
-                    const auto& tint = sprite.per_vertex ? sprite.corner_tint[i] : sprite.tint;
-                    quad.vertices[i] = {projected.x, projected.y, projected.z, uv[i][0], uv[i][1],
-                                        static_cast<float>(tint[0]), static_cast<float>(tint[1]),
-                                        static_cast<float>(tint[2]), static_cast<float>(tint[3])};
-                }
-                effect_quads.push_back(quad);
-            };
-            if (sprite.line) {
-                // Two projected end points, widened to a screen-space quad.
-                const auto p0 = project(sprite.corners[0]);
-                const auto p1 = project(sprite.corners[1]);
-                if (std::isfinite(p0.x) && std::isfinite(p0.y) && std::isfinite(p0.z) && std::isfinite(p1.x) &&
-                    std::isfinite(p1.y) && std::isfinite(p1.z)) {
-                    float dx = p1.x - p0.x, dy = p1.y - p0.y;
-                    const float len = std::sqrt(dx * dx + dy * dy);
-                    const float half = std::max(0.75F, static_cast<float>(image.height) / 720.0F);
-                    if (len > 1.0e-4F) {
-                        dx = dx / len * half;
-                        dy = dy / len * half;
-                    } else {
-                        dx = half;
-                        dy = 0.0F;
-                    }
-                    const float nx = -dy, ny = dx;
-                    const auto& t0 = sprite.per_vertex ? sprite.corner_tint[0] : sprite.tint;
-                    const auto& t1 = sprite.per_vertex ? sprite.corner_tint[1] : sprite.tint;
-                    const auto make = [](float x, float y, float z, const std::array<std::uint8_t, 4>& t) {
-                        return EffectSv{x, y, z, 0.0F, 0.0F, static_cast<float>(t[0]), static_cast<float>(t[1]),
-                                        static_cast<float>(t[2]), static_cast<float>(t[3])};
-                    };
-                    EffectQuad quad;
-                    quad.texture = nullptr;
-                    quad.additive = sprite.additive;
-                    quad.vertices[0] = make(p0.x + nx, p0.y + ny, p0.z, t0);
-                    quad.vertices[1] = make(p0.x - nx, p0.y - ny, p0.z, t0);
-                    quad.vertices[2] = make(p1.x - nx, p1.y - ny, p1.z, t1);
-                    quad.vertices[3] = make(p1.x + nx, p1.y + ny, p1.z, t1);
-                    effect_quads.push_back(quad);
-                }
-                continue;
-            }
-            if (sprite.oriented) {
-                const Vec3 corners[4] = {sprite.corners[0], sprite.corners[1],
-                                         sprite.corners[2], sprite.corners[3]};
-                bool finite = true;
-                for (const auto& c : corners) {
-                    finite = finite && std::isfinite(c.x) && std::isfinite(c.y) &&
-                             std::isfinite(c.z);
-                }
-                if (finite) emit_quad(corners);
-                continue;
-            }
-            if (sprite.extents) {
-                Vec3 anchor;
-                if (!matrix_ops::is_finite_affine(sprite.world) ||
-                    !matrix_ops::transform_point({0.0F, 0.0F, 0.0F}, sprite.world, &anchor)) {
-                    continue;
-                }
-                const auto at = [&](float x, float y) {
-                    return Vec3{anchor.x + right.x * x + up.x * y,
-                                anchor.y + right.y * x + up.y * y,
-                                anchor.z + right.z * x + up.z * y};
-                };
-                const Vec3 corners[4] = {
-                    at(sprite.left, sprite.bottom), at(sprite.right, sprite.bottom),
-                    at(sprite.right, sprite.top), at(sprite.left, sprite.top),
-                };
-                emit_quad(corners);
-                continue;
-            }
-            if (!std::isfinite(sprite.width) || !std::isfinite(sprite.height) ||
-                !(sprite.width > 0.0F) || !(sprite.height > 0.0F) ||
-                !matrix_ops::is_finite_affine(sprite.world)) {
-                continue;
-            }
-            Vec3 center;
-            if (!matrix_ops::transform_point({0.0F, 0.0F, 0.0F}, sprite.world, &center)) continue;
-            const auto axis_length = [](float x, float y, float z) {
-                return std::sqrt(std::max(0.0F, x * x + y * y + z * z));
-            };
-            const float sx = axis_length(sprite.world.values[0], sprite.world.values[1], sprite.world.values[2]);
-            const float sy_world = axis_length(sprite.world.values[4], sprite.world.values[5], sprite.world.values[6]);
-            if (!(sx > 1.0e-6F) || !(sy_world > 1.0e-6F)) continue;
-            const float hx = 0.5F * sprite.width * sx;
-            const float hy = 0.5F * sprite.height * sy_world;
-            const Vec3 corners[4] = {
-                {center.x - right.x * hx - up.x * hy,
-                 center.y - right.y * hx - up.y * hy,
-                 center.z - right.z * hx - up.z * hy},
-                {center.x + right.x * hx - up.x * hy,
-                 center.y + right.y * hx - up.y * hy,
-                 center.z + right.z * hx - up.z * hy},
-                {center.x + right.x * hx + up.x * hy,
-                 center.y + right.y * hx + up.y * hy,
-                 center.z + right.z * hx + up.z * hy},
-                {center.x - right.x * hx + up.x * hy,
-                 center.y - right.y * hx + up.y * hy,
-                 center.z - right.z * hx + up.z * hy},
-            };
-            emit_quad(corners);
-        }
-    }
+    if (!view.wireframe) effect_quads = build_effect_quads(view, project, image.height);
 
     // The model's triangles inside rows [row_begin, row_end).
     const auto model_band = [&](int row_begin, int row_end) {
@@ -1473,29 +1532,437 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         });
     }
 
-    for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
-        line3(view.overlay_lines[i], view.overlay_lines[i + 1U], 255U, 90U, 60U, 255U, collision_px);
-    }
-    for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
-        const auto kind = i / 2U < view.room_collision_kinds.size() ? view.room_collision_kinds[i / 2U] : 0U;
-        const auto color = collision_kind_color(kind);
-        line3(room_place(view, view.room_collision_lines[i]), room_place(view, view.room_collision_lines[i + 1U]),
-              color[0], color[1], color[2], 255U, collision_px);
-    }
-
-    if (hierarchy != nullptr && hierarchy->available()) {
-        for (const auto& edge_value : hierarchy->edges) {
-            if (edge_value.parent >= hierarchy->points.size() || edge_value.child >= hierarchy->points.size()) continue;
-            line3(hierarchy->points[edge_value.parent], hierarchy->points[edge_value.child], 255U, 255U, 255U, 255U,
-                  mesh_px);
-        }
-        for (const auto& point : hierarchy->points) {
-            const Vec3 c = to_cam(point);
-            if (c.z >= line_near) marker(image, cam_point(c), 255U, mesh_px);
-        }
-    }
-
+    draw_overlays(pen, hierarchy);
     return image;
+}
+
+// ---- GPU frame (view_gpu.h) ------------------------------------------------
+//
+// The same decisions as render_view_software, written down for a GPU backend
+// instead of rasterised here.
+
+std::atomic<GpuViewBackend*> g_gpu_backend{nullptr};
+std::atomic<bool> g_gpu_enabled{true};
+std::atomic<std::uint64_t> g_gpu_frames{0U};
+std::atomic<std::uint64_t> g_cpu_frames{0U};
+std::atomic<std::uint64_t> g_gpu_failures{0U};
+
+// Camera rotation of rotate() as a matrix (rows), mirror included.
+std::array<float, 9> camera_rotation(float yaw, float pitch) {
+    const float cy = std::cos(yaw), sy = std::sin(yaw);
+    const float cp = std::cos(pitch), sp = std::sin(pitch);
+    return {-cy, 0.0F, sy, -sp * sy, cp, -sp * cy, cp * sy, sp, cp * cy};
+}
+
+// Column-major world -> camera matrix: c = R * (L * p + l - centre) + (-pan, cd),
+// with L / l the room placement (identity for the model).
+std::array<float, 16> camera_matrix(const CameraFrame& frame, const ViewState& view, bool room) {
+    const auto r = camera_rotation(view.yaw_radians, view.pitch_radians);
+    std::array<float, 9> l{1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F};
+    Vec3 lt{};
+    if (room) {
+        const float c = std::cos(view.room_yaw), s = std::sin(view.room_yaw);
+        l = {c, 0.0F, s, 0.0F, 1.0F, 0.0F, -s, 0.0F, c};
+        const Vec3& pv = view.room_pivot;
+        lt = {-(c * pv.x + s * pv.z) + pv.x + view.room_offset.x, view.room_offset.y,
+              -(-s * pv.x + c * pv.z) + pv.z + view.room_offset.z};
+    }
+    std::array<float, 16> m{};
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            float sum = 0.0F;
+            for (int k = 0; k < 3; ++k) sum += r[row * 3 + k] * l[k * 3 + col];
+            m[col * 4 + row] = sum;
+        }
+    }
+    const Vec3 d{lt.x - frame.center.x, lt.y - frame.center.y, lt.z - frame.center.z};
+    const float shift[3] = {-frame.pan_x, -frame.pan_y, frame.camera_distance};
+    for (int row = 0; row < 3; ++row) {
+        m[12 + row] = r[row * 3 + 0] * d.x + r[row * 3 + 1] * d.y + r[row * 3 + 2] * d.z + shift[row];
+    }
+    m[15] = 1.0F;
+    return m;
+}
+
+[[nodiscard]] float camera_z(const std::array<float, 16>& m, const Vec3& p) noexcept {
+    return m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
+}
+
+// The model's triangles grouped by texture and blend, one vertex per corner.
+GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
+                                 const std::vector<std::uint32_t>* triangle_texture_slots,
+                                 const std::vector<ImagePreview>* textures, float radius) {
+    GpuGeometry out;
+    const bool textured = textures != nullptr && triangle_texture_slots != nullptr && mesh.has_uv0() &&
+        mesh.indices.size() % 3U == 0U && triangle_texture_slots->size() == mesh.indices.size() / 3U;
+    const auto lights = view.unlit ? std::vector<float>{}
+                                   : vertex_light(mesh, view.yaw_radians, view.pitch_radians, radius);
+    const bool colored = mesh.has_color0();
+    const bool uv = mesh.has_uv0();
+    const auto n = mesh.vertices.size();
+
+    struct Bucket final {
+        GpuBatch batch;
+        std::vector<std::uint32_t> triangles;  // first index of each triangle
+    };
+    std::vector<Bucket> buckets;
+    std::size_t last = 0U;
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t];
+        if (ia >= n || mesh.indices[t + 1U] >= n || mesh.indices[t + 2U] >= n) continue;
+        const std::uint8_t blend_mode = mesh.has_blend0() ? mesh.blend0[ia] : 0U;
+        const ImagePreview* texture = nullptr;
+        if (textured) {
+            const auto slot = (*triangle_texture_slots)[t / 3U];
+            if (slot != kNoTextureSlot && slot < textures->size() && (*textures)[slot].available()) {
+                texture = &(*textures)[slot];
+            }
+        }
+        bool neutral = false;
+        if (texture == nullptr && view.fallback_texture != nullptr && view.fallback_texture->available()) {
+            texture = view.fallback_texture;
+            neutral = true;
+        }
+        const bool lit = !lights.empty() && (neutral || (!colored && blend_mode != 2U && blend_mode != 3U));
+        GpuBatch key;
+        key.texture = texture;
+        key.kind = texture == nullptr ? GpuBatchKind::model
+            : blend_mode == 2U       ? GpuBatchKind::model_additive
+            : blend_mode == 3U       ? GpuBatchKind::model_subtractive
+                                     : GpuBatchKind::model;
+        key.colored = colored && texture != nullptr;
+        key.light_base = lit ? (neutral ? 0.45F : 0.72F) : 1.0F;
+        key.light_gain = lit ? (neutral ? 0.85F : 0.42F) : 0.0F;
+        const auto same = [&key](const GpuBatch& b) {
+            return b.texture == key.texture && b.kind == key.kind && b.colored == key.colored &&
+                   b.light_base == key.light_base && b.light_gain == key.light_gain;
+        };
+        if (buckets.empty() || !same(buckets[last].batch)) {
+            last = buckets.size();
+            for (std::size_t i = 0U; i < buckets.size(); ++i) {
+                if (same(buckets[i].batch)) {
+                    last = i;
+                    break;
+                }
+            }
+            if (last == buckets.size()) buckets.push_back({key, {}});
+        }
+        buckets[last].triangles.push_back(static_cast<std::uint32_t>(t));
+    }
+    // Opaque batches first, additive / subtractive ones after them (they
+    // never hide anything, so drawing them last keeps them visible).
+    std::stable_partition(buckets.begin(), buckets.end(),
+                          [](const Bucket& b) { return b.batch.kind == GpuBatchKind::model; });
+    std::size_t total = 0U;
+    for (const auto& b : buckets) total += b.triangles.size() * 3U;
+    out.vertices.reserve(total);
+    for (auto& b : buckets) {
+        b.batch.first = static_cast<std::uint32_t>(out.vertices.size());
+        for (const auto t : b.triangles) {
+            for (std::size_t k = 0U; k < 3U; ++k) {
+                const auto i = mesh.indices[t + k];
+                GpuVertex v;
+                v.x = mesh.vertices[i].x;
+                v.y = mesh.vertices[i].y;
+                v.z = mesh.vertices[i].z;
+                if (uv) {
+                    v.u = mesh.uv0[i].u;
+                    v.v = mesh.uv0[i].v;
+                }
+                if (colored) v.rgba = mesh.color0[i];
+                v.light = lights.empty() ? 0.0F : lights[i];
+                out.vertices.push_back(v);
+            }
+        }
+        b.batch.count = static_cast<std::uint32_t>(out.vertices.size()) - b.batch.first;
+        out.batches.push_back(b.batch);
+    }
+    return out;
+}
+
+// The room's triangles grouped by texture, blend and pass (prepare_room's
+// rules); built once per room and cached by the backend.
+GpuGeometry build_room_geometry(const ViewState& view) {
+    GpuGeometry out;
+    const Mesh& rm = *view.room_mesh;
+    const bool uv = rm.has_uv0();
+    const bool colored = rm.has_color0();
+    const bool normals = rm.has_normal0();
+    const bool textured = uv && view.room_textures != nullptr && view.room_texture_slots != nullptr &&
+        view.room_texture_slots->size() == rm.indices.size() / 3U;
+    const auto* soft = view.room_translucent_triangles != nullptr &&
+            view.room_translucent_triangles->size() == rm.indices.size() / 3U
+        ? view.room_translucent_triangles
+        : nullptr;
+    const auto n = rm.vertices.size();
+
+    struct Bucket final {
+        GpuBatch batch;
+        std::vector<std::uint32_t> triangles;
+    };
+    std::vector<Bucket> buckets;
+    std::unordered_map<std::uint64_t, std::size_t> index;
+    std::unordered_map<const ImagePreview*, std::uint32_t> texture_ids;
+    for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
+        const auto i0 = rm.indices[t];
+        if (i0 >= n || rm.indices[t + 1U] >= n || rm.indices[t + 2U] >= n) continue;
+        const ImagePreview* texture = nullptr;
+        std::uint32_t slot = kNoTextureSlot;
+        if (textured) {
+            slot = (*view.room_texture_slots)[t / 3U];
+            if (slot != kNoTextureSlot && slot < view.room_textures->size() &&
+                (*view.room_textures)[slot].available()) {
+                texture = &(*view.room_textures)[slot];
+            }
+        }
+        const bool neutral = texture == nullptr && view.fallback_texture != nullptr &&
+            view.fallback_texture->available();
+        if (neutral) texture = view.fallback_texture;
+        GpuBatch key;
+        key.texture = texture;
+        key.colored = colored && !neutral;
+        key.light_base = key.colored ? 1.0F : (neutral ? 0.45F : 0.7F);
+        key.light_gain = key.colored ? 0.0F : (neutral ? 0.55F : 0.3F);
+        key.translucent = soft != nullptr && (*soft)[t / 3U] != 0U && !neutral;
+        const std::uint8_t blend = rm.has_blend0() && !neutral ? rm.blend0[i0] : 0U;
+        key.kind = blend == 2U ? GpuBatchKind::room_additive
+            : blend == 3U      ? GpuBatchKind::room_subtractive
+                               : GpuBatchKind::room;
+        key.scroll_slot = textured ? slot : kNoTextureSlot;
+        const auto [tex_it, tex_new] =
+            texture_ids.try_emplace(texture, static_cast<std::uint32_t>(texture_ids.size()));
+        (void)tex_new;
+        const int light_class = key.colored ? 0 : (neutral ? 1 : 2);
+        const std::uint64_t k = (static_cast<std::uint64_t>(tex_it->second) << 40U) ^
+            (static_cast<std::uint64_t>(key.scroll_slot) << 8U) ^
+            (static_cast<std::uint64_t>(key.kind) << 4U) ^ (static_cast<std::uint64_t>(key.translucent) << 3U) ^
+            static_cast<std::uint64_t>(light_class);
+        const auto [it, inserted] = index.try_emplace(k, buckets.size());
+        if (inserted) buckets.push_back({key, {}});
+        buckets[it->second].triangles.push_back(static_cast<std::uint32_t>(t));
+    }
+    std::size_t total = 0U;
+    for (const auto& b : buckets) total += b.triangles.size() * 3U;
+    out.vertices.reserve(total);
+    for (auto& b : buckets) {
+        b.batch.first = static_cast<std::uint32_t>(out.vertices.size());
+        for (const auto t : b.triangles) {
+            Vec3 normal{};
+            if (normals) {
+                for (std::size_t k = 0U; k < 3U; ++k) {
+                    const auto& nm = rm.normal0[rm.indices[t + k]];
+                    normal.x += nm.x;
+                    normal.y += nm.y;
+                    normal.z += nm.z;
+                }
+            }
+            for (std::size_t k = 0U; k < 3U; ++k) {
+                const auto i = rm.indices[t + k];
+                GpuVertex v;
+                v.x = rm.vertices[i].x;
+                v.y = rm.vertices[i].y;
+                v.z = rm.vertices[i].z;
+                if (uv) {
+                    v.u = rm.uv0[i].u;
+                    v.v = rm.uv0[i].v;
+                }
+                if (colored) v.rgba = rm.color0[i];
+                v.nx = normal.x;
+                v.ny = normal.y;
+                v.nz = normal.z;
+                out.vertices.push_back(v);
+            }
+        }
+        b.batch.count = static_cast<std::uint32_t>(out.vertices.size()) - b.batch.first;
+        out.batches.push_back(b.batch);
+    }
+    if (!rm.vertices.empty()) {
+        Vec3 c{};
+        for (const auto& v : rm.vertices) {
+            c.x += v.x;
+            c.y += v.y;
+            c.z += v.z;
+        }
+        const float inv = 1.0F / static_cast<float>(rm.vertices.size());
+        out.center = {c.x * inv, c.y * inv, c.z * inv};
+        for (const auto& v : rm.vertices) {
+            const float dx = v.x - out.center.x, dy = v.y - out.center.y, dz = v.z - out.center.z;
+            out.radius = std::max(out.radius, std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] std::uint64_t mix_hash(std::uint64_t h, const void* data, std::size_t bytes) noexcept {
+    const auto* p = static_cast<const std::uint8_t*>(data);
+    for (std::size_t i = 0U; i < bytes; ++i) {
+        h ^= p[i];
+        h *= 0x100000001B3ULL;
+    }
+    return h;
+}
+
+GpuRoomKey room_key(const ViewState& view) {
+    const Mesh& rm = *view.room_mesh;
+    GpuRoomKey key;
+    key.mesh = &rm;
+    key.vertices = rm.vertices.data();
+    key.indices = rm.indices.data();
+    key.slots = view.room_texture_slots;
+    key.textures = view.room_textures != nullptr ? view.room_textures->data() : nullptr;
+    key.texture_count = view.room_textures != nullptr ? view.room_textures->size() : 0U;
+    key.translucent = view.room_translucent_triangles;
+    key.fallback = view.fallback_texture;
+    key.vertex_count = rm.vertices.size();
+    key.index_count = rm.indices.size();
+    // A few samples of the data, so a new room at a reused address differs.
+    std::uint64_t h = 0xCBF29CE484222325ULL;
+    for (std::size_t k = 0U; k < 8U && !rm.vertices.empty(); ++k) {
+        h = mix_hash(h, &rm.vertices[k * (rm.vertices.size() - 1U) / 7U], sizeof(Vec3));
+    }
+    for (std::size_t k = 0U; k < 8U && !rm.indices.empty(); ++k) {
+        h = mix_hash(h, &rm.indices[k * (rm.indices.size() - 1U) / 7U], sizeof(std::uint32_t));
+    }
+    key.content = h;
+    return key;
+}
+
+GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const ViewState& view,
+                             const CameraFrame& frame, const std::vector<std::uint32_t>* triangle_texture_slots,
+                             const std::vector<ImagePreview>* textures) {
+    static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
+    GpuViewFrame out;
+    out.width = width;
+    out.height = height;
+    const auto& bg = kBackgrounds[view.background & 3U];
+    out.background = {bg[0], bg[1], bg[2]};
+    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float focal = zoom * frame.focal_px;
+    out.model_view = camera_matrix(frame, view, false);
+    out.camera_distance = frame.camera_distance;
+    out.radius = frame.radius;
+    out.smooth_model = view.smooth_textures;
+    out.smooth_room = true;
+    out.model = build_model_geometry(mesh, view, triangle_texture_slots, textures, frame.radius);
+
+    float far_z = frame.camera_distance + frame.radius;
+    for (const auto& v : mesh.vertices) far_z = std::max(far_z, camera_z(out.model_view, v));
+
+    out.room = view.room_mesh != nullptr && view.room_mesh->indices.size() >= 3U;
+    if (out.room) {
+        out.room_view = camera_matrix(frame, view, true);
+        out.room_key = room_key(view);
+        out.build_room = [&view] { return build_room_geometry(view); };
+        for (const auto& v : view.room_mesh->vertices) far_z = std::max(far_z, camera_z(out.room_view, v));
+        if (view.room_time != 0.0F) {
+            for (const auto& scroll : view.room_scrolls) {
+                bool seen = false;
+                for (const auto& s : out.room_scrolls) seen = seen || s.slot == scroll.texture;
+                if (seen) continue;
+                out.room_scrolls.push_back({scroll.texture, std::fmod(scroll.u_per_frame * view.room_time, 1.0F),
+                                            std::fmod(scroll.v_per_frame * view.room_time, 1.0F)});
+            }
+        }
+    }
+
+    if (view.floor) {
+        if (!out.room) {
+            const float half = frame.radius * 1.4F;
+            const Vec3 c[4] = {
+                {frame.center.x - half, view.floor_y, frame.center.z - half},
+                {frame.center.x + half, view.floor_y, frame.center.z - half},
+                {frame.center.x + half, view.floor_y, frame.center.z + half},
+                {frame.center.x - half, view.floor_y, frame.center.z + half},
+            };
+            out.floor = {c[0], c[1], c[2], c[0], c[2], c[3]};
+            for (const auto& v : c) far_z = std::max(far_z, camera_z(out.model_view, v));
+        }
+        if (view.floor_shadow.size() >= 3U) {
+            out.shadow.assign(view.floor_shadow.begin(),
+                              view.floor_shadow.begin() + static_cast<std::ptrdiff_t>(view.floor_shadow.size() / 3U * 3U));
+        }
+    }
+
+    // Near plane: the room pass's own (prepare_room), kept in front of the
+    // model when the camera dollies in.
+    const float cd = frame.camera_distance;
+    const float near_z = std::max(1.0e-4F, std::min(std::max(1.0F, frame.radius * 0.05F), 0.5F * cd));
+
+    const auto project = [&](const Vec3& world) {
+        return project_in_frame(frame, world, view.yaw_radians, view.pitch_radians, zoom, width, height);
+    };
+    for (const auto& quad : build_effect_quads(view, project, height)) {
+        GpuScreenQuad q;
+        q.texture = quad.texture;
+        q.additive = quad.additive;
+        bool visible = true;
+        for (std::size_t i = 0U; i < 4U; ++i) {
+            const auto& s = quad.vertices[i];
+            visible = visible && s.z + cd > near_z;
+            far_z = std::max(far_z, s.z + cd);
+            q.vertices[i] = {s.x, s.y, s.z, s.u, s.v, {s.r, s.g, s.b, s.a}};
+        }
+        if (visible) out.effects.push_back(q);
+    }
+
+    far_z = std::max(far_z * 1.02F + 1.0F, near_z * 4.0F);
+    out.near_z = near_z;
+    out.far_z = far_z;
+    out.projection = {2.0F * focal / static_cast<float>(width), -2.0F * focal / static_cast<float>(height),
+                      (far_z + near_z) / (far_z - near_z), -2.0F * far_z * near_z / (far_z - near_z)};
+    return out;
+}
+
+}  // namespace
+
+void set_gpu_view_backend(GpuViewBackend* backend) noexcept { g_gpu_backend.store(backend); }
+GpuViewBackend* gpu_view_backend() noexcept { return g_gpu_backend.load(); }
+void set_gpu_view_enabled(bool enabled) noexcept { g_gpu_enabled.store(enabled); }
+bool gpu_view_enabled() noexcept { return g_gpu_enabled.load(); }
+
+GpuViewStats gpu_view_stats() noexcept {
+    return {g_gpu_frames.load(), g_cpu_frames.load(), g_gpu_failures.load()};
+}
+
+std::string view_renderer_description() {
+    auto* backend = gpu_view_backend();
+    if (backend == nullptr) return "CPU (software)";
+    const auto name = backend->describe();
+    if (name.empty()) return "CPU (software; no GPU)";
+    return gpu_view_enabled() ? "GPU: " + name : "CPU (software; GPU off: " + name + ")";
+}
+
+RgbaImage render_view(const Mesh& mesh, int width, int height,
+                      const ViewState& view,
+                      const HierarchyOverlay* hierarchy,
+                      const std::vector<std::uint32_t>* triangle_texture_slots,
+                      const std::vector<ImagePreview>* textures) {
+    auto* backend = gpu_view_enabled() ? gpu_view_backend() : nullptr;
+    if (backend != nullptr && !view.wireframe && !view.uv_layout && !mesh.vertices.empty() &&
+        mesh.indices.size() >= 3U) {
+        RgbaImage image;
+        image.width = std::clamp(width, 1, 8192);
+        image.height = std::clamp(height, 1, 8192);
+        image.pixels.resize(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U);
+        const auto frame = view_frame(mesh, view, image.width, image.height);
+        bool drawn = false;
+        try {
+            const auto gpu = build_gpu_frame(mesh, image.width, image.height, view, frame,
+                                              triangle_texture_slots, textures);
+            drawn = backend->draw(gpu, image);
+        } catch (...) {
+            drawn = false;
+        }
+        if (drawn) {
+            const OverlayPen pen{image, frame, view};
+            draw_overlays(pen, hierarchy);
+            g_gpu_frames.fetch_add(1U);
+            return image;
+        }
+        g_gpu_failures.fetch_add(1U);
+    }
+    g_cpu_frames.fetch_add(1U);
+    return render_view_software(mesh, width, height, view, hierarchy, triangle_texture_slots, textures);
 }
 
 ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& view, float px, float py,
