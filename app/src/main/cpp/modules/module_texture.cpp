@@ -155,7 +155,8 @@ PipelineResult run_ptx_set(
     const textures::ParseResult& set,
     const ProbeResult& probe,
     const char* module_id) {
-    if (!set.ok() || set.kind != textures::Kind::ptx_bundle) {
+    if (!set.ok() || (set.kind != textures::Kind::ptx_bundle &&
+                      set.kind != textures::Kind::ui_texture_bank)) {
         return module_support::reject(
             probe, module_id,
             set.detail.empty() ? "PTX rejected by TextureSet" : set.detail);
@@ -175,6 +176,7 @@ PipelineResult run_ptx_set(
             "PTX rejected: child-resource allocation failed");
     }
 
+    const bool ui_bank = set.kind == textures::Kind::ui_texture_bank;
     std::uint64_t total_dds_bytes = 0U;
     std::uint64_t gallery_preview_pixels = 0U;
     std::uint32_t dxt1 = 0U;
@@ -213,6 +215,16 @@ PipelineResult run_ptx_set(
         child.suggested_filename =
             "texture_" + std::to_string(slot.index) + ".dds";
         child.source_span = SourceSpan{slot.dds_offset, slot.dds_size};
+        if (ui_bank) {
+            // Raw block data behind a 0x800 header: the gallery shows the
+            // decoded image; the span is the whole texture record.
+            child.id = "ui-texture-" + std::to_string(slot.index);
+            child.title = "UI texture " + std::to_string(slot.index) + " " +
+                          std::to_string(slot.dds.width) + "x" + std::to_string(slot.dds.height);
+            child.suggested_filename = "ui_texture_" + std::to_string(slot.index) + ".bin";
+            child.source_span = SourceSpan{slot.descriptor_offset,
+                                           static_cast<std::uint64_t>(slot.sector_span) * 0x800U};
+        }
         child.probe = child_dds_probe();
         child.capabilities = capability(ResourceCapability::Inspection) |
                              ResourceCapability::ImagePreview;
@@ -249,7 +261,8 @@ PipelineResult run_ptx_set(
     }
 
     std::ostringstream detail;
-    detail << "PTX texture bundle | textures=" << set.slots.size()
+    detail << (ui_bank ? "UI texture bank (id*.pac) | textures=" : "PTX texture bundle | textures=")
+           << set.slots.size()
            << " dxt1=" << dxt1
            << " dxt5=" << dxt5
            << " ddsBytes=" << total_dds_bytes
@@ -257,8 +270,8 @@ PipelineResult run_ptx_set(
 
     auto out = structural_pipeline(probe, module_id, detail.str());
     out.modules.push_back({"native.texture-set", true});
-    out.modules.push_back({"profiles.dmc3.texture-slot-framing", true});
-    out.modules.push_back({"formats.dds.child-validation", true});
+    out.modules.push_back({ui_bank ? "profiles.dmc3.ui-texture-bank" : "profiles.dmc3.texture-slot-framing", true});
+    if (!ui_bank) out.modules.push_back({"formats.dds.child-validation", true});
     if (set.ptx_community_descriptors) {
         out.modules.push_back({"native.ptx-community-descriptors", true});
         out.detail +=
@@ -269,9 +282,9 @@ PipelineResult run_ptx_set(
         out.detail +=
             "\nPTX compatibility: retained corpus-confirmed DXT1 auxiliary mode without obsolete DXT5 coupling";
     }
-    out.inspection.format = "PTX";
-    out.inspection.root.id = "ptx";
-    out.inspection.root.title = "PTX";
+    out.inspection.format = ui_bank ? "UITEX" : "PTX";
+    out.inspection.root.id = ui_bank ? "ui-texture-bank" : "ptx";
+    out.inspection.root.title = ui_bank ? "UI texture bank" : "PTX";
     out.inspection.root.kind = InspectionKind::Document;
     out.inspection.root.source_span = SourceSpan{0U, source.size()};
     out.inspection.root.properties.push_back({
@@ -307,7 +320,8 @@ bool frame_ptx_operation(void* raw, std::uint32_t) noexcept {
         }
 
         state->set = textures::parse_ptx(as_bytes(state->bytes, state->size));
-        if (!state->set.ok() || state->set.kind != textures::Kind::ptx_bundle) {
+        if (!state->set.ok() || (state->set.kind != textures::Kind::ptx_bundle &&
+                                    state->set.kind != textures::Kind::ui_texture_bank)) {
             state->result = module_support::reject(
                 *state->probe, state->module_id,
                 state->set.detail.empty()
@@ -344,7 +358,8 @@ bool project_texture_operation(void* raw, std::uint32_t) noexcept {
 
         if (state->probe->format == Format::Ptx) {
             if (state->bytes == nullptr || !state->set.ok() ||
-                state->set.kind != textures::Kind::ptx_bundle) {
+                (state->set.kind != textures::Kind::ptx_bundle &&
+                 state->set.kind != textures::Kind::ui_texture_bank)) {
                 state->result = module_support::reject(
                     *state->probe, state->module_id,
                     "PTX rejected: Crusader TextureSet dependency is unavailable");

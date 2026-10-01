@@ -13,6 +13,7 @@
 #include "dmc_rengine/formats/pac.hpp"
 #include "dmc_rengine/formats/pnst.hpp"
 #include "dmcresource/archive_entry.h"
+#include "dmcresource/texture_set.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/effect_bank.h"
@@ -67,6 +68,12 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             const auto parsed = ptx_compat::parse_texture_bundle(
                 std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
             if (parsed.ok()) return {Format::Ptx, "PTX", "ptx"};
+            // Interface archives (id*.pac) keep their textures in a bank with
+            // per-texture block headers instead of descriptor-wrapped DDS.
+            if (texture_set::parse_ui_texture_bank(
+                    std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size}).ok()) {
+                return {Format::Ptx, "UITEX", "ptx"};
+            }
         } catch (...) {
         }
         try {
