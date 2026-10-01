@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <unordered_set>
@@ -10,6 +11,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -33,6 +35,7 @@
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/view_gpu.h"
+#include "dmcresource/view_benchmark.h"
 #include "android/gles_view_backend.h"
 
 namespace {
@@ -1275,4 +1278,94 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_rendererInfo(JNIEnv* env, jclass) 
             (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "");
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF(""); }
+}
+
+// ---- Frame buffers in native memory ------------------------------------------
+//
+// ByteBuffer.allocateDirect lives in the Java heap on Android (a non-movable
+// array), whose limit two 8K frames (2 x ~120 MB) exceed, so the viewer kept
+// falling back to 6K. These buffers come from the native heap instead; the
+// view frees each one exactly once when it is no longer in use.
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_allocateFrameBuffer(JNIEnv* env, jclass, jlong bytes) {
+    if (bytes <= 0) return nullptr;
+    void* memory = std::malloc(static_cast<std::size_t>(bytes));
+    if (memory == nullptr) return nullptr;
+    jobject buffer = env->NewDirectByteBuffer(memory, bytes);
+    if (buffer == nullptr) std::free(memory);
+    return buffer;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_freeFrameBuffer(JNIEnv* env, jclass, jobject buffer) {
+    if (buffer != nullptr) std::free(env->GetDirectBufferAddress(buffer));
+}
+
+// ---- Benchmark ------------------------------------------------------------------
+
+// The viewer's frame loop without the screen, as fast as it goes for
+// `seconds`: pose the motion (motion_start NaN: no motion), render with the
+// gesture controls, copy the pixels out like renderToBuffer. Returns the
+// report (format_view_benchmark) with the renderer and `settings` in it.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
+        JNIEnv* env, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly,
+        jfloat motion_start, jfloat seconds, jstring settings) {
+    dmcresource::ViewBenchmarkResult result;
+    int out_width = 0, out_height = 0;
+    try {
+        std::vector<std::uint8_t> pixels;
+        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+        float end_frame = 0.0F, loop_start = 0.0F;
+        {
+            const SessionLock jni_lock{session_mutex()};
+            const Session* session = from_handle(handle);
+            if (session == nullptr) return env->NewStringUTF("Nothing to draw.");
+            if (std::isfinite(motion_start)) {
+                end_frame = dmcresource::motion::motion_end_frame(session);
+                loop_start = dmcresource::motion::motion_loop_start_frame(session);
+            }
+        }
+        dmcresource::ViewBenchmarkOptions options;
+        options.seconds = std::clamp(static_cast<double>(seconds), 1.0, 120.0);
+        result = dmcresource::run_view_benchmark(options, [&](int index) {
+            // The lock is taken per frame, as the render thread does, so the
+            // UI thread is never kept waiting for the whole run.
+            const SessionLock jni_lock{session_mutex()};
+            Session* session = from_handle(handle);
+            if (session == nullptr) return false;
+            if (std::isfinite(motion_start)) {
+                // One game frame (60 per second) per drawn frame, looping like the viewer.
+                float frame = motion_start + static_cast<float>(index);
+                if (end_frame > 0.0F && frame > end_frame) {
+                    const float span = end_frame - loop_start;
+                    frame = span > 0.0F ? loop_start + std::fmod(frame - end_frame, span) : end_frame;
+                }
+                (void)dmcresource::motion::apply_motion_frame(session, frame);
+            }
+            const auto image = dmcresource::render_session(
+                session, width, height, dmcresource::benchmark_yaw(yaw, index), pitch, zoom,
+                static_cast<std::uint32_t>(render_flags), controls);
+            if (image.pixels.empty()) return false;
+            out_width = image.width;
+            out_height = image.height;
+            pixels.resize(image.pixels.size());
+            std::memcpy(pixels.data(), image.pixels.data(), image.pixels.size());
+            return true;
+        });
+        // Leave the pose where the run started.
+        if (std::isfinite(motion_start)) {
+            const SessionLock jni_lock{session_mutex()};
+            if (Session* session = from_handle(handle)) (void)dmcresource::motion::apply_motion_frame(session, motion_start);
+        }
+    } catch (...) {
+        result.stopped = true;
+    }
+    try {
+        const auto text = dmcresource::format_view_benchmark(
+            result, dmcresource::view_renderer_description(), out_width, out_height, to_utf8(env, settings));
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF("Benchmark failed."); }
 }

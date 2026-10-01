@@ -1012,6 +1012,80 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // ---- Benchmark
+
+    private final java.util.ArrayList<String> benchmarkResults = new java.util.ArrayList<>();
+
+    /** The settings a benchmark ran with, for its report. */
+    private String benchmarkSettings() {
+        final android.content.SharedPreferences p = prefs();
+        final boolean gpu = p.getBoolean(SET_GPU, true);
+        final StringBuilder text = new StringBuilder();
+        if (gpu) {
+            final int msaa = p.getInt(SET_GPU_MSAA, 4);
+            final int aniso = p.getInt(SET_GPU_ANISOTROPY, 8);
+            text.append("MSAA ").append(msaa == 0 ? "off" : msaa + "x")
+                    .append(", mipmaps ").append(p.getBoolean(SET_GPU_MIPMAPS, true) ? "on" : "off")
+                    .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x").append(", ");
+        }
+        text.append(p.getBoolean(SET_SMOOTH, false) ? "smooth" : "pixel").append(" textures");
+        if (p.getBoolean(SET_UNLIT, false)) text.append(", unlit");
+        if (roomLoaded && roomShown()) text.append(", room ").append(roomName);
+        return text.toString();
+    }
+
+    private void runBenchmark() {
+        final TextView progress = new TextView(this);
+        progress.setTextColor(0xffe6e8ee);
+        progress.setTextSize(15f);
+        progress.setPadding(dp(20), dp(16), dp(20), dp(8));
+        progress.setText("Drawing frames as fast as possible for 10 seconds…\nKeep the app open.");
+        final AlertDialog running = new AlertDialog.Builder(this)
+                .setTitle("Benchmark")
+                .setView(progress)
+                .setCancelable(false)
+                .show();
+        final boolean started = renderView.runBenchmark(10.0f, benchmarkSettings(), report -> {
+            running.dismiss();
+            benchmarkResults.add(0, report);
+            showBenchmarkResults();
+        });
+        if (!started) {
+            running.dismiss();
+            notice("Open a model or a stage first", Toast.LENGTH_SHORT);
+        }
+    }
+
+    private void showBenchmarkResults() {
+        final StringBuilder all = new StringBuilder();
+        for (int i = 0; i < benchmarkResults.size(); ++i) {
+            if (i > 0) all.append("\n\n— earlier —\n");
+            all.append(benchmarkResults.get(i));
+        }
+        final TextView text = new TextView(this);
+        text.setTextColor(0xffe6e8ee);
+        text.setTextSize(14f);
+        text.setTextIsSelectable(true);
+        text.setPadding(dp(20), dp(12), dp(20), dp(8));
+        text.setText(all.toString());
+        final android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(text);
+        new AlertDialog.Builder(this)
+                .setTitle("Benchmark results")
+                .setView(scroll)
+                .setPositiveButton("Run again", (d, w) -> runBenchmark())
+                .setNeutralButton("Copy", (d, w) -> {
+                    final android.content.ClipboardManager clipboard =
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Benchmark", all.toString()));
+                        notice("Benchmark results copied", Toast.LENGTH_SHORT);
+                    }
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
     /** Full-screen settings window: render quality, animation, room. */
     private void showSettingsDialog() {
         final android.app.Dialog dialog = new android.app.Dialog(this,
@@ -1086,6 +1160,17 @@ public final class MainActivity extends Activity {
         content.addView(choiceRow("Shadows when a file opens", new String[]{"On", "Off"},
                 p.getBoolean(SET_SHADOWS, true) ? 0 : 1,
                 i -> { p.edit().putBoolean(SET_SHADOWS, i == 0).apply(); apply.run(); }));
+
+        final LinearLayout.LayoutParams benchParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        benchParams.topMargin = dp(10);
+        content.addView(actionChip("Benchmark: maximum FPS with these settings (10 s)", () -> {
+            dialog.dismiss();
+            runBenchmark();
+        }), benchParams);
+        content.addView(hint("Draws full-size frames back to back for 10 seconds while the camera turns "
+                + "(and the motion plays, if one is playing), without waiting for the screen. Change a "
+                + "setting and run again to compare; results stay listed until the app closes."));
 
         content.addView(sectionTitle("Graphics: lines and overlays"));
         final int[] widths = {1, 2, 3, 4, 6};

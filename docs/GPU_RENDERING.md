@@ -88,3 +88,31 @@ PSNR 45.9 dB (model), 42.7 dB (smooth textures), 44.7 dB (shadow + bones),
 recording backend: batches and light terms, the camera matrices against the
 software joint markers (< 0.01 px), near / far planes, the overlays on top,
 byte-identical fallback, wireframe / UV on the CPU, and the room key.
+
+## Benchmark
+
+Settings → Graphics → **Benchmark: maximum FPS with these settings (10 s)**.
+The render thread draws full-size frames back to back for 10 seconds with the
+current resolution, renderer and quality settings; the camera turns once per
+240 frames and a playing motion advances one game frame per drawn frame. A
+frame is what the viewer does per frame minus the screen: pose, render (GPU
+read-back included) and copy the pixels out. The first 5 frames (texture and
+room upload) are not timed.
+
+The report gives the renderer, the frame size, the settings, the average fps,
+the 1% low (99th-percentile frame time), median, best and worst, and how many
+frames went to the GPU / CPU. Results of one app session stay listed so
+settings can be compared; "Copy" puts them on the clipboard. Core:
+`view_benchmark.h` (`run_view_benchmark`, `summarize_frame_times`), test
+`view_benchmark_test.cpp`.
+
+## 8K frames
+
+Frame buffers used to come from `ByteBuffer.allocateDirect`, which on Android
+is a non-movable array in the **Java heap**. Two 8K frames (7680 px long side,
+~110–120 MB each on a 19.5:9 screen) exceed the default heap limit, so the
+viewer reported "Not enough memory" and fell back to 6K. The buffers are now
+allocated in native memory (`NativeBridge.allocateFrameBuffer` /
+`freeFrameBuffer`) and freed exactly once, when neither listed nor on their way
+to the screen. Bitmaps were already native (Android 8+). At 8K the GPU uses
+no MSAA (the ~256 MiB sample budget allows none at 30 Mpx).

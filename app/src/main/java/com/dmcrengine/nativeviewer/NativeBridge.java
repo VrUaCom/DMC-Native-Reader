@@ -170,6 +170,16 @@ public final class NativeBridge {
     public static native void setGpuOptions(int msaaSamples, boolean mipmaps, int anisotropy);
     /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */
     public static native int[] gpuCapabilities();
+    /** A frame buffer in native memory (not the Java heap); free it once with freeFrameBuffer. */
+    public static native java.nio.ByteBuffer allocateFrameBuffer(long bytes);
+    public static native void freeFrameBuffer(java.nio.ByteBuffer buffer);
+    /**
+     * Draws frames back to back for `seconds` with these view settings (camera turning, motion
+     * advancing from motionStart unless NaN) and returns the report: renderer, size, fps.
+     */
+    public static native String benchmarkView(long handle, int width, int height, float yaw, float pitch,
+            float zoom, int flags, float panX, float panY, float roomYaw, boolean follow, float dolly,
+            float motionStart, float seconds, String settings);
     /** What draws the frames ("GPU: OpenGL ES 3.2 / Adreno ...") and the frame counts. */
     public static native String rendererInfo();
 }

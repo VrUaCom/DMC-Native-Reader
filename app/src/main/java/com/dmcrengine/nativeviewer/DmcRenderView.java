@@ -715,17 +715,37 @@ public final class DmcRenderView extends View {
         boolean preview;
     }
 
+    // Pixels live in native memory: ByteBuffer.allocateDirect is limited by the
+    // Java heap, which two 8K frames (2 x ~120 MB) exceed. A buffer is freed
+    // once, when it is neither listed nor on its way to the screen.
     private static final class FrameBuffer {
         final java.nio.ByteBuffer pixels;
         final int width;
         final int height;
         boolean busy;
+        boolean retired;  // dropped while busy: freed when released
+        private boolean freed;
 
         FrameBuffer(int width, int height) {
             this.width = width;
             this.height = height;
-            pixels = java.nio.ByteBuffer.allocateDirect(width * height * 4);
+            pixels = NativeBridge.allocateFrameBuffer((long) width * height * 4L);
+            if (pixels == null) throw new OutOfMemoryError("frame buffer " + width + "x" + height);
         }
+
+        void dispose() {
+            if (freed) return;
+            freed = true;
+            NativeBridge.freeFrameBuffer(pixels);
+        }
+    }
+
+    /** Drops every buffer: free ones now, busy ones when they are released. Holds renderLock. */
+    private void retireFrameBuffers() {
+        for (FrameBuffer buffer : frameBuffers) {
+            if (buffer.busy) buffer.retired = true; else buffer.dispose();
+        }
+        frameBuffers.clear();
     }
 
     private final Object renderLock = new Object();
@@ -760,7 +780,7 @@ public final class DmcRenderView extends View {
                         for (int k = frameBuffers.size() - 1; k >= 0; --k) {
                             final FrameBuffer old = frameBuffers.get(k);
                             if (!old.busy && (old.width != request.width || old.height != request.height)) {
-                                frameBuffers.remove(k);
+                                frameBuffers.remove(k).dispose();
                             }
                         }
                         final boolean big = (long) request.width * request.height * 4L > 32L * 1024L * 1024L;
@@ -774,7 +794,7 @@ public final class DmcRenderView extends View {
                         try {
                             target = new FrameBuffer(request.width, request.height);
                         } catch (OutOfMemoryError error) {
-                            frameBuffers.clear();
+                            retireFrameBuffers();
                             renderScheduled = false;
                             post(() -> lowerResolution());
                             return;
@@ -796,6 +816,7 @@ public final class DmcRenderView extends View {
     private void releaseFrame(FrameBuffer buffer) {
         synchronized (renderLock) {
             buffer.busy = false;
+            if (buffer.retired) buffer.dispose();
             if (pendingRequest != null && !renderScheduled && renderHandler != null) {
                 renderScheduled = true;
                 renderHandler.post(renderJob);
@@ -880,6 +901,47 @@ public final class DmcRenderView extends View {
         }
     }
 
+    public interface BenchmarkListener {
+        void onBenchmarkDone(String report);
+    }
+
+    /**
+     * Maximum frame rate with the current settings: the render thread draws full-size frames back
+     * to back for `seconds` (camera turning, the motion advancing when one plays) without showing
+     * them. A playing motion is paused for the run and resumed after it. False: nothing to measure.
+     */
+    public boolean runBenchmark(float seconds, String settings, BenchmarkListener listener) {
+        if (session == 0 || staticImagePreview || getWidth() <= 0 || getHeight() <= 0) return false;
+        final boolean wasPlaying = motionPlaying;
+        final float motionStart = wasPlaying ? lastMotionFrame : Float.NaN;
+        if (wasPlaying) pauseMotion();
+        final long handle = session;
+        final int width = renderWidth();
+        final int height = renderHeight();
+        final int flags = renderFlags | settingsFlags | lineFlags(width, height);
+        final float y = yaw, p = pitch, z = zoom, px = panX, py = panY, ry = roomYaw, d = dolly;
+        final boolean f = follow;
+        final String what = settings + (wasPlaying ? ", motion playing" : "");
+        synchronized (renderLock) {
+            if (renderHandler == null) {
+                renderThread = new HandlerThread("dmc-render");
+                renderThread.start();
+                renderHandler = new Handler(renderThread.getLooper());
+            }
+            // On the render thread: no viewer frame is drawn at the same time.
+            renderHandler.post(() -> {
+                final String report = NativeBridge.benchmarkView(handle, width, height, y, p, z, flags,
+                        px, py, ry, f, d, motionStart, seconds, what);
+                post(() -> {
+                    if (wasPlaying && session == handle) resumeMotionAt(motionStart);
+                    renderNow();
+                    listener.onBenchmarkDone(report == null ? "Benchmark failed." : report);
+                });
+            });
+        }
+        return true;
+    }
+
     public void renderNow() {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return;
         if (staticImagePreview) {
@@ -907,6 +969,7 @@ public final class DmcRenderView extends View {
         removeCallbacks(fullFrame);
         synchronized (renderLock) {
             pendingRequest = null;
+            retireFrameBuffers();
             if (renderThread != null) {
                 renderThread.quitSafely();
                 renderThread = null;
