@@ -7,13 +7,16 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/inspection_format.h"
 
+#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -185,6 +188,47 @@ std::vector<std::uint8_t> make_scm() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_hits() {
+    // One valid HITS cell and one triangle-plane record.  The fixture checks
+    // the environment-collision boundary without assigning surface semantics
+    // to raw flags.
+    std::vector<std::uint8_t> bytes(0x88U, 0U);
+    bytes[0] = 'H'; bytes[1] = 'I'; bytes[2] = 'T'; bytes[3] = 'S';
+    put_u32(bytes, 0x04U, 0x88U);
+    put_f32(bytes, 0x08U, 0.0F);   put_f32(bytes, 0x0CU, 0.0F);   put_f32(bytes, 0x10U, 0.0F);
+    put_f32(bytes, 0x14U, 100.0F); put_f32(bytes, 0x18U, 100.0F); put_f32(bytes, 0x1CU, 100.0F);
+    put_f32(bytes, 0x20U, 100.0F); put_f32(bytes, 0x24U, 100.0F); put_f32(bytes, 0x28U, 100.0F);
+    put_u32(bytes, 0x2CU, 1U); put_u32(bytes, 0x30U, 1U); put_u32(bytes, 0x34U, 1U);
+    put_u32(bytes, 0x38U, 1U); put_u32(bytes, 0x3CU, 0x3CU); put_u32(bytes, 0x40U, 0x48U);
+    put_u32(bytes, 0x44U, 0x40U);  // cell list at file offset 0x48
+    put_u32(bytes, 0x48U, 0U);      // triangle byte offset 0
+    put_u32(bytes, 0x4CU, 0xFFFFFFFFU);
+    put_u32(bytes, 0x50U, 0x12345678U);
+    put_f32(bytes, 0x54U, 0.0F);  put_f32(bytes, 0x58U, 0.0F);  put_f32(bytes, 0x5CU, 0.0F);
+    put_f32(bytes, 0x60U, 10.0F); put_f32(bytes, 0x64U, 0.0F);  put_f32(bytes, 0x68U, 0.0F);
+    put_f32(bytes, 0x6CU, 0.0F);  put_f32(bytes, 0x70U, 0.0F);  put_f32(bytes, 0x74U, 10.0F);
+    put_f32(bytes, 0x78U, 0.0F);  put_f32(bytes, 0x7CU, 1.0F);  put_f32(bytes, 0x80U, 0.0F);
+    put_f32(bytes, 0x84U, 0.0F);
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_stage_pac(const std::vector<std::uint8_t>& scm,
+                                         const std::vector<std::uint8_t>& hits) {
+    // PAC offsets are relative physical slot starts.  Keeping the HITS in a
+    // separate slot exercises the same provenance path as a real stage PAC.
+    constexpr std::size_t scm_offset = 0x10U;
+    constexpr std::size_t hits_offset = 0x1C0U;
+    std::vector<std::uint8_t> bytes(hits_offset + hits.size(), 0U);
+    bytes[0] = 'P'; bytes[1] = 'A'; bytes[2] = 'C'; bytes[3] = 0U;
+    put_u32(bytes, 0x04U, 2U);
+    put_u32(bytes, 0x08U, static_cast<std::uint32_t>(scm_offset));
+    put_u32(bytes, 0x0CU, static_cast<std::uint32_t>(hits_offset));
+    assert(scm.size() == hits_offset - scm_offset);
+    std::copy(scm.begin(), scm.end(), bytes.begin() + static_cast<std::ptrdiff_t>(scm_offset));
+    std::copy(hits.begin(), hits.end(), bytes.begin() + static_cast<std::ptrdiff_t>(hits_offset));
+    return bytes;
+}
+
 bool trace_contains(const dmcresource::PipelineResult& result,
                     std::string_view id) {
     for (const auto& module : result.modules) {
@@ -274,6 +318,80 @@ int main() {
     assert(has_capability(mod_result.capabilities,
                           ResourceCapability::UvCoordinates));
 
+    const auto hits = make_hits();
+    const auto hits_result = run_decode_pipeline(
+        "stage.hits", hits.data(), hits.size());
+    assert(hits_result.accepted && hits_result.renderable);  // drawn as a 3D surface
+    assert(hits_result.scene.meshes.size() == 1U && hits_result.scene.meshes[0].mesh.indices.size() == 3U);
+    assert(hits_result.probe.format == Format::Hits);
+    assert(hits_result.inspection.format == "HITS");
+    assert(has_capability(hits_result.capabilities, ResourceCapability::Collision));
+    const auto collision = dmcresource::environment_collision::parse(
+        "slot_0003.hits", 3U,
+        std::span<const std::uint8_t>{hits.data(), hits.size()});
+    assert(collision && collision->resource_slot == 3U && collision->triangles.size() == 1U);
+    assert(collision->cell_reference_count == 1U);
+    assert(dmcresource::environment_collision::debug_lines(*collision).size() == 6U);
+
+    // Stage collision queries (0x14005E880 segment test and the Reader's
+    // character proxy) on a floor y = 0 and a wall x = 100 facing -x.
+    {
+        namespace ec = dmcresource::environment_collision;
+        using dmcresource::Vec3;
+        ec::Source source;
+        source.bounds_min = {-500.0F, -10.0F, -500.0F};
+        source.bounds_max = {500.0F, 500.0F, 500.0F};
+        // Floor (normal +y, plane y = 0), two triangles.
+        source.triangles.push_back({0U, {-500.0F, 0.0F, -500.0F}, {-500.0F, 0.0F, 500.0F},
+                                    {500.0F, 0.0F, 500.0F}, {0.0F, 1.0F, 0.0F}, 0.0F});
+        source.triangles.push_back({0U, {-500.0F, 0.0F, -500.0F}, {500.0F, 0.0F, 500.0F},
+                                    {500.0F, 0.0F, -500.0F}, {0.0F, 1.0F, 0.0F}, 0.0F});
+        // Wall x = 100 (normal -x: n.p + d = 0 with d = 100), category 0x0002.
+        source.triangles.push_back({0x00020000U, {100.0F, 0.0F, -500.0F}, {100.0F, 500.0F, -500.0F},
+                                    {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
+        source.triangles.push_back({0x00020000U, {100.0F, 500.0F, -500.0F}, {100.0F, 500.0F, 500.0F},
+                                    {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
+
+        // Kinds: one per distinct flags value, ascending; floors/walls counted.
+        {
+            const auto kinds = ec::kinds(source);
+            assert(kinds.size() == 2U && kinds[0].flags == 0U && kinds[0].count == 2U &&
+                   kinds[0].floors == 2U && kinds[1].flags == 0x00020000U && kinds[1].walls == 2U);
+            const auto line_kinds = ec::debug_line_kinds(source, kinds);
+            assert(line_kinds.size() == 12U && line_kinds[0] == 0U && line_kinds[6] == 1U);
+            assert(dmcresource::collision_kind_color(0) != dmcresource::collision_kind_color(1));
+        }
+
+        // Nearest hit wins: a diagonal shot meets the wall before the floor.
+        const auto wall = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, -100.0F, 0.0F});
+        assert(wall && wall->triangle >= 2U);
+        assert(std::fabs(wall->point.x - 100.0F) < 1.0e-3F && std::fabs(wall->point.y) < 1.0e-3F + 1.0F);
+        assert(std::fabs(wall->fraction - 0.5F) < 1.0e-4F);
+        // A category mask skips the wall records.
+        const auto masked = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, 50.0F, 0.0F}, 0x0002U);
+        assert(!masked);
+        const auto floor = ec::segment_hit(source, {0.0F, 50.0F, 0.0F}, {0.0F, -50.0F, 0.0F});
+        assert(floor && std::fabs(floor->point.y) < 1.0e-4F && floor->normal.y == 1.0F);
+        assert(!ec::segment_hit(source, {0.0F, 50.0F, 0.0F}, {50.0F, 60.0F, 0.0F}));
+
+        // The sphere stops `radius` short of the wall and slides along it.
+        const auto slid = ec::slide_sphere(source, {0.0F, 90.0F, 0.0F}, {300.0F, 90.0F, 40.0F}, 50.0F);
+        assert(std::fabs(slid.x - 50.0F) < 0.5F && std::fabs(slid.z - 40.0F) < 0.5F);
+        const auto free_move = ec::slide_sphere(source, {0.0F, 90.0F, 0.0F}, {-200.0F, 90.0F, 0.0F}, 50.0F);
+        assert(std::fabs(free_move.x + 200.0F) < 1.0e-3F);
+        const auto height = ec::floor_below(source, {10.0F, 90.0F, 10.0F}, 1000.0F);
+        assert(height && std::fabs(*height) < 1.0e-4F);
+        assert(!ec::floor_below(source, {10.0F, -5.0F, 10.0F}, 1000.0F));
+
+        // Room <-> model placement round trip (view_renderer's room pass).
+        namespace room = dmcresource::stage_room;
+        const room::Placement placement{{10.0F, 2.0F, -4.0F}, 0.7F, {3.0F, -1.0F, 5.0F}};
+        const Vec3 p{123.0F, 45.0F, -67.0F};
+        const auto back = room::model_to_room(placement, room::room_to_model(placement, p));
+        assert(std::fabs(back.x - p.x) < 1.0e-3F && std::fabs(back.y - p.y) < 1.0e-3F &&
+               std::fabs(back.z - p.z) < 1.0e-3F);
+    }
+
     // Both canonical adapters must preserve slots through render materialization
     // and expose the native companion action (including MOD's nonzero slot 5).
     for (const auto* result : {&scm_result, &mod_result}) {
@@ -303,6 +421,13 @@ int main() {
         const auto built = room::build_room("sample.scm", scm.data(), scm.size());
         assert(built && built->pieces == 1U && built->mesh.indices.size() == 3U);
         assert(built->triangle_texture_slots.size() == 1U && !built->spots.empty());
+        const auto stage_pac = make_stage_pac(scm, hits);
+        const auto built_stage = room::build_room("stage.pac", stage_pac.data(), stage_pac.size());
+        assert(built_stage && built_stage->pieces == 1U);
+        assert(built_stage->collision_sources.size() == 1U);
+        assert(built_stage->collision_sources[0].resource_slot == 1U);
+        assert(built_stage->collision_sources[0].triangles.size() == 1U);
+        assert(built_stage->collision_lines.size() == 6U);
         const auto stage = dmcresource::open_session("sample.scm", scm.data(), scm.size());
         const auto model = dmcresource::open_session("sample.mod", mod.data(), mod.size());
         assert(stage && room::is_stage_session(*stage) && model && !room::is_stage_session(*model));
@@ -368,6 +493,88 @@ int main() {
             look.room_yaw = 0.8F;
             const auto after = dmcresource::render_view(square, 96, 96, look);
             assert(before.pixels != after.pixels);
+        }
+
+        // A soft-alpha texture also holds opaque texels: a triangle flagged
+        // translucent still draws them (a distant tower's walls), and the
+        // wireframe view outlines the room's meshes.
+        {
+            dmcresource::Mesh wall;
+            wall.vertices = {{-300, 0, 400}, {300, 0, 400}, {300, 500, 400}, {-300, 500, 400}};
+            wall.uv0 = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+            wall.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ImagePreview solid;
+            solid.width = 2U;
+            solid.height = 2U;
+            solid.rgba8.assign(16U, 255U);  // opaque white
+            const std::vector<std::uint32_t> slots(2U, 0U);
+            const std::vector<dmcresource::ImagePreview> textures{solid};
+            const std::vector<std::uint8_t> soft(2U, 1U);  // flagged translucent
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = 0.0F;
+            const auto bare = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            look.room_mesh = &wall;
+            look.room_texture_slots = &slots;
+            look.room_textures = &textures;
+            look.room_translucent_triangles = &soft;
+            const auto drawn = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lit = 0U;
+            for (std::size_t o = 0U; o < drawn.pixels.size(); o += 4U) {
+                if (drawn.pixels[o] != bare.pixels[o]) ++lit;
+            }
+            assert(lit > 96U * 96U / 8U);
+            look.wireframe = true;
+            look.room_wire_main = true;
+            const auto wired = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lines = 0U;
+            for (std::size_t o = 0U; o < wired.pixels.size(); o += 4U) {
+                if (wired.pixels[o] > 120U && wired.pixels[o + 2U] > 200U) ++lines;
+            }
+            assert(lines > 20U);
+            // The backdrop opacity of the room lines: 0 hides them, more is brighter.
+            {
+                dmcresource::ViewState backdrop = look;
+                backdrop.room_wire_main = false;
+                backdrop.mesh_line_px = 1;
+                const auto total = [&](float opacity) {
+                    backdrop.room_wire_opacity = opacity;
+                    const auto image = dmcresource::render_view(model->render_mesh, 96, 96, backdrop);
+                    std::uint64_t sum = 0U;
+                    for (std::size_t o = 2U; o < image.pixels.size(); o += 4U) sum += image.pixels[o];
+                    return sum;
+                };
+                const auto hidden = total(0.0F), faint = total(0.3F), solid = total(1.0F);
+                assert(hidden < faint && faint < solid);
+            }
+            // A wider mesh line covers more pixels.
+            look.mesh_line_px = 4;
+            const auto thick = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t thick_lines = 0U;
+            for (std::size_t o = 0U; o < thick.pixels.size(); o += 4U) {
+                if (thick.pixels[o] > 120U && thick.pixels[o + 2U] > 200U) ++thick_lines;
+            }
+            assert(thick_lines > lines * 2U);
+        }
+
+        // Room normals are not trusted: a wall whose vertex normals point away
+        // from the camera is still drawn (whole far buildings did this).
+        {
+            dmcresource::Mesh wall;
+            wall.vertices = {{-300, 0, 400}, {300, 0, 400}, {300, 500, 400}, {-300, 500, 400}};
+            wall.normal0.assign(4U, {0.0F, 0.0F, 1.0F});  // away from the camera at z < 400
+            wall.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = 0.0F;
+            const auto bare = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            look.room_mesh = &wall;
+            const auto drawn = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lit = 0U;
+            for (std::size_t o = 0U; o < drawn.pixels.size(); o += 4U) {
+                if (drawn.pixels[o] != bare.pixels[o]) ++lit;
+            }
+            assert(lit > 96U * 96U / 8U);
         }
 
         // Settings bits: background 2 (light) fills the corner.

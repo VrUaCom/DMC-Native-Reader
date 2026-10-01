@@ -26,7 +26,8 @@ namespace dmcresource::effect_bank {
 
 struct Record final {
     char kind{};
-    std::uint32_t id{};
+    // Canonical loader identity is (kind, u16 id), not a filename or ordinal.
+    std::uint16_t id{};
     std::uint32_t slot{};                    // record slot in the inner PNST
     std::span<const std::uint8_t> bytes;     // empty when the slot is absent
     std::span<const std::uint8_t> companion; // M only (the next slot)
@@ -65,6 +66,7 @@ struct SpriteAnimation final {
     std::uint8_t texture{};
     std::uint8_t frame_time{};
     bool loop{};
+    std::uint8_t loop_frame{};  // +0x05: frame a looping animation restarts at
     std::vector<SpriteFrame> frames;
 };
 [[nodiscard]] std::optional<SpriteAnimation> sprite_animation(const Record& record);
@@ -132,5 +134,51 @@ struct PRuntimeView final {
     std::vector<std::uint32_t> target_offsets;
 };
 [[nodiscard]] std::optional<PRuntimeView> p_runtime_view(const Record& record);
+// EXE-confirmed E record fields used by the runtime presentation path. The
+// fields intentionally keep their structural names: semantic effect names are
+// not inferred from a texture or a MotionScript action.
+struct EffectDescriptor final {
+    std::uint8_t mode{};
+    std::uint16_t texture{};
+    std::uint8_t animation_gate{};
+    std::uint16_t animation{0xFFFFU};
+    SpriteFrame rectangle{}; // direct x/y/width/height when A is inactive
+    // Lifetime in ticks (+0x80, 0x1402E4190 -> effect+0x8B0). The state-1
+    // update 0x1402E47F0 decrements it by dt and retires the effect once it
+    // is negative, unless +0x84 is set: then the effect lives until its
+    // parent retires it (0x1402E7A40 on parent+0x60).
+    std::int32_t lifetime_ticks{};
+    bool lifetime_known{};
+    bool held_by_parent{};
+    // Geometry (init 0x1402E42EA, draw 0x1402E5D00 / 0x1402E69E0). Size A and
+    // pivot B in effect-local units: size mode +0x2C = 0 takes
+    // A = (+0x3C, +0x44, +0x4C), B = (+0x30, +0x34, +0x38); modes 1/2 draw A
+    // from [min, max] pairs at +0x3C (per axis / uniform) with B = A * 0.5.
+    // Reader uses the mean of retail random draws.
+    bool geometry_known{};
+    std::array<float, 3> size{};
+    std::array<float, 3> pivot{};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};   // +0xA8
+    // Initial rotation D in degrees (+0x150 + 12*i: flag, min, max).
+    std::array<float, 3> rotation_degrees{};
+    std::uint8_t orientation{};                      // +0x1F5 (mode 2)
+};
+[[nodiscard]] std::optional<EffectDescriptor> effect_descriptor(const Record& record);
+
+// V is a composite runtime record. Its entries are kept as a dependency graph
+// so callers can compose the EXE child transforms without flattening a nested
+// V or assigning a semantic name to a P/G subtype.
+struct CompositeEntry final {
+    std::uint8_t dispatch_kind{}; // 0=P, 1=E, 2=G, 3=V
+    std::uint16_t id{};
+    std::int16_t activation_offset{};
+    std::array<float, 3> translation{};
+    std::array<float, 3> rotation_degrees{};
+    std::array<float, 3> scale{1.0F, 1.0F, 1.0F};
+};
+struct CompositeRecord final {
+    std::vector<CompositeEntry> entries;
+};
+[[nodiscard]] std::optional<CompositeRecord> composite_record(const Record& record);
 
 }  // namespace dmcresource::effect_bank

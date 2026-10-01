@@ -5,6 +5,8 @@
 #include <cstring>
 #include <limits>
 
+#include "dmcresource/dds_bcn.h"
+
 namespace dmcresource::ptx_compat {
 
 namespace dmc3 = dmc::rengine::profiles::dmc3;
@@ -110,13 +112,183 @@ constexpr std::uint32_t kMaxTextures = 4096U;
     return out;
 }
 
+[[nodiscard]] std::uint32_t u16(std::span<const std::byte> s, std::size_t o) noexcept {
+    return std::to_integer<std::uint32_t>(s[o]) | std::to_integer<std::uint32_t>(s[o + 1U]) << 8U;
+}
+
+// Retail single-level PTX (interface packs id*.pac, checked on id900.pac).
+// Same framing as every PTX (dmc3.exe 0x140336BB0): count + sector spans in
+// the first 0x800 bytes, then per texture at its sector a 0x70 serialized
+// gfxTexture object (vtable slot zero on disk, fixed up in place by
+// 0x140046510) followed by a standard DDS loaded with DirectXTK. Here the
+// DDS holds the base level only (mip count 0, DDSD_MIPMAPCOUNT clear).
+// gfxTexture fields checked against the DDS:
+//   +0x10 u16 logical width, +0x12 u16 logical height,
+//   +0x18 u32 row bytes of 4x4 blocks,
+//   +0x44 u16 x2 secondary size (= logical size),
+//   +0x64 u32 DDS size = 128 + base level (image record +0x04).
+// Accepted only when all of these agree and the sector padding after each
+// DDS is zero. Rengine reads the same bundles as
+// TextureSlotReadVariant::legacy_single_mip_interface_bundle_dxt5.
+[[nodiscard]] dmc3::TextureSlotFramingResult parse_single_level(std::span<const std::byte> s) {
+    dmc3::TextureSlotFramingResult out;
+    out.status = dmc3::TextureSlotFramingStatus::not_recognized;
+    if (s.size() < kSector * 2U || s.size() % kSector != 0U) return out;
+    const auto count = u32(s, 0U);
+    if (count == 0U || count > kMaxTextures || 4U + std::size_t{count} * 4U > kSector) return out;
+    for (std::size_t i = 4U + std::size_t{count} * 4U; i < kSector; ++i) {
+        if (s[i] != std::byte{0}) return out;
+    }
+    std::uint64_t sector = 1U;
+    out.document.kind = dmc3::TextureSlotFramingKind::texture_bundle;
+    out.document.slot_size = s.size();
+    for (std::uint32_t index = 0U; index < count; ++index) {
+        const auto span = u32(s, 4U + std::size_t{index} * 4U);
+        const std::uint64_t desc = sector * kSector;
+        const std::uint64_t dds = desc + kDescriptor;
+        if (span == 0U || desc + std::uint64_t{span} * kSector > s.size()) return {};
+        const auto d = static_cast<std::size_t>(dds);
+        const auto o = static_cast<std::size_t>(desc);
+        if (std::to_integer<char>(s[d]) != 'D' || std::to_integer<char>(s[d + 1U]) != 'D' ||
+            std::to_integer<char>(s[d + 2U]) != 'S' || std::to_integer<char>(s[d + 3U]) != ' ' ||
+            u32(s, d + 4U) != 124U) {
+            return {};
+        }
+        constexpr std::uint32_t kDdsdMipmapCount = 0x20000U;
+        const auto flags = u32(s, d + 8U);
+        const auto height = u32(s, d + 12U);
+        const auto width = u32(s, d + 16U);
+        const auto mips = u32(s, d + 28U);
+        const auto fourcc = u32(s, d + 84U);
+        if (mips > 1U || (flags & kDdsdMipmapCount) != 0U) return {};
+        dmc3::TextureCompressionKind kind{};
+        std::uint32_t block = 0U;
+        if (fourcc == 0x31545844U) { kind = dmc3::TextureCompressionKind::dxt1; block = 8U; }
+        else if (fourcc == 0x35545844U) { kind = dmc3::TextureCompressionKind::dxt5; block = 16U; }
+        else return {};
+        if (width == 0U || height == 0U || width > 8192U || height > 8192U) return {};
+        const auto payload = dxt_chain_size(width, height, 1U, block);
+        const std::uint64_t size = kDdsHeader + payload;
+        const std::uint64_t end = desc + std::uint64_t{span} * kSector;
+        if (dds + size > end) return {};
+        const auto row_bytes = std::max<std::uint32_t>(1U, (width + 3U) / 4U) * block;
+        if (u16(s, o + 0x10U) != width || u16(s, o + 0x12U) != height ||
+            u32(s, o + 0x18U) != row_bytes || u32(s, o + 0x64U) != size ||
+            u16(s, o + 0x44U) != width || u16(s, o + 0x46U) != height) {
+            return {};
+        }
+        for (std::uint64_t i = dds + size; i < end; ++i) {
+            if (s[static_cast<std::size_t>(i)] != std::byte{0}) return {};
+        }
+        dmc3::TextureSlotEntry entry{};
+        entry.texture_index = index;
+        entry.descriptor_offset = desc;
+        entry.dds_offset = dds;
+        entry.dds_size = static_cast<std::uint32_t>(size);
+        entry.dds_payload_size = static_cast<std::uint32_t>(payload);
+        entry.width = width;
+        entry.height = height;
+        entry.mip_map_count = 1U;
+        entry.compression = kind;
+        entry.secondary_width = width;
+        entry.secondary_height = height;
+        entry.sector_span = span;
+        out.document.textures.push_back(entry);
+        sector += span;
+    }
+    if (sector * kSector != s.size()) return {};
+    out.status = dmc3::TextureSlotFramingStatus::ok;
+    out.detail = "single-level PTX (base-level DDS without mip chain)";
+    return out;
+}
+
+[[nodiscard]] std::uint64_t u64(std::span<const std::byte> s, std::size_t o) noexcept {
+    return static_cast<std::uint64_t>(u32(s, o)) | (static_cast<std::uint64_t>(u32(s, o + 4U)) << 32U);
+}
+
+// PTX bundles carrying DDS formats beyond retail DXT1/DXT5 (future HD
+// textures). Accepted on exactly what dmc3.exe checks when it loads them:
+//   0x140336BB0  count, sector spans, first texture at +0x800;
+//   0x1403365B0  first dword is not "TM2\0";
+//   0x140046510  gfxTexture +0x00 == 0 (vtable slot), +0x20 == 0x40 and
+//                image record +0x08 (= +0x68) == 8 (self-relative pointers);
+//   0x140046AF0  DDS of +0x64 bytes at +0x70, loaded by DirectXTK
+//                (any BC1..BC7 format, legacy or DX10 header);
+//   0x1403365B0  +0x10 / +0x12 logical width / height (non-zero).
+// Plus the bounds the Reader needs: each DDS inside its sector span and the
+// spans ending exactly at the end of the source. Only taken when at least
+// one texture is outside retail DXT1/DXT5, so retail bundles keep their
+// strict readers.
+[[nodiscard]] dmc3::TextureSlotFramingResult parse_extended_formats(std::span<const std::byte> s) {
+    dmc3::TextureSlotFramingResult out;
+    out.status = dmc3::TextureSlotFramingStatus::not_recognized;
+    if (s.size() < kSector * 2U || s.size() % kSector != 0U) return out;
+    const auto count = u32(s, 0U);
+    if (count == 0U || count > kMaxTextures || 4U + std::size_t{count} * 4U > kSector) return out;
+
+    bool any_extended = false;
+    std::uint64_t sector = 1U;
+    out.document.kind = dmc3::TextureSlotFramingKind::texture_bundle;
+    out.document.slot_size = s.size();
+    for (std::uint32_t index = 0U; index < count; ++index) {
+        const auto span = u32(s, 4U + std::size_t{index} * 4U);
+        const std::uint64_t desc = sector * kSector;
+        const std::uint64_t end = desc + std::uint64_t{span} * kSector;
+        if (span == 0U || end > s.size()) return {};
+        const auto o = static_cast<std::size_t>(desc);
+        if (u64(s, o) != 0U || u64(s, o + 0x20U) != 0x40U || u64(s, o + 0x68U) != 8U) return {};
+        const auto width = s[o + 0x10U] == std::byte{0} && s[o + 0x11U] == std::byte{0};
+        const auto height = s[o + 0x12U] == std::byte{0} && s[o + 0x13U] == std::byte{0};
+        if (width || height) return {};
+        const std::uint64_t dds_size = u32(s, o + 0x64U);
+        const std::uint64_t dds = desc + kDescriptor;
+        if (dds_size < kDdsHeader || dds + dds_size > end) return {};
+        const auto bytes = s.subspan(static_cast<std::size_t>(dds), static_cast<std::size_t>(dds_size));
+        const auto parsed = dds_bcn::parse(bytes);
+        if (!parsed.ok() || parsed.document.total_size != dds_size) return {};
+        const auto& d = parsed.document;
+        const bool retail = !d.dx10_header &&
+            (d.format == dds_bcn::Format::bc1 || d.format == dds_bcn::Format::bc3) &&
+            !d.premultiplied;
+        any_extended = any_extended || !retail;
+
+        dmc3::TextureSlotEntry entry{};
+        entry.texture_index = index;
+        entry.descriptor_offset = desc;
+        entry.dds_offset = dds;
+        entry.dds_size = static_cast<std::uint32_t>(dds_size);
+        // Canonical entry contract: bytes after the 128-byte DDS header (a DX10
+        // extension header is counted in; texture_set re-reads the real split).
+        entry.dds_payload_size = static_cast<std::uint32_t>(dds_size - kDdsHeader);
+        entry.width = d.width;
+        entry.height = d.height;
+        entry.mip_map_count = d.mip_count;
+        entry.compression = dds_bcn::block_bytes(d.format) == 8U
+            ? dmc3::TextureCompressionKind::dxt1
+            : dmc3::TextureCompressionKind::dxt5;
+        entry.secondary_width = d.width;
+        entry.secondary_height = d.height;
+        entry.sector_span = span;
+        out.document.textures.push_back(entry);
+        sector += span;
+    }
+    if (!any_extended || sector * kSector != s.size()) return {};
+    out.status = dmc3::TextureSlotFramingStatus::ok;
+    out.detail = "PTX with BC1..BC7 / DX10 DDS (dmc3.exe load-path checks)";
+    return out;
+}
+
 }  // namespace
 
 dmc3::TextureSlotFramingResult parse_texture_bundle(
     std::span<const std::byte> source,
     bool* compatibility_used,
-    bool* community_descriptors_used) {
+    bool* community_descriptors_used,
+    bool* single_level_used,
+    bool* extended_formats_used) {
     if (community_descriptors_used != nullptr) *community_descriptors_used = false;
+    if (single_level_used != nullptr) *single_level_used = false;
+    if (extended_formats_used != nullptr) *extended_formats_used = false;
     const auto read = dmc3::TextureSlotFramingReader::parse(source);
 
     // Retain the existing product diagnostic bit for the historical DXT1
@@ -133,6 +305,34 @@ dmc3::TextureSlotFramingResult parse_texture_bundle(
             });
     }
     if (read.framing.ok()) return read.framing;
+    // The canonical reader accepts only full mip chains; retail single-level
+    // bundles fail its DDS domain check and get the strict single-level read.
+    if (read.framing.status == dmc3::TextureSlotFramingStatus::invalid_dds) {
+        try {
+            auto single = parse_single_level(source);
+            if (single.ok()) {
+                if (compatibility_used != nullptr) *compatibility_used = false;
+                if (single_level_used != nullptr) *single_level_used = true;
+                return single;
+            }
+        } catch (...) {
+        }
+    }
+    // DDS formats beyond DXT1/DXT5 fail the canonical DDS domain; read them
+    // with the executable's own load checks.
+    if (read.framing.status == dmc3::TextureSlotFramingStatus::unsupported_compression ||
+        read.framing.status == dmc3::TextureSlotFramingStatus::invalid_dds ||
+        read.framing.status == dmc3::TextureSlotFramingStatus::descriptor_mismatch) {
+        try {
+            auto extended = parse_extended_formats(source);
+            if (extended.ok()) {
+                if (compatibility_used != nullptr) *compatibility_used = false;
+                if (extended_formats_used != nullptr) *extended_formats_used = true;
+                return extended;
+            }
+        } catch (...) {
+        }
+    }
     // Only descriptor-field disagreements are tolerated. Structural faults
     // (padding, trailing bytes, sector bounds, DDS validity) stay rejected.
     if (read.framing.status != dmc3::TextureSlotFramingStatus::descriptor_mismatch) {

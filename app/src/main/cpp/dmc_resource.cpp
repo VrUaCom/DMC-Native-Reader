@@ -1,4 +1,5 @@
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/texture_reencode.h"
 
 #include <algorithm>
 #include <cctype>
@@ -75,6 +76,10 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Evt, true, "EventTbl", "event-script", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.eventtbl");
     }
+    if (magic4(bytes, size, 'H', 'I', 'T', 'S')) {
+        return result(Format::Hits, true, "HITS", "environment-collision", "inspection",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.hits");
+    }
 
     if (magic4(bytes, size, 'P', 'A', 'C', '\0')) {
         return result(Format::Pac, true, "PAC", "archive", "child-resources",
@@ -148,6 +153,13 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
     }
+    // One gfxTexture + DDS without a bundle header (.tm2 under another name).
+    if (bytes != nullptr && size != 0U &&
+        texture_reencode::is_wrapped_texture(
+            std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size})) {
+        return result(Format::Dds, true, "DDS", "texture", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "image/vnd-ms.dds");
+    }
     // Collision shape tables (ICollisionHandle, 0x14005C260): 80-byte records.
     if (bytes != nullptr &&
         collision::looks_like_shape_table(std::span<const std::uint8_t>{bytes, size})) {
@@ -194,6 +206,7 @@ const char* format_name(Format format) noexcept {
     case Format::Dds: return "DDS";
     case Format::Ptx: return "PTX";
     case Format::Evt: return "EventTbl";
+    case Format::Hits: return "HITS";
     case Format::Pac: return "PAC";
     case Format::Mot: return "MOT";
     case Format::Pnst: return "PNST";

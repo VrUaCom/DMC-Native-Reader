@@ -1,12 +1,14 @@
 #pragma once
 
 #include <concepts>
+#include <cstdint>
 #include <span>
 #include <string_view>
 #include <type_traits>
 
 #include "dmcresource/cpp23_profile.h"
 #include "dmcresource/spider/crusader.h"
+#include "dmcresource/spider/plan_builder.h"
 
 namespace dmcresource::spider::cpp23 {
 
@@ -35,6 +37,23 @@ template <StateObject State>
     std::span<const crusader::OperationBinding> bindings,
     State& state) noexcept {
     return crusader::execute(plan, bindings, &state);
+}
+
+// An operation written against its real state type.
+template <StateObject State>
+using TypedOperationFn = bool (*)(State&, std::uint32_t) noexcept;
+
+// Adapts `bool fn(State&, operand) noexcept` to the Crusader ABI: one
+// template function per (State, fn), so bindings stay plain function
+// pointers (no std::function, no allocation).
+template <StateObject State, TypedOperationFn<State> Fn>
+[[nodiscard]] bool typed_operation(void* raw, std::uint32_t operand) noexcept {
+    return raw != nullptr && Fn(*static_cast<State*>(raw), operand);
+}
+
+template <StateObject State, TypedOperationFn<State> Fn>
+[[nodiscard]] constexpr crusader::OperationBinding bind(crusader::OperationId operation) noexcept {
+    return {.operation = operation, .execute = &typed_operation<State, Fn>};
 }
 
 }  // namespace dmcresource::spider::cpp23

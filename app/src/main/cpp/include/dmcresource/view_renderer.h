@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <vector>
 #include <span>
@@ -20,6 +21,9 @@ enum class RenderFlag : std::uint32_t {
     Shadows = 1U << 6U,
     Collision = 1U << 7U,
     Room = 1U << 8U,
+    // HITS room/environment collision overlay. This is deliberately separate
+    // from Collision (character attack shapes on body bones).
+    RoomCollision = 1U << 14U,
     SmoothTextures = 1U << 9U,  // bilinear texture filtering on models
     Unlit = 1U << 10U,          // no camera light on models
     Preview = 1U << 13U,        // fast frame while the view moves: nearest texels
@@ -55,6 +59,62 @@ struct ViewState {
     std::span<const Vec3> floor_shadow{};
     // Optional coloured line pairs drawn over the model (collision debug).
     std::span<const Vec3> overlay_lines{};
+    std::span<const Vec3> room_collision_lines{};
+    // Kind of each line pair of room_collision_lines (collision_kind_color).
+    std::span<const std::uint8_t> room_collision_kinds{};
+    // Line widths in image pixels: meshes (wireframe, room wire, bones) and
+    // collisions (HITS, attack shapes).
+    // Opacity of the room's wireframe lines when the room is only the backdrop
+    // of a model (0 hides them, 1 is opaque).
+    float room_wire_opacity{0.45F};
+    // Texture scrolls of the room (texture index, rate per game frame) and the
+    // animation clock in game frames (60 per second; 0 = still).
+    struct RoomScroll final {
+        std::uint32_t texture{};
+        float u_per_frame{};
+        float v_per_frame{};
+    };
+    std::span<const RoomScroll> room_scrolls{};
+    float room_time{0.0F};
+    int mesh_line_px{1};
+    int collision_line_px{1};
+    // Resource-backed EXE effect presentation. The runtime supplies explicit
+    // world transforms and atlas UVs; the renderer does not infer an effect
+    // from an MOT name or from a body joint.
+    struct EffectSprite final {
+        Matrix4 world{};
+        const ImagePreview* texture{};
+        float width{};
+        float height{};
+        float u0{};
+        float v0{};
+        float u1{1.0F};
+        float v1{1.0F};
+        // CEffect mode 1 (0x1402E5D00): camera-plane extents around the world
+        // anchor, already scaled to world units: x in [left, right], y in
+        // [bottom, top]. When unset the centred width/height is used.
+        bool extents{};
+        float left{}, right{}, bottom{}, top{};
+        // CEffect mode 2 (0x1402E69E0): an oriented quad whose world corners
+        // are resolved by the caller (order: -B, -B+U, -B+U+V, -B+V).
+        bool oriented{};
+        std::array<Vec3, 4> corners{};
+        // Vertex colour of particle quads (P records): texel * tint / 255,
+        // alpha likewise. Additive adds the tinted colour weighted by alpha.
+        std::array<std::uint8_t, 4> tint{255U, 255U, 255U, 255U};
+        // Per-corner colours (particle quads: one RGBA per vertex, Gouraud);
+        // when set they replace `tint`.
+        bool per_vertex{false};
+        std::array<std::array<std::uint8_t, 4>, 4> corner_tint{};
+        // A line from corners[0] to corners[1] (CPtclLine01), drawn a few
+        // pixels wide in screen space; colours blend along it.
+        bool line{false};
+        bool additive{false};
+        // Untextured polygon (CPtclPoly00 / Line records): texture is null and
+        // the tint is the whole colour.
+        bool solid{false};
+    };
+    std::span<const EffectSprite> effect_sprites{};
     // Texture for triangles without one (neutral_texture.h); lit by a
     // camera light so the form stays readable. nullptr: depth-shaded grey.
     const ImagePreview* fallback_texture{nullptr};
@@ -67,6 +127,9 @@ struct ViewState {
     const std::vector<ImagePreview>* room_textures{nullptr};
     const std::vector<std::uint8_t>* room_translucent_triangles{nullptr};
     Vec3 room_offset{};
+    // The room is the subject of the view (a stage scene): its wireframe is
+    // drawn at full strength, not as a dim backdrop.
+    bool room_wire_main{false};
     // Viewer settings: bilinear model textures, no model light, background.
     bool smooth_textures{false};
     bool unlit{false};
@@ -77,10 +140,44 @@ struct ViewState {
     // about room_pivot (room coordinates) before room_offset moves it.
     float pan_x{0.0F};
     float pan_y{0.0F};
+    // Dolly: the camera moves along its view axis by this fraction of the
+    // framing distance (>0 toward the orbit centre, <0 away; 1 = at it).
+    float dolly{0.0F};
     Vec3 frame_shift{};
     float room_yaw{0.0F};
     Vec3 room_pivot{};
+    // Fly camera (stages, collision views): the camera stands at fly_eye and
+    // looks along yaw / pitch, turning about itself instead of orbiting the
+    // framed centre. Pan, dolly and the follow shift do not apply.
+    bool fly{false};
+    Vec3 fly_eye{};
 };
+
+// World directions of the view camera at yaw / pitch (the same mirrored
+// camera as render_view): forward into the screen, right = screen right,
+// up = screen up.
+struct CameraBasis final {
+    Vec3 forward{};
+    Vec3 right{};
+    Vec3 up{};
+};
+[[nodiscard]] CameraBasis camera_basis(float yaw_radians, float pitch_radians) noexcept;
+
+// World position of the camera render_view uses for this view (orbit or fly);
+// switching a view to fly with this eye keeps the picture unchanged.
+[[nodiscard]] Vec3 view_camera_eye(const Mesh& mesh, int width, int height, const ViewState& view);
+
+// One fly step: `forward` along the view direction (pitch included, so
+// flying while looking up climbs), `strafe` along screen right, `rise`
+// straight up; all in world units.
+[[nodiscard]] Vec3 fly_move(const Vec3& eye, float yaw_radians, float pitch_radians, float forward,
+                            float strafe, float rise) noexcept;
+
+// Colour of a HITS record kind in the collision overlay and its legend.
+[[nodiscard]] std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept;
+
+// Framing distance (model units) of the camera at dolly 0 for these vertices.
+[[nodiscard]] float framing_camera_distance(std::span<const Vec3> vertices) noexcept;
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
     std::span<const std::uint32_t> indices, int width, int height, float zoom);

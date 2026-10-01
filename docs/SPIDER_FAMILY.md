@@ -53,6 +53,46 @@ Candidate uses:
 
 Tarantula is **not required** for the accepted Native Reader v24 path and must not be inserted into hot inner loops or simple direct operations merely for symmetry.
 
+### First Tarantula workflow: texture format change
+
+DMC Rengine (branch `claude/devil-microy3-decompile-port-2v8pne`, merged with
+`experiment/spider-python-migration`) runs `texture-reencode` as a Tarantula
+workflow and offers an in-memory entry for viewers:
+`spider::tarantula::run_texture_reencode(bytes, request)`.
+
+- **Steps:** acquire → inspect → transform[slot] → assemble → validate →
+  publish.
+- **Replaces:** a scratch Python + etcpak prototype.
+
+The Reader's "Texture format" action is the product counterpart:
+
+- a Crusader plan (select source → re-encode → open result → verify) over
+  the copied `texture_reencode` module;
+- Black Widow flags `CanReencodeTextures` and `CanSaveSource` for the menu.
+
+The output is byte-identical to the Rengine workflow. When the vendored
+Rengine includes the workflow, the action's re-encode step should call it
+and drop the copied modules.
+
+### Plan builder and typed operations
+
+`spider/plan_builder.h` mirrors DMC Rengine `spider/plan_builder.hpp`
+(branch `experiment/spider-python-migration`).
+
+- **Plans:** built from named nodes; dependencies can only point to earlier
+  nodes.
+- **Bad graph:** fails closed with `invalid_plan` before any operation runs.
+- **Labels:** turn an `ExecutionReport` into the step that stopped.
+- **Typed operations:** `spider::cpp23::bind<State, &fn>` adapts
+  `bool fn(State&, operand) noexcept` to the Crusader ABI with plain
+  function pointers.
+
+The texture re-encode action is the first user. Its failures read
+`"<step> failed: <reason>"`. A session opened from a PAC slot carries its
+container natively (`Session::container_source`, Black Widow
+`ReencodeRebuildsContainer`), so the shell passes no container or child
+index.
+
 ## Hot-path rule
 
 Rasterization, barycentric interpolation, vector/matrix math, UV math, texture sampling and similarly small/hot numerical operations remain direct C++20.

@@ -47,7 +47,11 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ADD_MOD_PARTS = 1005;
     private static final int REQUEST_ADD_PAC = 1011;
     private static final int REQUEST_ROOM = 1012;
+    private static final int REQUEST_ROOM_EFFECTS = 1014;
+    private static final String PREF_EFFECTS_NAME = "room.effects.name";
+    private static final String EFFECTS_FILE = "room_effects.bin";
     private static final int REQUEST_EXPORT_INFO = 1013;
+    private static final int REQUEST_SAVE_SOURCE = 1015;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -79,6 +83,8 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private long pendingSaveSession;
+
     private static final class StagedAsset {
         final Uri uri;
         final String name;
@@ -105,6 +111,9 @@ public final class MainActivity extends Activity {
     private Button uvButton;
     private Button shadowButton;
     private Button collisionButton;
+    private Button stageCollisionButton;
+    private Button flyButton;
+    private Button breakButton;
     // Position in the collision cycle: -1 all attacks, then each used id.
     private int collisionCursor = -2;
     private Button infoButton;
@@ -140,6 +149,9 @@ public final class MainActivity extends Activity {
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
+    // Stage archive the root scene was assembled from (its files stay
+    // browsable from the menu).
+    private Uri stagePacUri;
     // Selected class inside a shared enemy archive (em000.pac); 0 = first.
     private int enemyVariant;
     // Position buttons under the title (one per enemy class / weapon / dress state).
@@ -162,8 +174,22 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         buildUi();
         applyViewerSettings();
+        // A gesture added later is on for a mask stored before it existed.
+        if (!prefs().getBoolean(PREF_GESTURE_CAMERA_V2, false)) {
+            prefs().edit()
+                    .putInt(PREF_GESTURES, prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL)
+                            | DmcRenderView.G_CLOSE_PAN | DmcRenderView.G_TURN)
+                    .putBoolean(PREF_GESTURE_CAMERA_V2, true).apply();
+        }
+        if (!prefs().getBoolean(PREF_GESTURE_DOLLY, false)) {
+            prefs().edit()
+                    .putInt(PREF_GESTURES, prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL) | DmcRenderView.G_DOLLY)
+                    .putBoolean(PREF_GESTURE_DOLLY, true).apply();
+        }
         renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
+        renderView.setResolutionListener(side -> prefs().edit().putInt(SET_MAX_SIDE, side).apply());
         restoreRoom();
+        restoreRoomEffects();
         handleIncomingIntent(getIntent());
     }
 
@@ -301,6 +327,26 @@ public final class MainActivity extends Activity {
         syncToggleButton(collisionButton,
                 hasSession && NativeBridge.hasCollision(session) && !renderView.isUvLayoutVisible(),
                 renderView.isCollisionVisible());
+
+        // Stage collision (HITS of the room): the button appears once a stage
+        // with collision is the room around the opened model.
+        final boolean stageScene = hasSession && NativeBridge.stageCollisionSourceCount(session) > 0;
+        // Only a stage has its collision button; a model seen in a room does not
+        // (the room's HITS stay switchable in Settings).
+        syncToggleButton(stageCollisionButton,
+                !renderView.isUvLayoutVisible() && stageScene,
+                renderView.isRoomCollisionVisible());
+
+        // Camera mode (stages and collision views): orbit <-> fly.
+        final boolean flyAvailable = hasSession && !renderView.isUvLayoutVisible()
+                && (stageScene || NativeBridge.isStageSession(session)
+                    || NativeBridge.hasEnvironmentCollision(session) || renderView.isRoomCollisionVisible());
+        if (!flyAvailable && renderView.isFlyMode()) renderView.setFlyMode(false);
+        syncToggleButton(flyButton, flyAvailable, renderView.isFlyMode());
+
+        syncToggleButton(breakButton,
+                hasSession && !renderView.isUvLayoutVisible() && NativeBridge.roomBreakable(session),
+                NativeBridge.roomBroken());
 
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
@@ -579,6 +625,52 @@ public final class MainActivity extends Activity {
         });
         addToolButton(bar, collisionButton);
 
+        // Stage collision: shows the HITS walls and floors of the room. They
+        // are always active: characters stop at walls and follow floors,
+        // shots hit them.
+        stageCollisionButton = makeSquareButton("\u25A6", "Stage collision (HITS)", 20f);
+        stageCollisionButton.setOnClickListener(v -> {
+            final int stageSources = session != 0 ? NativeBridge.stageCollisionSourceCount(session) : 0;
+            if (stageSources <= 0 && (!roomLoaded || NativeBridge.roomCollisionSourceCount() <= 0)) return;
+            final boolean show = !renderView.isRoomCollisionVisible();
+            if (show && stageSources <= 0 && !roomShown()) {
+                prefs().edit().putBoolean(PREF_ROOM_SHOWN, true).apply();
+            }
+            renderView.setRoomCollisionVisible(show);
+            notice(show ? "Stage collision shown: "
+                            + (stageSources > 0 ? stageSources : NativeBridge.roomCollisionSourceCount())
+                            + " HITS source(s)"
+                         : "Stage collision hidden (still active)", Toast.LENGTH_SHORT);
+            applyResourceUiState();
+        });
+        addToolButton(bar, stageCollisionButton);
+
+        // Camera mode: orbit (turn round the model / stage) or fly (joysticks
+        // under the fingers: left moves, right looks). The same button goes back.
+        flyButton = makeSquareButton("\u2708", "Camera mode: orbit / fly", 18f);
+        flyButton.setOnClickListener(v -> {
+            final boolean fly = !renderView.isFlyMode();
+            if (!renderView.setFlyMode(fly)) return;
+            notice(fly ? "Fly camera: left thumb moves (forward / back, sideways), right thumb looks "
+                            + "(turn, tilt); fly forward while looking up or down to climb or descend"
+                       : "Orbit camera", Toast.LENGTH_LONG);
+            applyResourceUiState();
+        });
+        addToolButton(bar, flyButton);
+
+        // Breakable stage objects ("# SET n BREAK"): show them broken (their
+        // bmodel, the break effect played once) or intact.
+        breakButton = makeSquareButton("\u2716", "Break stage objects", 18f);
+        breakButton.setOnClickListener(v -> {
+            if (session == 0 || !NativeBridge.roomBreakable(session)) return;
+            final boolean broken = !NativeBridge.roomBroken();
+            NativeBridge.setRoomBroken(broken);
+            notice(broken ? "Stage objects broken" : "Stage objects intact", Toast.LENGTH_SHORT);
+            applyResourceUiState();
+            renderView.renderNow();
+        });
+        addToolButton(bar, breakButton);
+
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {
             if (!blackWidowState.canShowUv) return;
@@ -611,6 +703,93 @@ public final class MainActivity extends Activity {
     private boolean roomLoaded;
     private String roomName = "";
 
+    private String effectsName = "";
+    private String effectsDetail = "";
+
+    private File effectsFile() {
+        return new File(getFilesDir(), EFFECTS_FILE);
+    }
+
+    private void roomEffectsChoose() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_ROOM_EFFECTS);
+    }
+
+    private void roomEffectsRemove() {
+        NativeBridge.clearRoomEffects();
+        effectsName = "";
+        effectsDetail = "";
+        //noinspection ResultOfMethodCallIgnored
+        effectsFile().delete();
+        prefs().edit().remove(PREF_EFFECTS_NAME).apply();
+        renderView.refreshRoom();
+        notice("Stage effects removed", Toast.LENGTH_SHORT);
+    }
+
+    /** Copies the picked stage effect bank (st*_effect.pac) into app storage and loads it. */
+    private void chooseRoomEffects(Uri uri) {
+        final String name = displayName(uri);
+        new Thread(() -> {
+            final File target = effectsFile();
+            final File partial = new File(getFilesDir(), EFFECTS_FILE + ".part");
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new java.io.FileOutputStream(partial)) {
+                if (in != null) {
+                    byte[] buffer = new byte[1 << 16];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception ignored) {
+                copied = false;
+            }
+            final String detail = copied ? loadEffectsFile(partial, name) : null;
+            if (detail == null) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+                runOnUiThread(() -> notice("Stage effects: " + name + " is not an effect bank", Toast.LENGTH_LONG));
+                return;
+            }
+            //noinspection ResultOfMethodCallIgnored
+            target.delete();
+            //noinspection ResultOfMethodCallIgnored
+            partial.renameTo(target);
+            prefs().edit().putString(PREF_EFFECTS_NAME, name).apply();
+            runOnUiThread(() -> {
+                effectsName = name;
+                effectsDetail = detail;
+                renderView.refreshRoom();
+                notice("Stage effects: " + name + " (" + detail + ")", Toast.LENGTH_LONG);
+            });
+        }).start();
+    }
+
+    private void restoreRoomEffects() {
+        final File file = effectsFile();
+        final String name = prefs().getString(PREF_EFFECTS_NAME, null);
+        if (name == null || !file.isFile()) return;
+        new Thread(() -> {
+            final String detail = loadEffectsFile(file, name);
+            if (detail == null) return;
+            runOnUiThread(() -> {
+                effectsName = name;
+                effectsDetail = detail;
+                renderView.refreshRoom();
+            });
+        }).start();
+    }
+
+    private static String loadEffectsFile(File file, String name) {
+        try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            return NativeBridge.loadRoomEffects(pfd.getFd(), name);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private File roomFile() {
         return new File(getFilesDir(), ROOM_FILE);
     }
@@ -635,21 +814,38 @@ public final class MainActivity extends Activity {
     private static final String SET_SHADOWS = "set.shadows";
     private static final String SET_SPEED = "set.speed";
     private static final String SET_FAST_PREVIEW = "set.fastPreview";
+    private static final String SET_MESH_LINE = "set.meshLine";
+    // Opacity of the room's wireframe lines behind a model, in tenths (0-10);
+    // bits 28-31 of the render flags hold it + 1.
+    private static final String SET_ROOM_LINES = "set.roomLines";
+    private static final String SET_ROOM_ANIM = "set.roomAnimate";
+    private static final String SET_COLLISION_LINE = "set.collisionLine";
+    private static final String SET_GPU = "set.gpu";
+    private static final String SET_GPU_MSAA = "set.gpuMsaa";
+    private static final String SET_GPU_MIPMAPS = "set.gpuMipmaps";
+    private static final String SET_GPU_ANISOTROPY = "set.gpuAnisotropy";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
+        NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
+        NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
+                p.getInt(SET_GPU_ANISOTROPY, 8));
         final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
                 | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
-                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11);
+                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11)
+                | ((Math.max(0, Math.min(10, p.getInt(SET_ROOM_LINES, 5))) + 1) << 28)
+                | (p.getBoolean(SET_ROOM_ANIM, true) ? 1 << 15 : 0);
         renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
                 p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
-                p.getBoolean(SET_FAST_PREVIEW, true));
+                p.getBoolean(SET_FAST_PREVIEW, true),
+                p.getInt(SET_MESH_LINE, 1), p.getInt(SET_COLLISION_LINE, 1));
     }
 
     private void roomToggle() {
         final boolean shown = !roomShown();
         prefs().edit().putBoolean(PREF_ROOM_SHOWN, shown).apply();
         renderView.setRoomVisible(shown && roomLoaded);
+        applyResourceUiState();
         notice(shown ? "Room shown: " + roomName : "Room hidden", Toast.LENGTH_SHORT);
     }
 
@@ -675,6 +871,7 @@ public final class MainActivity extends Activity {
         roomFile().delete();
         prefs().edit().remove(PREF_ROOM_NAME).apply();
         renderView.setRoomVisible(false);
+        applyResourceUiState();
         notice("Room removed: plain floor", Toast.LENGTH_SHORT);
     }
 
@@ -689,10 +886,19 @@ public final class MainActivity extends Activity {
         title.setTextColor(0xffc8ccd6);
         title.setTextSize(14f);
         block.addView(title);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+        // Many choices wrap onto rows of at most five.
+        final int perRow = names.length > 5 ? 5 : names.length;
         final TextView[] chips = new TextView[names.length];
+        LinearLayout row = null;
         for (int i = 0; i < names.length; ++i) {
+            if (i % perRow == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                final LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                if (i > 0) rowParams.topMargin = dp(6);
+                block.addView(row, rowParams);
+            }
             final int index = i;
             TextView chip = new TextView(this);
             chip.setText(names[i]);
@@ -710,8 +916,13 @@ public final class MainActivity extends Activity {
             params.setMarginEnd(dp(6));
             row.addView(chip, params);
         }
-        block.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        // Keep the last row's chips the width of the others.
+        while (names.length % perRow != 0 && row != null && row.getChildCount() < perRow) {
+            final View spacer = new View(this);
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, 1, 1f);
+            params.setMarginEnd(dp(6));
+            row.addView(spacer, params);
+        }
         return block;
     }
 
@@ -746,6 +957,162 @@ public final class MainActivity extends Activity {
         return fallback;
     }
 
+    /** A labelled slider from `min` to `max`; the label shows `format(value)`. */
+    private LinearLayout sliderRow(String label, int min, int max, int step, int value,
+                                   java.util.function.IntFunction<String> format,
+                                   java.util.function.IntConsumer onChange) {
+        final LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(10), 0, dp(4));
+        final TextView title = new TextView(this);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        final int clamped = Math.max(min, Math.min(max, value));
+        title.setText(label + ": " + format.apply(clamped));
+        block.addView(title);
+        final android.widget.SeekBar bar = new android.widget.SeekBar(this);
+        bar.setMax(max - min);
+        bar.setProgress(clamped - min);
+        bar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar seekBar, int progress, boolean fromUser) {
+                final int v = min + progress;
+                title.setText(label + ": " + format.apply(v));
+                if (fromUser) onChange.accept(v);
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar seekBar) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar seekBar) { }
+        });
+        block.addView(bar, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return block;
+    }
+
+    private TextView hint(String text) {
+        final TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextColor(0xff8c909c);
+        view.setTextSize(12f);
+        view.setPadding(0, dp(2), 0, dp(4));
+        return view;
+    }
+
+    /**
+     * The kinds of collision record (distinct flag values) of the HITS shown
+     * now, each in the colour it is drawn with.
+     */
+    private void addCollisionKinds(LinearLayout content) {
+        final String[] kinds = NativeBridge.collisionKinds(session);
+        final TextView title = new TextView(this);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        title.setPadding(0, dp(12), 0, dp(4));
+        if (kinds == null || kinds.length == 0) {
+            title.setText("Collision kinds: none shown. Open a stage, a .hits file or choose a room with collision.");
+            content.addView(title);
+            return;
+        }
+        title.setText("Collision kinds in the HITS shown now: " + kinds.length
+                + " (one per distinct record flags value)");
+        content.addView(title);
+        for (int i = 0; i < kinds.length; ++i) {
+            final String[] part = kinds[i].split("\\|");
+            if (part.length < 6) continue;
+            final long flags = Long.parseLong(part[0]);
+            final int color = 0xff000000 | Integer.parseInt(part[5]);
+            final LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(3), 0, dp(3));
+            final View swatch = new View(this);
+            swatch.setBackgroundColor(color);
+            row.addView(swatch, new LinearLayout.LayoutParams(dp(26), dp(6)));
+            final TextView text = new TextView(this);
+            text.setTextColor(0xffe0e3ea);
+            text.setTextSize(13f);
+            text.setTypeface(Typeface.MONOSPACE);
+            text.setPadding(dp(10), 0, 0, 0);
+            text.setText(String.format(java.util.Locale.US,
+                    "%d  0x%08X  %s records  (floor %s / wall %s / ceiling %s)",
+                    i + 1, flags, part[1], part[2], part[3], part[4]));
+            row.addView(text);
+            content.addView(row);
+        }
+    }
+
+    // ---- Benchmark
+
+    private final java.util.ArrayList<String> benchmarkResults = new java.util.ArrayList<>();
+
+    /** The settings a benchmark ran with, for its report. */
+    private String benchmarkSettings() {
+        final android.content.SharedPreferences p = prefs();
+        final boolean gpu = p.getBoolean(SET_GPU, true);
+        final StringBuilder text = new StringBuilder();
+        if (gpu) {
+            final int msaa = p.getInt(SET_GPU_MSAA, 4);
+            final int aniso = p.getInt(SET_GPU_ANISOTROPY, 8);
+            text.append("MSAA ").append(msaa == 0 ? "off" : msaa + "x")
+                    .append(", mipmaps ").append(p.getBoolean(SET_GPU_MIPMAPS, true) ? "on" : "off")
+                    .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x").append(", ");
+        }
+        text.append(p.getBoolean(SET_SMOOTH, false) ? "smooth" : "pixel").append(" textures");
+        if (p.getBoolean(SET_UNLIT, false)) text.append(", unlit");
+        if (roomLoaded && roomShown()) text.append(", room ").append(roomName);
+        return text.toString();
+    }
+
+    private void runBenchmark() {
+        final TextView progress = new TextView(this);
+        progress.setTextColor(0xffe6e8ee);
+        progress.setTextSize(15f);
+        progress.setPadding(dp(20), dp(16), dp(20), dp(8));
+        progress.setText("Drawing frames as fast as possible for 10 seconds…\nKeep the app open.");
+        final AlertDialog running = new AlertDialog.Builder(this)
+                .setTitle("Benchmark")
+                .setView(progress)
+                .setCancelable(false)
+                .show();
+        final boolean started = renderView.runBenchmark(10.0f, benchmarkSettings(), report -> {
+            running.dismiss();
+            benchmarkResults.add(0, report);
+            showBenchmarkResults();
+        });
+        if (!started) {
+            running.dismiss();
+            notice("Open a model or a stage first", Toast.LENGTH_SHORT);
+        }
+    }
+
+    private void showBenchmarkResults() {
+        final StringBuilder all = new StringBuilder();
+        for (int i = 0; i < benchmarkResults.size(); ++i) {
+            if (i > 0) all.append("\n\n— earlier —\n");
+            all.append(benchmarkResults.get(i));
+        }
+        final TextView text = new TextView(this);
+        text.setTextColor(0xffe6e8ee);
+        text.setTextSize(14f);
+        text.setTextIsSelectable(true);
+        text.setPadding(dp(20), dp(12), dp(20), dp(8));
+        text.setText(all.toString());
+        final android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(text);
+        new AlertDialog.Builder(this)
+                .setTitle("Benchmark results")
+                .setView(scroll)
+                .setPositiveButton("Run again", (d, w) -> runBenchmark())
+                .setNeutralButton("Copy", (d, w) -> {
+                    final android.content.ClipboardManager clipboard =
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Benchmark", all.toString()));
+                        notice("Benchmark results copied", Toast.LENGTH_SHORT);
+                    }
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
     /** Full-screen settings window: render quality, animation, room. */
     private void showSettingsDialog() {
         final android.app.Dialog dialog = new android.app.Dialog(this,
@@ -770,19 +1137,44 @@ public final class MainActivity extends Activity {
         content.addView(header);
 
         final Runnable apply = this::applyViewerSettings;
-        content.addView(sectionTitle("Render"));
-        final int[] sides = {360, 540, 720, 1024};
-        content.addView(choiceRow("Resolution (longest side, px)", new String[]{"360", "540", "720", "1024"},
+        content.addView(sectionTitle("Graphics"));
+        content.addView(choiceRow("Renderer", new String[]{"GPU (graphics chip)", "CPU (software)"},
+                p.getBoolean(SET_GPU, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_GPU, i == 0).apply(); apply.run(); }));
+        final int[] caps = NativeBridge.gpuCapabilities();
+        final int maxSamples = caps != null && caps.length > 0 ? caps[0] : 0;
+        final int maxAnisotropy = caps != null && caps.length > 1 ? caps[1] : 0;
+        content.addView(hint("GPU draws the model, the room, the floor, shadows and effects with OpenGL ES 3; "
+                + "lines and bones are drawn on top. Wireframe and UV views always use the CPU. Now: "
+                + NativeBridge.rendererInfo()
+                + (maxSamples > 0 ? "\nThis chip: anti-aliasing up to " + maxSamples + "x, anisotropic filtering "
+                        + (maxAnisotropy > 1 ? "up to " + maxAnisotropy + "x." : "not supported.") : "")));
+        final int[] msaa = {0, 2, 4, 8};
+        content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},
+                indexOf(msaa, p.getInt(SET_GPU_MSAA, 4), 2),
+                i -> { p.edit().putInt(SET_GPU_MSAA, msaa[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Mipmaps (GPU): no shimmer on distant textures", new String[]{"On", "Off"},
+                p.getBoolean(SET_GPU_MIPMAPS, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_GPU_MIPMAPS, i == 0).apply(); apply.run(); }));
+        final int[] aniso = {1, 2, 4, 8, 16};
+        content.addView(choiceRow("Anisotropic filtering (GPU, smooth textures): sharp floors at an angle",
+                new String[]{"Off", "2x", "4x", "8x", "16x"},
+                indexOf(aniso, p.getInt(SET_GPU_ANISOTROPY, 8), 3),
+                i -> { p.edit().putInt(SET_GPU_ANISOTROPY, aniso[i]).apply(); apply.run(); }));
+        content.addView(hint("Higher anti-aliasing costs memory at large resolutions: above the chip's limit or "
+                + "about 256 MB of samples the next lower level is used. The CPU renderer ignores these three."));
+        final int[] sides = {360, 540, 720, 1024, 2048, 3840, 5120, 6144, 7680};
+        content.addView(choiceRow("Resolution (longest side, px; 2K-8K render larger than the screen)",
+                new String[]{"360", "540", "720", "1024", "2K", "4K", "5K", "6K", "8K"},
                 indexOf(sides, p.getInt(SET_MAX_SIDE, 720), 2),
                 i -> { p.edit().putInt(SET_MAX_SIDE, sides[i]).apply(); apply.run(); }));
-        final int[] frames = {50, 33, 16};
+        content.addView(hint("2K = 2048, 4K = 3840, 5K = 5120, 6K = 6144, 8K = 7680 px. They need a lot of memory "
+                + "and time per frame; while the view moves a small preview is shown. If memory runs out the "
+                + "next lower size is chosen."));
         content.addView(choiceRow("While moving (drag, flick, animation)",
                 new String[]{"Fast preview (half size)", "Full quality"},
                 p.getBoolean(SET_FAST_PREVIEW, true) ? 0 : 1,
                 i -> { p.edit().putBoolean(SET_FAST_PREVIEW, i == 0).apply(); apply.run(); }));
-        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
-                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
-                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
         content.addView(choiceRow("Model textures", new String[]{"Pixel (original)", "Smooth"},
                 p.getBoolean(SET_SMOOTH, false) ? 1 : 0,
                 i -> { p.edit().putBoolean(SET_SMOOTH, i == 1).apply(); apply.run(); }));
@@ -796,7 +1188,36 @@ public final class MainActivity extends Activity {
                 p.getBoolean(SET_SHADOWS, true) ? 0 : 1,
                 i -> { p.edit().putBoolean(SET_SHADOWS, i == 0).apply(); apply.run(); }));
 
+        final LinearLayout.LayoutParams benchParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        benchParams.topMargin = dp(10);
+        content.addView(actionChip("Benchmark: maximum FPS with these settings (10 s)", () -> {
+            dialog.dismiss();
+            runBenchmark();
+        }), benchParams);
+        content.addView(hint("Draws full-size frames back to back for 10 seconds while the camera turns "
+                + "(and the motion plays, if one is playing), without waiting for the screen. Change a "
+                + "setting and run again to compare; results stay listed until the app closes."));
+
+        content.addView(sectionTitle("Graphics: lines and overlays"));
+        final int[] widths = {1, 2, 3, 4, 6};
+        final String[] widthNames = {"1", "2", "3", "4", "6"};
+        content.addView(choiceRow("Mesh line width (wireframe, room meshes, bones; px at 720)", widthNames,
+                indexOf(widths, p.getInt(SET_MESH_LINE, 1), 0),
+                i -> { p.edit().putInt(SET_MESH_LINE, widths[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Collision line width (HITS, attack shapes; px at 720)", widthNames,
+                indexOf(widths, p.getInt(SET_COLLISION_LINE, 1), 0),
+                i -> { p.edit().putInt(SET_COLLISION_LINE, widths[i]).apply(); apply.run(); }));
+        content.addView(sliderRow("Room mesh lines behind a model (wireframe mode): opacity", 0, 10, 10,
+                p.getInt(SET_ROOM_LINES, 5), value -> value * 10 + "%  " + (value == 0 ? "(hidden)" : ""),
+                value -> { p.edit().putInt(SET_ROOM_LINES, value).apply(); apply.run(); }));
+        addCollisionKinds(content);
+
         content.addView(sectionTitle("Animation"));
+        final int[] frames = {50, 33, 16};
+        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
+                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
+                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
         final float[] speeds = {0.25f, 0.5f, 1.0f, 2.0f};
         int speedIndex = 2;
         for (int i = 0; i < speeds.length; ++i) {
@@ -830,10 +1251,46 @@ public final class MainActivity extends Activity {
         if (roomLoaded) {
             content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
                     i -> { if ((i == 0) != roomShown()) roomToggle(); }));
+            content.addView(choiceRow("Room animation (sky clouds, stage effects)", new String[]{"On", "Off"},
+                    p.getBoolean(SET_ROOM_ANIM, true) ? 0 : 1,
+                    i -> { p.edit().putBoolean(SET_ROOM_ANIM, i == 0).apply(); apply.run(); }));
+            if (NativeBridge.roomCollisionSourceCount() > 0) {
+                content.addView(choiceRow("HITS room collision", new String[]{"On", "Off"},
+                        renderView.isRoomCollisionVisible() ? 0 : 1,
+                        i -> {
+                            if (i == 0 && !roomShown()) {
+                                prefs().edit().putBoolean(PREF_ROOM_SHOWN, true).apply();
+                            }
+                            renderView.setRoomCollisionVisible(i == 0);
+                            applyResourceUiState();
+                        }));
+            }
             if (NativeBridge.roomSpotCount() > 1) addAction.accept("Next floor spot", this::roomNextSpot);
             addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
         }
         content.addView(roomActions);
+        // Stage effects: the layout's effects (burning drums) play from st*_effect.pac.
+        final TextView effectsStatus = new TextView(this);
+        effectsStatus.setTextColor(0xffc8ccd6);
+        effectsStatus.setTextSize(14f);
+        effectsStatus.setPadding(0, dp(12), 0, dp(4));
+        effectsStatus.setText(effectsName.isEmpty()
+                ? "Stage effects: none. Choose the stage's effect bank (st*_effect.pac) to play the effects its "
+                        + "layout keeps on objects."
+                : "Stage effects: " + effectsName + " (" + effectsDetail + ")");
+        content.addView(effectsStatus);
+        final LinearLayout effectsActions = new LinearLayout(this);
+        effectsActions.setOrientation(LinearLayout.VERTICAL);
+        final LinearLayout.LayoutParams effectsParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        effectsParams.topMargin = dp(6);
+        effectsActions.addView(actionChip(effectsName.isEmpty() ? "Choose stage effects…" : "Replace stage effects…",
+                () -> { dialog.dismiss(); roomEffectsChoose(); }), effectsParams);
+        if (!effectsName.isEmpty()) {
+            effectsActions.addView(actionChip("Remove stage effects", () -> { roomEffectsRemove(); dialog.dismiss(); }),
+                    effectsParams);
+        }
+        content.addView(effectsActions);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
@@ -850,6 +1307,8 @@ public final class MainActivity extends Activity {
     // ---- Gestures (DmcRenderView): the activity side and the Gestures window.
 
     private static final String PREF_GESTURES = "gestures.mask";
+    private static final String PREF_GESTURE_DOLLY = "gestures.dollyAdded";
+    private static final String PREF_GESTURE_CAMERA_V2 = "gestures.closePanTurnAdded";
 
     private final DmcRenderView.GestureListener gestureListener = new DmcRenderView.GestureListener() {
         @Override public void onStepMotion(int direction) {
@@ -987,8 +1446,11 @@ public final class MainActivity extends Activity {
                 i -> renderView.setFollow(i == 0)));
 
         final Object[][] list = {
-                {DmcRenderView.G_PAN, "Two fingers drag — pan the camera"},
+                {DmcRenderView.G_PAN, "Two fingers drag — pan the camera; pinch — zoom (zoom and lens shown)"},
+                {DmcRenderView.G_DOLLY, "Hold one finger, slide another up / down on the other half — move the camera (distance shown)"},
                 {DmcRenderView.G_TWIST, "Two fingers twist — turn the model in the room (the view when there is no room)"},
+                {DmcRenderView.G_CLOSE_PAN, "Two fingers held together, dragged — move the camera up / down, left / right (no zoom)"},
+                {DmcRenderView.G_TURN, "Hold one finger, twist two others round it — turn the camera round the model / centre"},
                 {DmcRenderView.G_DOUBLE_TAP, "Double tap — reset the view; on the room floor: stand the model there"},
                 {DmcRenderView.G_TAP_PAUSE, "Tap the model — pause / resume the animation"},
                 {DmcRenderView.G_FLING, "Flick — the view keeps turning and slows down"},
@@ -1065,9 +1527,19 @@ public final class MainActivity extends Activity {
             panel.addView(row);
         };
         addRow.accept("Open / replace resource", this::chooseFile);
+        if (session != 0 && blackWidowState.canReencodeTextures) {
+            addRow.accept("Texture format (BC1…BC7)…", this::showTextureFormatDialog);
+        }
+        if (session != 0 && blackWidowState.canSaveSource) {
+            addRow.accept("Save file…", this::chooseSaveSource);
+        }
         if (isRootScene() && assembledPacUri != null) {
             addRow.accept("Add weapon / .PAC…", this::chooseAdditionalPac);
             addRow.accept("Browse .PAC files…", this::browseAssembledPac);
+        }
+        if (isRootScene() && stagePacUri != null) {
+            addRow.accept("Browse .PAC files…", () -> browsePac(stagePacUri));
+            addRow.accept("Stage effects (st*_effect.pac)…", this::roomEffectsChoose);
         }
         if (hasModCompositionContext()) addRow.accept("Add .MOD part(s)", this::chooseAdditionalMods);
         if (isRootScene() && canAttachPtx()) addRow.accept("Attach .PTX texture", this::choosePtxForCurrentSession);
@@ -1124,6 +1596,7 @@ public final class MainActivity extends Activity {
                 roomName = name;
                 roomDetail = detail;
                 renderView.setRoomVisible(true);
+                applyResourceUiState();
                 notice("Room: " + detail, Toast.LENGTH_LONG);
             });
         }).start();
@@ -1141,6 +1614,7 @@ public final class MainActivity extends Activity {
                 roomName = name;
                 roomDetail = detail;
                 renderView.setRoomVisible(roomShown());
+                applyResourceUiState();
             });
         }).start();
     }
@@ -1214,9 +1688,9 @@ public final class MainActivity extends Activity {
             previousPack = entry.packSlot;
 
             // One visual row per MOT:
-            // [Script Play ...] [raw MOT].
-            // Script buttons stay visible even when this script cannot address
-            // the MOT, so the PAC's controller count is always explicit.
+            // [linked Script Play ...] [raw MOT].
+            // A controller without a real link to this MOT is not a disabled
+            // action: it is absent data, so do not spend UI space on it.
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1227,6 +1701,7 @@ public final class MainActivity extends Activity {
                     final int slot = NativeBridge.motionScriptSlot(session, scriptIndex);
                     final boolean available = NativeBridge.motionScriptCanPlayMotion(
                             session, scriptIndex, entry.libraryIndex);
+                    if (!available) continue;
                     final boolean activeScript =
                             index == selectedMotionIndex &&
                             scriptIndex == selectedScriptIndex;
@@ -1236,10 +1711,8 @@ public final class MainActivity extends Activity {
                             "Play " + entry.name + " through MotionScript " +
                                     (slot >= 0 ? "slot " + slot : Integer.toString(scriptIndex)),
                             9f);
-                    scriptButton.setEnabled(available);
                     scriptButton.setActivated(activeScript);
-                    scriptButton.setAlpha(
-                            activeScript ? 1.0f : (available ? 0.78f : 0.30f));
+                    scriptButton.setAlpha(activeScript ? 1.0f : 0.78f);
                     scriptButton.setOnClickListener(
                             v -> selectMotionScript(motionIndex, scriptIndex));
                     addToolButton(row, scriptButton);
@@ -1428,6 +1901,28 @@ public final class MainActivity extends Activity {
             params.setMarginEnd(dp(TOOL_GAP_DP));
             variantBar.addView(button, params);
         }
+        // Class events of the assembled enemy (em000 family: Death = control
+        // code 0x3E7). They run on top of the playing Script Play action.
+        final String[] events = session == 0 ? null : NativeBridge.classEventNames(session);
+        for (int index = 0; events != null && index < events.length; ++index) {
+            final int event = index;
+            final String name = events[index];
+            Button button = makeSquareButton("\u2620 " + name, "Send class event " + name, 13f);
+            button.setPadding(dp(10), 0, dp(10), 0);
+            button.setAlpha(0.85f);
+            button.setOnClickListener(v -> {
+                if (session == 0) return;
+                final boolean sent = NativeBridge.triggerClassEvent(session, event);
+                if (sent && !renderView.isMotionPlaying()) renderView.startMotion();
+                notice(sent ? name + " ▶" : "Play an action through Script Play first",
+                        Toast.LENGTH_SHORT);
+            });
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, dp(TOOL_SIZE_DP - 8));
+            params.setMarginStart(dp(TOOL_GAP_DP * 4));
+            params.setMarginEnd(dp(TOOL_GAP_DP));
+            variantBar.addView(button, params);
+        }
         variantScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
     }
 
@@ -1499,10 +1994,14 @@ public final class MainActivity extends Activity {
     }
 
     private void browseAssembledPac() {
-        if (assembledPacUri == null) return;
-        final String name = displayName(assembledPacUri);
+        browsePac(assembledPacUri);
+    }
+
+    private void browsePac(Uri pac) {
+        if (pac == null) return;
+        final String name = displayName(pac);
         long archive = 0;
-        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(assembledPacUri)) {
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(pac)) {
             if (pfd != null) archive = NativeBridge.open(pfd.getFd(), name);
         } catch (Exception ignored) {
             archive = 0;
@@ -1677,6 +2176,74 @@ public final class MainActivity extends Activity {
         return out.toString();
     }
 
+    /** Spider texture re-encode: pick a format, run natively, open the result. */
+    private void showTextureFormatDialog() {
+        final long target = session;
+        if (target == 0) return;
+        final String[] names = NativeBridge.textureFormatNames();
+        final String[] labels = NativeBridge.textureFormatLabels();
+        if (names == null || labels == null || names.length != labels.length) return;
+        final android.widget.CheckBox dx10 = new android.widget.CheckBox(this);
+        dx10.setText("Always write the DX10 header");
+        dx10.setPadding(dp(8), dp(4), dp(8), dp(4));
+        new AlertDialog.Builder(this)
+                .setTitle(blackWidowState.reencodeRebuildsContainer
+                        ? "Texture format (whole .PAC)" : "Texture format")
+                .setItems(labels, (dialog, which) -> runTextureReencode(
+                        target, names[which], dx10.isChecked()))
+                .setView(dx10)
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void runTextureReencode(long target, String format, boolean dx10) {
+        final String title = titleView.getText().toString();
+        notice("Re-encoding textures to " + format.toUpperCase(java.util.Locale.ROOT) + "…",
+                Toast.LENGTH_SHORT);
+        new Thread(() -> {
+            final long result = NativeBridge.reencodeTextures(target, format, dx10);
+            final String detail = NativeBridge.reencodeTexturesDetail();
+            runOnUiThread(() -> {
+                if (result == 0) {
+                    notice("Format change failed: " + detail, Toast.LENGTH_LONG);
+                    return;
+                }
+                final String name = NativeBridge.sourceFileName(result);
+                navigateToSession(result, (name.isEmpty() ? title : name)
+                        + " · " + format.toUpperCase(java.util.Locale.ROOT));
+                final int newline = detail.indexOf('\n');
+                notice((newline > 0 ? detail.substring(0, newline) : detail)
+                        + " — use ⋮ → Save file…", Toast.LENGTH_LONG);
+            });
+        }, "texture-reencode").start();
+    }
+
+    private void chooseSaveSource() {
+        if (session == 0 || !blackWidowState.canSaveSource) return;
+        pendingSaveSession = session;
+        String name = NativeBridge.sourceFileName(session);
+        if (name == null || name.isEmpty()) name = "resource.bin";
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        intent.putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(intent, REQUEST_SAVE_SOURCE);
+    }
+
+    private void saveSourceToUri(Uri target) {
+        boolean saved = false;
+        if (target != null && pendingSaveSession != 0) {
+            try (android.os.ParcelFileDescriptor pfd =
+                         getContentResolver().openFileDescriptor(target, "rwt")) {
+                saved = pfd != null && NativeBridge.writeSource(pendingSaveSession, pfd.getFd());
+            } catch (Exception ignored) {
+                saved = false;
+            }
+        }
+        pendingSaveSession = 0;
+        notice(saved ? "File saved" : "Could not save the file", Toast.LENGTH_LONG);
+    }
+
     private void exportInfoToUri(Uri target) {
         boolean saved = false;
         if (target != null && !pendingInfoExportText.isEmpty()) {
@@ -1782,7 +2349,8 @@ public final class MainActivity extends Activity {
         if (blackWidowState.canExportPng) {
             choosePngExportDestination();
         } else if (blackWidowState.canRender) {
-            renderView.resetView();
+            renderView.resetView();  // also leaves the fly camera
+            applyResourceUiState();
         }
     }
 
@@ -1814,6 +2382,12 @@ public final class MainActivity extends Activity {
                 pendingExportSession = 0;
             }
             if (requestCode == REQUEST_EXPORT_INFO) pendingInfoExportText = "";
+            if (requestCode == REQUEST_SAVE_SOURCE) pendingSaveSession = 0;
+            return;
+        }
+
+        if (requestCode == REQUEST_SAVE_SOURCE) {
+            saveSourceToUri(data.getData());
             return;
         }
 
@@ -1853,6 +2427,10 @@ public final class MainActivity extends Activity {
 
         if (requestCode == REQUEST_ROOM) {
             if (data != null && data.getData() != null) chooseRoom(data.getData());
+            return;
+        }
+        if (requestCode == REQUEST_ROOM_EFFECTS) {
+            if (data != null && data.getData() != null) chooseRoomEffects(data.getData());
             return;
         }
         if (requestCode == REQUEST_ADD_PAC) {
@@ -2011,6 +2589,7 @@ public final class MainActivity extends Activity {
         selectedMotionIndex = -1;
         selectedScriptIndex = -1;
         assembledPacUri = null;
+        stagePacUri = null;
         addedPacUris.clear();
     }
 
@@ -2133,6 +2712,11 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        // A stage's effect bank opened on its own is also the stage effects of the room.
+        if (opened != 0 && name.toLowerCase(java.util.Locale.ROOT).matches("st\\d+.*effect.*")) {
+            chooseRoomEffects(uri);
+        }
+
         if (opened == 0) {
             setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX / PAC / MOT.");
             applyResourceUiState();
@@ -2149,6 +2733,22 @@ public final class MainActivity extends Activity {
             opened = assembled;
             assembledPacUri = uri;
             name = name + " · assembled";
+        } else if (NativeBridge.isStageSession(opened)
+                && NativeBridge.childResourceCount(opened) > 0) {
+            // A stage archive opens as its assembled scene (the same build as
+            // the room), not as the file gallery.
+            long stage = 0;
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+                if (pfd != null) stage = NativeBridge.openStage(pfd.getFd(), name);
+            } catch (Exception ignored) {
+                stage = 0;
+            }
+            if (stage != 0) {
+                NativeBridge.close(opened);
+                opened = stage;
+                stagePacUri = uri;
+                name = name + " · stage";
+            }
         }
 
         activateSession(opened, name);

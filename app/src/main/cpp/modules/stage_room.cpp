@@ -1,6 +1,11 @@
 #include "dmcresource/stage_room.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cctype>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -8,6 +13,7 @@
 #include <sstream>
 
 #include "dmcresource/archive_entry.h"
+#include "dmcresource/effect_host.h"
 #include "dmcresource/render_scene.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/session_actions.h"
@@ -23,7 +29,20 @@ struct Item final {
     std::string container;
     Format format{Format::Unknown};
     const std::vector<std::uint8_t>* bytes{};
+    std::uint32_t slot{std::numeric_limits<std::uint32_t>::max()};
 };
+
+[[nodiscard]] std::uint32_t physical_slot(const ChildResource& child) noexcept {
+    constexpr std::string_view prefix = "slot-";
+    if (!child.id.starts_with(prefix)) return std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t slot = 0U;
+    const auto* first = child.id.data() + prefix.size();
+    const auto* last = child.id.data() + child.id.size();
+    const auto parsed = std::from_chars(first, last, slot);
+    return parsed.ec == std::errc{} && parsed.ptr == last
+        ? slot
+        : std::numeric_limits<std::uint32_t>::max();
+}
 
 // Same walk as PAC assembly: nested PACs are opened and kept alive; effect
 // banks and PNSTs (effects, trails) are not room geometry.
@@ -44,8 +63,10 @@ void walk(const Session& container,
             walk(*owner->back(), name + "/", depth + 1U, owner, out);
             continue;
         }
-        if (kind.format == Format::Scm || kind.format == Format::Mod || kind.format == Format::Ptx) {
-            out->push_back({name, prefix, kind.format, &child.source_bytes});
+        if (kind.format == Format::Scm || kind.format == Format::Mod ||
+            kind.format == Format::Ptx || kind.format == Format::Hits) {
+            out->push_back({name, prefix, kind.format, &child.source_bytes,
+                            physical_slot(child)});
         }
     }
 }
@@ -69,9 +90,24 @@ void walk(const Session& container,
     return out;
 }
 
-void append(const Session& piece, Room* room) {
+void append(const Session& piece, Room* room, bool layout_object = false, std::string name = {}) {
     const auto& src = piece.render_mesh;
     auto& dst = room->mesh;
+    {
+        Room::Piece info;
+        info.name = std::move(name);
+        info.first_triangle = dst.indices.size() / 3U;
+        info.triangle_count = src.indices.size() / 3U;
+        info.layout_object = layout_object;
+        Vec3 lo{1.0e30F, 1.0e30F, 1.0e30F}, hi{-1.0e30F, -1.0e30F, -1.0e30F};
+        for (const auto& v : src.vertices) {
+            lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)};
+            hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)};
+        }
+        info.bounds_min = lo;
+        info.bounds_max = hi;
+        room->piece_info.push_back(std::move(info));
+    }
     const auto base = static_cast<std::uint32_t>(dst.vertices.size());
     const auto count = src.vertices.size();
     const bool had = base > 0U;
@@ -89,6 +125,7 @@ void append(const Session& piece, Room* room) {
     grow(dst.uv0, src.has_uv0(), Vec2{}, src.uv0);
     grow(dst.color0, src.has_color0(), std::array<std::uint8_t, 4>{0x80U, 0x80U, 0x80U, 0x80U}, src.color0);
     grow(dst.normal0, src.has_normal0(), Vec3{}, src.normal0);
+    grow(dst.blend0, src.has_blend0(), std::uint8_t{0U}, src.blend0);
     dst.vertices.insert(dst.vertices.end(), src.vertices.begin(), src.vertices.end());
     for (const auto i : src.indices) dst.indices.push_back(base + i);
 
@@ -115,6 +152,20 @@ struct GameSet final {
     Vec3 pos{};
     Vec3 rot{};
     Vec3 scale{1.0F, 1.0F, 1.0F};
+    // `uv part, texture, U, V`: texture scroll of the placed model.
+    std::vector<std::array<float, 4>> uv;
+    // `eff K ID` with `epos x, y, z`: an effect the object keeps.
+    char effect_kind{};
+    int effect_id{-1};
+    Vec3 effect_pos{};
+    // "# SET n BREAK" (CStageSetBreak, parser 0x14024A540): the model after
+    // breaking, the effect played then (`beff`; an `epos` after it is its own
+    // position, object +0x6F0) and `remain` (0 none, 1 on, 2 on2).
+    int broken_model{-1};
+    char broken_effect_kind{};
+    int broken_effect_id{-1};
+    Vec3 broken_effect_pos{};
+    std::uint8_t remain{};
 };
 
 struct GameLayout final {
@@ -151,6 +202,7 @@ struct GameLayout final {
 [[nodiscard]] GameLayout parse_game(std::string_view text) {
     GameLayout out;
     GameSet* current = nullptr;
+    bool after_beff = false;  // the parser's r14b: `epos` fills the eff or beff slot
     std::size_t start = 0U;
     while (start < text.size()) {
         auto end = text.find('\n', start);
@@ -169,8 +221,10 @@ struct GameLayout final {
             while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t') ++i;  // number
             while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
             while (i < rest.size() && rest[i] > ' ' && rest[i] != ';') kind.push_back(rest[i++]);
-            out.sets.push_back({kind});
+            out.sets.push_back(GameSet{});
+            out.sets.back().kind = std::move(kind);
             current = &out.sets.back();
+            after_beff = false;
             continue;
         }
         if (current == nullptr) continue;
@@ -186,6 +240,28 @@ struct GameLayout final {
             current->rot = {values[0], values[1], values[2]};
         } else if (key == "scale" && values.size() >= 3U) {
             current->scale = {values[0], values[1], values[2]};
+        } else if (key == "eff" || key == "beff") {
+            // "V 98": a kind letter and a decimal id.
+            const auto rest = line.substr(key_end);
+            std::size_t i = 0U;
+            while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+            if (i < rest.size() && std::isalpha(static_cast<unsigned char>(rest[i]))) {
+                after_beff = key == "beff";
+                (after_beff ? current->broken_effect_kind : current->effect_kind) = rest[i];
+                const auto id = numbers(rest.substr(i + 1U));
+                if (!id.empty()) (after_beff ? current->broken_effect_id : current->effect_id) = static_cast<int>(id[0]);
+            }
+        } else if (key == "epos" && values.size() >= 3U) {
+            (after_beff ? current->broken_effect_pos : current->effect_pos) = Vec3{values[0], values[1], values[2]};
+        } else if (key == "bmodel" && !values.empty()) {
+            current->broken_model = static_cast<int>(values[0]);
+        } else if (key == "remain") {
+            auto rest = line.substr(key_end);
+            rest = rest.substr(0U, rest.find(';'));
+            current->remain = rest.find("on2") != std::string_view::npos ? 2U
+                              : rest.find("on") != std::string_view::npos ? 1U : 0U;
+        } else if (key == "uv" && values.size() >= 4U) {
+            current->uv.push_back({values[0], values[1], values[2], values[3]});
         } else if (key == "cam_init" && values.size() >= 3U) {
             out.has_camera = true;
             out.camera = {values[0], values[1], values[2]};
@@ -213,6 +289,34 @@ void place(Mesh& mesh, const GameSet& set) {
     for (auto& n : mesh.normal0) n = turn(n);
 }
 
+// Joint hierarchy of a merged model, optionally moved by its layout placement
+// (the same turn as place()).
+void merge_hierarchy(const Session& piece, const GameSet* set, Room* room) {
+    const auto& src = piece.hierarchy_overlay;
+    if (!src.available()) return;
+    constexpr float kRad = 3.14159265358979F / 180.0F;
+    auto& dst = room->hierarchy;
+    const auto base = dst.points.size();
+    for (std::size_t i = 0U; i < src.points.size(); ++i) {
+        Vec3 v = src.points[i];
+        if (set != nullptr) {
+            const float cx = std::cos(set->rot.x * kRad), sx = std::sin(set->rot.x * kRad);
+            const float cy = std::cos(set->rot.y * kRad), sy = std::sin(set->rot.y * kRad);
+            const float cz = std::cos(set->rot.z * kRad), sz = std::sin(set->rot.z * kRad);
+            v = {v.x * set->scale.x, v.y * set->scale.y, v.z * set->scale.z};
+            v = {v.x, cx * v.y - sx * v.z, sx * v.y + cx * v.z};
+            v = {cy * v.x + sy * v.z, v.y, -sy * v.x + cy * v.z};
+            v = {cz * v.x - sz * v.y + set->pos.x, sz * v.x + cz * v.y + set->pos.y, v.z + set->pos.z};
+        }
+        dst.points.push_back(v);
+        dst.kinds.push_back(i < src.kinds.size() ? src.kinds[i] : RenderNodeKind{});
+    }
+    for (const auto& edge : src.edges) {
+        dst.edges.push_back({edge.parent + static_cast<std::uint32_t>(base), edge.child + static_cast<std::uint32_t>(base)});
+    }
+    dst.spatial = true;
+}
+
 [[nodiscard]] Vec3 sub(const Vec3& a, const Vec3& b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 [[nodiscard]] Vec3 cross(const Vec3& a, const Vec3& b) noexcept {
     return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
@@ -230,6 +334,11 @@ std::mutex g_mutex;
 std::shared_ptr<const Room> g_room;
 std::size_t g_spot = 0U;
 std::optional<Vec3> g_placed;
+// Active collision (owner = Session address) and its revision counter.
+const void* g_collision_owner = nullptr;
+std::optional<ActiveCollision> g_collision;
+std::uint64_t g_collision_revision = 0U;
+std::shared_ptr<const Session> g_effect_host;
 
 }  // namespace
 
@@ -377,8 +486,12 @@ std::vector<Vec3> floor_spots(const Mesh& mesh, std::size_t limit) {
     return out;
 }
 
-std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t* bytes, std::size_t size) noexcept {
-    try {
+namespace {
+
+// One state of a room: intact, or with every BREAK object broken.
+std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t* bytes, std::size_t size,
+                                       bool broken) {
+    {
         if (bytes == nullptr || size == 0U) return nullptr;
         auto root = open_session(name, bytes, size);
         if (!root) return nullptr;
@@ -391,6 +504,7 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
         if (items.empty() && root->renderable && !root->render_mesh.vertices.empty()) {
             // A lone .scm / .mod: the file itself is the room.
             ++room->pieces;
+            merge_hierarchy(*root, nullptr, room.get());
             append(*root, room.get());
         }
         for (std::size_t i = 0U; i < items.size(); ++i) {
@@ -409,7 +523,8 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
             }
             (items[i].format == Format::Scm ? scm : mod) += 1U;
             ++room->pieces;
-            append(*piece, room.get());
+            merge_hierarchy(*piece, nullptr, room.get());
+            append(*piece, room.get(), false, items[i].name);
         }
         // Stage objects: the "# GAME" layout places model k (k-th model entry
         // of the top-level PNST, EFM / SCM / MOD in order, MOT PACs skipped)
@@ -429,15 +544,30 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
             }
         }
         if (object_bank != nullptr && !layout.sets.empty()) {
+            // Layout model k is the PNST entry in slot 10 * k (slots 10 k + 1.. hold
+            // the model's companions, e.g. its motion PAC); a stage may skip numbers.
             std::vector<const ChildResource*> models;
             for (const auto& child : object_bank->children) {
                 if (child.source_bytes.empty()) continue;
                 const auto format = archive::classify_payload(child.source_bytes.data(), child.source_bytes.size()).format;
-                if (format == Format::Mod || format == Format::Scm) models.push_back(&child);
+                if (format != Format::Mod && format != Format::Scm) continue;
+                const auto slot = physical_slot(child);
+                if (slot == std::numeric_limits<std::uint32_t>::max() || slot % 10U != 0U) {
+                    models.push_back(&child);  // unnumbered: keep the order
+                    continue;
+                }
+                const auto index = static_cast<std::size_t>(slot / 10U);
+                if (index > 1024U) continue;
+                if (models.size() <= index) models.resize(index + 1U, nullptr);
+                models[index] = &child;
             }
             for (const auto& set : layout.sets) {
-                if (set.model < 0 || static_cast<std::size_t>(set.model) >= models.size()) continue;
-                const auto& child = *models[static_cast<std::size_t>(set.model)];
+                // Broken (0x14024AE40): the object switches to its bmodel, or
+                // is removed (0x1403261E0) when it has none.
+                const int model = broken && set.kind == "BREAK" ? set.broken_model : set.model;
+                if (model < 0 || static_cast<std::size_t>(model) >= models.size()) continue;
+                if (models[static_cast<std::size_t>(model)] == nullptr) continue;
+                const auto& child = *models[static_cast<std::size_t>(model)];
                 auto piece = open_session(child.suggested_filename, child.source_bytes.data(), child.source_bytes.size());
                 if (!piece || !piece->renderable || piece->render_mesh.indices.size() < 3U) continue;
                 // Objects use the stage texture bank (the PNST holds none).
@@ -452,8 +582,48 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                 place(piece->render_mesh, set);
                 ++objects;
                 ++room->pieces;
-                append(*piece, room.get());
+                merge_hierarchy(*piece, &set, room.get());
+                const auto texture_base = static_cast<std::uint32_t>(room->textures.size());
+                append(*piece, room.get(), true, child.suggested_filename);
+                for (const auto& uv : set.uv) {
+                    // Rates read as 1/4096 of the texture per game frame, the
+                    // unit family of CDrawUV (an inference: the layout reader
+                    // of the EXE is not traced for this key).
+                    if (uv[1] < 0.0F) continue;
+                    room->uv_scrolls.push_back({texture_base + static_cast<std::uint32_t>(uv[1]),
+                                                uv[2] / 4096.0F, uv[3] / 4096.0F});
+                }
             }
+        }
+        for (const auto& set : layout.sets) {
+            // Intact: `eff` at epos (state 0 spawn, 0x1402E7CA0 at epos x the
+            // object matrix). Broken: the eff is retired and `beff` spawned
+            // once at its own position (object +0x6F0).
+            const bool broken_set = broken && set.kind == "BREAK";
+            const char kind = broken_set ? set.broken_effect_kind : set.effect_kind;
+            const int id = broken_set ? set.broken_effect_id : set.effect_id;
+            if (id < 0 || kind == '\0') continue;
+            Mesh point;
+            point.vertices = {broken_set ? set.broken_effect_pos : set.effect_pos};
+            place(point, set);
+            room->effects.push_back({kind, static_cast<std::uint16_t>(id), point.vertices[0], broken_set});
+        }
+        for (const auto& item : items) {
+            if (item.format != Format::Hits || item.bytes == nullptr || item.bytes->empty()) continue;
+            const auto parsed = environment_collision::parse(
+                item.name, item.slot,
+                std::span<const std::uint8_t>{item.bytes->data(), item.bytes->size()});
+            if (parsed) room->collision_sources.push_back(*parsed);
+        }
+        if (!room->collision_sources.empty()) {
+            // The first physical HITS source is the explicit default debug
+            // source. Other sources remain available as separate provenance
+            // records and are not merged or reinterpreted.
+            room->collision_lines = environment_collision::debug_lines(
+                room->collision_sources.front());
+            room->collision_kinds = environment_collision::kinds(room->collision_sources.front());
+            room->collision_line_kinds = environment_collision::debug_line_kinds(
+                room->collision_sources.front(), room->collision_kinds);
         }
         if (room->mesh.indices.size() < 3U) return nullptr;
         // Soft-alpha textures: more than 2 % of texels between 8 and 239.
@@ -495,11 +665,77 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                << objects << " placed objects), "
                << room->textured_pieces << " textured, " << room->mesh.vertices.size() << " vertices, "
                << room->mesh.indices.size() / 3U << " triangles, " << room->spots.size() << " floor spots";
+        if (!room->collision_sources.empty()) {
+            std::size_t triangles = 0U;
+            for (const auto& source : room->collision_sources) triangles += source.triangles.size();
+            detail << ", " << room->collision_sources.size() << " HITS collision source(s), "
+                   << triangles << " triangle-plane records";
+            for (const auto& source : room->collision_sources) {
+                detail << "\n  HITS " << source.resource_name << " slot=";
+                if (source.resource_slot == std::numeric_limits<std::uint32_t>::max()) {
+                    detail << "unknown";
+                } else {
+                    detail << source.resource_slot;
+                }
+                detail << " grid=" << source.grid_count_x << 'x' << source.grid_count_y << 'x'
+                       << source.grid_count_z << " triangles=" << source.triangles.size()
+                       << " refs=" << source.cell_reference_count;
+            }
+        }
+        std::size_t breakable = 0U;
+        for (const auto& set : layout.sets) breakable += set.kind == "BREAK" ? 1U : 0U;
+        if (breakable > 0U) {
+            detail << ", " << breakable << " breakable objects";
+            if (broken) detail << " (broken)";
+        }
         room->detail = detail.str();
+        room->breakable_objects = breakable;
+        return room;
+    }
+}
+
+}  // namespace
+
+std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t* bytes, std::size_t size) noexcept {
+    try {
+        auto room = build_room_state(name, bytes, size, false);
+        if (room && room->breakable_objects > 0U) room->broken = build_room_state(name, bytes, size, true);
         return room;
     } catch (...) {
         return nullptr;
     }
+}
+
+namespace {
+std::atomic<bool> g_broken{false};
+std::atomic<std::int64_t> g_broken_since_ms{0};
+
+std::int64_t now_ms() noexcept {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
+void set_broken(bool broken) noexcept {
+    if (broken) g_broken_since_ms.store(now_ms());
+    g_broken.store(broken);
+}
+
+bool broken() noexcept { return g_broken.load(); }
+
+float broken_frames() noexcept {
+    if (!g_broken.load()) return -1.0F;
+    return static_cast<float>(now_ms() - g_broken_since_ms.load()) * 0.06F;
+}
+
+const Room& shown(const Room& room) noexcept {
+    return g_broken.load() && room.broken ? *room.broken : room;
+}
+
+std::shared_ptr<const Room> shown(std::shared_ptr<const Room> room) noexcept {
+    if (room && g_broken.load() && room->broken) return room->broken;
+    return room;
 }
 
 void set_current(std::shared_ptr<const Room> room) noexcept {
@@ -535,6 +771,177 @@ Vec3 spot_position() noexcept {
 std::size_t spot() noexcept {
     const std::lock_guard lock{g_mutex};
     return g_spot;
+}
+
+Placement placement_for(std::span<const Vec3> rest, float yaw) noexcept {
+    Placement out;
+    const Vec3 spot = spot_position();
+    out.pivot = spot;
+    out.yaw = std::isfinite(yaw) ? yaw : 0.0F;
+    if (rest.empty()) return out;
+    double sx = 0.0, sz = 0.0;
+    float low = std::numeric_limits<float>::infinity();
+    for (const auto& v : rest) {
+        sx += v.x;
+        sz += v.z;
+        low = std::min(low, v.y);
+    }
+    const auto n = static_cast<double>(rest.size());
+    out.offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+    return out;
+}
+
+Vec3 room_to_model(const Placement& placement, const Vec3& v) noexcept {
+    // Same as view_renderer's room vertex placement.
+    const float c = std::cos(placement.yaw), s = std::sin(placement.yaw);
+    const float x = v.x - placement.pivot.x, z = v.z - placement.pivot.z;
+    return {c * x + s * z + placement.pivot.x + placement.offset.x, v.y + placement.offset.y,
+            -s * x + c * z + placement.pivot.z + placement.offset.z};
+}
+
+Vec3 model_to_room(const Placement& placement, const Vec3& v) noexcept {
+    const float c = std::cos(placement.yaw), s = std::sin(placement.yaw);
+    const float x = v.x - placement.pivot.x - placement.offset.x;
+    const float z = v.z - placement.pivot.z - placement.offset.z;
+    return {c * x - s * z + placement.pivot.x, v.y - placement.offset.y, s * x + c * z + placement.pivot.z};
+}
+
+Vec3 room_direction_to_model(const Placement& placement, const Vec3& d) noexcept {
+    const float c = std::cos(placement.yaw), s = std::sin(placement.yaw);
+    return {c * d.x + s * d.z, d.y, -s * d.x + c * d.z};
+}
+
+void set_active_collision(const void* owner, std::shared_ptr<const Room> room,
+                          const Placement& placement) noexcept {
+    const std::lock_guard lock{g_mutex};
+    const bool same = g_collision && g_collision_owner == owner && g_collision->room == room &&
+                      g_collision->placement.yaw == placement.yaw &&
+                      g_collision->placement.pivot.x == placement.pivot.x &&
+                      g_collision->placement.pivot.y == placement.pivot.y &&
+                      g_collision->placement.pivot.z == placement.pivot.z &&
+                      g_collision->placement.offset.x == placement.offset.x &&
+                      g_collision->placement.offset.y == placement.offset.y &&
+                      g_collision->placement.offset.z == placement.offset.z;
+    if (same) return;
+    g_collision_owner = owner;
+    g_collision = ActiveCollision{std::move(room), placement, ++g_collision_revision};
+}
+
+void clear_active_collision(const void* owner) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (g_collision_owner != owner || !g_collision) return;
+    g_collision.reset();
+    g_collision_owner = nullptr;
+    ++g_collision_revision;
+}
+
+std::optional<ActiveCollision> active_collision(const void* owner) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (owner == nullptr || g_collision_owner != owner || !g_collision || g_collision->source() == nullptr) {
+        return std::nullopt;
+    }
+    return g_collision;
+}
+
+std::optional<environment_collision::SegmentHit> segment_hit_model(
+    const ActiveCollision& collision, const Vec3& from, const Vec3& to, std::uint16_t skip_mask) noexcept {
+    const auto* source = collision.source();
+    if (source == nullptr) return std::nullopt;
+    auto hit = environment_collision::segment_hit(source[0], model_to_room(collision.placement, from),
+                                                  model_to_room(collision.placement, to), skip_mask);
+    if (!hit) return std::nullopt;
+    hit->point = room_to_model(collision.placement, hit->point);
+    hit->normal = room_direction_to_model(collision.placement, hit->normal);
+    return hit;
+}
+
+// Framing box of a stage scene: about one character on the floor spot.
+constexpr float kStageFrameHalf = 120.0F;
+constexpr float kStageFrameHeight = 200.0F;
+
+std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* bytes,
+                                    std::size_t size) noexcept {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto archive = open_session(name, bytes, size);
+        if (!archive || !is_stage_session(*archive)) return nullptr;
+        std::shared_ptr<const Room> room = build_room(name, bytes, size);
+        if (!room) return nullptr;
+        // The largest SCM gives the session its canonical identity
+        // (probe, inspection, capabilities); the drawn mesh is the room.
+        const ChildResource* main = nullptr;
+        const auto find = [&main](const auto& self, const std::vector<ChildResource>& children,
+                                  std::size_t depth) -> void {
+            for (const auto& child : children) {
+                if (!child.source_bytes.empty() && child.probe.format == Format::Scm &&
+                    (main == nullptr || child.source_bytes.size() > main->source_bytes.size())) {
+                    main = &child;
+                }
+                if (depth < 3U) self(self, child.children, depth + 1U);
+            }
+        };
+        find(find, archive->children, 0U);
+        if (main == nullptr) return nullptr;
+        auto stage = open_session(main->suggested_filename, main->source_bytes.data(), main->source_bytes.size());
+        if (!stage) return nullptr;
+        // The stage is drawn by the room pass (near-plane clipped, so the
+        // camera can stand inside it). The session mesh is only a
+        // character-sized framing box on the first floor spot, with one
+        // degenerate triangle: the camera starts where a model would stand.
+        Vec3 spot{};
+        if (!room->spots.empty()) {
+            spot = room->spots.front();
+        } else if (!room->mesh.vertices.empty()) {
+            spot = room->mesh.vertices.front();
+        }
+        Mesh anchor;
+        for (const float y : {0.0F, kStageFrameHeight}) {
+            for (const float x : {-kStageFrameHalf, kStageFrameHalf}) {
+                for (const float z : {-kStageFrameHalf, kStageFrameHalf}) {
+                    anchor.vertices.push_back({spot.x + x, spot.y + y, spot.z + z});
+                }
+            }
+        }
+        anchor.indices = {0U, 0U, 0U};
+        stage->render_mesh = std::move(anchor);
+        stage->render_triangle_texture_slots.clear();
+        stage->attached_textures.clear();
+        stage->hierarchy_overlay = room->hierarchy;
+        stage->renderable = true;
+        stage->archive_name = std::string{name};
+        stage->detail = room->detail;
+        stage->children = std::move(archive->children);
+        stage->stage = std::move(room);
+        return stage;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+std::shared_ptr<Session> make_effect_host(std::string_view name, const std::uint8_t* bytes,
+                                          std::size_t size) noexcept {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto source = std::make_shared<std::vector<std::uint8_t>>(bytes, bytes + size);
+        auto loaded = load_effect_bank(source, 0U);
+        if (!loaded || loaded->bank.records.empty()) return nullptr;
+        auto host = std::make_shared<Session>();
+        host->archive_name = std::string{name};
+        host->effect_banks.push_back(std::move(*loaded));
+        return host;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void set_effect_host(std::shared_ptr<const Session> host) noexcept {
+    const std::lock_guard lock{g_mutex};
+    g_effect_host = std::move(host);
+}
+
+std::shared_ptr<const Session> effect_host() noexcept {
+    const std::lock_guard lock{g_mutex};
+    return g_effect_host;
 }
 
 bool is_stage_session(const Session& session) noexcept {

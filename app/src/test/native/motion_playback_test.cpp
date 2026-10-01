@@ -4,12 +4,15 @@
 #include "dmcresource/resource_session.h"
 
 #include <bit>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <numbers>
+#include <string>
 #include <vector>
 
 // MOT playback regression: EXE 0x140310310 animated local, compression-2
@@ -167,6 +170,31 @@ std::vector<std::uint8_t> make_spatial_mod() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_lady_body_mod() {
+    auto bytes = make_spatial_mod();
+    bytes.resize(0x580U, 0U);
+    put_u8(bytes, 0x11U, 23U);
+    put_u64(bytes, 0x20U, 0x200U);
+
+    // The synthetic body only needs one triangle, but it retains a full
+    // 23-node spatial domain so the recovered component presets can address
+    // host joints 3 and 9 without weakening the production attachment gate.
+    put_u32(bytes, 0x200U, 0x20U);
+    put_u32(bytes, 0x204U, 0x40U);
+    put_u32(bytes, 0x208U, 0x60U);
+    put_u32(bytes, 0x20CU, 0x80U);
+    for (std::size_t node = 0U; node < 23U; ++node) {
+        put_u8(bytes, 0x220U + node,
+                node == 0U ? 0xFFU : static_cast<std::uint8_t>(node - 1U));
+        put_u8(bytes, 0x240U + node, static_cast<std::uint8_t>(node));
+        put_u8(bytes, 0x260U + node, 0U);
+        put_transform(bytes, 0x280U + node * 0x20U,
+                      0.0F, node == 0U ? 0.0F : 1.0F, 0.0F,
+                      node == 0U ? 0.0F : 1.0F);
+    }
+    return bytes;
+}
+
 // Three-node MOT: node 0 translation-x only, one compression-2 track with
 // keys (frame 0 -> 10.0) and (frame 10 -> 20.0).
 std::vector<std::uint8_t> make_translation_mot() {
@@ -194,14 +222,183 @@ std::vector<std::uint8_t> make_translation_mot() {
     return bytes;
 }
 
+// Same translation track with a full 23-node body header.
+std::vector<std::uint8_t> make_translation_mot_domain23() {
+    std::vector<std::uint8_t> bytes(0x70U, 0U);
+    put_u32(bytes, 0x00U, 0x50U);
+    bytes[4] = 'M';
+    bytes[5] = 'O';
+    bytes[6] = 'T';
+    bytes[7] = 0;
+    put_f32(bytes, 0x0CU, 10.0F);
+    put_f32(bytes, 0x14U, 10.0F);
+    put_u16(bytes, 0x1CU, 23U);
+    put_u16(bytes, 0x1EU, 0x040U);
+
+    put_u32(bytes, 0x50U, 1U);
+    put_u16(bytes, 0x54U, 0x18U);
+    put_u16(bytes, 0x56U, 2U);
+    put_u16(bytes, 0x58U, 2U);
+    put_u16(bytes, 0x5AU, 0U);
+    put_f32(bytes, 0x5CU, 10.0F);
+    put_f32(bytes, 0x60U, 10.0F);
+    put_u16(bytes, 0x64U, 0U);
+    put_u16(bytes, 0x66U, 0U);
+    put_u16(bytes, 0x68U, 10U);
+    put_u16(bytes, 0x6AU, 0xFFFFU);
+    return bytes;
+}
+
+// Enemy-form MotionScript with five banks and 45 actions per bank. Every
+// action resolves to the same tiny script; bank4/action44 is the canonical
+// synthetic Lady state-0x7F route used below. The opcode-3 payload is a
+// five-channel row whose lane1 channel0 value is 1, so the CEm034 bridge can
+// be exercised without naming or guessing an effect frame.
+std::vector<std::uint8_t> make_lady_runtime_script() {
+    constexpr std::size_t kTable = 6U;
+    constexpr std::size_t kBankCount = 5U;
+    constexpr std::size_t kActionCount = 45U;
+    constexpr std::size_t kBankListBytes = kBankCount * 2U + 2U;
+    constexpr std::size_t kActionListBytes = kActionCount * 2U + 2U;
+    constexpr std::size_t kScriptBytes = 8U + 6U + 6U + 6U;
+
+    std::vector<std::uint8_t> bytes(kTable + kBankListBytes, 0U);
+    put_u16(bytes, 0U, static_cast<std::uint16_t>(kTable));
+    put_u16(bytes, 2U, 0U);  // no resource table: the test supplies ScriptLink
+    put_u16(bytes, 4U, 0xFFFFU);
+
+    std::array<std::size_t, kBankCount> bank_lists{};
+    for (std::size_t bank = 0U; bank < kBankCount; ++bank) {
+        bank_lists[bank] = bytes.size();
+        bytes.resize(bytes.size() + kActionListBytes, 0U);
+        put_u16(bytes, kTable + bank * 2U,
+                static_cast<std::uint16_t>(bank_lists[bank] - kTable));
+    }
+    put_u16(bytes, kTable + kBankCount * 2U, 0xFFFFU);
+
+    const std::size_t script = bytes.size();
+    bytes.resize(bytes.size() + kScriptBytes, 0U);
+    bytes[script + 0U] = 1U;       // play MOT
+    bytes[script + 4U] = 4U;       // bank metadata, not the runtime link
+    bytes[script + 5U] = 44U;
+    bytes[script + 8U] = 3U;       // opcode3: five channels
+    bytes[script + 9U] = 1U;       // channel0 == 1 on the lane that consumes it
+    bytes[script + 14U] = 0U;      // wait to frame 10
+    put_u16(bytes, script + 16U, 10U);
+    bytes[script + 20U] = 0U;      // terminal wait
+    put_u16(bytes, script + 22U, 0x7FFFU);
+
+    for (const auto list : bank_lists) {
+        const auto relative = static_cast<std::uint16_t>(script - list);
+        for (std::size_t action = 0U; action < kActionCount; ++action) {
+            put_u16(bytes, list + action * 2U, relative);
+        }
+        put_u16(bytes, list + kActionCount * 2U, 0xFFFFU);
+    }
+    return bytes;
+}
+
 [[nodiscard]] bool near(float a, float b, float epsilon = 0.0005F) {
     return std::fabs(a - b) < epsilon;
+}
+
+std::size_t g_generic_bridge_resets{};
+
+void generic_profile_effect_reset(dmcresource::Session*) noexcept {
+    ++g_generic_bridge_resets;
+}
+
+void generic_profile_effect_step(dmcresource::Session* session,
+                                 float frame) noexcept {
+    if (session == nullptr || session->effect_runtime == nullptr) return;
+    dmcresource::motion::DynamicActorEvent event;
+    event.actor = 7U;
+    event.actor_state = 4U;
+    event.lane = 0U;
+    event.channel = 2U;
+    event.signal_value = 3U;
+    event.script_frame = frame;
+    event.world_authoritative = true;
+    event.evidence = dmcresource::motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+    const auto instances = session->effect_runtime->instances();
+    if (instances.empty()) {
+        event.kind = dmcresource::motion::DynamicActorEventKind::Spawn;
+        event.actor_instance = 1U;
+    } else {
+        event.kind = dmcresource::motion::DynamicActorEventKind::Update;
+        event.actor_instance = instances.front().actor_instance;
+    }
+    session->effect_runtime->apply_actor_event(event);
 }
 
 }  // namespace
 
 int main() {
     namespace motion = dmcresource::motion;
+
+    // Retail 0x1402e7a90 mode=3 normalizes the selected slot20
+    // orientation rows for V423 independently of the Shl02 actor basis.
+    {
+        dmcresource::Matrix4 raw;
+        raw.values = {
+            0.0F, 2.0F, 0.0F, 0.0F,
+            -3.0F, 0.0F, 0.0F, 0.0F,
+            0.0F, 0.0F, 4.0F, 0.0F,
+            11.0F, 12.0F, 13.0F, 1.0F,
+        };
+        const auto effect_parent = motion::shl02_effect_parent_matrix(raw);
+        assert(near(effect_parent.values[0], 0.0F));
+        assert(near(effect_parent.values[1], 1.0F));
+        assert(near(effect_parent.values[4], -1.0F));
+        assert(near(effect_parent.values[10], 1.0F));
+        assert(effect_parent.values[12] == 11.0F &&
+               effect_parent.values[13] == 12.0F &&
+               effect_parent.values[14] == 13.0F);
+    }
+
+    // CEm034Shl02: the flight direction is the slot20 X axis only. The old
+    // Reader multiplied (1,0,0,1) by the full matrix, adding the hand
+    // translation (~y 100) to the direction and pointing the shell upward.
+    {
+        dmcresource::Matrix4 slot20;
+        slot20.values = {
+            0.0F, 0.0F, 2.0F, 0.0F,   // X axis -> world +Z (scaled)
+            0.0F, 1.0F, 0.0F, 0.0F,
+            -1.0F, 0.0F, 0.0F, 0.0F,
+            5.0F, 100.0F, -7.0F, 1.0F,
+        };
+        const auto at0 = motion::shl02_shell_world(slot20, 0.0F);
+        // Init 0x1401738F0 adds (18.6,0,12) in world axes.
+        assert(near(at0.values[12], 23.6F) && near(at0.values[13], 100.0F) &&
+               near(at0.values[14], 5.0F));
+        // Align-Z: row2 = flight direction, row1 = up, row0 = up x dir.
+        assert(near(at0.values[8], 0.0F) && near(at0.values[9], 0.0F) &&
+               near(at0.values[10], 1.0F));
+        assert(near(at0.values[5], 1.0F));
+        assert(near(at0.values[0], 1.0F));
+        // 30 units per tick, straight until the first retarget.
+        const auto at9 = motion::shl02_shell_world(slot20, 9.0F);
+        assert(near(at9.values[14], 5.0F + 270.0F, 0.01F) &&
+               near(at9.values[13], 100.0F));
+        // Lifetime 120 ticks: the position holds from there (explode state).
+        const auto at120 = motion::shl02_shell_world(slot20, 120.0F);
+        const auto at200 = motion::shl02_shell_world(slot20, 200.0F);
+        assert(near(at120.values[14], 5.0F + 3600.0F, 0.05F));
+        assert(at200.values[14] == at120.values[14]);
+    }
+
+    // CEm034Shl04 grenade: ballistic toss, one mirrored 0.5 bounce on the
+    // floor, then at rest (|v| < 10) until the fuse runs out.
+    {
+        const dmcresource::Vec3 hand{0.0F, 82.0F, 0.0F};
+        const dmcresource::Vec3 toss{0.0F, 2.5F, 9.68F};
+        const auto at1 = motion::shl04_grenade_position(hand, toss, 120.0F, 1.0F);
+        assert(near(at1.y, 84.5F) && near(at1.z, 9.68F));
+        const auto at40 = motion::shl04_grenade_position(hand, toss, 120.0F, 40.0F);
+        const auto at100 = motion::shl04_grenade_position(hand, toss, 120.0F, 100.0F);
+        assert(at40.y >= 0.0F && at40.z > 100.0F);
+        assert(at100.x == at40.x && at100.y == at40.y && at100.z == at40.z);
+    }
 
     // 16-bit angle wrap exactly as cvttss2si + word store.
     assert(near(motion::quantize_motion_angle(0.5F), 0.5F, 0.0002F));
@@ -238,9 +435,12 @@ int main() {
     assert(report.animated_parts == 1U);
     assert(report.end_frame == 10.0F);
     assert(motion::has_motion(session.get()));
+    // Raw MOT is intentionally isolated from Script Play runtime effects.
+    assert(motion::effect_events(session.get()).empty());
 
     // Frame 5: root translation-x = 15, vertices bound to bone 0 move +5.
     assert(motion::apply_motion_frame(session.get(), 5.0F));
+    assert(motion::effect_events(session.get()).empty());
     assert(near(session->scene.nodes[0].world.values[12], 15.0F));
     for (std::size_t i = 0U; i < rest.size(); ++i) {
         assert(near(session->render_mesh.vertices[i].x, rest[i].x + 5.0F));
@@ -278,12 +478,15 @@ int main() {
     assert(!rejected.ok);
     assert(!motion::has_motion(session.get()));
 
-    // 0x140310A61 binds only joints of the evaluated motion group: a MOT
-    // covering the leading joints drives a model whose extra trailing joints
-    // belong to another group (em000: 22-node MOTs on 23-node bodies).
+    // 0x140310A61 consumes one mask per initialized CMotion joint. A shorter
+    // declared MOT domain is valid when the aligned header tail contains zero
+    // masks for the remaining model nodes (the em034 slot20 2-mask/3-node
+    // controller is the canonical real-resource case).
     auto short_mot = make_translation_mot();
     put_u16(short_mot, 0x1CU, 2U);
-    assert(!motion::load_motion(session.get(), "short.mot", short_mot.data(), short_mot.size()).ok);
+    assert(motion::load_motion(session.get(), "short.mot", short_mot.data(), short_mot.size()).ok);
+    assert(near(session->scene.nodes[0].world.values[12], 10.0F));
+    assert(near(session->scene.nodes[2].world.values[12], 10.0F));
     auto grouped_mod = make_spatial_mod();
     put_u8(grouped_mod, 0x229U, 2U);   // order position 1 = node 2 -> motion group 2
     auto grouped = dmcresource::open_session("grouped.mod", grouped_mod.data(), grouped_mod.size());
@@ -293,6 +496,275 @@ int main() {
         motion::load_motion(grouped.get(), "short.mot", short_mot.data(), short_mot.size());
     assert(grouped_report.ok && grouped_report.animated_parts == 1U);
     assert(motion::motion_can_drive(*grouped, short_mot));
-    assert(!motion::motion_can_drive(*session, short_mot));
+    assert(motion::motion_can_drive(*session, short_mot));
+
+    // A non-zero byte in the aligned mask tail is not silently promoted to a
+    // synthetic domain entry; the bounded compatibility rule fails closed.
+    auto nonzero_padding = short_mot;
+    put_u16(nonzero_padding, 0x22U, 0x040U);
+    assert(!motion::load_motion(
+        session.get(), "nonzero-padding.mot",
+        nonzero_padding.data(), nonzero_padding.size()).ok);
+
+    // Integrated Script Play: controller -> bank4/action44 -> CEm034 state
+    // 0x7F -> lane1/channel0 -> Shl00 -> V463. The synthetic session has no
+    // exact Shl00 actor matrix, so the effect must remain deferred rather than
+    // appearing at identity. This still exercises the real MotionPlayer
+    // bridge, resource gate and deterministic reverse replay.
+    {
+        auto lady = dmcresource::open_session(
+            "em034-body.mod", mod.data(), mod.size());
+        assert(lady != nullptr);
+        lady->archive_name = "em034.pac";
+        lady->effect_bank_slots = {28U};
+        const auto append_resource = [&effect_resources = lady->effect_resources](
+                                         char kind,
+                                         std::uint16_t id,
+                                         std::uint32_t slot,
+                                         motion::EvidenceStatus evidence) {
+            effect_resources.push_back({kind, id, slot, evidence});
+        };
+        const auto append_child_resources =
+            [&append_resource](const auto& self,
+                               const motion::EffectChildRef& child) -> void {
+                append_resource(child.effect_kind, child.effect_id,
+                                child.resource_slot, child.evidence);
+                for (const auto& nested : child.children) self(self, nested);
+            };
+        for (const auto& profile : motion::em034_effect_bindings()) {
+            append_resource(profile.effect_kind, profile.effect_id,
+                            profile.resource_slot,
+                            motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED);
+            for (const auto& child : profile.children) {
+                append_child_resources(append_child_resources, child);
+            }
+        }
+        lady->script_effect_bridge.prepare = motion::install_effect_bindings;
+        lady->lady_component_bindings.push_back({
+            0U, 0U, 0U, 20U, motion::LadyPlacementPreset::BodyStowed,
+            motion::LadyControlDomain::BodyConstraint, 1.0F});
+
+        const auto script_bytes = make_lady_runtime_script();
+        const auto script = motion::MotionScriptFile::parse(script_bytes);
+        assert(script && script->bank_count() == 5U);
+        assert(script->signals(4U, 44U).size() == 1U);
+        lady->motion_scripts.push_back({
+            12U, dmcresource::Session::MotionScriptRole::LadyBody,
+            std::make_shared<const motion::MotionScriptFile>(*script)});
+        lady->motion_library.push_back({});
+        auto& payload = lady->motion_library.back();
+        payload.name = "synthetic-lady.mot";
+        payload.bytes = make_translation_mot();
+        payload.script_links.push_back({0U, 4U, 44U, 0x7F, 0x3U});
+
+        const auto first = motion::run_script_frame(
+            lady.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 0.0F);
+        assert(first.actor_events.size() == 1U);
+        assert(first.actor_events[0].actor == 0U);
+        assert(first.actor_events[0].lane == 1U &&
+               first.actor_events[0].channel == 0U &&
+               first.actor_events[0].signal_value == 1U);
+        assert(first.effect_events.size() == 1U);
+        assert(first.effect_events[0].kind ==
+               motion::RuntimeEffectEvent::Kind::Deferred);
+        assert(first.effect_events[0].instance.source.effect_kind == 'V');
+        assert(first.effect_events[0].instance.source.effect_id == 463U);
+        assert(first.effect_events[0].instance.state ==
+               motion::EffectRuntimeState::DeferredTransform);
+        assert(motion::active_effect_instances(lady.get()).empty());
+        assert(lady->effect_runtime != nullptr &&
+               lady->effect_runtime->instances().size() == 1U);
+
+        const auto sequential = motion::run_script_frame(
+            lady.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 45.0F);
+        assert(sequential.effect_events.empty());
+        assert(lady->effect_runtime->instances().size() == 1U);
+        assert(lady->effect_runtime->instances()[0].state ==
+               motion::EffectRuntimeState::DeferredTransform);
+
+        motion::set_effects_visible(lady.get(), false);
+        assert(lady->effect_runtime->instances().size() == 1U);
+        assert(lady->effect_runtime->presentation_instances().empty());
+        assert(motion::presentation_effect_instances(lady.get()).empty());
+        motion::set_effects_visible(lady.get(), true);
+
+        const auto reverse = motion::run_script_frame(
+            lady.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 10.0F);
+        assert(reverse.effect_events.size() == 1U);
+        assert(reverse.effect_events[0].kind ==
+               motion::RuntimeEffectEvent::Kind::Deferred);
+        assert(reverse.effect_events[0].instance.instance_id == 1U);
+        assert(reverse.effect_events[0].instance.source.effect_id == 463U);
+        assert(lady->effect_runtime->instances().size() == 1U);
+        assert(lady->effect_runtime->instances()[0].current_frame == 0.0F);
+    }
+
+    // Synchronized Lady pair: the body controller and component0 controller
+    // own separate MOD parts but are evaluated at one Script Play frame.
+    // Bank4/action30 is state 0x71: the entry dispatcher 0x14016A410 starts
+    // em034_013 (4,30) and clears +0x4020, so both tracks run. Bank4/action3
+    // (state 0x56) keeps Kalina on the hand constraint: no component track.
+    {
+        const auto lady_body_mod = make_lady_body_mod();
+        auto body_source = dmcresource::open_session(
+            "em034-body.mod", lady_body_mod.data(), lady_body_mod.size());
+        auto component_source = dmcresource::open_session(
+            "em034-component.mod", mod.data(), mod.size());
+        assert(body_source != nullptr && component_source != nullptr);
+        const std::vector<const dmcresource::Session*> parts{
+            body_source.get(), component_source.get()};
+        const std::vector<std::string> names{"Lady body", "Lady component0"};
+        auto lady_pair = dmcresource::compose_mod_sessions(parts, names);
+        assert(lady_pair != nullptr && lady_pair->composite_parts.size() == 2U);
+        const auto body_mot23 = make_translation_mot_domain23();
+        const auto raw_body = motion::load_motion(
+            body_source.get(), "synthetic-body-domain23.mot",
+            body_mot23.data(), body_mot23.size());
+        assert(raw_body.ok);
+        lady_pair->archive_name = "em034.pac";
+        lady_pair->lady_component_bindings.push_back({
+            0U, 1U, 0U, 20U, motion::LadyPlacementPreset::BodyStowed,
+            motion::LadyControlDomain::BodyConstraint, 1.0F});
+        auto& component_binding = lady_pair->lady_component_bindings.front();
+        assert(motion::set_lady_component_preset(
+            lady_pair.get(), component_binding,
+            motion::LadyPlacementPreset::BodyStowed));
+
+        const auto script_bytes = make_lady_runtime_script();
+        const auto script = motion::MotionScriptFile::parse(script_bytes);
+        assert(script.has_value());
+        const auto shared_script =
+            std::make_shared<const motion::MotionScriptFile>(*script);
+        lady_pair->motion_scripts.push_back({
+            12U, dmcresource::Session::MotionScriptRole::LadyBody,
+            shared_script});
+        lady_pair->motion_scripts.push_back({
+            13U, dmcresource::Session::MotionScriptRole::LadyComponent0,
+            shared_script});
+
+        lady_pair->motion_library.resize(2U);
+        lady_pair->motion_library[0].name = "synthetic-lady-body.mot";
+        lady_pair->motion_library[0].bytes = body_mot23;
+        lady_pair->motion_library[0].script_links.push_back({
+            0U, 4U, 30U, -1, 0U});
+        lady_pair->motion_library[1].name = "synthetic-lady-component0.mot";
+        lady_pair->motion_library[1].bytes = make_translation_mot();
+        lady_pair->motion_library[1].script_links.push_back({
+            1U, 4U, 30U, -1, 0U});
+        lady_pair->motion_library.push_back(lady_pair->motion_library[0]);
+        lady_pair->motion_library[2].name = "synthetic-lady-body-held.mot";
+        lady_pair->motion_library[2].script_links = {{0U, 4U, 3U, -1, 0U}};
+        const auto held = motion::load_scripted_motion(lady_pair.get(), 0U, 2U);
+        assert(held.ok && held.synchronized_tracks == 0U);
+        assert(component_binding.control_domain ==
+               motion::LadyControlDomain::BodyConstraint);
+
+        // The legacy load entry used by the JNI/UI shell must promote the
+        // same confirmed pair; this guards the integration boundary separately
+        // from the frame-step API below.
+        const auto direct = motion::load_scripted_motion(
+            lady_pair.get(), 0U, 0U);
+        assert(direct.ok);
+        assert(direct.synchronized_tracks == 2U);
+        assert(direct.deferred_tracks == 0U);
+
+        const auto legacy_step = motion::run_script_frame(
+            lady_pair.get(), 0U, motion::ScriptActionId{4U, 30U, 0U}, 0.0F);
+        assert(legacy_step.synchronized_tracks == 2U);
+        assert(legacy_step.deferred_tracks == 0U);
+
+        const std::array<motion::ScriptTrackAction, 2> tracks{{
+            {0U, motion::ScriptActionId{4U, 30U, 0U}},
+            {1U, motion::ScriptActionId{
+                4U, 30U, std::numeric_limits<std::size_t>::max()}},
+        }};
+        const auto first = motion::run_synchronized_script_frame(
+            lady_pair.get(), tracks, 0.0F);
+        assert(first.synchronized_tracks == 2U);
+        assert(first.deferred_tracks == 0U);
+        assert(motion::has_motion(lady_pair.get()));
+        assert(component_binding.control_domain ==
+               motion::LadyControlDomain::IndependentMotionScript);
+        assert(lady_pair->composite_parts[1].placement.mode ==
+               dmcresource::CompositePlacementMode::HostJoint);
+
+        const float body_root_at_zero =
+            lady_pair->scene.nodes[0].world.values[12];
+        const float component_root_at_zero =
+            lady_pair->scene.nodes[23].world.values[12];
+        // With +0x4020 cleared the component MOT runs in actor space (the
+        // body part's space), not relative to the stowed equipment matrix.
+        assert(near(component_root_at_zero, 10.0F));
+        const auto forward = motion::run_synchronized_script_frame(
+            lady_pair.get(), tracks, 5.0F);
+        assert(forward.synchronized_tracks == 2U);
+        assert(forward.deferred_tracks == 0U);
+        assert(near(lady_pair->scene.nodes[0].world.values[12],
+                    body_root_at_zero + 5.0F));
+        assert(near(lady_pair->scene.nodes[23].world.values[12],
+                    component_root_at_zero + 5.0F));
+    }
+
+    // Profile-neutral ScriptEffectBridge: a non-Lady character can emit its
+    // own evidence-backed actor events through the same runtime. Reverse seek
+    // resets and replays the effect timeline, while raw MOT stays isolated.
+    {
+        dmcresource::Session unknown_profile;
+        unknown_profile.archive_name = "em999.pac";
+        unknown_profile.effect_bank_slots = {28U};
+        assert(!motion::install_effect_bindings(&unknown_profile));
+        assert(unknown_profile.script_effect_bindings.empty());
+
+        auto generic = dmcresource::open_session(
+            "em999-body.mod", mod.data(), mod.size());
+        assert(generic != nullptr);
+        constexpr motion::EffectBinding binding{
+            7U, 'P', 18U, 41U, motion::RuntimeEffectParent::DynamicActor,
+            4U, 0U, 2U, 3U,
+            motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED,
+            motion::EffectLifetimeRule::ParentActorRetire,
+            motion::EvidenceStatus::EXE_CONFIRMED};
+        generic->effect_resources.push_back(
+            {'P', 18U, 41U, motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED});
+        assert(motion::set_script_effect_bindings(
+            generic.get(), std::span<const motion::EffectBinding>{&binding, 1U}));
+        generic->script_effect_bridge = {
+            nullptr, generic_profile_effect_reset, generic_profile_effect_step};
+        assert(motion::ensure_effect_runtime(generic.get()));
+
+        const auto script_bytes = make_lady_runtime_script();
+        const auto script = motion::MotionScriptFile::parse(script_bytes);
+        assert(script.has_value());
+        generic->motion_scripts.push_back({
+            38U, dmcresource::Session::MotionScriptRole::Primary,
+            std::make_shared<const motion::MotionScriptFile>(*script)});
+        generic->motion_library.push_back({});
+        auto& payload = generic->motion_library.back();
+        payload.name = "synthetic-generic.mot";
+        payload.bytes = make_translation_mot();
+        payload.script_links.push_back({0U, 4U, 44U, -1, 0U});
+
+        const auto first = motion::run_script_frame(
+            generic.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 0.0F);
+        assert(first.effect_events.size() == 1U);
+        assert(first.effect_events[0].kind == motion::RuntimeEffectEvent::Kind::Spawn);
+        assert(first.effect_events[0].instance.source.effect_id == 18U);
+
+        const auto forward = motion::run_script_frame(
+            generic.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 10.0F);
+        assert(forward.effect_events.size() == 1U);
+        assert(forward.effect_events[0].kind == motion::RuntimeEffectEvent::Kind::Update);
+        assert(generic->effect_runtime->instances()[0].current_frame == 10.0F);
+
+        const auto reverse = motion::run_script_frame(
+            generic.get(), 0U, motion::ScriptActionId{4U, 44U, 0U}, 2.0F);
+        assert(reverse.effect_events.size() == 1U);
+        assert(reverse.effect_events[0].kind == motion::RuntimeEffectEvent::Kind::Spawn);
+        assert(generic->effect_runtime->instances()[0].current_frame == 2.0F);
+        assert(g_generic_bridge_resets > 0U);
+
+        assert(motion::load_library_motion(generic.get(), 0U).ok);
+        assert(motion::effect_events(generic.get()).empty());
+    }
     return 0;
 }

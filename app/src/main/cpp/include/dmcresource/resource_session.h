@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -10,8 +11,10 @@
 #include <vector>
 
 #include "dmcresource/composite_model.h"
+#include "dmcresource/effect_bank.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
@@ -27,6 +30,12 @@ struct MotionState;
 }
 namespace collision {
 struct CollisionBinding;
+}
+namespace stage_room {
+struct Room;
+}
+namespace environment_collision {
+struct Source;
 }
 
 // Portable product session; platform shells own only handles and byte transport.
@@ -72,6 +81,11 @@ struct Session {
     // where available and deterministic corpus binding otherwise.
     std::string archive_name;
     bool renderable{};
+    // A stage archive opened as its assembled scene (stage_room::open_stage):
+    // the merged room it was built from, with its HITS collision.
+    std::shared_ptr<const stage_room::Room> stage;
+    // A HITS file opened on its own: the parsed records, for the kind colours.
+    std::shared_ptr<const environment_collision::Source> hits;
 
     // Motions discovered while assembling a PAC (read-only copies of the
     // retained payloads). Played through motion::load_motion.
@@ -107,6 +121,20 @@ struct Session {
     // Non-canonical reads the viewer still shows (orange warning in the UI).
     std::vector<std::string> non_canonical_notes;
 
+    // Bytes the session was opened from, kept only for resources whose
+    // textures the Spider re-encode action can rewrite (DDS, PTX, single
+    // gfxTexture, PAC with texture slots). `authored` marks sessions produced
+    // by such an action: their source_bytes are the file to save.
+    std::shared_ptr<const std::vector<std::uint8_t>> source_bytes;
+    std::string source_name;
+    bool authored{};
+    // Set when the session was opened from a slot of a PAC that kept its
+    // bytes: the container a texture re-encode rebuilds, so the result is the
+    // file the game loads. Shared, so it outlives the parent session.
+    std::shared_ptr<const std::vector<std::uint8_t>> container_source;
+    std::string container_name;
+    int container_slot{-1};
+
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;
 
@@ -126,12 +154,70 @@ struct Session {
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
     std::vector<MotionScriptBinding> motion_scripts;
     std::vector<motion::WeaponBinding> weapon_bindings;
+    // Enemy class of an em000-style archive position (EnemyVariant) and the
+    // composite part its weapon model was attached as (script object 1).
+    std::string enemy_class;
+    std::optional<std::size_t> enemy_weapon_part;
+    // Composite part of the enemy body model. Its joints are the entries of
+    // the CEm000 joint array obj+0x6D8 (0x14030F850: entry k +0x110 = joint k
+    // world), which the event handler 0x1401C3130 attaches effects to.
+    std::optional<std::size_t> enemy_body_part;
+    // Class event "death" (control code 0x3E7 -> obj+0x2EF4): the Script Play
+    // frame it was triggered at, and the last frame the bridge saw.
+    std::optional<float> enemy_death_start;
+    float enemy_script_frame{};
+    // Actor instances the enemy bridge spawned, keyed by (actor << 16 |
+    // actor_state), valid for effect runtime reset generation
+    // enemy_effect_generation.
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> enemy_effect_actors;
+    std::uint64_t enemy_effect_generation{};
 
     // Boss-Lady CEm034 uses a different runtime: five persistent component
     // managers with two placement presets, plus separate dynamic CShell actors.
     // Keep this separate from player WeaponBinding so a single scalar weapon
     // state cannot silently collapse the recovered multi-channel contract.
     std::vector<motion::LadyComponentBinding> lady_component_bindings;
+
+    // Script-owned effect state. Raw MOT playback never feeds this runtime;
+    // profile bridges provide evidence-backed bindings and Script Play is the
+    // only producer. Visibility is presentation-only and must not reset state.
+    std::shared_ptr<motion::EffectRuntime> effect_runtime;
+    bool effects_visible{true};
+    // Owned profile data used by the generic installer. Each profile may
+    // replace this table when its Script controller is selected; MotionPlayer
+    // does not inspect character names or effect semantics.
+    std::vector<motion::EffectBinding> script_effect_bindings;
+    // Session-owned storage for nested binding spans. Profile providers may
+    // supply temporary vectors; the session must retain the full graph before
+    // Script Play or runtime construction can outlive the provider call.
+    std::vector<std::shared_ptr<std::vector<motion::EffectChildRef>>>
+        script_effect_child_groups;
+    // Optional profile-owned producer for any Script Play profile. Its
+    // prepare/reset/step hooks are called only by Script Play; raw MOT never
+    // enters this path. The producer feeds the one shared EffectRuntime.
+    motion::ScriptEffectBridge script_effect_bridge{};
+    // Direct PAC slots whose payload was identified as an EXE FXBANK. Runtime
+    // bindings may only resolve against these retained resource identities;
+    // an absent slot is never substituted with another bank or child record.
+    std::vector<std::uint32_t> effect_bank_slots;
+    // Exact `(kind,u16 id)` keys parsed from those banks. This is a resource
+    // availability gate, not a semantic effect-name table.
+    std::vector<motion::EffectResourceRef> effect_resources;
+
+    // Retained resource-backed FXBANK data. The parsed record spans point into
+    // `source`, so a runtime presentation lookup never falls back to a
+    // different bank or to a synthetic effect resource.
+    struct EffectTexture final {
+        std::uint16_t id{};
+        ImagePreview image;
+    };
+    struct EffectBank final {
+        std::uint32_t resource_slot{};
+        std::shared_ptr<const std::vector<std::uint8_t>> source;
+        effect_bank::Bank bank;
+        std::vector<EffectTexture> textures;
+    };
+    std::vector<EffectBank> effect_banks;
 
     // Dynamic CEm034 CShell visuals stay outside the persistent composite.
     // Source geometry/textures are retained once; active/world are presentation
@@ -147,7 +233,20 @@ struct Session {
         std::vector<std::uint32_t> texture_slots;
         std::vector<ImagePreview> textures;
         Matrix4 world{};
+        // Retail CEm034Shl02 passes a separately normalized copy of the
+        // selected slot20 matrix to V423. It is not the actor render basis.
+        Matrix4 effect_parent_world{};
+        // Shl03: velocity per tick. Shl02: unit flight direction (shell+0x140
+        // before the speed factor) and the init position (shell+0x80).
         Vec3 velocity{};
+        Vec3 origin{};
+        // CShell state byte (+0x08): 1 flight, 2 explode.
+        std::uint8_t shell_state{};
+        bool explode_emitted{};
+        // Shl02: flight age at which the shell met the stage HITS (<0 none).
+        float hit_age{-1.0F};
+        // lane/channel/value of the MotionScript signal that spawned it.
+        std::array<std::uint8_t, 3> spawn_signal{0xFFU, 0xFFU, 0xFFU};
         float spawn_frame{-1.0F};
         float last_update_frame{-1.0F};
         float retire_frame{-1.0F};  // <0 = owner/state controlled
@@ -215,7 +314,26 @@ struct ViewControls final {
     float pan_y{};
     float room_yaw{};  // room turned about the model's spot (radians)
     bool follow{};     // camera follows the model as its motion moves it
+    // Camera dolly as a fraction of the framing distance (session_camera_distance):
+    // >0 moves the camera toward the model, <0 away.
+    float dolly{};
+    // Fly camera at `eye` (view_renderer.h ViewState::fly); pan, dolly and
+    // follow are ignored while it flies.
+    bool fly{};
+    Vec3 eye{};
 };
+
+// World position of the camera of that view (the start of a fly camera).
+[[nodiscard]] std::optional<Vec3> session_camera_eye(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls);
+
+// Model-unit distance of the camera from the framed model at dolly 0 (0 when
+// the session has nothing to frame).
+[[nodiscard]] float session_camera_distance(const Session* session) noexcept;
+// Dolly range of a session: a stage scene can be entered, a model cannot be
+// passed through.
+[[nodiscard]] float session_dolly_limit(const Session* session) noexcept;
 
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,

@@ -15,7 +15,10 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/collision_debug.h"
+#include "dmcresource/effect_bank.h"
+#include "dmcresource/effect_host.h"
 #include "dmcresource/mod_bytes.h"
+#include "dmcresource/texture_set.h"
 #include "dmcresource/shadow_hull.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/part_attachment.h"
@@ -251,11 +254,55 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         const std::string_view archive_name = archive_names.front();
         std::vector<std::unique_ptr<Session>> nested;
         std::vector<Entry> entries;
+        std::vector<std::uint32_t> effect_bank_slots;
+        std::vector<motion::EffectResourceRef> effect_resources;
+        std::vector<Session::EffectBank> effect_banks;
         for (std::size_t a = 0U; a < archives.size(); ++a) {
             const std::string prefix = a == 0U ? std::string{} : std::string{archive_names[a]} + "/";
             // Added archives keep their own container key so pairing never
             // crosses archives; archive 0 keeps "" for the player slot rule.
             collect(*archives[a], a, prefix, 0U, false, &nested, &entries, &report);
+        }
+
+        // Keep the direct FXBANK slot identity available to the runtime
+        // bridge. `collect()` intentionally descends into the bank's PNST
+        // children, so the nested V/P/E/G records must not be mistaken for a
+        // new top-level resource slot. The slot number is provenance only;
+        // resource resolution still uses the canonical kind/u16-id pair.
+        for (const auto& child : pac.children) {
+            const auto slot = slot_of(child);
+            if (!slot.has_value() || child.source_bytes.empty()) continue;
+            const auto kind = archive::classify_payload(
+                child.source_bytes.data(), child.source_bytes.size());
+            if (kind.format != Format::EffectBank) continue;
+            if (std::find(effect_bank_slots.begin(), effect_bank_slots.end(), *slot) ==
+                effect_bank_slots.end()) {
+                effect_bank_slots.push_back(*slot);
+            }
+            auto source = std::make_shared<std::vector<std::uint8_t>>(
+                child.source_bytes.begin(), child.source_bytes.end());
+            auto loaded = dmcresource::load_effect_bank(source, *slot);
+            if (!loaded.has_value()) continue;
+            const auto parsed = std::optional<effect_bank::Bank>{loaded->bank};
+            Session::EffectBank retained = std::move(*loaded);
+            effect_banks.push_back(std::move(retained));
+            for (const auto& record : parsed->records) {
+                const motion::EffectResourceRef resource{
+                    record.kind,
+                    record.id,
+                    *slot,
+                    motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED};
+                const auto duplicate = std::find_if(
+                    effect_resources.begin(), effect_resources.end(),
+                    [&resource](const motion::EffectResourceRef& candidate) {
+                        return candidate.effect_kind == resource.effect_kind &&
+                               candidate.effect_id == resource.effect_id &&
+                               candidate.resource_slot == resource.resource_slot;
+                    });
+                if (duplicate == effect_resources.end()) {
+                    effect_resources.push_back(resource);
+                }
+            }
         }
 
         const auto positions = motion::archive_variants(archive_name);
@@ -375,8 +422,15 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     ? motion::weapon_motion_bank(archive_names[entry.archive])
                     : std::nullopt;
                 Session::MotionPayload payload{
-                    bank ? std::string{bank->weapon_name} + " · " + entry.name : entry.name,
-                    *entry.bytes};
+                    .name = bank ? std::string{bank->weapon_name} + " · " + entry.name
+                                 : entry.name,
+                    .bytes = *entry.bytes,
+                    .bank = -1,
+                    .index = -1,
+                    .pack_slot = -1,
+                    .mot_slot = -1,
+                    .actions = {},
+                    .script_links = {}};
                 // Motion script address: pl000.pac slots 2/3/4 hold banks 0/1/2
                 // (pl000_00_0..2), an added pl000_00_<N>.pac is bank N; the MOT
                 // index is its slot.
@@ -437,6 +491,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 if (report_out != nullptr) *report_out = std::move(report);
                 return nullptr;
             }
+            if (variant != nullptr) assembled->enemy_class = std::string{variant->class_name};
 
             // One PTX for every part (player PACs: slot 0) -> one shared bank.
             bool shared = texture_for_model.front().has_value();
@@ -537,6 +592,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         host = part;
                     }
                 }
+                if (host) assembled->enemy_body_part = *host;
                 for (std::size_t part = 0U; host && part < model_entry.size(); ++part) {
                     const auto& entry = entries[model_entry[part]];
                     if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
@@ -555,6 +611,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                             motion::attach_local_matrix_zyx(variant->weapon_translation,
                                                             variant->weapon_rotation_zyx))) {
                         ++report.attached_parts;
+                        assembled->enemy_weapon_part = part;
                         report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
                             "->bodyJoint" + std::to_string(variant->weapon_joint);
                     }
@@ -650,8 +707,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     assembled->inspection.root.properties.push_back({
                         "LadyComponentRuntime",
                         "slots20..24 default to BodyStowed; preset1 is ActiveDeployed. "
-                        "component3 preset1 uses RuntimeBodyRootScaled "
-                        "(CEm034+0x43C0, scale source +0x4400), not body joint13.",
+                        "component3 preset1 uses CEm034+0x43C0 = body joint13 "
+                        "world scaled by +0x4400 (update 0x140171240).",
                         EvidenceLevel::ExeConfirmed});
                 }
             }
@@ -760,6 +817,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 }
             }
         }
+
+        assembled->effect_bank_slots = std::move(effect_bank_slots);
+        assembled->effect_resources = std::move(effect_resources);
+        assembled->effect_banks = std::move(effect_banks);
 
         // Texture scrolls (.tsc, CDrawUV): objects whose source flags carry a
         // scroll number move their UVs with the playback clock. A single model
@@ -1176,6 +1237,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         }
         assembled->motion_library = std::move(motions);
         assembled->archive_name = std::string{archive_name};
+        // One profile registry callback serves every archive. It installs
+        // only EXE/corpus-confirmed data for the current profile; unknown
+        // profiles remain effect-free until their provider is reversed.
+        assembled->script_effect_bridge.prepare = motion::install_effect_bindings;
         assembled->children = pac.children;
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
@@ -1272,4 +1337,42 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
     }
 }
 
+
 }  // namespace dmcresource::pac_assembly
+
+namespace dmcresource {
+
+std::optional<Session::EffectBank> load_effect_bank(
+    std::shared_ptr<const std::vector<std::uint8_t>> source, std::uint32_t slot) {
+    if (!source) return std::nullopt;
+    const auto parsed = effect_bank::parse_bank(
+        std::span<const std::uint8_t>{source->data(), source->size()});
+    if (!parsed.has_value()) return std::nullopt;
+    Session::EffectBank retained;
+    retained.resource_slot = slot;
+    retained.source = std::move(source);
+    retained.bank = *parsed;
+    // E resolves T through the bank's own texture manager. Decode only those
+    // exact T records once and retain their canonical ids; the live renderer
+    // never substitutes an attached model texture.
+    for (const auto& record : retained.bank.records) {
+        if (record.kind != 'T') continue;
+        const auto dds = effect_bank::texture_dds(record);
+        if (dds.empty()) continue;
+        const auto dds_bytes = std::span<const std::byte>{
+            reinterpret_cast<const std::byte*>(dds.data()), dds.size()};
+        const auto parsed_textures = texture_set::parse_dds(dds_bytes);
+        if (!parsed_textures.ok()) continue;
+        const auto* texture_slot = texture_set::find_slot(parsed_textures, 0U);
+        if (texture_slot == nullptr) continue;
+        Session::EffectTexture texture;
+        texture.id = record.id;
+        if (texture_set::decode_base_mip(dds_bytes, *texture_slot, &texture.image) &&
+            texture.image.available()) {
+            retained.textures.push_back(std::move(texture));
+        }
+    }
+    return retained;
+}
+
+}  // namespace dmcresource
