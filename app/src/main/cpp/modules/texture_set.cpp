@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <span>
 #include <utility>
-#include <vector>
 
 #include "dmc_rengine/profiles/dmc3/texture_slot_framing_compat.hpp"
 #include "dmcresource/ptx_framing_compat.h"
@@ -122,7 +121,8 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
 
     bool compat_used = false;
     bool community = false;
-    const auto framing = ptx_compat::parse_texture_bundle(source, &compat_used, &community);
+    bool single_level = false;
+    const auto framing = ptx_compat::parse_texture_bundle(source, &compat_used, &community, &single_level);
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
         out.detail = "PTX rejected by canonical texture-slot reader";
@@ -130,8 +130,6 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
             out.detail += ": ";
             out.detail += framing.detail;
         }
-        auto ui = parse_ui_texture_bank(source);
-        if (ui.ok()) return ui;
         return out;
     }
 
@@ -139,6 +137,7 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
         out.kind = Kind::ptx_bundle;
         out.ptx_aux_compat_used = compat_used;
         out.ptx_community_descriptors = community;
+        out.ptx_single_level = single_level;
         out.slots.reserve(framing.document.textures.size());
         for (const auto& entry : framing.document.textures) {
             if (!append_framed_slot(&out, source, entry)) {
@@ -152,103 +151,6 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
         out = {};
         out.detail = "PTX rejected: texture-set allocation failed";
     }
-    return out;
-}
-
-ParseResult parse_ui_texture_bank(std::span<const std::byte> source) {
-    constexpr std::size_t kSector = 0x800U;
-    constexpr std::uint32_t kMaxTextures = 256U;
-    constexpr std::uint32_t kMaxSide = 4096U;
-    constexpr std::uint32_t kHeaderTag = 0x000201A5U;
-    ParseResult out;
-    const auto u32 = [&](std::size_t at) -> std::uint32_t {
-        return static_cast<std::uint32_t>(source[at]) |
-               static_cast<std::uint32_t>(source[at + 1U]) << 8U |
-               static_cast<std::uint32_t>(source[at + 2U]) << 16U |
-               static_cast<std::uint32_t>(source[at + 3U]) << 24U;
-    };
-    const auto u16 = [&](std::size_t at) -> std::uint32_t {
-        return static_cast<std::uint32_t>(source[at]) |
-               static_cast<std::uint32_t>(source[at + 1U]) << 8U;
-    };
-    if (source.size() < 2U * kSector || source.size() % kSector != 0U) {
-        out.detail = "UI texture bank rejected: size is not a whole number of sectors";
-        return out;
-    }
-    const auto count = u32(0U);
-    if (count == 0U || count > kMaxTextures || 4U + 4U * count > kSector) {
-        out.detail = "UI texture bank rejected: texture count";
-        return out;
-    }
-    for (std::size_t at = 4U + 4U * count; at < kSector; ++at) {
-        if (source[at] != std::byte{0}) {
-            out.detail = "UI texture bank rejected: header padding is not zero";
-            return out;
-        }
-    }
-    std::size_t pos = kSector;
-    std::vector<Slot> slots;
-    slots.reserve(count);
-    for (std::uint32_t i = 0U; i < count; ++i) {
-        const auto span = u32(4U + 4U * i);
-        if (span < 2U || span > (source.size() - pos) / kSector) {
-            out.detail = "UI texture bank rejected: sector span leaves the source";
-            return out;
-        }
-        const auto width = u16(pos + 0x10U);
-        const auto height = u16(pos + 0x12U);
-        const auto pitch = u32(pos + 0x18U);
-        const auto format = u32(pos + 0x20U);
-        if (u32(pos + 0x08U) != kHeaderTag || width == 0U || height == 0U ||
-            width > kMaxSide || height > kMaxSide || width % 4U != 0U || height % 4U != 0U) {
-            out.detail = "UI texture bank rejected: texture header";
-            return out;
-        }
-        // Row pitch of 4x4 blocks decides the block size: 16 bytes (DXT5) or
-        // 8 bytes (DXT1). Only format 0x40 (DXT5) is seen in the retail pack.
-        const std::uint32_t blocks_w = width / 4U;
-        dds_bc::Compression compression{};
-        std::uint32_t block_bytes = 0U;
-        if (pitch == blocks_w * 16U) {
-            compression = dds_bc::Compression::dxt5;
-            block_bytes = 16U;
-        } else if (pitch == blocks_w * 8U) {
-            compression = dds_bc::Compression::dxt1;
-            block_bytes = 8U;
-        } else {
-            out.detail = "UI texture bank rejected: row pitch matches no block size";
-            return out;
-        }
-        const auto payload = static_cast<std::uint64_t>(blocks_w) * (height / 4U) * block_bytes;
-        const auto data_room = static_cast<std::uint64_t>(span - 1U) * kSector;
-        if (payload == 0U || payload > data_room || data_room - payload >= kSector) {
-            out.detail = "UI texture bank rejected: block data does not fill its sector span";
-            return out;
-        }
-        Slot slot;
-        slot.index = i;
-        slot.descriptor_offset = pos;
-        slot.dds_offset = pos + kSector - dds_bc::header_size;
-        slot.dds_size = dds_bc::header_size + payload;
-        slot.sector_span = span;
-        slot.secondary_width = width;
-        slot.secondary_height = height;
-        slot.dds.width = width;
-        slot.dds.height = height;
-        slot.dds.mip_count = 1U;
-        slot.dds.compression = compression;
-        slot.dds.payload_size = static_cast<std::uint32_t>(payload);
-        slot.dds.total_size = static_cast<std::uint32_t>(dds_bc::header_size + payload);
-        slot.ui_format = format;
-        slots.push_back(slot);
-        pos += static_cast<std::size_t>(span) * kSector;
-    }
-    if (pos != source.size()) {
-        out.detail = "UI texture bank rejected: bytes after the last sector span";
-        return out;
-    }
-    out.kind = Kind::ui_texture_bank;
-    out.slots = std::move(slots);
     return out;
 }
 

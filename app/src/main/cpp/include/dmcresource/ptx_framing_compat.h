@@ -11,9 +11,14 @@ namespace dmc3 = dmc::rengine::profiles::dmc3;
 
 // Product-side facade over DMC Rengine's canonical read compatibility layer.
 // Native Reader owns no descriptor constants or legacy framing grammar here.
+// Retail PTX bundles whose DDS children hold only the base level (no mip
+// chain), e.g. the interface textures of id*.pac, are outside the canonical
+// full-chain descriptor domain; they are read by a strict single-level path
+// and reported through single_level_used.
 [[nodiscard]] dmc3::TextureSlotFramingResult parse_texture_bundle(
     std::span<const std::byte> source,
     bool* compatibility_used = nullptr,
-    bool* community_descriptors_used = nullptr);
+    bool* community_descriptors_used = nullptr,
+    bool* single_level_used = nullptr);
 
 }  // namespace dmcresource::ptx_compat
