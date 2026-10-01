@@ -117,16 +117,17 @@ void check(const char* label, std::uint8_t cls) {
     assert(quads.size() == per_object * 3U);
     const auto& last = Truth::kFrame[Truth::kFrames - 1];
     const auto project = [](const float* m, const float* v, float* out) {
-        const float w = v[0] * m[3] + v[1] * m[7] + v[2] * m[11] + m[15];
-        out[0] = (v[0] * m[0] + v[1] * m[4] + v[2] * m[8] + m[12]) / w;
-        out[1] = (v[0] * m[1] + v[1] * m[5] + v[2] * m[9] + m[13]) / w;
-        out[2] = (v[0] * m[2] + v[1] * m[6] + v[2] * m[10] + m[14]) / w;
+        out[0] = v[0] * m[0] + v[1] * m[4] + v[2] * m[8] + m[12];
+        out[1] = v[0] * m[1] + v[1] * m[5] + v[2] * m[9] + m[13];
+        out[2] = v[0] * m[2] + v[1] * m[6] + v[2] * m[10] + m[14];
     };
     for (std::size_t q = 0U; q < quads.size(); ++q) {
         const std::size_t object = q / per_object;
         const std::size_t in_object = q % per_object;
         const int* color = object == 0U ? last.col : last.layer[object - 1U].col;
         const float* m = Truth::kFinal[object];
+        // The translation helper keeps w = 1 (its mask is set by a static initializer).
+        assert(m[3] == 0.0F && m[7] == 0.0F && m[11] == 0.0F && m[15] == 1.0F);
         const auto check_corner = [&](int k, const float* v) {
             float e[3];
             project(m, v, e);

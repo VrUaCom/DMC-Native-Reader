@@ -101,12 +101,13 @@ Class fields (all s16 / 16 unless noted):
   group 0 to all four, ease 1 gives (g0, g1, g1, g0), ease 2 keeps four. After
   segment 2 the track stops (or loops). Vertex index w picks the group: quad
   BR 1, BL 0, TL 2, TR 3; triangle 0, 1, 2; line 0 (pivot) and 1 (end).
-* Draw `0x140312F10`: local = scale rows x Rz*Ry*Rx with a translation row;
-  the translation helper `0x140031200` adds the vector's w (1.0) to the row's
-  w, so the row-3 w is **2.0**: through the world matrix the translation part is
-  doubled and the projective divide halves everything but the world
-  translation (positions, sizes, local translation: x0.5). The port divides by
-  w exactly.
+* Draw `0x140312F10`: local = scale rows x Rz*Ry*Rx with a translation row, then
+  x world. The translation helper `0x140031200` adds the vector to row 3 and
+  keeps the row's w through a mask (0, 0, 0, -1) that a static initializer
+  (`0x140001920`) writes at `0x1405D9F30`; the file image holds zeros there, so an
+  emulator that skips the static initializers sees w = 2 (an early version of
+  this port did, and halved every size). The scratch emulator now runs the
+  6260 constant-copy initializers first.
 * Sprt00 vertices (non-camera-local path): corner x camera^-1 x world^-1
   (rotation) x emitter-rotation^-1, plus the particle position, so the emitter's
   own quad faces the camera; a layer with another rotation tilts its copy.

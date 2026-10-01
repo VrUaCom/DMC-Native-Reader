@@ -534,16 +534,13 @@ void Simulation::quads(const Matrix4& world, const Camera& camera, std::vector<Q
         local[12] = object.translation[0];
         local[13] = object.translation[1];
         local[14] = object.translation[2];
-        local[15] = 2.0F;  // 0x140031200 adds the vector's w = 1 to the row's w
+        local[15] = 1.0F;  // 0x140031200 keeps the row's w (mask 0,0,0,-1 set by a static initializer)
         const Mat to_world = mul(local, w);
         const auto project = [&](const Vec3& v) {
-            // (x, y, z, 1) * to_world, then the homogeneous divide.
-            const float x = v.x * to_world[0] + v.y * to_world[4] + v.z * to_world[8] + to_world[12];
-            const float y = v.x * to_world[1] + v.y * to_world[5] + v.z * to_world[9] + to_world[13];
-            const float z = v.x * to_world[2] + v.y * to_world[6] + v.z * to_world[10] + to_world[14];
-            const float h = v.x * to_world[3] + v.y * to_world[7] + v.z * to_world[11] + to_world[15];
-            const float inv = std::fabs(h) > 1.0e-6F ? 1.0F / h : 1.0F;
-            return Vec3{x * inv, y * inv, z * inv};
+            // (x, y, z, 1) * to_world (an affine matrix: w stays 1).
+            return Vec3{v.x * to_world[0] + v.y * to_world[4] + v.z * to_world[8] + to_world[12],
+                        v.x * to_world[1] + v.y * to_world[5] + v.z * to_world[9] + to_world[13],
+                        v.x * to_world[2] + v.y * to_world[6] + v.z * to_world[10] + to_world[14]};
         };
         const auto group_color = [&object](std::size_t group) {
             std::array<std::uint8_t, 4> c{};
