@@ -53,6 +53,27 @@ Candidate uses:
 
 Tarantula is **not required** for the accepted Native Reader v24 path and must not be inserted into hot inner loops or simple direct operations merely for symmetry.
 
+### First Tarantula workflow: texture format change
+
+DMC Rengine (branch `claude/devil-microy3-decompile-port-2v8pne`, merged with
+`experiment/spider-python-migration`) runs `texture-reencode` as a Tarantula
+workflow and offers an in-memory entry for viewers:
+`spider::tarantula::run_texture_reencode(bytes, request)`.
+
+- **Steps:** acquire → inspect → transform[slot] → assemble → validate →
+  publish.
+- **Replaces:** a scratch Python + etcpak prototype.
+
+The Reader's "Texture format" action is the product counterpart:
+
+- a Crusader plan (select source → re-encode → open result → verify) over
+  the copied `texture_reencode` module;
+- Black Widow flags `CanReencodeTextures` and `CanSaveSource` for the menu.
+
+The output is byte-identical to the Rengine workflow. When the vendored
+Rengine includes the workflow, the action's re-encode step should call it
+and drop the copied modules.
+
 ## Hot-path rule
 
 Rasterization, barycentric interpolation, vector/matrix math, UV math, texture sampling and similarly small/hot numerical operations remain direct C++20.
