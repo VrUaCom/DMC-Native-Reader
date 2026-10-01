@@ -223,6 +223,14 @@ APK verifier.
     the player / weapon spawn sites and the stage keywords `beff`, `SET LIGHT`
     and `DOOR` are mapped in `docs/research/dmc3-effect-triggers-recon-v77.md`.
     Nothing new is drawn yet.
+  - **Reverse kept in Rengine:** the v72..v77 effect reverses, a snapshot of
+    the EXE facts that lived only in Reader comments, the fx analysis /
+    emulator tools and the costume tools are in `VrUaCom/dmc-rengine-cpp`
+    (branch `claude/devil-microy3-decompile-port-2v8pne`, commit `eae720e`):
+    `docs/research/dmc3-effect-runtime-2026-10-01.md`,
+    `dmc3-particle-p-records-2026-10-01.md`, `dmc3-generator-g-records-2026-10-01.md`,
+    `dmc3-effect-triggers-2026-10-01.md`, `dmc3-native-reader-code-facts-2026-10-01.md`,
+    `research/exe/fx/`, `tools/dmc3-costume-tools/`.
   - **Missing buildings in the render (the "LOD" report):** the room pass
     dropped triangles whose vertex normals pointed away from the camera, and
     stage normals are not reliable (whole far buildings faced "away"). There
