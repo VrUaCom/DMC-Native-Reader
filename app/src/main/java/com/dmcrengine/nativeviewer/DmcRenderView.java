@@ -48,7 +48,9 @@ public final class DmcRenderView extends View {
     public static final int G_SCREENSHOT = 1 << 10; // three-finger tap: save a PNG
     public static final int G_FOLLOW = 1 << 11;    // four-finger tap: camera follows / stays
     public static final int G_DOLLY = 1 << 12;     // hold one finger, slide another up / down: move the camera
-    public static final int G_ALL = (1 << 13) - 1;
+    public static final int G_CLOSE_PAN = 1 << 13; // two fingers held together, dragged: move the camera in space
+    public static final int G_TURN = 1 << 14;      // hold one finger, twist two others: turn the camera round
+    public static final int G_ALL = (1 << 15) - 1;
 
     /** What the gestures ask of the activity. */
     public interface GestureListener {
@@ -86,7 +88,57 @@ public final class DmcRenderView extends View {
     private int multiCount;
     // Two fingers: undecided until one moves; then the usual pinch / pan /
     // twist, or a dolly (one finger holds, the other slides up / down).
-    private static final int MULTI_UNDECIDED = 0, MULTI_NORMAL = 1, MULTI_DOLLY = 2;
+    // Fingers held together (closer than CLOSE_PAIR_MM) that move as one
+    // move the camera in space instead of zooming.
+    private static final int MULTI_UNDECIDED = 0, MULTI_NORMAL = 1, MULTI_DOLLY = 2, MULTI_CLOSE_PAN = 3;
+    private static final float CLOSE_PAIR_MM = 24.0f;
+    private boolean pairStartedClose;
+    // Three fingers: one holds, the other two twist round it -> the camera
+    // turns round the model / the centre (TURN); decided once they move.
+    private static final int TRIPLE_UNDECIDED = 0, TRIPLE_NORMAL = 1, TRIPLE_TURN = 2;
+    private int tripleMode = TRIPLE_NORMAL;
+    private final int[] tripleIds = new int[3];
+    private final float[] tripleStartX = new float[3], tripleStartY = new float[3];
+    private int turnHoldId = MotionEvent.INVALID_POINTER_ID, turnIdA, turnIdB;
+    private float turnAngle, turnTotal;
+    private boolean turnUsed;
+
+    // Fly camera (stages, collision views): the camera stands at its own eye;
+    // a joystick appears under each finger — left half: move (forward / back,
+    // sideways), right half: look (turn, tilt). Flying forward follows the
+    // view, so looking up and pushing forward climbs.
+    private boolean flyMode;
+    private float flySpeed = 100.0f;  // model units per second at full stick
+    private final int[] stickId = {MotionEvent.INVALID_POINTER_ID, MotionEvent.INVALID_POINTER_ID};
+    private final float[] stickBaseX = new float[2], stickBaseY = new float[2];
+    private final float[] stickX = new float[2], stickY = new float[2];
+    private long flyLastMs;
+    private final Runnable flyTick = new Runnable() {
+        @Override public void run() {
+            if (!flyMode || (stickId[0] == MotionEvent.INVALID_POINTER_ID
+                    && stickId[1] == MotionEvent.INVALID_POINTER_ID)) {
+                return;
+            }
+            final long now = SystemClock.uptimeMillis();
+            final float dt = Math.min(0.05f, Math.max(0.0f, (now - flyLastMs) / 1000.0f));
+            flyLastMs = now;
+            final float[] move = stickVector(0);
+            final float[] look = stickVector(1);
+            boolean changed = false;
+            if (look[0] != 0.0f || look[1] != 0.0f) {
+                yaw -= look[0] * 1.8f * dt;     // push right: turn right
+                pitch = Math.max(-1.55f, Math.min(1.55f, pitch - look[1] * 1.2f * dt));  // push up: look up
+                changed = true;
+            }
+            if (move[0] != 0.0f || move[1] != 0.0f) {
+                final float step = flySpeed * dt;
+                NativeBridge.flyMove(yaw, pitch, -move[1] * step, move[0] * step, 0.0f);
+                changed = true;
+            }
+            if (changed) renderThrottled(false);
+            postOnAnimation(this);
+        }
+    };
     private int multiMode = MULTI_NORMAL;
     private int holdId = MotionEvent.INVALID_POINTER_ID, dragId = MotionEvent.INVALID_POINTER_ID;
     private float pairStartX0, pairStartY0, pairStartX1, pairStartY1;
@@ -198,7 +250,10 @@ public final class DmcRenderView extends View {
         scaleDetector = new ScaleGestureDetector(context,
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     @Override public boolean onScale(ScaleGestureDetector detector) {
-                        if (staticImagePreview || multiMode == MULTI_DOLLY) return false;
+                        if (staticImagePreview || flyMode || multiMode == MULTI_DOLLY
+                                || multiMode == MULTI_CLOSE_PAN || tripleMode == TRIPLE_TURN) {
+                            return false;
+                        }
                         zoom *= detector.getScaleFactor();
                         zoom = Math.max(GestureHud.ZOOM_MIN, Math.min(GestureHud.ZOOM_MAX, zoom));
                         if (multiMode != MULTI_UNDECIDED) {
@@ -470,6 +525,7 @@ public final class DmcRenderView extends View {
 
     public void setSession(long newSession) {
         pauseMotion();
+        if (flyMode) leaveFly();
         ++generation;
         synchronized (renderLock) {
             pendingRequest = null;
@@ -528,7 +584,140 @@ public final class DmcRenderView extends View {
         loadStaticImagePreview();
     }
 
+    // ---- Fly camera ----------------------------------------------------------
+
+    public boolean isFlyMode() {
+        return flyMode;
+    }
+
+    /**
+     * Switches between the orbit camera and the fly camera. The fly camera starts where the orbit
+     * camera stands, looking the same way, so the picture does not jump; back in orbit the camera
+     * frames the model / stage again from the direction it last looked.
+     */
+    public boolean setFlyMode(boolean on) {
+        if (on == flyMode) return true;
+        if (on) {
+            if (session == 0 || staticImagePreview || isUvLayoutVisible()) return false;
+            final float[] eye = NativeBridge.cameraEye(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
+                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly);
+            if (eye == null || eye.length < 3) return false;
+            final float[] metrics = NativeBridge.cameraMetrics(session);
+            final float distance = metrics != null && metrics.length > 0 ? metrics[0] : 0.0f;
+            // Full stick crosses the framed distance in about two seconds.
+            flySpeed = Math.max(1.0f, distance * 0.5f);
+            removeCallbacks(spinTick);
+            spinYaw = 0.0f;
+            spinPitch = 0.0f;
+            endDolly();
+            hud.reset();
+            NativeBridge.setFlyCamera(true, eye[0], eye[1], eye[2]);
+            flyMode = true;
+        } else {
+            leaveFly();
+        }
+        renderNow();
+        return true;
+    }
+
+    private void leaveFly() {
+        flyMode = false;
+        NativeBridge.setFlyCamera(false, 0.0f, 0.0f, 0.0f);
+        for (int side = 0; side < 2; ++side) releaseStick(side);
+        removeCallbacks(flyTick);
+        touching = false;
+    }
+
+    /** Stick deflection, x right / y down, each -1..1 (dead zone, softer near the centre). */
+    private float[] stickVector(int side) {
+        if (stickId[side] == MotionEvent.INVALID_POINTER_ID) return new float[]{0.0f, 0.0f};
+        final float radius = GestureHud.stickRadius(getResources().getDisplayMetrics().density);
+        float x = (stickX[side] - stickBaseX[side]) / radius;
+        float y = (stickY[side] - stickBaseY[side]) / radius;
+        final float length = (float) Math.hypot(x, y);
+        if (length < 0.12f) return new float[]{0.0f, 0.0f};
+        final float clamped = Math.min(1.0f, length);
+        final float scaled = (clamped - 0.12f) / 0.88f;
+        final float k = scaled * scaled / length;  // quadratic: fine control near the centre
+        return new float[]{x * k, y * k};
+    }
+
+    private void showStick(int side) {
+        final float radius = GestureHud.stickRadius(getResources().getDisplayMetrics().density);
+        float dx = stickX[side] - stickBaseX[side];
+        float dy = stickY[side] - stickBaseY[side];
+        final float length = (float) Math.hypot(dx, dy);
+        if (length > radius) {
+            dx *= radius / length;
+            dy *= radius / length;
+        }
+        hud.showStick(side, stickBaseX[side], stickBaseY[side], stickBaseX[side] + dx, stickBaseY[side] + dy);
+    }
+
+    private void releaseStick(int side) {
+        stickId[side] = MotionEvent.INVALID_POINTER_ID;
+        hud.releaseStick(side);
+    }
+
+    private boolean onFlyTouch(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                final int index = event.getActionIndex();
+                final float x = event.getX(index), y = event.getY(index);
+                final int side = x < getWidth() * 0.5f ? 0 : 1;
+                if (stickId[side] == MotionEvent.INVALID_POINTER_ID) {
+                    final boolean first = stickId[0] == MotionEvent.INVALID_POINTER_ID
+                            && stickId[1] == MotionEvent.INVALID_POINTER_ID;
+                    stickId[side] = event.getPointerId(index);
+                    stickBaseX[side] = stickX[side] = x;
+                    stickBaseY[side] = stickY[side] = y;
+                    showStick(side);
+                    touching = true;
+                    if (first) {
+                        flyLastMs = SystemClock.uptimeMillis();
+                        postOnAnimation(flyTick);
+                    }
+                }
+                break;
+            }
+            case MotionEvent.ACTION_MOVE:
+                for (int side = 0; side < 2; ++side) {
+                    if (stickId[side] == MotionEvent.INVALID_POINTER_ID) continue;
+                    final int index = event.findPointerIndex(stickId[side]);
+                    if (index < 0) continue;
+                    stickX[side] = event.getX(index);
+                    stickY[side] = event.getY(index);
+                    showStick(side);
+                }
+                break;
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_UP: {
+                final int id = event.getPointerId(event.getActionIndex());
+                for (int side = 0; side < 2; ++side) {
+                    if (stickId[side] == id) releaseStick(side);
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    for (int side = 0; side < 2; ++side) releaseStick(side);
+                    touching = false;
+                    renderThrottled(true);
+                }
+                break;
+            }
+            case MotionEvent.ACTION_CANCEL:
+                for (int side = 0; side < 2; ++side) releaseStick(side);
+                touching = false;
+                renderThrottled(true);
+                break;
+            default:
+                break;
+        }
+        invalidate();
+        return true;
+    }
+
     public void resetView() {
+        if (flyMode) leaveFly();
         yaw = DEFAULT_YAW;
         pitch = -0.45f;
         zoom = 1.0f;
@@ -1027,6 +1216,7 @@ public final class DmcRenderView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (staticImagePreview) return true;
+        if (flyMode) return onFlyTouch(event);
 
         scaleDetector.onTouchEvent(event);
         // A new touch resets the state below before the tap detector sees it
@@ -1051,6 +1241,8 @@ public final class DmcRenderView extends View {
                 scrubbing = false;
                 multiShift = 0.0f;
                 multiShiftTaken = false;
+                turnUsed = false;
+                tripleMode = TRIPLE_NORMAL;
                 final float edge = EDGE_DP * density;
                 edgeStart = EDGE_NONE;
                 if (enabled(G_TOP_UI) && lastY < edge) {
@@ -1075,6 +1267,7 @@ public final class DmcRenderView extends View {
                     multiStartY = multiY;
                     endDolly();
                     multiMode = MULTI_NORMAL;
+                    if (event.getPointerCount() == 3) beginTriple(event); else endTurn();
                 } else if (event.getPointerCount() == 2) {
                     beginPair(event);
                 }
@@ -1095,6 +1288,7 @@ public final class DmcRenderView extends View {
                 }
                 rebaseToPointer(event, activePointerId);
                 beginMulti(event, up);
+                if (event.getPointerCount() == 3) endTurn();
                 if (event.getPointerCount() <= 2) {
                     endDolly();
                     multiMode = MULTI_NORMAL;
@@ -1144,6 +1338,7 @@ public final class DmcRenderView extends View {
             }
             case MotionEvent.ACTION_UP: {
                 touching = false;
+                endTurn();
                 endDolly();
                 multiMode = MULTI_NORMAL;
                 finishGesture(event, density);
@@ -1153,6 +1348,7 @@ public final class DmcRenderView extends View {
             }
             case MotionEvent.ACTION_CANCEL:
                 touching = false;
+                endTurn();
                 endDolly();
                 multiMode = MULTI_NORMAL;
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
@@ -1203,7 +1399,24 @@ public final class DmcRenderView extends View {
             sy += event.getY(i);
         }
         final float cx = sx / n, cy = sy / n;
+        if (n == 3 && maxPointers == 3) {
+            if (tripleMode == TRIPLE_UNDECIDED) decideTriple(event);
+            if (tripleMode == TRIPLE_TURN) moveTurn(event);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
         if (n == 2 && maxPointers == 2 && multiMode == MULTI_UNDECIDED) decidePair(event);
+        if (n == 2 && maxPointers == 2 && multiMode == MULTI_CLOSE_PAN) {
+            // Camera-plane move only: no zoom, no twist.
+            final float unit = 2.96f / (zoom * Math.max(1, Math.min(getWidth(), getHeight())));
+            panX -= (cx - multiX) * unit;
+            panY += (cy - multiY) * unit;
+            renderThrottled(false);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
         if (n == 2 && maxPointers == 2 && multiMode == MULTI_DOLLY) {
             moveDolly(event);
             multiX = cx;
@@ -1260,6 +1473,8 @@ public final class DmcRenderView extends View {
                 notice(follow ? "\\ud83c\\udfa5 Camera follows the model" : "\\ud83c\\udfa5 Camera stays in place");
                 renderNow();
             }
+        } else if (maxPointers == 3 && turnUsed) {
+            // The fingers turned the camera: no swipe, no screenshot.
         } else if (maxPointers == 3) {
             final float mx = multiShiftTaken ? multiShift : multiX - multiStartX;
             if (enabled(G_THREE_SWIPE) && Math.abs(mx) > 80.0f * density && gestureListener != null) {
@@ -1294,6 +1509,94 @@ public final class DmcRenderView extends View {
     // ---- dolly: one finger holds on one half of the screen, the other slides
     // up / down on the other half and the camera moves along its view axis.
 
+    // ---- turn: one finger holds, two others twist round it -> the camera
+    // turns round the model (or the centre of the stage).
+
+    private void beginTriple(MotionEvent event) {
+        tripleMode = enabled(G_TURN) ? TRIPLE_UNDECIDED : TRIPLE_NORMAL;
+        for (int i = 0; i < 3; ++i) {
+            tripleIds[i] = event.getPointerId(i);
+            tripleStartX[i] = event.getX(i);
+            tripleStartY[i] = event.getY(i);
+        }
+    }
+
+    private void decideTriple(MotionEvent event) {
+        final float slop = 11.0f * getResources().getDisplayMetrics().density;
+        final float[] moved = new float[3];
+        int still = -1, stillCount = 0, movedCount = 0;
+        for (int i = 0; i < 3; ++i) {
+            final int index = event.findPointerIndex(tripleIds[i]);
+            if (index < 0) {
+                tripleMode = TRIPLE_NORMAL;
+                return;
+            }
+            moved[i] = (float) Math.hypot(event.getX(index) - tripleStartX[i], event.getY(index) - tripleStartY[i]);
+            if (moved[i] >= slop) ++movedCount;
+            if (moved[i] < slop * 0.8f) {
+                still = i;
+                ++stillCount;
+            }
+        }
+        if (movedCount < 2) {
+            if (movedCount == 1 && stillCount < 2) tripleMode = TRIPLE_NORMAL;  // not two moving round one
+            return;
+        }
+        if (stillCount != 1) {
+            tripleMode = TRIPLE_NORMAL;  // all three moved: a swipe
+            return;
+        }
+        // The two moving fingers must turn, not slide together.
+        final int a = (still + 1) % 3, b = (still + 2) % 3;
+        final int ia = event.findPointerIndex(tripleIds[a]), ib = event.findPointerIndex(tripleIds[b]);
+        final float startAngle = (float) Math.atan2(tripleStartY[b] - tripleStartY[a], tripleStartX[b] - tripleStartX[a]);
+        final float nowAngle = (float) Math.atan2(event.getY(ib) - event.getY(ia), event.getX(ib) - event.getX(ia));
+        float delta = nowAngle - startAngle;
+        if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
+        if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
+        if (Math.abs(delta) < 0.08f) {
+            final float dxA = event.getX(ia) - tripleStartX[a], dxB = event.getX(ib) - tripleStartX[b];
+            if (Math.signum(dxA) == Math.signum(dxB) && Math.abs(dxA) > 2.0f * slop) tripleMode = TRIPLE_NORMAL;
+            return;
+        }
+        tripleMode = TRIPLE_TURN;
+        turnUsed = true;
+        turnHoldId = tripleIds[still];
+        turnIdA = tripleIds[a];
+        turnIdB = tripleIds[b];
+        turnAngle = startAngle;
+        turnTotal = 0.0f;
+        moveTurn(event);
+    }
+
+    private void moveTurn(MotionEvent event) {
+        final int ia = event.findPointerIndex(turnIdA), ib = event.findPointerIndex(turnIdB);
+        final int ih = event.findPointerIndex(turnHoldId);
+        if (ia < 0 || ib < 0 || ih < 0) return;
+        final float angle = (float) Math.atan2(event.getY(ib) - event.getY(ia), event.getX(ib) - event.getX(ia));
+        float delta = angle - turnAngle;
+        if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
+        if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
+        turnAngle = angle;
+        if (Math.abs(delta) > 0.0005f) {
+            // The camera circles the model / the centre; the room stays where it is.
+            yaw -= delta;
+            turnTotal += delta;
+            renderThrottled(false);
+        }
+        hud.showTurn((float) Math.toDegrees(turnTotal), event.getX(ih), event.getY(ih), getWidth(), getHeight());
+        invalidate();
+    }
+
+    private void endTurn() {
+        if (tripleMode == TRIPLE_TURN) {
+            hud.release();
+            invalidate();
+        }
+        tripleMode = TRIPLE_NORMAL;
+        turnHoldId = MotionEvent.INVALID_POINTER_ID;
+    }
+
     private void beginPair(MotionEvent event) {
         multiMode = MULTI_UNDECIDED;
         pairId0 = event.getPointerId(0);
@@ -1303,6 +1606,9 @@ public final class DmcRenderView extends View {
         pairStartX1 = event.getX(1);
         pairStartY1 = event.getY(1);
         zoomAtPair = zoom;
+        final float mm = (float) Math.hypot(pairStartX1 - pairStartX0, pairStartY1 - pairStartY0)
+                / Math.max(1.0f, getResources().getDisplayMetrics().xdpi) * 25.4f;
+        pairStartedClose = mm < CLOSE_PAIR_MM;
     }
 
     private void decidePair(MotionEvent event) {
@@ -1316,6 +1622,22 @@ public final class DmcRenderView extends View {
         final float d0 = (float) Math.hypot(event.getX(i0) - pairStartX0, event.getY(i0) - pairStartY0);
         final float d1 = (float) Math.hypot(event.getX(i1) - pairStartX1, event.getY(i1) - pairStartY1);
         if (d0 < slop && d1 < slop) return;  // not decided yet
+        if (pairStartedClose && enabled(G_CLOSE_PAN)) {
+            // Held together: moving as one moves the camera; spreading apart
+            // is still a pinch.
+            final float span0 = (float) Math.hypot(pairStartX1 - pairStartX0, pairStartY1 - pairStartY0);
+            final float span = (float) Math.hypot(event.getX(i1) - event.getX(i0), event.getY(i1) - event.getY(i0));
+            final float travel = (float) Math.hypot(
+                    (event.getX(i0) + event.getX(i1) - pairStartX0 - pairStartX1) * 0.5f,
+                    (event.getY(i0) + event.getY(i1) - pairStartY0 - pairStartY1) * 0.5f);
+            if (Math.abs(span - span0) < 0.6f * travel) {
+                multiMode = MULTI_CLOSE_PAN;
+                zoom = zoomAtPair;  // the pinch detector saw the small span change
+                hud.reset();
+                beginMulti(event, -1);
+                return;
+            }
+        }
         final boolean firstMoved = d0 >= slop;
         final boolean secondMoved = d1 >= slop;
         final int held = firstMoved ? i1 : i0;

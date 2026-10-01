@@ -146,7 +146,32 @@ struct ViewState {
     Vec3 frame_shift{};
     float room_yaw{0.0F};
     Vec3 room_pivot{};
+    // Fly camera (stages, collision views): the camera stands at fly_eye and
+    // looks along yaw / pitch, turning about itself instead of orbiting the
+    // framed centre. Pan, dolly and the follow shift do not apply.
+    bool fly{false};
+    Vec3 fly_eye{};
 };
+
+// World directions of the view camera at yaw / pitch (the same mirrored
+// camera as render_view): forward into the screen, right = screen right,
+// up = screen up.
+struct CameraBasis final {
+    Vec3 forward{};
+    Vec3 right{};
+    Vec3 up{};
+};
+[[nodiscard]] CameraBasis camera_basis(float yaw_radians, float pitch_radians) noexcept;
+
+// World position of the camera render_view uses for this view (orbit or fly);
+// switching a view to fly with this eye keeps the picture unchanged.
+[[nodiscard]] Vec3 view_camera_eye(const Mesh& mesh, int width, int height, const ViewState& view);
+
+// One fly step: `forward` along the view direction (pitch included, so
+// flying while looking up climbs), `strafe` along screen right, `rise`
+// straight up; all in world units.
+[[nodiscard]] Vec3 fly_move(const Vec3& eye, float yaw_radians, float pitch_radians, float forward,
+                            float strafe, float rise) noexcept;
 
 // Colour of a HITS record kind in the collision overlay and its legend.
 [[nodiscard]] std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept;

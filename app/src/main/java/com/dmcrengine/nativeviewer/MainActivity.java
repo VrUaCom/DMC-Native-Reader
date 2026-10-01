@@ -112,6 +112,7 @@ public final class MainActivity extends Activity {
     private Button shadowButton;
     private Button collisionButton;
     private Button stageCollisionButton;
+    private Button flyButton;
     private Button breakButton;
     // Position in the collision cycle: -1 all attacks, then each used id.
     private int collisionCursor = -2;
@@ -174,6 +175,12 @@ public final class MainActivity extends Activity {
         buildUi();
         applyViewerSettings();
         // A gesture added later is on for a mask stored before it existed.
+        if (!prefs().getBoolean(PREF_GESTURE_CAMERA_V2, false)) {
+            prefs().edit()
+                    .putInt(PREF_GESTURES, prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL)
+                            | DmcRenderView.G_CLOSE_PAN | DmcRenderView.G_TURN)
+                    .putBoolean(PREF_GESTURE_CAMERA_V2, true).apply();
+        }
         if (!prefs().getBoolean(PREF_GESTURE_DOLLY, false)) {
             prefs().edit()
                     .putInt(PREF_GESTURES, prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL) | DmcRenderView.G_DOLLY)
@@ -329,6 +336,13 @@ public final class MainActivity extends Activity {
         syncToggleButton(stageCollisionButton,
                 !renderView.isUvLayoutVisible() && stageScene,
                 renderView.isRoomCollisionVisible());
+
+        // Camera mode (stages and collision views): orbit <-> fly.
+        final boolean flyAvailable = hasSession && !renderView.isUvLayoutVisible()
+                && (stageScene || NativeBridge.isStageSession(session)
+                    || NativeBridge.hasEnvironmentCollision(session) || renderView.isRoomCollisionVisible());
+        if (!flyAvailable && renderView.isFlyMode()) renderView.setFlyMode(false);
+        syncToggleButton(flyButton, flyAvailable, renderView.isFlyMode());
 
         syncToggleButton(breakButton,
                 hasSession && !renderView.isUvLayoutVisible() && NativeBridge.roomBreakable(session),
@@ -630,6 +644,19 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, stageCollisionButton);
+
+        // Camera mode: orbit (turn round the model / stage) or fly (joysticks
+        // under the fingers: left moves, right looks). The same button goes back.
+        flyButton = makeSquareButton("\u2708", "Camera mode: orbit / fly", 18f);
+        flyButton.setOnClickListener(v -> {
+            final boolean fly = !renderView.isFlyMode();
+            if (!renderView.setFlyMode(fly)) return;
+            notice(fly ? "Fly camera: left thumb moves (forward / back, sideways), right thumb looks "
+                            + "(turn, tilt); fly forward while looking up or down to climb or descend"
+                       : "Orbit camera", Toast.LENGTH_LONG);
+            applyResourceUiState();
+        });
+        addToolButton(bar, flyButton);
 
         // Breakable stage objects ("# SET n BREAK"): show them broken (their
         // bmodel, the break effect played once) or intact.
@@ -1281,6 +1308,7 @@ public final class MainActivity extends Activity {
 
     private static final String PREF_GESTURES = "gestures.mask";
     private static final String PREF_GESTURE_DOLLY = "gestures.dollyAdded";
+    private static final String PREF_GESTURE_CAMERA_V2 = "gestures.closePanTurnAdded";
 
     private final DmcRenderView.GestureListener gestureListener = new DmcRenderView.GestureListener() {
         @Override public void onStepMotion(int direction) {
@@ -1421,6 +1449,8 @@ public final class MainActivity extends Activity {
                 {DmcRenderView.G_PAN, "Two fingers drag — pan the camera; pinch — zoom (zoom and lens shown)"},
                 {DmcRenderView.G_DOLLY, "Hold one finger, slide another up / down on the other half — move the camera (distance shown)"},
                 {DmcRenderView.G_TWIST, "Two fingers twist — turn the model in the room (the view when there is no room)"},
+                {DmcRenderView.G_CLOSE_PAN, "Two fingers held together, dragged — move the camera up / down, left / right (no zoom)"},
+                {DmcRenderView.G_TURN, "Hold one finger, twist two others round it — turn the camera round the model / centre"},
                 {DmcRenderView.G_DOUBLE_TAP, "Double tap — reset the view; on the room floor: stand the model there"},
                 {DmcRenderView.G_TAP_PAUSE, "Tap the model — pause / resume the animation"},
                 {DmcRenderView.G_FLING, "Flick — the view keeps turning and slows down"},
@@ -2319,7 +2349,8 @@ public final class MainActivity extends Activity {
         if (blackWidowState.canExportPng) {
             choosePngExportDestination();
         } else if (blackWidowState.canRender) {
-            renderView.resetView();
+            renderView.resetView();  // also leaves the fly camera
+            applyResourceUiState();
         }
     }
 

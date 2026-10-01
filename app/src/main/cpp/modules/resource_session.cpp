@@ -1889,6 +1889,13 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;
     view.dolly = std::isfinite(controls.dolly)
         ? std::clamp(controls.dolly, kDollyMin, session_dolly_limit(&session)) : 0.0F;
+    if (controls.fly && std::isfinite(controls.eye.x) && std::isfinite(controls.eye.y) &&
+        std::isfinite(controls.eye.z)) {
+        view.fly = true;
+        view.fly_eye = controls.eye;
+        view.pan_x = view.pan_y = 0.0F;
+        view.dolly = 0.0F;
+    }
 
     // Up to 8K (7680 x 4320); the viewer asks for the size its Resolution
     // setting chose.
@@ -1922,7 +1929,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
                                                      : view.framing_vertices;
     // Camera follow: frame the model where its motion has taken it (x/z of
     // the vertex centre against the rest pose; height stays put).
-    if (controls.follow && !view.framing_vertices.empty() && !session.render_mesh.vertices.empty()) {
+    if (controls.follow && !view.fly && !view.framing_vertices.empty() && !session.render_mesh.vertices.empty()) {
         double rx = 0.0, rz = 0.0, cx = 0.0, cz = 0.0;
         for (const auto& v : view.framing_vertices) {
             rx += v.x;
@@ -2070,6 +2077,17 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
             : session->render_mesh;
     return render_view(presented, prepared.width, prepared.height, prepared.view,
                        prepared.hierarchy, prepared.texture_slots, prepared.textures);
+}
+
+std::optional<Vec3> session_camera_eye(const Session* session, int requested_width, int requested_height,
+                                       float yaw, float pitch, float zoom, std::uint32_t render_flags,
+                                       const ViewControls& controls) {
+    if (session == nullptr || !session->renderable || session->uv_gallery) return std::nullopt;
+    PreparedView prepared;
+    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    const Mesh& presented = prepared.dynamic_presentation ? prepared.presentation_mesh : session->render_mesh;
+    if (presented.vertices.empty()) return std::nullopt;
+    return view_camera_eye(presented, prepared.width, prepared.height, prepared.view);
 }
 
 SessionPick pick_session(const Session* session, int requested_width, int requested_height, float yaw,

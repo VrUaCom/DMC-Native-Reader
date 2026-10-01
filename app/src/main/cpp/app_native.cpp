@@ -111,6 +111,29 @@ std::unordered_set<Session*>& live_sessions() noexcept {
 
 using SessionLock = std::lock_guard<std::recursive_mutex>;
 
+// Fly camera of the view (stages, collision views): set from the UI thread,
+// read by every frame, pick and benchmark so they all see the same camera.
+struct FlyCamera final {
+    bool on{};
+    dmcresource::Vec3 eye{};
+};
+std::mutex& fly_mutex() noexcept {
+    static std::mutex mutex;
+    return mutex;
+}
+FlyCamera& fly_camera() noexcept {
+    static FlyCamera camera;
+    return camera;
+}
+
+dmcresource::ViewControls view_controls(float pan_x, float pan_y, float room_yaw, jboolean follow, float dolly) {
+    dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+    const std::lock_guard lock{fly_mutex()};
+    controls.fly = fly_camera().on;
+    controls.eye = fly_camera().eye;
+    return controls;
+}
+
 Session* from_handle(jlong handle) noexcept {
     auto* session = reinterpret_cast<Session*>(static_cast<std::uintptr_t>(handle));
     if (session == nullptr) return nullptr;
@@ -541,7 +564,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderEx(
     const Session* session = from_handle(handle);
     if (session == nullptr) return JNI_FALSE;
     try {
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         const auto image = dmcresource::render_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
@@ -568,7 +591,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
             !dmcresource::motion::apply_motion_frame(session, motion_frame)) {
             status = 2;
         }
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         const auto image = dmcresource::render_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
@@ -610,7 +633,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_pickView(
     const Session* session = from_handle(handle);
     if (session == nullptr) return nullptr;
     try {
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         const auto pick = dmcresource::pick_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls, x, y);
@@ -1317,7 +1340,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
     int out_width = 0, out_height = 0;
     try {
         std::vector<std::uint8_t> pixels;
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         float end_frame = 0.0F, loop_start = 0.0F;
         {
             const SessionLock jni_lock{session_mutex()};
@@ -1368,4 +1391,60 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
             result, dmcresource::view_renderer_description(), out_width, out_height, to_utf8(env, settings));
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF("Benchmark failed."); }
+}
+
+// ---- Fly camera ---------------------------------------------------------------
+
+// Where the camera of that view stands (orbit or fly): {x, y, z}, or null.
+// The fly camera starts here, so the picture does not jump when it begins.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraEye(
+        JNIEnv* env, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly) {
+    try {
+        const SessionLock jni_lock{session_mutex()};
+        const Session* session = from_handle(handle);
+        const auto eye = dmcresource::session_camera_eye(session, width, height, yaw, pitch, zoom,
+            static_cast<std::uint32_t>(render_flags), view_controls(pan_x, pan_y, room_yaw, follow, dolly));
+        if (!eye) return nullptr;
+        const jfloat values[3] = {eye->x, eye->y, eye->z};
+        jfloatArray out = env->NewFloatArray(3);
+        if (out != nullptr) env->SetFloatArrayRegion(out, 0, 3, values);
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// Turns the fly camera on at `eye` (or off: the orbit camera again).
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setFlyCamera(JNIEnv*, jclass, jboolean on, jfloat x, jfloat y,
+                                                           jfloat z) {
+    const std::lock_guard lock{fly_mutex()};
+    fly_camera().on = on == JNI_TRUE;
+    fly_camera().eye = {x, y, z};
+}
+
+// Moves the fly camera: `forward` along the view (pitch included), `strafe`
+// to screen right, `rise` straight up, in model units. Returns the new eye.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_flyMove(JNIEnv* env, jclass, jfloat yaw, jfloat pitch,
+                                                      jfloat forward, jfloat strafe, jfloat rise) {
+    dmcresource::Vec3 eye;
+    {
+        const std::lock_guard lock{fly_mutex()};
+        auto& camera = fly_camera();
+        camera.eye = dmcresource::fly_move(camera.eye, yaw, pitch, forward, strafe, rise);
+        eye = camera.eye;
+    }
+    const jfloat values[3] = {eye.x, eye.y, eye.z};
+    jfloatArray out = env->NewFloatArray(3);
+    if (out != nullptr) env->SetFloatArrayRegion(out, 0, 3, values);
+    return out;
+}
+
+// A collision view: a .hits file, or a stage / model whose HITS are loaded.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hasEnvironmentCollision(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    return session != nullptr && session->hits != nullptr ? JNI_TRUE : JNI_FALSE;
 }

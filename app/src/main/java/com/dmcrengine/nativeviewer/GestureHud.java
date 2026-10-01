@@ -14,6 +14,10 @@ import java.util.Locale;
  * the other slides up / down) shows the distance to the target, or how far the
  * camera has moved when nothing is bound.
  *
+ * The fly camera's two joysticks use the same rings (base where the finger
+ * came down, a knob under the finger); the turn gesture (one finger holds, two
+ * others twist round it) shows the ring under the holding finger and the angle.
+ *
  * Numbers are light white digits with a soft dark outline, captions small
  * letter-spaced grey; everything is a little transparent and fades in and out.
  */
@@ -28,7 +32,7 @@ final class GestureHud {
 
     private static final long FADE_IN_MS = 130, FADE_OUT_MS = 420, HOLD_MS = 380;
 
-    private enum Mode { NONE, ZOOM, DOLLY }
+    private enum Mode { NONE, ZOOM, DOLLY, TURN }
 
     private final float density;
     private final float scaledDensity;
@@ -60,6 +64,23 @@ final class GestureHud {
     private boolean bound;
     private float dollyFraction;   // ruler phase
     private float rulerTravel;     // accumulated ruler scroll in px
+
+    // TURN (one finger holds, two twist): ring at the holding finger, degrees
+    private float turnDegrees;
+
+    // Joysticks of the fly camera: 0 left (move), 1 right (look).
+    private static final class Stick {
+        boolean active;
+        float baseX, baseY, knobX, knobY;
+        float alpha;
+    }
+    private final Stick[] sticks = {new Stick(), new Stick()};
+    private long sticksFrameMs;
+
+    /** Travel of a joystick knob: the outer ring of the dolly's rings. */
+    static float stickRadius(float density) {
+        return 49f * density;
+    }
 
     GestureHud(float density, float scaledDensity) {
         this.density = density;
@@ -126,6 +147,31 @@ final class GestureHud {
         viewHeight = Math.max(1, height);
     }
 
+    void showTurn(float degrees, float holdPx, float holdPy, int width, int height) {
+        begin(Mode.TURN);
+        turnDegrees = degrees;
+        holdX = holdPx;
+        holdY = holdPy;
+        viewWidth = Math.max(1, width);
+        viewHeight = Math.max(1, height);
+    }
+
+    /** Joystick `index` (0 left, 1 right): base ring at (bx, by), knob at (kx, ky). */
+    void showStick(int index, float bx, float by, float kx, float ky) {
+        final Stick stick = sticks[index];
+        if (!stick.active && stick.alpha <= 0f) sticksFrameMs = SystemClock.uptimeMillis();
+        stick.active = true;
+        stick.baseX = bx;
+        stick.baseY = by;
+        stick.knobX = kx;
+        stick.knobY = ky;
+    }
+
+    /** The finger left joystick `index`: it fades out. */
+    void releaseStick(int index) {
+        sticks[index].active = false;
+    }
+
     /** Fades the read-out out (after the fingers lift). */
     void release() {
         if (!active) return;
@@ -140,7 +186,8 @@ final class GestureHud {
     }
 
     boolean needsFrame() {
-        return mode != Mode.NONE;
+        return mode != Mode.NONE || sticks[0].active || sticks[1].active
+                || sticks[0].alpha > 0f || sticks[1].alpha > 0f;
     }
 
     private void begin(Mode next) {
@@ -170,6 +217,7 @@ final class GestureHud {
     // ---- drawing
 
     void draw(Canvas canvas) {
+        drawSticks(canvas);
         if (mode == Mode.NONE) return;
         final long now = SystemClock.uptimeMillis();
         final float dt = Math.min(64L, Math.max(0L, now - lastFrameMs)) ;
@@ -185,7 +233,13 @@ final class GestureHud {
         }
         if (alpha <= 0.002f) return;
         final float ease = alpha * alpha * (3f - 2f * alpha);
-        if (mode == Mode.ZOOM) drawZoom(canvas, ease); else drawDolly(canvas, ease);
+        if (mode == Mode.ZOOM) {
+            drawZoom(canvas, ease);
+        } else if (mode == Mode.TURN) {
+            drawTurn(canvas, ease);
+        } else {
+            drawDolly(canvas, ease);
+        }
     }
 
     private static int withAlpha(int argb, float a) {
@@ -287,10 +341,7 @@ final class GestureHud {
     private void drawDolly(Canvas canvas, float ease) {
         // Ring around the holding finger.
         final float r = 38f * density;
-        fill.setColor(withAlpha(0x14ffffff, ease));
-        canvas.drawCircle(holdX, holdY, r, fill);
-        ring(canvas, holdX, holdY, r, 1.5f, 0xa6ffffff, ease);
-        ring(canvas, holdX, holdY, r + 11f * density, 1.0f, 0x40ffffff, ease);
+        holdRings(canvas, holdX, holdY, ease);
 
         // Read-out above the ring (below it near the top edge).
         final float meters = distanceCm / UNITS_PER_METER;
@@ -341,6 +392,47 @@ final class GestureHud {
         canvas.drawPath(path, lineShadow);
         fill.setColor(withAlpha(WHITE, ease));
         canvas.drawPath(path, fill);
+    }
+
+    /** The rings under a holding finger (dolly, turn, joystick base). */
+    private void holdRings(Canvas canvas, float x, float y, float ease) {
+        final float r = 38f * density;
+        fill.setColor(withAlpha(0x14ffffff, ease));
+        canvas.drawCircle(x, y, r, fill);
+        ring(canvas, x, y, r, 1.5f, 0xa6ffffff, ease);
+        ring(canvas, x, y, r + 11f * density, 1.0f, 0x40ffffff, ease);
+    }
+
+    private void drawTurn(Canvas canvas, float ease) {
+        holdRings(canvas, holdX, holdY, ease);
+        final float r = 38f * density;
+        final String number = String.format(Locale.US, "%s%.0f", turnDegrees > 0.5f ? "+"
+                : (turnDegrees < -0.5f ? "−" : ""), Math.abs(turnDegrees));
+        final float panelHalf = 84f * density;
+        final float cx = Math.max(panelHalf, Math.min(viewWidth - panelHalf, holdX));
+        float baseline = holdY - r - 34f * density;
+        if (baseline < 96f * density) baseline = holdY + r + 78f * density;
+        readout(canvas, cx, baseline, "CAMERA TURN", number, "°", ease);
+    }
+
+    private void drawSticks(Canvas canvas) {
+        final long now = SystemClock.uptimeMillis();
+        final float dt = Math.min(64L, Math.max(0L, now - sticksFrameMs));
+        sticksFrameMs = now;
+        for (Stick stick : sticks) {
+            stick.alpha = stick.active ? Math.min(1f, stick.alpha + dt / FADE_IN_MS)
+                    : Math.max(0f, stick.alpha - dt / FADE_OUT_MS);
+            if (stick.alpha <= 0.002f) continue;
+            final float ease = stick.alpha * stick.alpha * (3f - 2f * stick.alpha);
+            holdRings(canvas, stick.baseX, stick.baseY, ease);
+            // Knob: a soft disc with a bright rim under the finger.
+            final float k = 14f * density;
+            fill.setColor(withAlpha(OUTLINE, ease * 0.8f));
+            canvas.drawCircle(stick.knobX, stick.knobY, k + 1.5f * density, fill);
+            fill.setColor(withAlpha(0x55ffffff, ease));
+            canvas.drawCircle(stick.knobX, stick.knobY, k, fill);
+            ring(canvas, stick.knobX, stick.knobY, k, 1.5f, 0xd0ffffff, ease);
+        }
     }
 
     private void ring(Canvas canvas, float x, float y, float radius, float widthDp, int color, float ease) {

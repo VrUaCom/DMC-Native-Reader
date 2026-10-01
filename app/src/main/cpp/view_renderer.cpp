@@ -96,11 +96,21 @@ P2 project_in_frame(const CameraFrame& frame, const Vec3& world, float yaw, floa
 }
 
 // The camera of a view: framed on the rest pose (or the mesh), then moved by
-// the follow shift and the gesture pan.
+// the follow shift and the gesture pan. A fly camera keeps the framing's
+// distance and focal length but stands at its own eye: the orbit centre is
+// put that distance in front of it.
 CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int height) {
     auto frame = compute_camera_frame(
         view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices} : view.framing_vertices,
         width, height);
+    if (view.fly && std::isfinite(view.fly_eye.x) && std::isfinite(view.fly_eye.y) &&
+        std::isfinite(view.fly_eye.z)) {
+        const auto basis = camera_basis(view.yaw_radians, view.pitch_radians);
+        const float cd = frame.camera_distance;
+        frame.center = {view.fly_eye.x + basis.forward.x * cd, view.fly_eye.y + basis.forward.y * cd,
+                        view.fly_eye.z + basis.forward.z * cd};
+        return frame;
+    }
     frame.center.x += view.frame_shift.x;
     frame.center.y += view.frame_shift.y;
     frame.center.z += view.frame_shift.z;
@@ -529,6 +539,21 @@ RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
 }
 
 }  // namespace
+
+// Rows of rotate(): r0 = camera x (screen right), r1 = camera y (screen up),
+// r2 = camera z (into the screen), in world coordinates.
+CameraBasis camera_basis(float yaw, float pitch) noexcept {
+    const float cy = std::cos(yaw), sy = std::sin(yaw);
+    const float cp = std::cos(pitch), sp = std::sin(pitch);
+    return {{cp * sy, sp, cp * cy}, {-cy, 0.0F, sy}, {-sp * sy, cp, -sp * cy}};
+}
+
+Vec3 fly_move(const Vec3& eye, float yaw, float pitch, float forward, float strafe, float rise) noexcept {
+    const auto b = camera_basis(yaw, pitch);
+    return {eye.x + b.forward.x * forward + b.right.x * strafe,
+            eye.y + b.forward.y * forward + b.right.y * strafe + rise,
+            eye.z + b.forward.z * forward + b.right.z * strafe};
+}
 
 std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept {
     static constexpr std::array<std::array<std::uint8_t, 3>, 12> kPalette{{
@@ -1977,6 +2002,17 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     }
     g_cpu_frames.fetch_add(1U);
     return render_view_software(mesh, width, height, view, hierarchy, triangle_texture_slots, textures);
+}
+
+Vec3 view_camera_eye(const Mesh& mesh, int width, int height, const ViewState& view) {
+    if (view.fly) return view.fly_eye;
+    const auto frame = view_frame(mesh, view, std::clamp(width, 1, 8192), std::clamp(height, 1, 8192));
+    // c = R (w - centre) + (-pan, cd) is 0 at the eye.
+    const auto b = camera_basis(view.yaw_radians, view.pitch_radians);
+    const float cd = frame.camera_distance;
+    return {frame.center.x + b.right.x * frame.pan_x + b.up.x * frame.pan_y - b.forward.x * cd,
+            frame.center.y + b.right.y * frame.pan_x + b.up.y * frame.pan_y - b.forward.y * cd,
+            frame.center.z + b.right.z * frame.pan_x + b.up.z * frame.pan_y - b.forward.z * cd};
 }
 
 ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& view, float px, float py,

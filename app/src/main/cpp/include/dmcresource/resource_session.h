@@ -317,7 +317,16 @@ struct ViewControls final {
     // Camera dolly as a fraction of the framing distance (session_camera_distance):
     // >0 moves the camera toward the model, <0 away.
     float dolly{};
+    // Fly camera at `eye` (view_renderer.h ViewState::fly); pan, dolly and
+    // follow are ignored while it flies.
+    bool fly{};
+    Vec3 eye{};
 };
+
+// World position of the camera of that view (the start of a fly camera).
+[[nodiscard]] std::optional<Vec3> session_camera_eye(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls);
 
 // Model-unit distance of the camera from the framed model at dolly 0 (0 when
 // the session has nothing to frame).
