@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -126,6 +127,16 @@ struct ScriptTrackAction final {
     Session* session,
     std::span<const ScriptTrackAction> tracks,
     float frame) noexcept;
+
+// Script action of the current non-Lady Script Play (script archive slot,
+// bank, action); empty for raw MOT playback.
+struct CurrentScriptAction final {
+    std::uint32_t script_slot{};
+    std::size_t bank{};
+    std::size_t action{};
+};
+[[nodiscard]] std::optional<CurrentScriptAction> current_script_action(
+    const Session* session) noexcept;
 
 [[nodiscard]] std::span<const RuntimeEffectInstance> active_effect_instances(
     const Session* session) noexcept;

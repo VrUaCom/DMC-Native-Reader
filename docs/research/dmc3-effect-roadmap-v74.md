@@ -34,6 +34,6 @@
 
 1. ~~P records~~ (done for every corpus record, v75).
 2. ~~G records~~ (done, v76).
-3. em000 family attack and death effects (recon v77, sections 3-4).
+3. em000 family: attack effects done (v78, code 3); death and the start-of-command events still open.
 4. Stage `beff` / `bmodel` toggle and the `SET LIGHT` light.
 5. Nevan states; CEfcPub and the weapon trails.

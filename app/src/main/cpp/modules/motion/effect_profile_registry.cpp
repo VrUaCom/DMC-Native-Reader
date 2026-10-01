@@ -5,6 +5,7 @@
 #include <cctype>
 #include <string_view>
 
+#include "dmcresource/motion/enemy_effects.h"
 #include "dmcresource/resource_session.h"
 
 namespace dmcresource::motion {
@@ -216,8 +217,13 @@ bool install_effect_bindings(Session* session) noexcept {
            session->effect_bank_slots.end();
 }
 
-constexpr std::array<EffectProfileProvider, 1> kProviders{{
+[[nodiscard]] std::span<const EffectBinding> em000_bindings_provider() noexcept {
+    return em000_effect_bindings();
+}
+
+constexpr std::array<EffectProfileProvider, 2> kProviders{{
     {"em034", &em034_profile_matches, &em034_effect_bindings_impl},
+    {"em000", &em000_profile_matches, &em000_bindings_provider},
 }};
 
 }  // namespace
@@ -235,6 +241,8 @@ bool install_effect_bindings(dmcresource::Session* session) noexcept {
 
     session->script_effect_bindings.clear();
     session->script_effect_child_groups.clear();
+    session->script_effect_bridge.step = nullptr;
+    session->script_effect_bridge.reset = nullptr;
     if (session->effect_runtime != nullptr) {
         session->effect_runtime->reset();
         session->effect_runtime->set_bindings(
@@ -248,6 +256,12 @@ bool install_effect_bindings(dmcresource::Session* session) noexcept {
         }
         const auto bindings = provider.bindings();
         if (bindings.empty()) return false;
+        // Profiles whose events come from per-frame script action tests get
+        // the Script Play step hook; CEm034 runs its own state bridge.
+        if (provider.profile_id == "em000") {
+            session->script_effect_bridge.step = em000_bridge_step;
+            session->script_effect_bridge.reset = em000_bridge_reset;
+        }
         return set_script_effect_bindings(session, bindings);
     }
     return false;

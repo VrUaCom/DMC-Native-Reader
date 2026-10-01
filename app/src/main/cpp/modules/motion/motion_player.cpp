@@ -2663,6 +2663,17 @@ RuntimeStepResult run_synchronized_script_frame(
     return result;
 }
 
+std::optional<CurrentScriptAction> current_script_action(
+    const Session* session) noexcept {
+    if (session == nullptr || session->motion == nullptr ||
+        !session->motion->script_driven) {
+        return std::nullopt;
+    }
+    const auto& state = *session->motion;
+    return CurrentScriptAction{state.script_slot, state.script_bank,
+                               state.script_action};
+}
+
 std::span<const RuntimeEffectInstance> active_effect_instances(
     const Session* session) noexcept {
     if (session == nullptr || session->effect_runtime == nullptr) return {};

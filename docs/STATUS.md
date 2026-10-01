@@ -223,6 +223,13 @@ APK verifier.
     the player / weapon spawn sites and the stage keywords `beff`, `SET LIGHT`
     and `DOOR` are mapped in `docs/research/dmc3-effect-triggers-recon-v77.md`.
     Nothing new is drawn yet.
+  - **em000 family attack effects (v78):** in Script Play, CEm000..CEm004
+    show event code 3 (E42 + V42, x2, following the weapon part) at the
+    frames the EXE AI commands wait for: actions 62 (40, 50), 66 (30), 68 (40,
+    50), 82 (76), 84 (180), 85 (100), 87 (30). The table comes from emulated
+    runs of every `CComEm000` command (rengine
+    `docs/research/dmc3-em000-attack-effects-2026-10-01.md`); on the data it
+    is the sand whirl of the teleport attacks. Test `enemy_effects_test`.
   - **Reverse kept in Rengine:** the v72..v77 effect reverses, a snapshot of
     the EXE facts that lived only in Reader comments, the fx analysis /
     emulator tools and the costume tools are in `VrUaCom/dmc-rengine-cpp`

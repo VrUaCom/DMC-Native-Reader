@@ -491,6 +491,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 if (report_out != nullptr) *report_out = std::move(report);
                 return nullptr;
             }
+            if (variant != nullptr) assembled->enemy_class = std::string{variant->class_name};
 
             // One PTX for every part (player PACs: slot 0) -> one shared bank.
             bool shared = texture_for_model.front().has_value();
@@ -609,6 +610,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                             motion::attach_local_matrix_zyx(variant->weapon_translation,
                                                             variant->weapon_rotation_zyx))) {
                         ++report.attached_parts;
+                        assembled->enemy_weapon_part = part;
                         report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
                             "->bodyJoint" + std::to_string(variant->weapon_joint);
                     }

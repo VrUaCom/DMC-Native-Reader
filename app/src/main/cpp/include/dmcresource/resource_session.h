@@ -140,6 +140,10 @@ struct Session {
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
     std::vector<MotionScriptBinding> motion_scripts;
     std::vector<motion::WeaponBinding> weapon_bindings;
+    // Enemy class of an em000-style archive position (EnemyVariant) and the
+    // composite part its weapon model was attached as (script object 1).
+    std::string enemy_class;
+    std::optional<std::size_t> enemy_weapon_part;
 
     // Boss-Lady CEm034 uses a different runtime: five persistent component
     // managers with two placement presets, plus separate dynamic CShell actors.
