@@ -76,19 +76,13 @@ public final class MainActivity extends Activity {
     private static final class NavigationEntry {
         final long session;
         final String title;
-        // Child index of `session` in the entry below it (-1: not a child).
-        final int childIndex;
 
-        NavigationEntry(long session, String title, int childIndex) {
+        NavigationEntry(long session, String title) {
             this.session = session;
             this.title = title;
-            this.childIndex = childIndex;
         }
     }
 
-    // Child index of the current session in its parent (-1 when it was not
-    // opened as a container child).
-    private int sessionChildIndex = -1;
     private long pendingSaveSession;
 
     private static final class StagedAsset {
@@ -2040,28 +2034,25 @@ public final class MainActivity extends Activity {
         final String[] names = NativeBridge.textureFormatNames();
         final String[] labels = NativeBridge.textureFormatLabels();
         if (names == null || labels == null || names.length != labels.length) return;
-        // A child of a PAC is rebuilt inside its PAC, so the file stays loadable.
-        final long container = (sessionChildIndex >= 0 && !navigation.isEmpty())
-                ? navigation.peek().session : 0;
-        final int childIndex = container != 0 ? sessionChildIndex : -1;
         final android.widget.CheckBox dx10 = new android.widget.CheckBox(this);
         dx10.setText("Always write the DX10 header");
         dx10.setPadding(dp(8), dp(4), dp(8), dp(4));
         new AlertDialog.Builder(this)
-                .setTitle(container != 0 ? "Texture format (whole .PAC)" : "Texture format")
+                .setTitle(blackWidowState.reencodeRebuildsContainer
+                        ? "Texture format (whole .PAC)" : "Texture format")
                 .setItems(labels, (dialog, which) -> runTextureReencode(
-                        target, container, childIndex, names[which], dx10.isChecked()))
+                        target, names[which], dx10.isChecked()))
                 .setView(dx10)
                 .setNegativeButton("Cancel", null)
                 .show();
     }
 
-    private void runTextureReencode(long target, long container, int childIndex, String format, boolean dx10) {
+    private void runTextureReencode(long target, String format, boolean dx10) {
         final String title = titleView.getText().toString();
         notice("Re-encoding textures to " + format.toUpperCase(java.util.Locale.ROOT) + "…",
                 Toast.LENGTH_SHORT);
         new Thread(() -> {
-            final long result = NativeBridge.reencodeTextures(target, container, childIndex, format, dx10);
+            final long result = NativeBridge.reencodeTextures(target, format, dx10);
             final String detail = NativeBridge.reencodeTexturesDetail();
             runOnUiThread(() -> {
                 if (result == 0) {
@@ -2994,12 +2985,10 @@ public final class MainActivity extends Activity {
             return;
         }
         navigateToSession(child, childTitle);
-        sessionChildIndex = index;
     }
 
     private void navigateToSession(long handle, String title) {
-        navigation.push(new NavigationEntry(session, titleView.getText().toString(), sessionChildIndex));
-        sessionChildIndex = -1;
+        navigation.push(new NavigationEntry(session, titleView.getText().toString()));
         activateSession(handle, title);
     }
 
@@ -3012,7 +3001,6 @@ public final class MainActivity extends Activity {
         if (child != 0) NativeBridge.close(child);
 
         NavigationEntry parent = navigation.pop();
-        sessionChildIndex = parent.childIndex;
         activateSession(parent.session, parent.title);
         return true;
     }
@@ -3041,7 +3029,6 @@ public final class MainActivity extends Activity {
             NavigationEntry entry = navigation.pop();
             if (entry.session != 0) NativeBridge.close(entry.session);
         }
-        sessionChildIndex = -1;
         applyResourceUiState();
     }
 

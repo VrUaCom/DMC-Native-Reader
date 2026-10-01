@@ -1170,20 +1170,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_textureFormatLabels(JNIEnv* env, j
     } catch (...) { return nullptr; }
 }
 
-// Opens the re-encoded result as a new session (0 on failure; the reason is
-// in reencodeTexturesDetail()). container/childIndex: the PAC session this
-// one was opened from, or 0 / -1.
+// Opens the re-encoded result as a new session (0 on failure; the reason,
+// naming the failed Spider step, is in reencodeTexturesDetail()). A session
+// opened from a PAC slot rebuilds its PAC natively (Black Widow
+// ReencodeRebuildsContainer); the shell passes nothing about containers.
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_reencodeTextures(
-        JNIEnv* env, jclass, jlong handle, jlong container, jint child_index,
-        jstring format, jboolean force_dx10) {
+        JNIEnv* env, jclass, jlong handle, jstring format, jboolean force_dx10) {
     const SessionLock jni_lock{session_mutex()};
     try {
         const Session* target = from_handle(handle);
-        const Session* parent = container != 0 ? from_handle(container) : nullptr;
         std::string detail;
         auto result = dmcresource::spider::actions::reencode_textures(
-            target, parent, child_index, to_utf8(env, format), force_dx10 == JNI_TRUE, &detail);
+            target, to_utf8(env, format), force_dx10 == JNI_TRUE, &detail);
         last_reencode_detail() = detail;
         return result ? to_handle(result.release()) : 0;
     } catch (...) {

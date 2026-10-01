@@ -36,6 +36,7 @@ public final class BlackWidowState {
     private static final long CAN_STAGE_COMPANION = 1L << 24;
     private static final long CAN_REENCODE_TEXTURES = 1L << 25;
     private static final long CAN_SAVE_SOURCE = 1L << 26;
+    private static final long REENCODE_REBUILDS_CONTAINER = 1L << 27;
 
     public final long bits;
     public final boolean canRender;
@@ -63,6 +64,7 @@ public final class BlackWidowState {
     public final boolean canExportPng;
     public final boolean canReencodeTextures;
     public final boolean canSaveSource;
+    public final boolean reencodeRebuildsContainer;
     public final boolean canAddModelPart;
     public final boolean canStageCompanion;
 
@@ -93,6 +95,7 @@ public final class BlackWidowState {
         canExportPng = has(bits, CAN_EXPORT_PNG);
         canReencodeTextures = has(bits, CAN_REENCODE_TEXTURES);
         canSaveSource = has(bits, CAN_SAVE_SOURCE);
+        reencodeRebuildsContainer = has(bits, REENCODE_REBUILDS_CONTAINER);
         canAddModelPart = has(bits, CAN_ADD_MODEL_PART);
         canStageCompanion = has(bits, CAN_STAGE_COMPANION);
     }

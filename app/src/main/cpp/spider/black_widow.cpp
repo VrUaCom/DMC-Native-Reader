@@ -90,6 +90,8 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::CanExportPng, session.png_export_available);
     set_if(&state, StateFlag::CanReencodeTextures, session.texture_reencode_available);
     set_if(&state, StateFlag::CanSaveSource, session.authored_source_available);
+    set_if(&state, StateFlag::ReencodeRebuildsContainer,
+           session.texture_reencode_available && session.reencode_rebuilds_container);
     set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
     set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;

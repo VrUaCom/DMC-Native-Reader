@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -94,6 +95,8 @@ bcn::Format first_texture_format(const std::vector<std::uint8_t>& file) {
 
 }  // namespace
 
+std::shared_ptr<const std::vector<std::uint8_t>> root_bytes_keepalive;
+
 int main() {
     std::vector<std::uint8_t> other(300, 0x5A);
     const auto pac = make_pac({make_ptx(), other});
@@ -104,7 +107,7 @@ int main() {
 
     // Whole PAC -> BC7.
     std::string detail;
-    auto bc7 = dmcresource::spider::actions::reencode_textures(root.get(), nullptr, -1, "bc7", false, &detail);
+    auto bc7 = dmcresource::spider::actions::reencode_textures(root.get(), "bc7", false, &detail);
     assert(bc7 && bc7->authored && bc7->source_bytes);
     assert(bw::has_state(dmcresource::black_widow_state(bc7.get()), bw::StateFlag::CanSaveSource));
     assert(first_texture_format(*bc7->source_bytes) == bcn::Format::bc7);
@@ -115,8 +118,12 @@ int main() {
 
     // Through the PTX child: the whole PAC comes back, slot 1 untouched.
     auto child = dmcresource::open_session_child(root.get(), 0);
-    assert(child && child->source_bytes);
-    auto dxt1 = dmcresource::spider::actions::reencode_textures(child.get(), root.get(), 0, "dxt1", false, &detail);
+    assert(child && child->source_bytes && child->container_source && child->container_slot == 0);
+    assert(bw::has_state(dmcresource::black_widow_state(child.get()), bw::StateFlag::ReencodeRebuildsContainer));
+    assert(!bw::has_state(dmcresource::black_widow_state(root.get()), bw::StateFlag::ReencodeRebuildsContainer));
+    // The link outlives the parent session.
+    root_bytes_keepalive = root->source_bytes;
+    auto dxt1 = dmcresource::spider::actions::reencode_textures(child.get(), "dxt1", false, &detail);
     assert(dxt1 && dxt1->source_bytes);
     const auto& out = *dxt1->source_bytes;
     assert(out.size() >= 4 && std::memcmp(out.data(), "PAC\0", 4) == 0);
@@ -125,11 +132,12 @@ int main() {
     assert(std::memcmp(out.data() + (*slots)[1].offset, other.data(), other.size()) == 0);
 
     // Unknown format and a resource without textures fail with a reason.
-    assert(!dmcresource::spider::actions::reencode_textures(root.get(), nullptr, -1, "png", false, &detail));
+    assert(!dmcresource::spider::actions::reencode_textures(root.get(), "png", false, &detail));
     auto plain = dmcresource::open_session("other.bin", other.data(), other.size());
     assert(plain && !plain->source_bytes);
-    assert(!dmcresource::spider::actions::reencode_textures(plain.get(), nullptr, -1, "bc7", false, &detail));
-    assert(!detail.empty());
+    assert(!dmcresource::spider::actions::reencode_textures(plain.get(), "bc7", false, &detail));
+    // The message names the Spider step that stopped.
+    assert(detail.rfind("select source failed", 0) == 0);
 
     assert(dmcresource::spider::actions::texture_format_choices().size() == 10U);
     std::puts("texture_reencode_action_test: ok");

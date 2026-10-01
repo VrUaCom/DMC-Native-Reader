@@ -128,6 +128,12 @@ struct Session {
     std::shared_ptr<const std::vector<std::uint8_t>> source_bytes;
     std::string source_name;
     bool authored{};
+    // Set when the session was opened from a slot of a PAC that kept its
+    // bytes: the container a texture re-encode rebuilds, so the result is the
+    // file the game loads. Shared, so it outlives the parent session.
+    std::shared_ptr<const std::vector<std::uint8_t>> container_source;
+    std::string container_name;
+    int container_slot{-1};
 
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;

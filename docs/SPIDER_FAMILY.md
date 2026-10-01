@@ -74,6 +74,25 @@ The output is byte-identical to the Rengine workflow. When the vendored
 Rengine includes the workflow, the action's re-encode step should call it
 and drop the copied modules.
 
+### Plan builder and typed operations
+
+`spider/plan_builder.h` mirrors DMC Rengine `spider/plan_builder.hpp`
+(branch `experiment/spider-python-migration`).
+
+- **Plans:** built from named nodes; dependencies can only point to earlier
+  nodes.
+- **Bad graph:** fails closed with `invalid_plan` before any operation runs.
+- **Labels:** turn an `ExecutionReport` into the step that stopped.
+- **Typed operations:** `spider::cpp23::bind<State, &fn>` adapts
+  `bool fn(State&, operand) noexcept` to the Crusader ABI with plain
+  function pointers.
+
+The texture re-encode action is the first user. Its failures read
+`"<step> failed: <reason>"`. A session opened from a PAC slot carries its
+container natively (`Session::container_source`, Black Widow
+`ReencodeRebuildsContainer`), so the shell passes no container or child
+index.
+
 ## Hot-path rule
 
 Rasterization, barycentric interpolation, vector/matrix math, UV math, texture sampling and similarly small/hot numerical operations remain direct C++20.

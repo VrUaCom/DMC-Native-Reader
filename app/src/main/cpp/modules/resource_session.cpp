@@ -448,6 +448,7 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .png_export_available = session_png_export_available(session),
         .texture_reencode_available = session->source_bytes != nullptr,
         .authored_source_available = session->authored && session->source_bytes != nullptr,
+        .reencode_rebuilds_container = session->container_source != nullptr,
     });
 }
 

@@ -1,6 +1,8 @@
 #include "dmcresource/resource_session.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cstring>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -308,7 +310,27 @@ const ImagePreview* session_child_preview(
 
 std::unique_ptr<Session> open_session_child(const Session* parent, int index) {
     if (!valid_child(parent, index)) return nullptr;
-    if (!parent->uv_gallery) return session_from_child(parent->children[index]);
+    if (!parent->uv_gallery) {
+        const auto& child = parent->children[static_cast<std::size_t>(index)];
+        auto session = session_from_child(child);
+        // A texture-bearing child of a PAC that kept its bytes remembers its
+        // container, so the Spider re-encode rebuilds the whole PAC.
+        if (session && session->source_bytes && parent->source_bytes &&
+            parent->source_bytes->size() >= 4U &&
+            std::memcmp(parent->source_bytes->data(), "PAC\0", 4U) == 0 &&
+            child.id.rfind("slot-", 0U) == 0U) {
+            int slot = -1;
+            const auto* first = child.id.data() + 5U;
+            const auto* last = child.id.data() + child.id.size();
+            const auto [ptr, ec] = std::from_chars(first, last, slot);
+            if (ec == std::errc{} && ptr == last && slot >= 0) {
+                session->container_source = parent->source_bytes;
+                session->container_name = parent->source_name;
+                session->container_slot = slot;
+            }
+        }
+        return session;
+    }
     auto session = std::make_unique<Session>();
     session->uv_gallery = parent->uv_gallery;
     session->uv_map_index = static_cast<std::size_t>(index);
