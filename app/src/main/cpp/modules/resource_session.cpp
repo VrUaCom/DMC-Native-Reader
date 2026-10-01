@@ -1019,24 +1019,28 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
     const auto* record = find_effect_record(
         session, 'P', child.effect_id, child.resource_slot);
     if (record == nullptr) return false;
-    const auto def = particle::parse_sprt00(record->bytes);
+    const auto def = particle::parse(record->bytes);
     if (!def.has_value()) return true;
-    const auto* animation_record =
-        find_animation_record(session, child.resource_slot, def->animation);
-    if (animation_record == nullptr) return true;
-    const auto animation = effect_bank::sprite_animation(*animation_record);
-    if (!animation.has_value() || animation->frames.empty()) return true;
-    const auto* texture = find_effect_texture(
-        session, child.resource_slot, animation->texture);
-    if (texture == nullptr || !texture->available()) return true;
-
     particle::Animation timing;
-    timing.frame_time = animation->frame_time;
-    timing.last_frame = static_cast<std::uint8_t>(
-        std::min<std::size_t>(animation->frames.size() - 1U, 255U));
-    timing.loop = animation->loop;
-    timing.loop_frame = animation->loop_frame;
-    timing.frame_count = static_cast<std::uint32_t>(animation->frames.size());
+    const ImagePreview* texture = nullptr;
+    const effect_bank::SpriteAnimation* animation_ptr = nullptr;
+    std::optional<effect_bank::SpriteAnimation> animation;
+    if (def->cls == 3U) {
+        const auto* animation_record =
+            find_animation_record(session, child.resource_slot, def->animation);
+        if (animation_record == nullptr) return true;
+        animation = effect_bank::sprite_animation(*animation_record);
+        if (!animation.has_value() || animation->frames.empty()) return true;
+        animation_ptr = &*animation;
+        texture = find_effect_texture(session, child.resource_slot, animation->texture);
+        if (texture == nullptr || !texture->available()) return true;
+        timing.frame_time = animation->frame_time;
+        timing.last_frame = static_cast<std::uint8_t>(
+            std::min<std::size_t>(animation->frames.size() - 1U, 255U));
+        timing.loop = animation->loop;
+        timing.loop_frame = animation->loop_frame;
+        timing.frame_count = static_cast<std::uint32_t>(animation->frames.size());
+    }
     const std::uint32_t seed =
         (static_cast<std::uint32_t>(child.effect_id) + 1U) * 2654435761U ^
         (child.resource_slot * 40503U);
@@ -1051,27 +1055,34 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
     camera.forward = g_effect_view_forward;
     std::vector<particle::Quad> quads;
     simulation.quads(world, camera, &quads);
-    const auto& frame = animation->frames[std::min<std::size_t>(
-        simulation.frame(), animation->frames.size() - 1U)];
-    if (frame.w == 0U || frame.h == 0U) return true;
-    const float inv_w = 1.0F / static_cast<float>(texture->width);
-    const float inv_h = 1.0F / static_cast<float>(texture->height);
-    // 0x140313EA0: u1 / v1 reach the last texel of the cell (size - 1).
-    const float u0 = static_cast<float>(frame.x) * inv_w;
-    const float v0 = static_cast<float>(frame.y) * inv_h;
-    const float u1 = static_cast<float>(frame.x + frame.w - 1U) * inv_w;
-    const float v1 = static_cast<float>(frame.y + frame.h - 1U) * inv_h;
+    float u0 = 0.0F, v0 = 0.0F, u1 = 1.0F, v1 = 1.0F;
+    if (animation_ptr != nullptr) {
+        const auto& frame = animation_ptr->frames[std::min<std::size_t>(
+            simulation.frame(), animation_ptr->frames.size() - 1U)];
+        if (frame.w == 0U || frame.h == 0U) return true;
+        const float inv_w = 1.0F / static_cast<float>(texture->width);
+        const float inv_h = 1.0F / static_cast<float>(texture->height);
+        // 0x140313EA0: u1 / v1 reach the last texel of the cell (size - 1).
+        u0 = static_cast<float>(frame.x) * inv_w;
+        v0 = static_cast<float>(frame.y) * inv_h;
+        u1 = static_cast<float>(frame.x + frame.w - 1U) * inv_w;
+        v1 = static_cast<float>(frame.y + frame.h - 1U) * inv_h;
+    }
     for (const auto& quad : quads) {
         ViewState::EffectSprite sprite{};
         sprite.world = world;
         sprite.texture = texture;
+        sprite.solid = texture == nullptr;
         sprite.u0 = u0;
         sprite.v0 = v0;
         sprite.u1 = u1;
         sprite.v1 = v1;
         sprite.oriented = true;
         sprite.corners = quad.corners;
-        sprite.tint = quad.rgba;
+        sprite.per_vertex = true;
+        sprite.corner_tint = quad.rgba;
+        sprite.line = quad.line;
+        sprite.additive = quad.additive;
         out->push_back(sprite);
     }
     return true;
@@ -1231,7 +1242,7 @@ bool collect_effect_children(
         return 90.0F;
     }
     if (kind == 'P') {
-        const auto def = particle::parse_sprt00(record->bytes);
+        const auto def = particle::parse(record->bytes);
         if (!def.has_value()) return 0.0F;
         return def->life >= 0 ? static_cast<float>(def->life) + 1.0F : 90.0F;
     }

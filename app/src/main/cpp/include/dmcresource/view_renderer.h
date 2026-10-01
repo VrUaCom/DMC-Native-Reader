@@ -102,7 +102,17 @@ struct ViewState {
         // Vertex colour of particle quads (P records): texel * tint / 255,
         // alpha likewise. Additive adds the tinted colour weighted by alpha.
         std::array<std::uint8_t, 4> tint{255U, 255U, 255U, 255U};
+        // Per-corner colours (particle quads: one RGBA per vertex, Gouraud);
+        // when set they replace `tint`.
+        bool per_vertex{false};
+        std::array<std::array<std::uint8_t, 4>, 4> corner_tint{};
+        // A line from corners[0] to corners[1] (CPtclLine01), drawn a few
+        // pixels wide in screen space; colours blend along it.
+        bool line{false};
         bool additive{false};
+        // Untextured polygon (CPtclPoly00 / Line records): texture is null and
+        // the tint is the whole colour.
+        bool solid{false};
     };
     std::span<const EffectSprite> effect_sprites{};
     // Texture for triangles without one (neutral_texture.h); lit by a

@@ -203,13 +203,14 @@ APK verifier.
     has slots 10, 30, 40, 50 only), no longer the k-th entry.
   - **Additive / subtractive room geometry** (light shafts) follows the vertex
     blend channel.
-  - **P records of class 3 (CPtclSprt00)** are drawn (80 of the 109 P records
-    of the corpus): a 12-quad burst with friction, gravity,
-    a 3-segment colour track and per-layer local transforms, ported from
-    `dmc3.exe` and replayed against an emulated run
-    (`docs/research/dmc3-particle-sprt00-exe-v75.md`, `particle_sprt_test`).
-    Random draws use a fixed seed, blend is normal alpha (the packed blend
-    state is not decoded). Classes 0, 1, 2, 4, 5 and G are still not drawn.
+  - **P records are drawn** (all 109 of the corpus: CPtclSprt00 quads 83,
+    CPtclPoly00 triangles 12, CPtclLine01 streaks 14): a burst with friction,
+    gravity, a 3-segment colour track with per-vertex colours, per-layer local
+    transforms and the GS ALPHA blend (alpha or additive), ported from
+    `dmc3.exe` and replayed against emulated runs (synthetic truth in
+    `particle_test`; all 109 real records compared over 12 ticks)
+    (`docs/research/dmc3-particle-sprt00-exe-v75.md`). Random draws use a fixed
+    seed. Classes 0, 2, 5 (no corpus record) and G records are not drawn.
   - **Missing buildings in the render (the "LOD" report):** the room pass
     dropped triangles whose vertex normals pointed away from the camera, and
     stage normals are not reliable (whole far buildings faced "away"). There

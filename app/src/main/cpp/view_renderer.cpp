@@ -887,6 +887,7 @@ void raster_room(const RoomTri& tri, bool translucent_pass, bool smooth, float c
 struct EffectSv final {
     float x{}, y{}, z{};
     float u{}, v{};
+    float r{255.0F}, g{255.0F}, b{255.0F}, a{255.0F};  // vertex colour (0..255)
 };
 
 // E records are resource-backed alpha sprites. Their EXE mode paths enter the
@@ -894,8 +895,8 @@ struct EffectSv final {
 // keeps the exact world anchor/atlas rectangle and rasterises an explicit
 // camera-facing quad. No semantic effect name or MOT-derived position is used.
 void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv& c,
-                            const ImagePreview& texture, bool smooth,
-                            const std::array<std::uint8_t, 4>& tint, bool additive,
+                            const ImagePreview* texture, bool smooth,
+                            bool additive,
                             int row_begin, int row_end, RgbaImage& image,
                             const std::vector<float>& depth) {
     const P2 pa{a.x, a.y, a.z};
@@ -923,9 +924,12 @@ void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv
             const float v = w0 * a.v + w1 * b.v + w2 * c.v;
             std::uint8_t r = 0U, g = 0U, bl = 0U, alpha = 0U;
             bool sampled = false;
-            if (smooth) {
+            if (texture == nullptr) {
+                r = g = bl = alpha = 255U;
+                sampled = true;
+            } else if (smooth) {
                 int rgba[4]{};
-                if (sample_bilinear_fast(texture, u, v, rgba)) {
+                if (sample_bilinear_fast(*texture, u, v, rgba)) {
                     r = static_cast<std::uint8_t>(std::clamp(rgba[0], 0, 255));
                     g = static_cast<std::uint8_t>(std::clamp(rgba[1], 0, 255));
                     bl = static_cast<std::uint8_t>(std::clamp(rgba[2], 0, 255));
@@ -933,15 +937,19 @@ void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv
                     sampled = true;
                 }
             } else {
-                sampled = sample_texture(texture, u, v, &r, &g, &bl, &alpha);
+                sampled = sample_texture(*texture, u, v, &r, &g, &bl, &alpha);
             }
             if (!sampled) continue;
-            const bool tinted = tint[0] != 255U || tint[1] != 255U || tint[2] != 255U || tint[3] != 255U;
+            const float vr = w0 * a.r + w1 * b.r + w2 * c.r;
+            const float vg = w0 * a.g + w1 * b.g + w2 * c.g;
+            const float vb = w0 * a.b + w1 * b.b + w2 * c.b;
+            const float va = w0 * a.a + w1 * b.a + w2 * c.a;
+            const bool tinted = vr < 254.5F || vg < 254.5F || vb < 254.5F || va < 254.5F;
             if (tinted) {
-                r = static_cast<std::uint8_t>(r * tint[0] / 255U);
-                g = static_cast<std::uint8_t>(g * tint[1] / 255U);
-                bl = static_cast<std::uint8_t>(bl * tint[2] / 255U);
-                alpha = static_cast<std::uint8_t>(alpha * tint[3] / 255U);
+                r = static_cast<std::uint8_t>(std::clamp(static_cast<float>(r) * vr / 255.0F, 0.0F, 255.0F));
+                g = static_cast<std::uint8_t>(std::clamp(static_cast<float>(g) * vg / 255.0F, 0.0F, 255.0F));
+                bl = static_cast<std::uint8_t>(std::clamp(static_cast<float>(bl) * vb / 255.0F, 0.0F, 255.0F));
+                alpha = static_cast<std::uint8_t>(std::clamp(static_cast<float>(alpha) * va / 255.0F, 0.0F, 255.0F));
             }
             if (alpha < (tinted ? 2U : 8U)) continue;
             if (additive) {
@@ -1152,7 +1160,6 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     struct EffectQuad final {
         std::array<EffectSv, 4> vertices{};
         const ImagePreview* texture{};
-        std::array<std::uint8_t, 4> tint{255U, 255U, 255U, 255U};
         bool additive{false};
     };
     std::vector<EffectQuad> effect_quads;
@@ -1166,7 +1173,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         const Vec3 right{-cy, 0.0F, -sy};
         const Vec3 up{0.0F, cp, -sp};
         for (const auto& sprite : view.effect_sprites) {
-            if (sprite.texture == nullptr || !sprite.texture->available()) continue;
+            if (!sprite.solid && (sprite.texture == nullptr || !sprite.texture->available())) continue;
             const float uv[4][2] = {
                 {sprite.u0, sprite.v1}, {sprite.u1, sprite.v1},
                 {sprite.u1, sprite.v0}, {sprite.u0, sprite.v0},
@@ -1174,7 +1181,6 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const auto emit_quad = [&](const Vec3 (&corners)[4]) {
                 EffectQuad quad;
                 quad.texture = sprite.texture;
-                quad.tint = sprite.tint;
                 quad.additive = sprite.additive;
                 for (std::size_t i = 0U; i < 4U; ++i) {
                     const auto projected = project(corners[i]);
@@ -1182,11 +1188,47 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                         !std::isfinite(projected.z)) {
                         return;
                     }
-                    quad.vertices[i] = {projected.x, projected.y, projected.z,
-                                        uv[i][0], uv[i][1]};
+                    const auto& tint = sprite.per_vertex ? sprite.corner_tint[i] : sprite.tint;
+                    quad.vertices[i] = {projected.x, projected.y, projected.z, uv[i][0], uv[i][1],
+                                        static_cast<float>(tint[0]), static_cast<float>(tint[1]),
+                                        static_cast<float>(tint[2]), static_cast<float>(tint[3])};
                 }
                 effect_quads.push_back(quad);
             };
+            if (sprite.line) {
+                // Two projected end points, widened to a screen-space quad.
+                const auto p0 = project(sprite.corners[0]);
+                const auto p1 = project(sprite.corners[1]);
+                if (std::isfinite(p0.x) && std::isfinite(p0.y) && std::isfinite(p0.z) && std::isfinite(p1.x) &&
+                    std::isfinite(p1.y) && std::isfinite(p1.z)) {
+                    float dx = p1.x - p0.x, dy = p1.y - p0.y;
+                    const float len = std::sqrt(dx * dx + dy * dy);
+                    const float half = std::max(0.75F, static_cast<float>(image.height) / 720.0F);
+                    if (len > 1.0e-4F) {
+                        dx = dx / len * half;
+                        dy = dy / len * half;
+                    } else {
+                        dx = half;
+                        dy = 0.0F;
+                    }
+                    const float nx = -dy, ny = dx;
+                    const auto& t0 = sprite.per_vertex ? sprite.corner_tint[0] : sprite.tint;
+                    const auto& t1 = sprite.per_vertex ? sprite.corner_tint[1] : sprite.tint;
+                    const auto make = [](float x, float y, float z, const std::array<std::uint8_t, 4>& t) {
+                        return EffectSv{x, y, z, 0.0F, 0.0F, static_cast<float>(t[0]), static_cast<float>(t[1]),
+                                        static_cast<float>(t[2]), static_cast<float>(t[3])};
+                    };
+                    EffectQuad quad;
+                    quad.texture = nullptr;
+                    quad.additive = sprite.additive;
+                    quad.vertices[0] = make(p0.x + nx, p0.y + ny, p0.z, t0);
+                    quad.vertices[1] = make(p0.x - nx, p0.y - ny, p0.z, t0);
+                    quad.vertices[2] = make(p1.x - nx, p1.y - ny, p1.z, t1);
+                    quad.vertices[3] = make(p1.x + nx, p1.y + ny, p1.z, t1);
+                    effect_quads.push_back(quad);
+                }
+                continue;
+            }
             if (sprite.oriented) {
                 const Vec3 corners[4] = {sprite.corners[0], sprite.corners[1],
                                          sprite.corners[2], sprite.corners[3]};
@@ -1421,12 +1463,11 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 fill(shadow[t], shadow[t + 1U], shadow[t + 2U], row_begin, row_end, shadow_pixel);
             }
             for (const auto& quad : effect_quads) {
-                if (quad.texture == nullptr) continue;
                 raster_effect_triangle(quad.vertices[0], quad.vertices[1], quad.vertices[2],
-                                       *quad.texture, !view.fast_preview, quad.tint, quad.additive,
+                                       quad.texture, !view.fast_preview, quad.additive,
                                        row_begin, row_end, image, depth);
                 raster_effect_triangle(quad.vertices[0], quad.vertices[2], quad.vertices[3],
-                                       *quad.texture, !view.fast_preview, quad.tint, quad.additive,
+                                       quad.texture, !view.fast_preview, quad.additive,
                                        row_begin, row_end, image, depth);
             }
         });
