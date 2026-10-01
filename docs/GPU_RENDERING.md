@@ -2,7 +2,7 @@
 
 The model / stage view can be drawn on the device's graphics chip (Adreno on
 Snapdragon phones such as the Galaxy S26 Ultra, Mali / Xclipse elsewhere)
-instead of the software rasteriser. Settings → Render → **Renderer** switches
+instead of the software rasteriser. Settings → Graphics → **Renderer** switches
 between "GPU (graphics chip)" (default) and "CPU (software)"; the hint under it
 shows what draws the frames now, e.g. `GPU: OpenGL ES 3.2 / Adreno (TM) ...`,
 and how many frames went each way.
