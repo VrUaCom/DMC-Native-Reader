@@ -99,6 +99,10 @@ struct ViewState {
         // are resolved by the caller (order: -B, -B+U, -B+U+V, -B+V).
         bool oriented{};
         std::array<Vec3, 4> corners{};
+        // Vertex colour of particle quads (P records): texel * tint / 255,
+        // alpha likewise. Additive adds the tinted colour weighted by alpha.
+        std::array<std::uint8_t, 4> tint{255U, 255U, 255U, 255U};
+        bool additive{false};
     };
     std::span<const EffectSprite> effect_sprites{};
     // Texture for triangles without one (neutral_texture.h); lit by a

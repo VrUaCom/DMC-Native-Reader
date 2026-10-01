@@ -225,6 +225,7 @@ std::optional<SpriteAnimation> sprite_animation(const Record& record) {
     out.texture = b[1];
     out.frame_time = b[2];
     out.loop = b[4] != 0U;
+    out.loop_frame = b[5];
     const std::size_t count = static_cast<std::size_t>(b[3]) + 1U;
     for (std::size_t i = 0U; i < count; ++i) {
         const std::size_t o = 6U + i * 10U;

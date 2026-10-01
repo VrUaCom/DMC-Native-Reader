@@ -6,11 +6,11 @@
 | --- | --- |
 | CEm034 (Lady) | Shl00/02/04/05 shells and their V/E effects, from EXE-traced triggers |
 | Stage layout | `eff V id` + `epos` on objects (st002 drums), from `st*_effect.pac`; texture scroll `uv`; additive light geometry |
-| Any FXBANK child | E sprites (modes 1 and 2) in the gallery preview |
+| Any FXBANK child | E sprites (modes 1 and 2) and P records of class 3 (CPtclSprt00, see `dmc3-particle-sprt00-exe-v75.md`) in the gallery preview |
 
 ## Not drawn
 
-- **P records** (particles). Sizes 336 / 528 / 704 bytes. Observed layout:
+- **P records of classes 0, 1, 2, 4, 5** (Line00, Poly00, Poly01, Line01, Line02; class 3 is drawn). Sizes 336 / 528 / 704 bytes. Observed layout:
   - `+0x00` type (2), `+0x10 / +0x14 / +0x18` element counts (0x10, 0x140 / 0x20, 0x150);
   - `+0x28..+0x33` a short name (`40p0`..`40p4`), then keyed tracks from `+0x84`
     (entries of `u16 flags, u32 frames, float value`);

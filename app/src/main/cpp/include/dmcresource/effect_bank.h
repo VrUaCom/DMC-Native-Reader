@@ -66,6 +66,7 @@ struct SpriteAnimation final {
     std::uint8_t texture{};
     std::uint8_t frame_time{};
     bool loop{};
+    std::uint8_t loop_frame{};  // +0x05: frame a looping animation restarts at
     std::vector<SpriteFrame> frames;
 };
 [[nodiscard]] std::optional<SpriteAnimation> sprite_animation(const Record& record);

@@ -121,6 +121,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/stage_room.cpp
     modules/module_hits.cpp
     modules/effect_bank.cpp
+    modules/particle_sprt.cpp
     modules/module_effects.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
@@ -283,7 +284,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
-        effect_runtime motion_playback pac_assembly player_coat
+        effect_runtime motion_playback pac_assembly player_coat particle_sprt
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

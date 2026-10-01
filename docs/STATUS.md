@@ -1,6 +1,6 @@
 # DMC Native Reader — Status
 
-Last updated: **2026-09-30**.
+Last updated: **2026-10-01**.
 
 ## Product target
 
@@ -203,7 +203,13 @@ APK verifier.
     has slots 10, 30, 40, 50 only), no longer the k-th entry.
   - **Additive / subtractive room geometry** (light shafts) follows the vertex
     blend channel.
-  - P and G effect records are still not drawn.
+  - **P records of class 3 (CPtclSprt00)** are drawn (80 of the 109 P records
+    of the corpus): a 12-quad burst with friction, gravity,
+    a 3-segment colour track and per-layer local transforms, ported from
+    `dmc3.exe` and replayed against an emulated run
+    (`docs/research/dmc3-particle-sprt00-exe-v75.md`, `particle_sprt_test`).
+    Random draws use a fixed seed, blend is normal alpha (the packed blend
+    state is not decoded). Classes 0, 1, 2, 4, 5 and G are still not drawn.
   - **Missing buildings in the render (the "LOD" report):** the room pass
     dropped triangles whose vertex normals pointed away from the camera, and
     stage normals are not reliable (whole far buildings faced "away"). There

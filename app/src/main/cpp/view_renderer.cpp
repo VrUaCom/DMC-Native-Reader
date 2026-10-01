@@ -895,6 +895,7 @@ struct EffectSv final {
 // camera-facing quad. No semantic effect name or MOT-derived position is used.
 void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv& c,
                             const ImagePreview& texture, bool smooth,
+                            const std::array<std::uint8_t, 4>& tint, bool additive,
                             int row_begin, int row_end, RgbaImage& image,
                             const std::vector<float>& depth) {
     const P2 pa{a.x, a.y, a.z};
@@ -934,7 +935,24 @@ void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv
             } else {
                 sampled = sample_texture(texture, u, v, &r, &g, &bl, &alpha);
             }
-            if (!sampled || alpha < 8U) continue;
+            if (!sampled) continue;
+            const bool tinted = tint[0] != 255U || tint[1] != 255U || tint[2] != 255U || tint[3] != 255U;
+            if (tinted) {
+                r = static_cast<std::uint8_t>(r * tint[0] / 255U);
+                g = static_cast<std::uint8_t>(g * tint[1] / 255U);
+                bl = static_cast<std::uint8_t>(bl * tint[2] / 255U);
+                alpha = static_cast<std::uint8_t>(alpha * tint[3] / 255U);
+            }
+            if (alpha < (tinted ? 2U : 8U)) continue;
+            if (additive) {
+                const auto o = static_cast<std::size_t>(y * image.width + x) * 4U;
+                const unsigned add[3] = {r, g, bl};
+                for (std::size_t k = 0U; k < 3U; ++k) {
+                    image.pixels[o + k] = static_cast<std::uint8_t>(
+                        std::min(255U, image.pixels[o + k] + add[k] * alpha / 255U));
+                }
+                continue;
+            }
             // E's exact alpha/blend subtype is not promoted here. Normal alpha
             // composition is the evidence-safe portable presentation for the
             // decoded T/A rectangle and does not write a fake depth surface.
@@ -1134,6 +1152,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     struct EffectQuad final {
         std::array<EffectSv, 4> vertices{};
         const ImagePreview* texture{};
+        std::array<std::uint8_t, 4> tint{255U, 255U, 255U, 255U};
+        bool additive{false};
     };
     std::vector<EffectQuad> effect_quads;
     if (!view.wireframe && !view.effect_sprites.empty()) {
@@ -1154,6 +1174,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             const auto emit_quad = [&](const Vec3 (&corners)[4]) {
                 EffectQuad quad;
                 quad.texture = sprite.texture;
+                quad.tint = sprite.tint;
+                quad.additive = sprite.additive;
                 for (std::size_t i = 0U; i < 4U; ++i) {
                     const auto projected = project(corners[i]);
                     if (!std::isfinite(projected.x) || !std::isfinite(projected.y) ||
@@ -1401,10 +1423,10 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             for (const auto& quad : effect_quads) {
                 if (quad.texture == nullptr) continue;
                 raster_effect_triangle(quad.vertices[0], quad.vertices[1], quad.vertices[2],
-                                       *quad.texture, !view.fast_preview,
+                                       *quad.texture, !view.fast_preview, quad.tint, quad.additive,
                                        row_begin, row_end, image, depth);
                 raster_effect_triangle(quad.vertices[0], quad.vertices[2], quad.vertices[3],
-                                       *quad.texture, !view.fast_preview,
+                                       *quad.texture, !view.fast_preview, quad.tint, quad.additive,
                                        row_begin, row_end, image, depth);
             }
         });

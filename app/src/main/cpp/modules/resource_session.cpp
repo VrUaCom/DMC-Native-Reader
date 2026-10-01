@@ -13,6 +13,7 @@
 #include "dmcresource/neutral_texture.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/matrix_ops.h"
+#include "dmcresource/particle_sprt.h"
 
 #include <span>
 #include <chrono>
@@ -857,6 +858,20 @@ struct PreparedView final {
 // Camera forward of the view being prepared (same mirrored basis as the
 // renderer). Mode-2 axial billboards turn their width toward it.
 thread_local Vec3 g_effect_view_forward{0.0F, 0.0F, 1.0F};
+thread_local Vec3 g_effect_view_right{1.0F, 0.0F, 0.0F};
+thread_local Vec3 g_effect_view_up{0.0F, 1.0F, 0.0F};
+
+void set_effect_view_basis(float yaw, float pitch) noexcept {
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cp = std::cos(pitch);
+    const float sp = std::sin(pitch);
+    // The renderer's mirrored camera basis (view_renderer.cpp, effect quads).
+    g_effect_view_right = {-cy, 0.0F, -sy};
+    g_effect_view_up = {0.0F, cp, -sp};
+    // forward = right x up.
+    g_effect_view_forward = {sy * cp, -cy * sp, -cy * cp};
+}
 
 [[nodiscard]] Vec3 effect_row_transform(const Vec3& p, const Matrix4& m) noexcept {
     return {
@@ -990,6 +1005,78 @@ thread_local Vec3 g_effect_view_forward{0.0F, 0.0F, 1.0F};
     return true;
 }
 
+// P records of class 3 (CPtclSprt00): a 12-quad burst simulated from tick 0
+// to the entry's age (the EXE integrates 1.0 per 60 Hz update; the first
+// update runs on the frame the entry appears). The draw is a pure function of
+// age and the record, so the simulation is replayed per frame. Random draws
+// use a fixed per-record seed: the retail generator is not reproducible
+// across runs either. Classes other than 3 keep returning without drawing.
+[[nodiscard]] bool append_effect_particles(
+    const Session& session, const motion::EffectChildRef& child,
+    const Matrix4& world, float age,
+    std::vector<ViewState::EffectSprite>* out) {
+    if (out == nullptr || child.effect_kind != 'P') return true;
+    const auto* record = find_effect_record(
+        session, 'P', child.effect_id, child.resource_slot);
+    if (record == nullptr) return false;
+    const auto def = particle::parse_sprt00(record->bytes);
+    if (!def.has_value()) return true;
+    const auto* animation_record =
+        find_animation_record(session, child.resource_slot, def->animation);
+    if (animation_record == nullptr) return true;
+    const auto animation = effect_bank::sprite_animation(*animation_record);
+    if (!animation.has_value() || animation->frames.empty()) return true;
+    const auto* texture = find_effect_texture(
+        session, child.resource_slot, animation->texture);
+    if (texture == nullptr || !texture->available()) return true;
+
+    particle::Animation timing;
+    timing.frame_time = animation->frame_time;
+    timing.last_frame = static_cast<std::uint8_t>(
+        std::min<std::size_t>(animation->frames.size() - 1U, 255U));
+    timing.loop = animation->loop;
+    timing.loop_frame = animation->loop_frame;
+    timing.frame_count = static_cast<std::uint32_t>(animation->frames.size());
+    const std::uint32_t seed =
+        (static_cast<std::uint32_t>(child.effect_id) + 1U) * 2654435761U ^
+        (child.resource_slot * 40503U);
+    particle::Simulation simulation(*def, timing, seed);
+    const int updates = static_cast<int>(std::min(std::floor(age), 600.0F)) + 1;
+    for (int i = 0; i < updates; ++i) {
+        if (!simulation.update(world)) return true;  // expired
+    }
+    particle::Camera camera;
+    camera.right = g_effect_view_right;
+    camera.up = g_effect_view_up;
+    camera.forward = g_effect_view_forward;
+    std::vector<particle::Quad> quads;
+    simulation.quads(world, camera, &quads);
+    const auto& frame = animation->frames[std::min<std::size_t>(
+        simulation.frame(), animation->frames.size() - 1U)];
+    if (frame.w == 0U || frame.h == 0U) return true;
+    const float inv_w = 1.0F / static_cast<float>(texture->width);
+    const float inv_h = 1.0F / static_cast<float>(texture->height);
+    // 0x140313EA0: u1 / v1 reach the last texel of the cell (size - 1).
+    const float u0 = static_cast<float>(frame.x) * inv_w;
+    const float v0 = static_cast<float>(frame.y) * inv_h;
+    const float u1 = static_cast<float>(frame.x + frame.w - 1U) * inv_w;
+    const float v1 = static_cast<float>(frame.y + frame.h - 1U) * inv_h;
+    for (const auto& quad : quads) {
+        ViewState::EffectSprite sprite{};
+        sprite.world = world;
+        sprite.texture = texture;
+        sprite.u0 = u0;
+        sprite.v0 = v0;
+        sprite.u1 = u1;
+        sprite.v1 = v1;
+        sprite.oriented = true;
+        sprite.corners = quad.corners;
+        sprite.tint = quad.rgba;
+        out->push_back(sprite);
+    }
+    return true;
+}
+
 // V-local clock (0x140324A80): every update first adds dt (0x1403261B0,
 // 1.0 per 60 Hz tick at unit speed) to V+0xF0, then spawns each entry whose
 // signed i16 +0x04 threshold is below the accumulator. The spawn update is
@@ -1029,9 +1116,12 @@ bool collect_effect_children(
         }
         return append_effect_sprite(session, child, world, out);
     }
+    if (child.effect_kind == 'P') {
+        return append_effect_particles(session, child, world, age, out);
+    }
     if (child.effect_kind != 'V') {
-        // P/G are retained as exact dependencies. Their render subtype is not
-        // decoded, so they are deliberately not replaced by a guessed sprite.
+        // G is retained as an exact dependency; its render subtype is not
+        // decoded, so it is deliberately not replaced by a guessed sprite.
         return true;
     }
     // Profile bindings may already carry the reverse-confirmed graph (Lady
@@ -1082,14 +1172,7 @@ bool collect_effect_children(
     if (out == nullptr || session.effect_runtime == nullptr ||
         session.effect_banks.empty()) return false;
     try {
-        {
-            const float cy = std::cos(out->view.yaw_radians);
-            const float sy = std::sin(out->view.yaw_radians);
-            const float cp = std::cos(out->view.pitch_radians);
-            const float sp = std::sin(out->view.pitch_radians);
-            // forward = right x up of the renderer's mirrored camera basis.
-            g_effect_view_forward = {sy * cp, -cy * sp, -cy * cp};
-        }
+        set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
         std::vector<ViewState::EffectSprite> staged;
         for (const auto& instance : session.effect_runtime->presentation_instances()) {
             const auto& source = instance.source;
@@ -1147,6 +1230,11 @@ bool collect_effect_children(
         }
         return 90.0F;
     }
+    if (kind == 'P') {
+        const auto def = particle::parse_sprt00(record->bytes);
+        if (!def.has_value()) return 0.0F;
+        return def->life >= 0 ? static_cast<float>(def->life) + 1.0F : 90.0F;
+    }
     if (kind != 'V') return 0.0F;
     const auto composite = effect_bank::composite_record(*record);
     if (!composite.has_value()) return 0.0F;
@@ -1165,13 +1253,7 @@ bool collect_effect_children(
 void append_room_effects(const stage_room::Room& room, const std::shared_ptr<const Session>& host,
                          const stage_room::Placement& placement, float room_time, PreparedView* out) {
     if (out == nullptr || !host || room.effects.empty() || !(room_time > 0.0F)) return;
-    {
-        const float cy = std::cos(out->view.yaw_radians);
-        const float sy = std::sin(out->view.yaw_radians);
-        const float cp = std::cos(out->view.pitch_radians);
-        const float sp = std::sin(out->view.pitch_radians);
-        g_effect_view_forward = {sy * cp, -cy * sp, -cy * cp};
-    }
+    set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
     motion::RuntimeEffectInstance instance;
     std::vector<ViewState::EffectSprite> staged;
     std::size_t index = 0U;
