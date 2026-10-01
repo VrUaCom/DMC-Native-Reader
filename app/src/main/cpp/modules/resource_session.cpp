@@ -14,6 +14,7 @@
 #include "dmcresource/raster_card.h"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/particle_sprt.h"
+#include "dmcresource/generator.h"
 
 #include <span>
 #include <chrono>
@@ -1088,6 +1089,78 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
     return true;
 }
 
+bool collect_effect_children(
+    const Session& session, const motion::RuntimeEffectInstance& instance,
+    const motion::EffectChildRef& child, const Matrix4& parent_world,
+    float age, std::vector<ViewState::EffectSprite>* out, std::size_t depth);
+
+// G records (CGenerator): an invisible spawner replayed from tick 0 to the
+// entry's age; every spawn is a child effect (P, E, G or V) drawn at its own
+// age. The generator ticks once per 60 Hz update with the entry's current
+// world (earlier ticks reuse it: an approximation for moving owners). Random
+// draws use a fixed per-record seed (the retail generator is unseeded).
+[[nodiscard]] bool append_effect_generator(
+    const Session& session, const motion::RuntimeEffectInstance& instance,
+    const motion::EffectChildRef& child, const Matrix4& world, float age,
+    std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
+    const auto* record = find_effect_record(
+        session, 'G', child.effect_id, child.resource_slot);
+    if (record == nullptr) return false;
+    const auto def = generator::parse(record->bytes);
+    if (!def.has_value()) return true;
+    std::optional<generator::Clip> clip;
+    if (def->motion == 1U) {
+        const auto* clip_record = find_effect_record(
+            session, 'C', def->clip, child.resource_slot);
+        if (clip_record != nullptr) clip = generator::parse_clip(clip_record->bytes);
+    }
+    std::uint32_t state = (static_cast<std::uint32_t>(child.effect_id) + 1U) * 2654435761U ^
+                          (child.resource_slot * 40503U) ^ 0x9E3779B9U;
+    generator::Simulation simulation(
+        *def,
+        [&state]() {
+            state = state * 1664525U + 1013904223U;  // 0x140059390 stand-in
+            return state;
+        },
+        clip.has_value() ? &*clip : nullptr);
+    const int ticks = static_cast<int>(std::min(std::floor(age), 600.0F)) + 1;
+    std::vector<generator::Spawn> spawns;
+    for (int i = 0; i < ticks; ++i) {
+        if (!simulation.step(world, &spawns)) break;
+    }
+    // Many spawns of a fast generator are long dead: keep the newest ones.
+    constexpr std::size_t kMaxSpawns = 160U;
+    const std::size_t first = spawns.size() > kMaxSpawns ? spawns.size() - kMaxSpawns : 0U;
+    const auto ticks_run = static_cast<float>(simulation.tick());
+    for (std::size_t i = first; i < spawns.size(); ++i) {
+        const auto& spawn = spawns[i];
+        const char kind = effect_kind_for_dispatch(spawn.kind);
+        if (kind == '\0') continue;
+        // The creator runs inside tick `spawn.tick`; the child updates from the next one.
+        const float child_age = ticks_run - static_cast<float>(spawn.tick) - 1.0F;
+        if (child_age < 0.0F) continue;
+        motion::EffectChildRef spawned;
+        spawned.effect_kind = kind;
+        spawned.effect_id = spawn.id;
+        spawned.resource_slot = child.resource_slot;
+        spawned.dispatch_kind = spawn.kind;
+        spawned.scale = {1.0F, 1.0F, 1.0F};
+        spawned.evidence = child.evidence;
+        Matrix4 parent;
+        parent.values = spawn.matrix;
+        if (spawn.follow) {
+            Matrix4 composed;
+            Matrix4 live;
+            live.values = simulation.parent_world();
+            if (!matrix_ops::multiply(parent, live, &composed)) continue;
+            parent = composed;
+        }
+        if (find_effect_record(session, kind, spawn.id, child.resource_slot) == nullptr) continue;
+        (void)collect_effect_children(session, instance, spawned, parent, child_age, out, depth + 1U);
+    }
+    return true;
+}
+
 // V-local clock (0x140324A80): every update first adds dt (0x1403261B0,
 // 1.0 per 60 Hz tick at unit speed) to V+0xF0, then spawns each entry whose
 // signed i16 +0x04 threshold is below the accumulator. The spawn update is
@@ -1130,11 +1203,10 @@ bool collect_effect_children(
     if (child.effect_kind == 'P') {
         return append_effect_particles(session, child, world, age, out);
     }
-    if (child.effect_kind != 'V') {
-        // G is retained as an exact dependency; its render subtype is not
-        // decoded, so it is deliberately not replaced by a guessed sprite.
-        return true;
+    if (child.effect_kind == 'G') {
+        return append_effect_generator(session, instance, child, world, age, out, depth);
     }
+    if (child.effect_kind != 'V') return true;
     // Profile bindings may already carry the reverse-confirmed graph (Lady
     // currently does). Generic profiles are also allowed to provide only the
     // V root: in that case decode the exact child dispatch table from the
@@ -1245,6 +1317,16 @@ bool collect_effect_children(
         const auto def = particle::parse(record->bytes);
         if (!def.has_value()) return 0.0F;
         return def->life >= 0 ? static_cast<float>(def->life) + 1.0F : 90.0F;
+    }
+    if (kind == 'G') {
+        const auto def = generator::parse(record->bytes);
+        if (!def.has_value()) return 0.0F;
+        // Spawning lasts `life` ticks (endless: assume a few seconds), then the
+        // last child plays out.
+        const float spawning = def->endless ? 300.0F : static_cast<float>(std::max(def->life, 0));
+        const char child = effect_kind_for_dispatch(def->child_kind);
+        const float tail = child == '\0' ? 0.0F : effect_extent(host, child, def->child_id, slot, depth + 1);
+        return static_cast<float>(def->first_delay > 0 ? def->first_delay : 0) + spawning + tail;
     }
     if (kind != 'V') return 0.0F;
     const auto composite = effect_bank::composite_record(*record);

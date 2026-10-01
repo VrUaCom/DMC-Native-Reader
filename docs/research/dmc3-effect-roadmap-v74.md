@@ -18,8 +18,8 @@
   The consumer is the registrar `0x140314B80` and `CParticle`; not traced yet.
   Every V that lists `P` children (for example V543, the rocket explosion)
   is missing its particle part.
-- **G records** (generators, 96 bytes): `GRuntimeView` names the offsets; the
-  consumer `0x1402EBC10` is not ported.
+- ~~**G records**~~ (generators, 96 bytes): ported in v76, see
+  `dmc3-generator-exe-v76.md`.
 - **Enemy triggers.** Spawn sites of the effect API (`0x1402E7A90 / AB0 /
   CA0 / A80`) counted in `dmc3.exe` by class, code laid out per class
   (`spawnmap.py`, scratch tool): `CEm000` 998 sites in 567 functions, 70 of
@@ -32,6 +32,6 @@
 ## Suggested order
 
 1. ~~P records~~ (done for every corpus record, v75).
-2. G records.
+2. ~~G records~~ (done, v76).
 3. One enemy class end to end (CEm000 state function `0x1401C34C8`).
 4. Player weapon effects.

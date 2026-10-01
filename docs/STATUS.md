@@ -210,7 +210,13 @@ APK verifier.
     `dmc3.exe` and replayed against emulated runs (synthetic truth in
     `particle_test`; all 109 real records compared over 12 ticks)
     (`docs/research/dmc3-particle-sprt00-exe-v75.md`). Random draws use a fixed
-    seed. Classes 0, 2, 5 (no corpus record) and G records are not drawn.
+    seed. Classes 0, 2, 5 (no corpus record) are not drawn.
+  - **G records are drawn** (all 74 of the corpus): the generator is replayed
+    (spawn schedule, jitter, scale ramp, drift / C-clip motion, follow mode) and
+    each spawned P / E / G / V child is drawn at its own age. The port reproduces
+    every emulated spawn event of the 74 real records and of three synthetic
+    scenarios (`generator_test`) (`docs/research/dmc3-generator-exe-v76.md`).
+    Fixed seed; the G -> G path is not emulator-checked.
   - **Missing buildings in the render (the "LOD" report):** the room pass
     dropped triangles whose vertex normals pointed away from the camera, and
     stage normals are not reliable (whole far buildings faced "away"). There
