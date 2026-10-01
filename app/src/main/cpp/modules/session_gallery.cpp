@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "dmcresource/raster_card.h"
 
@@ -73,6 +75,95 @@ ImagePreview square_thumbnail(const ImagePreview& source) {
     return out;
 }
 
+// Draws `source` fitted (aspect kept) and centred in the cell, composited
+// over the cell background.
+void blit_fit(ImagePreview* out, std::uint32_t cell_x, std::uint32_t cell_y,
+              std::uint32_t cell, const ImagePreview& source) {
+    std::uint32_t draw_w = cell;
+    std::uint32_t draw_h = cell;
+    if (source.width >= source.height) {
+        draw_h = std::max<std::uint32_t>(
+            1U, static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(source.height) * cell / source.width));
+    } else {
+        draw_w = std::max<std::uint32_t>(
+            1U, static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(source.width) * cell / source.height));
+    }
+    const auto ox = cell_x + (cell - draw_w) / 2U;
+    const auto oy = cell_y + (cell - draw_h) / 2U;
+    for (std::uint32_t y = 0U; y < draw_h; ++y) {
+        const auto sy = std::min<std::uint32_t>(
+            source.height - 1U,
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(y) * source.height / draw_h));
+        for (std::uint32_t x = 0U; x < draw_w; ++x) {
+            const auto sx = std::min<std::uint32_t>(
+                source.width - 1U,
+                static_cast<std::uint32_t>(static_cast<std::uint64_t>(x) * source.width / draw_w));
+            const auto* s = source.rgba8.data() +
+                (static_cast<std::size_t>(sy) * source.width + sx) * 4U;
+            auto* d = out->rgba8.data() +
+                (static_cast<std::size_t>(oy + y) * out->width + ox + x) * 4U;
+            const std::uint32_t a = s[3];
+            for (std::size_t c = 0U; c < 3U; ++c) {
+                d[c] = static_cast<std::uint8_t>((s[c] * a + d[c] * (255U - a) + 127U) / 255U);
+            }
+            d[3] = 255U;
+        }
+    }
+}
+
+// Gallery tile for a resource whose children are images (a PTX with its DDS
+// textures, an effect bank, ...): one image fills the tile; two to four sit
+// in a 2x2 grid (unused cells stay empty); five or more show three images
+// and "+N" for the rest in the fourth cell.
+ImagePreview image_mosaic(const Session& opened) {
+    std::vector<const ImagePreview*> images;
+    std::size_t image_children = 0U;
+    for (const auto& child : opened.children) {
+        const bool image = child.image_preview.available() ||
+            has_capability(child.capabilities, ResourceCapability::ImagePreview);
+        if (!image) continue;
+        ++image_children;
+        if (child.image_preview.available() && images.size() < 4U) {
+            images.push_back(&child.image_preview);
+        }
+    }
+    if (images.empty()) return {};
+
+    raster::Canvas canvas(static_cast<int>(kThumbnailSize), static_cast<int>(kThumbnailSize));
+    if (image_children == 1U) {
+        auto out = canvas.take();
+        blit_fit(&out, 0U, 0U, kThumbnailSize, *images.front());
+        return out;
+    }
+    constexpr std::uint32_t kGap = 4U;
+    constexpr std::uint32_t kCell = (kThumbnailSize - kGap) / 2U;
+    const bool overflow = image_children > 4U;
+    const std::size_t shown = std::min<std::size_t>(images.size(), overflow ? 3U : 4U);
+    for (std::uint32_t i = 0U; i < 4U; ++i) {
+        const auto x = (i % 2U) * (kCell + kGap);
+        const auto y = (i / 2U) * (kCell + kGap);
+        canvas.fill(static_cast<int>(x), static_cast<int>(y),
+                    static_cast<int>(x + kCell), static_cast<int>(y + kCell), raster::kPanel);
+    }
+    if (overflow) {
+        const auto label = "+" + std::to_string(image_children - 3U);
+        constexpr int kScale = 5;
+        const int cx = static_cast<int>(kCell + kGap + kCell / 2U);
+        const int cy = static_cast<int>(kCell + kGap + kCell / 2U);
+        canvas.text(cx - raster::Canvas::text_width(label, kScale) / 2, cy - 7 * kScale / 2,
+                    label, raster::kLabel, kScale);
+    }
+    auto out = canvas.take();
+    for (std::size_t i = 0U; i < shown; ++i) {
+        const auto x = static_cast<std::uint32_t>(i % 2U) * (kCell + kGap);
+        const auto y = static_cast<std::uint32_t>(i / 2U) * (kCell + kGap);
+        blit_fit(&out, x, y, kCell, *images[i]);
+    }
+    return out;
+}
+
 ImagePreview square_thumbnail(RgbaImage image) {
     if (image.width <= 0 || image.height <= 0) return {};
     ImagePreview source{
@@ -110,6 +201,14 @@ const ImagePreview* materialize_child_thumbnail(
             render_flag(RenderFlag::Preview));
         *scratch = square_thumbnail(std::move(rendered));
         return scratch->available() ? scratch : nullptr;
+    }
+
+    // Children that are images (PTX textures, effect bank sprites): show the
+    // images themselves rather than the evidence card.
+    try {
+        *scratch = image_mosaic(*opened);
+        if (scratch->available()) return scratch;
+    } catch (...) {
     }
 
     // A nested container may deliberately have children and therefore no
