@@ -845,10 +845,34 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_roomAnimated(JNIEnv*, jclass, jlon
     if (session == nullptr) return JNI_FALSE;
     const bool has_host = dmcresource::stage_room::effect_host() != nullptr;
     if (session->stage != nullptr) {
-        return !session->stage->uv_scrolls.empty() || (has_host && !session->stage->effects.empty()) ? JNI_TRUE : JNI_FALSE;
+        const auto& stage = dmcresource::stage_room::shown(*session->stage);
+        return !stage.uv_scrolls.empty() || (has_host && !stage.effects.empty()) ? JNI_TRUE : JNI_FALSE;
+    }
+    const auto room = dmcresource::stage_room::shown(dmcresource::stage_room::current());
+    return room && (!room->uv_scrolls.empty() || (has_host && !room->effects.empty())) ? JNI_TRUE : JNI_FALSE;
+}
+
+// Break toggle (stage_room::set_broken): whether the stage scene or room drawn
+// with the session has breakable layout objects, and switching it.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomBreakable(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session != nullptr && session->stage != nullptr) {
+        return session->stage->broken != nullptr ? JNI_TRUE : JNI_FALSE;
     }
     const auto room = dmcresource::stage_room::current();
-    return room && (!room->uv_scrolls.empty() || (has_host && !room->effects.empty())) ? JNI_TRUE : JNI_FALSE;
+    return room && room->broken ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setRoomBroken(JNIEnv*, jclass, jboolean broken) {
+    dmcresource::stage_room::set_broken(broken == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomBroken(JNIEnv*, jclass) {
+    return dmcresource::stage_room::broken() ? JNI_TRUE : JNI_FALSE;
 }
 
 // Kinds (distinct flag values) of the HITS shown with the session: its own

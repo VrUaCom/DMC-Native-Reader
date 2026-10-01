@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -156,6 +158,14 @@ struct GameSet final {
     char effect_kind{};
     int effect_id{-1};
     Vec3 effect_pos{};
+    // "# SET n BREAK" (CStageSetBreak, parser 0x14024A540): the model after
+    // breaking, the effect played then (`beff`; an `epos` after it is its own
+    // position, object +0x6F0) and `remain` (0 none, 1 on, 2 on2).
+    int broken_model{-1};
+    char broken_effect_kind{};
+    int broken_effect_id{-1};
+    Vec3 broken_effect_pos{};
+    std::uint8_t remain{};
 };
 
 struct GameLayout final {
@@ -192,6 +202,7 @@ struct GameLayout final {
 [[nodiscard]] GameLayout parse_game(std::string_view text) {
     GameLayout out;
     GameSet* current = nullptr;
+    bool after_beff = false;  // the parser's r14b: `epos` fills the eff or beff slot
     std::size_t start = 0U;
     while (start < text.size()) {
         auto end = text.find('\n', start);
@@ -210,8 +221,10 @@ struct GameLayout final {
             while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t') ++i;  // number
             while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
             while (i < rest.size() && rest[i] > ' ' && rest[i] != ';') kind.push_back(rest[i++]);
-            out.sets.push_back({kind});
+            out.sets.push_back(GameSet{});
+            out.sets.back().kind = std::move(kind);
             current = &out.sets.back();
+            after_beff = false;
             continue;
         }
         if (current == nullptr) continue;
@@ -227,18 +240,26 @@ struct GameLayout final {
             current->rot = {values[0], values[1], values[2]};
         } else if (key == "scale" && values.size() >= 3U) {
             current->scale = {values[0], values[1], values[2]};
-        } else if ((key == "eff") && current != nullptr) {
+        } else if (key == "eff" || key == "beff") {
             // "V 98": a kind letter and a decimal id.
             const auto rest = line.substr(key_end);
             std::size_t i = 0U;
             while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
             if (i < rest.size() && std::isalpha(static_cast<unsigned char>(rest[i]))) {
-                current->effect_kind = rest[i];
+                after_beff = key == "beff";
+                (after_beff ? current->broken_effect_kind : current->effect_kind) = rest[i];
                 const auto id = numbers(rest.substr(i + 1U));
-                if (!id.empty()) current->effect_id = static_cast<int>(id[0]);
+                if (!id.empty()) (after_beff ? current->broken_effect_id : current->effect_id) = static_cast<int>(id[0]);
             }
         } else if (key == "epos" && values.size() >= 3U) {
-            current->effect_pos = {values[0], values[1], values[2]};
+            (after_beff ? current->broken_effect_pos : current->effect_pos) = Vec3{values[0], values[1], values[2]};
+        } else if (key == "bmodel" && !values.empty()) {
+            current->broken_model = static_cast<int>(values[0]);
+        } else if (key == "remain") {
+            auto rest = line.substr(key_end);
+            rest = rest.substr(0U, rest.find(';'));
+            current->remain = rest.find("on2") != std::string_view::npos ? 2U
+                              : rest.find("on") != std::string_view::npos ? 1U : 0U;
         } else if (key == "uv" && values.size() >= 4U) {
             current->uv.push_back({values[0], values[1], values[2], values[3]});
         } else if (key == "cam_init" && values.size() >= 3U) {
@@ -465,8 +486,12 @@ std::vector<Vec3> floor_spots(const Mesh& mesh, std::size_t limit) {
     return out;
 }
 
-std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t* bytes, std::size_t size) noexcept {
-    try {
+namespace {
+
+// One state of a room: intact, or with every BREAK object broken.
+std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t* bytes, std::size_t size,
+                                       bool broken) {
+    {
         if (bytes == nullptr || size == 0U) return nullptr;
         auto root = open_session(name, bytes, size);
         if (!root) return nullptr;
@@ -537,9 +562,12 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                 models[index] = &child;
             }
             for (const auto& set : layout.sets) {
-                if (set.model < 0 || static_cast<std::size_t>(set.model) >= models.size()) continue;
-                if (models[static_cast<std::size_t>(set.model)] == nullptr) continue;
-                const auto& child = *models[static_cast<std::size_t>(set.model)];
+                // Broken (0x14024AE40): the object switches to its bmodel, or
+                // is removed (0x1403261E0) when it has none.
+                const int model = broken && set.kind == "BREAK" ? set.broken_model : set.model;
+                if (model < 0 || static_cast<std::size_t>(model) >= models.size()) continue;
+                if (models[static_cast<std::size_t>(model)] == nullptr) continue;
+                const auto& child = *models[static_cast<std::size_t>(model)];
                 auto piece = open_session(child.suggested_filename, child.source_bytes.data(), child.source_bytes.size());
                 if (!piece || !piece->renderable || piece->render_mesh.indices.size() < 3U) continue;
                 // Objects use the stage texture bank (the PNST holds none).
@@ -568,12 +596,17 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
             }
         }
         for (const auto& set : layout.sets) {
-            if (set.effect_id < 0 || set.effect_kind == '\0') continue;
-            GameSet place_set = set;
+            // Intact: `eff` at epos (state 0 spawn, 0x1402E7CA0 at epos x the
+            // object matrix). Broken: the eff is retired and `beff` spawned
+            // once at its own position (object +0x6F0).
+            const bool broken_set = broken && set.kind == "BREAK";
+            const char kind = broken_set ? set.broken_effect_kind : set.effect_kind;
+            const int id = broken_set ? set.broken_effect_id : set.effect_id;
+            if (id < 0 || kind == '\0') continue;
             Mesh point;
-            point.vertices = {set.effect_pos};
-            place(point, place_set);
-            room->effects.push_back({set.effect_kind, static_cast<std::uint16_t>(set.effect_id), point.vertices[0]});
+            point.vertices = {broken_set ? set.broken_effect_pos : set.effect_pos};
+            place(point, set);
+            room->effects.push_back({kind, static_cast<std::uint16_t>(id), point.vertices[0], broken_set});
         }
         for (const auto& item : items) {
             if (item.format != Format::Hits || item.bytes == nullptr || item.bytes->empty()) continue;
@@ -649,11 +682,60 @@ std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t
                        << " refs=" << source.cell_reference_count;
             }
         }
+        std::size_t breakable = 0U;
+        for (const auto& set : layout.sets) breakable += set.kind == "BREAK" ? 1U : 0U;
+        if (breakable > 0U) {
+            detail << ", " << breakable << " breakable objects";
+            if (broken) detail << " (broken)";
+        }
         room->detail = detail.str();
+        room->breakable_objects = breakable;
+        return room;
+    }
+}
+
+}  // namespace
+
+std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t* bytes, std::size_t size) noexcept {
+    try {
+        auto room = build_room_state(name, bytes, size, false);
+        if (room && room->breakable_objects > 0U) room->broken = build_room_state(name, bytes, size, true);
         return room;
     } catch (...) {
         return nullptr;
     }
+}
+
+namespace {
+std::atomic<bool> g_broken{false};
+std::atomic<std::int64_t> g_broken_since_ms{0};
+
+std::int64_t now_ms() noexcept {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
+
+void set_broken(bool broken) noexcept {
+    if (broken) g_broken_since_ms.store(now_ms());
+    g_broken.store(broken);
+}
+
+bool broken() noexcept { return g_broken.load(); }
+
+float broken_frames() noexcept {
+    if (!g_broken.load()) return -1.0F;
+    return static_cast<float>(now_ms() - g_broken_since_ms.load()) * 0.06F;
+}
+
+const Room& shown(const Room& room) noexcept {
+    return g_broken.load() && room.broken ? *room.broken : room;
+}
+
+std::shared_ptr<const Room> shown(std::shared_ptr<const Room> room) noexcept {
+    if (room && g_broken.load() && room->broken) return room->broken;
+    return room;
 }
 
 void set_current(std::shared_ptr<const Room> room) noexcept {

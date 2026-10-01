@@ -1360,9 +1360,17 @@ void append_room_effects(const stage_room::Room& room, const std::shared_ptr<con
         root.dispatch_kind = dispatch_kind_for_effect_kind(effect.kind);
         root.evidence = motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
         root.scale = {1.0F, 1.0F, 1.0F};
-        const float period = std::clamp(effect_extent(*host, effect.kind, effect.id, 0U, 0) + 20.0F, 60.0F, 600.0F);
-        // Each effect keeps its own phase so neighbours do not pulse together.
-        const float age = std::fmod(room_time + static_cast<float>(index) * 17.0F, period);
+        const float extent = effect_extent(*host, effect.kind, effect.id, 0U, 0);
+        float age = 0.0F;
+        if (effect.once) {
+            // A broken object's beff plays once from the break toggle.
+            age = stage_room::broken_frames();
+            if (age < 0.0F || age > std::max(extent, 1.0F)) continue;
+        } else {
+            const float period = std::clamp(extent + 20.0F, 60.0F, 600.0F);
+            // Each effect keeps its own phase so neighbours do not pulse together.
+            age = std::fmod(room_time + static_cast<float>(index) * 17.0F, period);
+        }
         Matrix4 world;
         const Vec3 x = stage_room::room_direction_to_model(placement, {1.0F, 0.0F, 0.0F});
         const Vec3 z = stage_room::room_direction_to_model(placement, {0.0F, 0.0F, 1.0F});
@@ -1924,7 +1932,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     // about that spot by the twist gesture; a stage itself has no room.
     if (!view.uv_layout && has_render_flag(flags, RenderFlag::Room) &&
         !stage_room::is_stage_session(session)) {
-        out->room = stage_room::current();
+        out->room = stage_room::shown(stage_room::current());
     }
     if (out->room && !rest.empty()) {
         const auto placement = stage_room::placement_for(rest, controls.room_yaw);
@@ -1950,7 +1958,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     // A stage opened as its scene: its merged mesh is drawn by the room pass
     // (near-plane clipped), turned about the floor spot by the twist gesture.
     if (!view.uv_layout && session.stage != nullptr) {
-        const auto& stage = *session.stage;
+        const auto& stage = stage_room::shown(*session.stage);
         view.room_mesh = &stage.mesh;
         view.room_texture_slots = &stage.triangle_texture_slots;
         view.room_textures = &stage.textures;

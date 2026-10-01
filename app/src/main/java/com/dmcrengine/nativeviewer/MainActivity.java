@@ -109,6 +109,7 @@ public final class MainActivity extends Activity {
     private Button shadowButton;
     private Button collisionButton;
     private Button stageCollisionButton;
+    private Button breakButton;
     // Position in the collision cycle: -1 all attacks, then each used id.
     private int collisionCursor = -2;
     private Button infoButton;
@@ -325,6 +326,10 @@ public final class MainActivity extends Activity {
         syncToggleButton(stageCollisionButton,
                 !renderView.isUvLayoutVisible() && stageScene,
                 renderView.isRoomCollisionVisible());
+
+        syncToggleButton(breakButton,
+                hasSession && !renderView.isUvLayoutVisible() && NativeBridge.roomBreakable(session),
+                NativeBridge.roomBroken());
 
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
@@ -622,6 +627,19 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, stageCollisionButton);
+
+        // Breakable stage objects ("# SET n BREAK"): show them broken (their
+        // bmodel, the break effect played once) or intact.
+        breakButton = makeSquareButton("\u2716", "Break stage objects", 18f);
+        breakButton.setOnClickListener(v -> {
+            if (session == 0 || !NativeBridge.roomBreakable(session)) return;
+            final boolean broken = !NativeBridge.roomBroken();
+            NativeBridge.setRoomBroken(broken);
+            notice(broken ? "Stage objects broken" : "Stage objects intact", Toast.LENGTH_SHORT);
+            applyResourceUiState();
+            renderView.renderNow();
+        });
+        addToolButton(bar, breakButton);
 
         uvButton = makeSquareButton("UV", "UV layout", 14f);
         uvButton.setOnClickListener(v -> {

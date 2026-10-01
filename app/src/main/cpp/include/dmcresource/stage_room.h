@@ -66,8 +66,15 @@ struct Room final {
         char kind{};
         std::uint16_t id{};
         Vec3 position{};
+        // A broken object's `beff`: played once from the moment the room was
+        // switched to its broken state, not looped.
+        bool once{};
     };
     std::vector<LayoutEffect> effects;
+    // "# SET n BREAK" objects of the layout, and the same room with all of
+    // them broken (bmodel shown, beff played; null when there are none).
+    std::size_t breakable_objects{};
+    std::shared_ptr<const Room> broken;
     // Environment collision sources are preserved independently from the
     // visible room mesh. HITS source ordering and physical slots remain part
     // of provenance; only the first source is selected for the optional
@@ -91,6 +98,17 @@ struct Room final {
 [[nodiscard]] std::vector<Vec3> floor_spots(const Mesh& mesh, std::size_t limit = 8U);
 // Floor point nearest to `focus` in xz, not above it.
 [[nodiscard]] std::optional<Vec3> floor_spots_near(const Mesh& mesh, const Vec3& focus);
+
+// Break toggle of the viewer: draw every room / stage scene in its broken
+// state (Room::broken) when it has one. `broken_frames` counts game frames
+// (60 per second) since the toggle was switched on, the clock of `once`
+// effects; negative while off.
+void set_broken(bool broken) noexcept;
+[[nodiscard]] bool broken() noexcept;
+[[nodiscard]] float broken_frames() noexcept;
+// The state of `room` to draw now.
+[[nodiscard]] const Room& shown(const Room& room) noexcept;
+[[nodiscard]] std::shared_ptr<const Room> shown(std::shared_ptr<const Room> room) noexcept;
 
 // The room of the viewer (shared by every render; thread-safe).
 void set_current(std::shared_ptr<const Room> room) noexcept;

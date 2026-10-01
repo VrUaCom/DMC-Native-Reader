@@ -149,4 +149,9 @@ public final class NativeBridge {
     public static native String[] classEventNames(long handle);
     /** Sends class event {@code index}; false unless a Script Play action runs. */
     public static native boolean triggerClassEvent(long handle, int index);
+    /** True when the stage scene / room drawn with the session has BREAK objects. */
+    public static native boolean roomBreakable(long handle);
+    /** Draws breakable stage objects broken (bmodel + one-shot beff) or intact. */
+    public static native void setRoomBroken(boolean broken);
+    public static native boolean roomBroken();
 }
