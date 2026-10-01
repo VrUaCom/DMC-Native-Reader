@@ -1945,14 +1945,18 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     }
 
     // SHW footprint on a floor under the feet (lowest rest vertex).
-    if (!view.uv_layout && session.stage == nullptr && has_render_flag(flags, RenderFlag::Shadows)) {
+    // A collision view (.hits) stands on nothing: no floor under it.
+    const bool collision_view = session.hits != nullptr && session.shadow_bindings.empty();
+    if (!view.uv_layout && session.stage == nullptr && !collision_view &&
+        has_render_flag(flags, RenderFlag::Shadows)) {
         float floor_y = std::numeric_limits<float>::infinity();
         for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
         if (std::isfinite(floor_y)) {
-            // SHW hulls when the archive has them, else the mesh itself.
-            out->floor_shadow = session.shadow_bindings.empty()
-                ? shadow::mesh_floor_shadow(session.render_mesh, shadow::kViewerLightDirection, floor_y)
-                : shadow::floor_shadow_triangles(session, shadow::kViewerLightDirection, floor_y);
+            // Shadows come only from shadow files (SHW hulls); without them
+            // the model just stands on the floor.
+            if (!session.shadow_bindings.empty()) {
+                out->floor_shadow = shadow::floor_shadow_triangles(session, shadow::kViewerLightDirection, floor_y);
+            }
             view.floor = true;
             view.floor_y = floor_y;
             view.floor_shadow = out->floor_shadow;

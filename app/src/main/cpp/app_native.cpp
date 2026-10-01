@@ -815,10 +815,10 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const auto* session = from_handle(handle);
-    // SHW hulls, or the mesh fallback for any renderable model (a stage
-    // scene is the floor itself).
-    return session != nullptr && session->stage == nullptr &&
-                   (session->renderable || !session->shadow_bindings.empty())
+    // Only real shadow files (SHW hulls bound to the model, e.g. Dante's or
+    // Vergil's PAC): no button for anything else (a stage scene is the floor
+    // itself, a collision view has none).
+    return session != nullptr && session->stage == nullptr && !session->shadow_bindings.empty()
                ? JNI_TRUE
                : JNI_FALSE;
 }

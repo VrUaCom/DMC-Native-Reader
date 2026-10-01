@@ -40,3 +40,12 @@ Core: `ViewState::fly` / `fly_eye`, `camera_basis`, `fly_move`,
 reads the same fly state (JNI `setFlyCamera`, `flyMove`, `cameraEye`). Test:
 `fly_camera_test.cpp` (switching keeps the picture to 0.02 px, forward is the
 image centre, right / up are screen right / up, turning keeps the eye).
+
+## Shadow button
+
+The shadow button appears only when the opened file has shadow files bound
+(SHW hulls: Dante `pl000`, Vergil `pl001`, weapons such as `plwp_sword`), and
+it switches only those shadows. Models without SHW (e.g. `em000`, `em028`),
+stages and collision views have no shadow button and no made-up shadow (the
+old mesh-outline fallback is gone); a model still stands on the plain floor,
+a `.hits` collision view has no floor.
