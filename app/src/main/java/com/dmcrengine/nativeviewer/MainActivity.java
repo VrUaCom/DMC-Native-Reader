@@ -51,6 +51,7 @@ public final class MainActivity extends Activity {
     private static final String PREF_EFFECTS_NAME = "room.effects.name";
     private static final String EFFECTS_FILE = "room_effects.bin";
     private static final int REQUEST_EXPORT_INFO = 1013;
+    private static final int REQUEST_SAVE_SOURCE = 1015;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -75,12 +76,20 @@ public final class MainActivity extends Activity {
     private static final class NavigationEntry {
         final long session;
         final String title;
+        // Child index of `session` in the entry below it (-1: not a child).
+        final int childIndex;
 
-        NavigationEntry(long session, String title) {
+        NavigationEntry(long session, String title, int childIndex) {
             this.session = session;
             this.title = title;
+            this.childIndex = childIndex;
         }
     }
+
+    // Child index of the current session in its parent (-1 when it was not
+    // opened as a container child).
+    private int sessionChildIndex = -1;
+    private long pendingSaveSession;
 
     private static final class StagedAsset {
         final Uri uri;
@@ -1375,6 +1384,12 @@ public final class MainActivity extends Activity {
             panel.addView(row);
         };
         addRow.accept("Open / replace resource", this::chooseFile);
+        if (session != 0 && blackWidowState.canReencodeTextures) {
+            addRow.accept("Texture format (BC1…BC7)…", this::showTextureFormatDialog);
+        }
+        if (session != 0 && blackWidowState.canSaveSource) {
+            addRow.accept("Save file…", this::chooseSaveSource);
+        }
         if (isRootScene() && assembledPacUri != null) {
             addRow.accept("Add weapon / .PAC…", this::chooseAdditionalPac);
             addRow.accept("Browse .PAC files…", this::browseAssembledPac);
@@ -2018,6 +2033,77 @@ public final class MainActivity extends Activity {
         return out.toString();
     }
 
+    /** Spider texture re-encode: pick a format, run natively, open the result. */
+    private void showTextureFormatDialog() {
+        final long target = session;
+        if (target == 0) return;
+        final String[] names = NativeBridge.textureFormatNames();
+        final String[] labels = NativeBridge.textureFormatLabels();
+        if (names == null || labels == null || names.length != labels.length) return;
+        // A child of a PAC is rebuilt inside its PAC, so the file stays loadable.
+        final long container = (sessionChildIndex >= 0 && !navigation.isEmpty())
+                ? navigation.peek().session : 0;
+        final int childIndex = container != 0 ? sessionChildIndex : -1;
+        final android.widget.CheckBox dx10 = new android.widget.CheckBox(this);
+        dx10.setText("Always write the DX10 header");
+        dx10.setPadding(dp(8), dp(4), dp(8), dp(4));
+        new AlertDialog.Builder(this)
+                .setTitle(container != 0 ? "Texture format (whole .PAC)" : "Texture format")
+                .setItems(labels, (dialog, which) -> runTextureReencode(
+                        target, container, childIndex, names[which], dx10.isChecked()))
+                .setView(dx10)
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void runTextureReencode(long target, long container, int childIndex, String format, boolean dx10) {
+        final String title = titleView.getText().toString();
+        notice("Re-encoding textures to " + format.toUpperCase(java.util.Locale.ROOT) + "…",
+                Toast.LENGTH_SHORT);
+        new Thread(() -> {
+            final long result = NativeBridge.reencodeTextures(target, container, childIndex, format, dx10);
+            final String detail = NativeBridge.reencodeTexturesDetail();
+            runOnUiThread(() -> {
+                if (result == 0) {
+                    notice("Format change failed: " + detail, Toast.LENGTH_LONG);
+                    return;
+                }
+                final String name = NativeBridge.sourceFileName(result);
+                navigateToSession(result, (name.isEmpty() ? title : name)
+                        + " · " + format.toUpperCase(java.util.Locale.ROOT));
+                final int newline = detail.indexOf('\n');
+                notice((newline > 0 ? detail.substring(0, newline) : detail)
+                        + " — use ⋮ → Save file…", Toast.LENGTH_LONG);
+            });
+        }, "texture-reencode").start();
+    }
+
+    private void chooseSaveSource() {
+        if (session == 0 || !blackWidowState.canSaveSource) return;
+        pendingSaveSession = session;
+        String name = NativeBridge.sourceFileName(session);
+        if (name == null || name.isEmpty()) name = "resource.bin";
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        intent.putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(intent, REQUEST_SAVE_SOURCE);
+    }
+
+    private void saveSourceToUri(Uri target) {
+        boolean saved = false;
+        if (target != null && pendingSaveSession != 0) {
+            try (android.os.ParcelFileDescriptor pfd =
+                         getContentResolver().openFileDescriptor(target, "rwt")) {
+                saved = pfd != null && NativeBridge.writeSource(pendingSaveSession, pfd.getFd());
+            } catch (Exception ignored) {
+                saved = false;
+            }
+        }
+        pendingSaveSession = 0;
+        notice(saved ? "File saved" : "Could not save the file", Toast.LENGTH_LONG);
+    }
+
     private void exportInfoToUri(Uri target) {
         boolean saved = false;
         if (target != null && !pendingInfoExportText.isEmpty()) {
@@ -2155,6 +2241,12 @@ public final class MainActivity extends Activity {
                 pendingExportSession = 0;
             }
             if (requestCode == REQUEST_EXPORT_INFO) pendingInfoExportText = "";
+            if (requestCode == REQUEST_SAVE_SOURCE) pendingSaveSession = 0;
+            return;
+        }
+
+        if (requestCode == REQUEST_SAVE_SOURCE) {
+            saveSourceToUri(data.getData());
             return;
         }
 
@@ -2902,10 +2994,12 @@ public final class MainActivity extends Activity {
             return;
         }
         navigateToSession(child, childTitle);
+        sessionChildIndex = index;
     }
 
     private void navigateToSession(long handle, String title) {
-        navigation.push(new NavigationEntry(session, titleView.getText().toString()));
+        navigation.push(new NavigationEntry(session, titleView.getText().toString(), sessionChildIndex));
+        sessionChildIndex = -1;
         activateSession(handle, title);
     }
 
@@ -2918,6 +3012,7 @@ public final class MainActivity extends Activity {
         if (child != 0) NativeBridge.close(child);
 
         NavigationEntry parent = navigation.pop();
+        sessionChildIndex = parent.childIndex;
         activateSession(parent.session, parent.title);
         return true;
     }
@@ -2946,6 +3041,7 @@ public final class MainActivity extends Activity {
             NavigationEntry entry = navigation.pop();
             if (entry.session != 0) NativeBridge.close(entry.session);
         }
+        sessionChildIndex = -1;
         applyResourceUiState();
     }
 

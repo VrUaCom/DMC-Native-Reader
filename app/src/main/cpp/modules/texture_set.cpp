@@ -7,6 +7,7 @@
 
 #include "dmc_rengine/profiles/dmc3/texture_slot_framing_compat.hpp"
 #include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/texture_reencode.h"
 
 namespace dmcresource::texture_set {
 namespace {
@@ -90,6 +91,38 @@ ParseResult parse_dds(std::span<const std::byte> source) {
 
     const auto read = dmc3::TextureSlotFramingReader::parse(source);
     const auto& framing = read.framing;
+    // A gfxTexture whose DDS is outside the canonical variants (any BC1..BC7,
+    // DX10, other header constants), accepted on the dmc3.exe load checks.
+    if (!framing.ok() && texture_reencode::is_wrapped_texture(source)) {
+        const auto dds_size = static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x64])) |
+            (static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x65])) << 8U) |
+            (static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x66])) << 16U) |
+            (static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x67])) << 24U);
+        const auto parsed = parse_exact_dds(bounded_dds_span(source, 0x70U, dds_size));
+        if (parsed.ok()) {
+            try {
+                const auto u16 = [&](std::size_t o) {
+                    return std::to_integer<std::uint32_t>(source[o]) |
+                        (std::to_integer<std::uint32_t>(source[o + 1U]) << 8U);
+                };
+                out.kind = Kind::wrapped_dds;
+                out.slots.push_back(Slot{
+                    .index = 0U,
+                    .descriptor_offset = 0U,
+                    .dds_offset = 0x70U,
+                    .dds_size = dds_size,
+                    .sector_span = 0U,
+                    .secondary_width = u16(0x10U),
+                    .secondary_height = u16(0x12U),
+                    .dds = parsed.document,
+                });
+            } catch (...) {
+                out = {};
+                out.detail = "DDS rejected: texture-set allocation failed";
+            }
+            return out;
+        }
+    }
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::wrapped_dds ||
         framing.document.textures.size() != 1U) {

@@ -121,6 +121,14 @@ struct Session {
     // Non-canonical reads the viewer still shows (orange warning in the UI).
     std::vector<std::string> non_canonical_notes;
 
+    // Bytes the session was opened from, kept only for resources whose
+    // textures the Spider re-encode action can rewrite (DDS, PTX, single
+    // gfxTexture, PAC with texture slots). `authored` marks sessions produced
+    // by such an action: their source_bytes are the file to save.
+    std::shared_ptr<const std::vector<std::uint8_t>> source_bytes;
+    std::string source_name;
+    bool authored{};
+
     // SHW shadow hulls placed on this session's models (PAC assembly).
     std::vector<shadow::ShadowBinding> shadow_bindings;
 

@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/texture_reencode.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/skeleton_rig.h"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
@@ -445,6 +446,8 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .hierarchy_node_count = session->scene.nodes.size(),
         .part_texture_attachment_available = has_attachable_composite_part(session),
         .png_export_available = session_png_export_available(session),
+        .texture_reencode_available = session->source_bytes != nullptr,
+        .authored_source_available = session->authored && session->source_bytes != nullptr,
     });
 }
 
@@ -534,6 +537,25 @@ std::unique_ptr<Session> open_binary_session(std::string_view name,
 
 }  // namespace
 
+namespace {
+
+// Keeps the source bytes of resources whose textures can be re-encoded
+// (Spider texture re-encode action); everything else keeps no copy.
+void retain_texture_source(Session* session, std::string_view name,
+                           const std::uint8_t* bytes, std::size_t size) noexcept {
+    if (session == nullptr || bytes == nullptr || size == 0U) return;
+    try {
+        const auto span = std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size};
+        if (!texture_reencode::holds_textures(span)) return;
+        session->source_bytes = std::make_shared<const std::vector<std::uint8_t>>(bytes, bytes + size);
+        session->source_name = std::string{name};
+    } catch (...) {
+        session->source_bytes.reset();
+    }
+}
+
+}  // namespace
+
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
     auto pipeline = dmcresource::run_decode_pipeline(name, bytes, size);
@@ -564,6 +586,7 @@ std::unique_ptr<Session> open_session(std::string_view name,
     }
     retain_lazy_child_sources(session.get(), bytes, size);
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
+    retain_texture_source(session.get(), name, bytes, size);
     return session;
 }
 

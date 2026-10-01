@@ -1,4 +1,5 @@
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/texture_reencode.h"
 
 #include <algorithm>
 #include <cctype>
@@ -151,6 +152,13 @@ ProbeResult probe(std::string_view filename,
     if (extension == "ptx") {
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
+    }
+    // One gfxTexture + DDS without a bundle header (.tm2 under another name).
+    if (bytes != nullptr && size != 0U &&
+        texture_reencode::is_wrapped_texture(
+            std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size})) {
+        return result(Format::Dds, true, "DDS", "texture", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "image/vnd-ms.dds");
     }
     // Collision shape tables (ICollisionHandle, 0x14005C260): 80-byte records.
     if (bytes != nullptr &&

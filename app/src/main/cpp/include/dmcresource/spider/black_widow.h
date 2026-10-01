@@ -38,6 +38,8 @@ enum class StateFlag : std::uint64_t {
     CanExportPng               = 1ULL << 22U,
     CanAddModelPart            = 1ULL << 23U,
     CanStageCompanion          = 1ULL << 24U,
+    CanReencodeTextures        = 1ULL << 25U,
+    CanSaveSource              = 1ULL << 26U,
 };
 
 using StateBits = std::uint64_t;
@@ -66,6 +68,8 @@ struct ModelSessionView final {
     std::size_t hierarchy_node_count{};
     bool part_texture_attachment_available{};
     bool png_export_available{};
+    bool texture_reencode_available{};
+    bool authored_source_available{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral

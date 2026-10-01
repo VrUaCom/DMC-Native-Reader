@@ -1127,3 +1127,99 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_nonCanonicalNotes(
         return env->NewStringUTF(joined.c_str());
     } catch (...) { return env->NewStringUTF(""); }
 }
+
+// ---- Texture format change (Spider texture re-encode action) ----
+
+namespace {
+
+std::string& last_reencode_detail() noexcept {
+    static std::string detail;
+    return detail;
+}
+
+jobjectArray to_string_array(JNIEnv* env, const std::vector<std::string>& values) {
+    jclass string_class = env->FindClass("java/lang/String");
+    if (string_class == nullptr) return nullptr;
+    jobjectArray out = env->NewObjectArray(static_cast<jsize>(values.size()), string_class, nullptr);
+    if (out == nullptr) return nullptr;
+    for (std::size_t i = 0U; i < values.size(); ++i) {
+        jstring s = env->NewStringUTF(values[i].c_str());
+        env->SetObjectArrayElement(out, static_cast<jsize>(i), s);
+        if (s != nullptr) env->DeleteLocalRef(s);
+    }
+    return out;
+}
+
+}  // namespace
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_textureFormatNames(JNIEnv* env, jclass) {
+    try {
+        std::vector<std::string> names;
+        for (const auto& c : dmcresource::spider::actions::texture_format_choices()) names.push_back(c.name);
+        return to_string_array(env, names);
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_textureFormatLabels(JNIEnv* env, jclass) {
+    try {
+        std::vector<std::string> labels;
+        for (const auto& c : dmcresource::spider::actions::texture_format_choices()) labels.push_back(c.label);
+        return to_string_array(env, labels);
+    } catch (...) { return nullptr; }
+}
+
+// Opens the re-encoded result as a new session (0 on failure; the reason is
+// in reencodeTexturesDetail()). container/childIndex: the PAC session this
+// one was opened from, or 0 / -1.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_reencodeTextures(
+        JNIEnv* env, jclass, jlong handle, jlong container, jint child_index,
+        jstring format, jboolean force_dx10) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const Session* target = from_handle(handle);
+        const Session* parent = container != 0 ? from_handle(container) : nullptr;
+        std::string detail;
+        auto result = dmcresource::spider::actions::reencode_textures(
+            target, parent, child_index, to_utf8(env, format), force_dx10 == JNI_TRUE, &detail);
+        last_reencode_detail() = detail;
+        return result ? to_handle(result.release()) : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_reencodeTexturesDetail(JNIEnv* env, jclass) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return env->NewStringUTF(last_reencode_detail().c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_sourceFileName(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    try {
+        return env->NewStringUTF(session != nullptr ? session->source_name.c_str() : "");
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+// Writes the session's file (an authored result) to a writable descriptor.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_writeSource(JNIEnv*, jclass, jlong handle, jint fd) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr || !session->authored || session->source_bytes == nullptr || fd < 0) return JNI_FALSE;
+    const auto& bytes = *session->source_bytes;
+    std::size_t written = 0U;
+    while (written < bytes.size()) {
+        const auto n = ::write(fd, bytes.data() + written, bytes.size() - written);
+        if (n <= 0) return JNI_FALSE;
+        written += static_cast<std::size_t>(n);
+    }
+    return ::ftruncate(fd, static_cast<off_t>(bytes.size())) == 0 || written == bytes.size() ? JNI_TRUE : JNI_FALSE;
+}

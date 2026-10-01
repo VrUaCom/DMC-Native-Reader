@@ -88,6 +88,8 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::CanInspectMeshes, session.object_count != 0U);
     set_if(&state, StateFlag::CanInspectHierarchy, session.hierarchy_node_count != 0U);
     set_if(&state, StateFlag::CanExportPng, session.png_export_available);
+    set_if(&state, StateFlag::CanReencodeTextures, session.texture_reencode_available);
+    set_if(&state, StateFlag::CanSaveSource, session.authored_source_available);
     set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
     set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;

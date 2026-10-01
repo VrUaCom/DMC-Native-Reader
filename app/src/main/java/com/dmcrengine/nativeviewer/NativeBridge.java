@@ -40,6 +40,17 @@ public final class NativeBridge {
     // native Spider/framing/DDS modules validate PTX and bind decoded texture
     // slots. Composite scenes may consume one shared PTX bank transactionally;
     // explicit per-part attachment remains the deterministic fallback.
+    // Texture format change: native Spider texture re-encode action. The
+    // result opens as a new session (0 on failure, reason in
+    // reencodeTexturesDetail()); container/childIndex name the PAC session
+    // this one was opened from so the whole PAC is rebuilt.
+    public static native String[] textureFormatNames();
+    public static native String[] textureFormatLabels();
+    public static native long reencodeTextures(long handle, long container, int childIndex,
+            String format, boolean forceDx10);
+    public static native String reencodeTexturesDetail();
+    public static native String sourceFileName(long handle);
+    public static native boolean writeSource(long handle, int fd);
     public static native boolean attachPtx(long handle, int fd, String filename);
     public static native boolean attachPtxToPart(long handle, int partIndex,
                                                   int fd, String filename);

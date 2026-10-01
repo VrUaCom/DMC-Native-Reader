@@ -41,4 +41,29 @@ namespace dmcresource::spider::actions {
     const std::uint8_t* bytes,
     std::size_t size) noexcept;
 
+// Texture format change. Re-encodes every texture of `target` (DDS, PTX,
+// single gfxTexture, or the texture slots of a PAC) to `format_name`
+// ("bc1".."bc7", "dxt1", "dxt5", "bc4s", "bc5s", "bc6h", "bc6h_sf16"); the
+// game's mips are kept. When `container` is the PAC session `target` was
+// opened from (child `child_index`), the whole PAC is rebuilt with only that
+// slot replaced, so the result is the file the game loads. Runs as a Crusader
+// plan (select source -> re-encode -> open result -> verify). Returns the
+// opened result, marked authored (savable through its source_bytes), or null
+// with `detail` explaining why.
+[[nodiscard]] std::unique_ptr<Session> reencode_textures(
+    const Session* target,
+    const Session* container,
+    int child_index,
+    std::string_view format_name,
+    bool force_dx10,
+    std::string* detail) noexcept;
+
+// Format names the action accepts, in menu order, with a short label each
+// ("bc7", "BC7 (DX10): best quality, RGBA").
+struct TextureFormatChoice final {
+    std::string name;
+    std::string label;
+};
+[[nodiscard]] std::vector<TextureFormatChoice> texture_format_choices();
+
 }  // namespace dmcresource::spider::actions

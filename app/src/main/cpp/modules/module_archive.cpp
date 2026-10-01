@@ -21,6 +21,7 @@
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/texture_reencode.h"
 #include "dmcresource/resource_limits.h"
 
 namespace dmcresource {
@@ -67,6 +68,11 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             const auto parsed = ptx_compat::parse_texture_bundle(
                 std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
             if (parsed.ok()) return {Format::Ptx, "PTX", "ptx"};
+            // One gfxTexture + DDS without a bundle header (id5000.pac slot 23).
+            if (texture_reencode::is_wrapped_texture(
+                    std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size})) {
+                return {Format::Dds, "TEX", "tm2"};
+            }
         } catch (...) {
         }
         try {
