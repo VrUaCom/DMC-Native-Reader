@@ -18,6 +18,7 @@ namespace {
 
 struct Recording final {
     int calls{};
+    GpuViewOptions options{};
     std::vector<GpuBatch> model_batches;
     std::vector<GpuVertex> model_vertices;
     std::array<float, 16> model_view{};
@@ -37,6 +38,7 @@ public:
 
     bool draw(const GpuViewFrame& frame, RgbaImage& image) override {
         ++last.calls;
+        last.options = frame.options;
         last.model_batches = frame.model.batches;
         last.model_vertices = frame.model.vertices;
         last.model_view = frame.model_view;
@@ -240,6 +242,19 @@ int main() {
         room.vertices[4].y = 31.0F;
         (void)render_view(mesh, W, H, with_room, nullptr, &slots, &textures);
         assert(!(backend.last.room_key == key));
+    }
+
+    // 7. Graphics settings reach the frame (defaults: 4x MSAA, mipmaps, 8x
+    //    anisotropy), clamped to the supported range.
+    {
+        const GpuViewOptions defaults = gpu_view_options();
+        assert(defaults.msaa_samples == 4 && defaults.mipmaps && defaults.anisotropy == 8);
+        set_gpu_view_options({0, false, 99});
+        (void)render_view(mesh, W, H, view, nullptr, &slots, &textures);
+        assert(backend.last.options.msaa_samples == 0);
+        assert(!backend.last.options.mipmaps);
+        assert(backend.last.options.anisotropy == 16);
+        set_gpu_view_options(defaults);
     }
 
     set_gpu_view_backend(nullptr);

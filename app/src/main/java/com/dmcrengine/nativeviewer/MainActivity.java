@@ -794,10 +794,15 @@ public final class MainActivity extends Activity {
     private static final String SET_ROOM_ANIM = "set.roomAnimate";
     private static final String SET_COLLISION_LINE = "set.collisionLine";
     private static final String SET_GPU = "set.gpu";
+    private static final String SET_GPU_MSAA = "set.gpuMsaa";
+    private static final String SET_GPU_MIPMAPS = "set.gpuMipmaps";
+    private static final String SET_GPU_ANISOTROPY = "set.gpuAnisotropy";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
         NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
+        NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
+                p.getInt(SET_GPU_ANISOTROPY, 8));
         final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
                 | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
                 | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11)
@@ -1031,13 +1036,32 @@ public final class MainActivity extends Activity {
         content.addView(header);
 
         final Runnable apply = this::applyViewerSettings;
-        content.addView(sectionTitle("Render"));
+        content.addView(sectionTitle("Graphics"));
         content.addView(choiceRow("Renderer", new String[]{"GPU (graphics chip)", "CPU (software)"},
                 p.getBoolean(SET_GPU, true) ? 0 : 1,
                 i -> { p.edit().putBoolean(SET_GPU, i == 0).apply(); apply.run(); }));
-        content.addView(hint("GPU draws the model, the room, the floor, shadows and effects with OpenGL ES 3 "
-                + "(4x anti-aliasing, smooth textures with mipmaps); lines and bones are drawn on top. "
-                + "Wireframe and UV views always use the CPU. Now: " + NativeBridge.rendererInfo()));
+        final int[] caps = NativeBridge.gpuCapabilities();
+        final int maxSamples = caps != null && caps.length > 0 ? caps[0] : 0;
+        final int maxAnisotropy = caps != null && caps.length > 1 ? caps[1] : 0;
+        content.addView(hint("GPU draws the model, the room, the floor, shadows and effects with OpenGL ES 3; "
+                + "lines and bones are drawn on top. Wireframe and UV views always use the CPU. Now: "
+                + NativeBridge.rendererInfo()
+                + (maxSamples > 0 ? "\nThis chip: anti-aliasing up to " + maxSamples + "x, anisotropic filtering "
+                        + (maxAnisotropy > 1 ? "up to " + maxAnisotropy + "x." : "not supported.") : "")));
+        final int[] msaa = {0, 2, 4, 8};
+        content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},
+                indexOf(msaa, p.getInt(SET_GPU_MSAA, 4), 2),
+                i -> { p.edit().putInt(SET_GPU_MSAA, msaa[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Mipmaps (GPU): no shimmer on distant textures", new String[]{"On", "Off"},
+                p.getBoolean(SET_GPU_MIPMAPS, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_GPU_MIPMAPS, i == 0).apply(); apply.run(); }));
+        final int[] aniso = {1, 2, 4, 8, 16};
+        content.addView(choiceRow("Anisotropic filtering (GPU, smooth textures): sharp floors at an angle",
+                new String[]{"Off", "2x", "4x", "8x", "16x"},
+                indexOf(aniso, p.getInt(SET_GPU_ANISOTROPY, 8), 3),
+                i -> { p.edit().putInt(SET_GPU_ANISOTROPY, aniso[i]).apply(); apply.run(); }));
+        content.addView(hint("Higher anti-aliasing costs memory at large resolutions: above the chip's limit or "
+                + "about 256 MB of samples the next lower level is used. The CPU renderer ignores these three."));
         final int[] sides = {360, 540, 720, 1024, 2048, 3840, 5120, 6144, 7680};
         content.addView(choiceRow("Resolution (longest side, px; 2K-8K render larger than the screen)",
                 new String[]{"360", "540", "720", "1024", "2K", "4K", "5K", "6K", "8K"},
@@ -1046,26 +1070,10 @@ public final class MainActivity extends Activity {
         content.addView(hint("2K = 2048, 4K = 3840, 5K = 5120, 6K = 6144, 8K = 7680 px. They need a lot of memory "
                 + "and time per frame; while the view moves a small preview is shown. If memory runs out the "
                 + "next lower size is chosen."));
-        final int[] widths = {1, 2, 3, 4, 6};
-        final String[] widthNames = {"1", "2", "3", "4", "6"};
-        content.addView(choiceRow("Mesh line width (wireframe, room meshes, bones; px at 720)", widthNames,
-                indexOf(widths, p.getInt(SET_MESH_LINE, 1), 0),
-                i -> { p.edit().putInt(SET_MESH_LINE, widths[i]).apply(); apply.run(); }));
-        content.addView(choiceRow("Collision line width (HITS, attack shapes; px at 720)", widthNames,
-                indexOf(widths, p.getInt(SET_COLLISION_LINE, 1), 0),
-                i -> { p.edit().putInt(SET_COLLISION_LINE, widths[i]).apply(); apply.run(); }));
-        content.addView(sliderRow("Room mesh lines behind a model (wireframe mode): opacity", 0, 10, 10,
-                p.getInt(SET_ROOM_LINES, 5), value -> value * 10 + "%  " + (value == 0 ? "(hidden)" : ""),
-                value -> { p.edit().putInt(SET_ROOM_LINES, value).apply(); apply.run(); }));
-        addCollisionKinds(content);
-        final int[] frames = {50, 33, 16};
         content.addView(choiceRow("While moving (drag, flick, animation)",
                 new String[]{"Fast preview (half size)", "Full quality"},
                 p.getBoolean(SET_FAST_PREVIEW, true) ? 0 : 1,
                 i -> { p.edit().putBoolean(SET_FAST_PREVIEW, i == 0).apply(); apply.run(); }));
-        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
-                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
-                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
         content.addView(choiceRow("Model textures", new String[]{"Pixel (original)", "Smooth"},
                 p.getBoolean(SET_SMOOTH, false) ? 1 : 0,
                 i -> { p.edit().putBoolean(SET_SMOOTH, i == 1).apply(); apply.run(); }));
@@ -1079,7 +1087,25 @@ public final class MainActivity extends Activity {
                 p.getBoolean(SET_SHADOWS, true) ? 0 : 1,
                 i -> { p.edit().putBoolean(SET_SHADOWS, i == 0).apply(); apply.run(); }));
 
+        content.addView(sectionTitle("Graphics: lines and overlays"));
+        final int[] widths = {1, 2, 3, 4, 6};
+        final String[] widthNames = {"1", "2", "3", "4", "6"};
+        content.addView(choiceRow("Mesh line width (wireframe, room meshes, bones; px at 720)", widthNames,
+                indexOf(widths, p.getInt(SET_MESH_LINE, 1), 0),
+                i -> { p.edit().putInt(SET_MESH_LINE, widths[i]).apply(); apply.run(); }));
+        content.addView(choiceRow("Collision line width (HITS, attack shapes; px at 720)", widthNames,
+                indexOf(widths, p.getInt(SET_COLLISION_LINE, 1), 0),
+                i -> { p.edit().putInt(SET_COLLISION_LINE, widths[i]).apply(); apply.run(); }));
+        content.addView(sliderRow("Room mesh lines behind a model (wireframe mode): opacity", 0, 10, 10,
+                p.getInt(SET_ROOM_LINES, 5), value -> value * 10 + "%  " + (value == 0 ? "(hidden)" : ""),
+                value -> { p.edit().putInt(SET_ROOM_LINES, value).apply(); apply.run(); }));
+        addCollisionKinds(content);
+
         content.addView(sectionTitle("Animation"));
+        final int[] frames = {50, 33, 16};
+        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
+                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
+                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
         final float[] speeds = {0.25f, 0.5f, 1.0f, 2.0f};
         int speedIndex = 2;
         for (int i = 0; i < speeds.length; ++i) {

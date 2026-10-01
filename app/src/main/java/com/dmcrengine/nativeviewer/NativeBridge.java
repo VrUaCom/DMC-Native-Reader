@@ -166,6 +166,10 @@ public final class NativeBridge {
 
     /** Draws the view on the graphics chip (OpenGL ES 3) when true, else on the CPU. */
     public static native void setGpuRendering(boolean enabled);
+    /** GPU picture quality: MSAA samples (0 = off), mipmaps, anisotropic filtering (1 = off). */
+    public static native void setGpuOptions(int msaaSamples, boolean mipmaps, int anisotropy);
+    /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */
+    public static native int[] gpuCapabilities();
     /** What draws the frames ("GPU: OpenGL ES 3.2 / Adreno ...") and the frame counts. */
     public static native String rendererInfo();
 }

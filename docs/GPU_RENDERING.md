@@ -7,6 +7,27 @@ between "GPU (graphics chip)" (default) and "CPU (software)"; the hint under it
 shows what draws the frames now, e.g. `GPU: OpenGL ES 3.2 / Adreno (TM) ...`,
 and how many frames went each way.
 
+## Settings → Graphics
+
+Everything that changes the picture is in one section, **Graphics**:
+
+| Setting | Values (default) | Applies to |
+| --- | --- | --- |
+| Renderer | GPU (graphics chip) / CPU (software) | — |
+| Anti-aliasing (MSAA) | Off, 2x, **4x**, 8x | GPU; capped by the chip (`GL_MAX_SAMPLES`) and ~256 MiB of samples |
+| Mipmaps | **On** / Off | GPU; smooth textures trilinear, pixel textures nearest-mip |
+| Anisotropic filtering | Off, 2x, 4x, **8x**, 16x | GPU, smooth textures; capped by the chip |
+| Resolution, While moving, Model textures, Model lighting, Background, Shadows when a file opens | as before | both |
+
+**Graphics: lines and overlays** holds the mesh / collision line widths, the
+room wireframe opacity and the HITS collision kinds. The animation frame rate
+moved to **Animation**. The hint under Renderer shows the active renderer, the
+frame counts and the chip's limits (`gpuCapabilities`).
+
+With MSAA, mipmaps and anisotropy all off the GPU frame is within 51–55 dB
+PSNR of the software one (Mesa llvmpipe, `pl000.pac`); with the defaults the
+difference is the intended smoothing.
+
 ## Split of responsibilities
 
 | Part | Where | What it owns |
@@ -28,7 +49,7 @@ After eight failed frames in a row the backend stops trying for the session.
 
 ## What runs where
 
-GPU (one offscreen pass per frame, 4x MSAA up to ~2.6 Mpx, 2x up to 9 Mpx):
+GPU (one offscreen pass per frame, MSAA as set in Graphics):
 
 1. opaque room texels (alpha-tested cut-outs < 32, soft textures' texels >= 240);
 2. the plain floor (when no room is shown);
@@ -57,9 +78,9 @@ PSNR 45.9 dB (model), 42.7 dB (smooth textures), 44.7 dB (shadow + bones),
 
 * model texture coordinates are perspective-correct (the software model pass
   interpolates them affinely);
-* smooth textures use trilinear mipmaps and up to 8x anisotropic filtering —
+* with mipmaps on, textures use mip levels (smooth: trilinear + anisotropic) —
   distant floors no longer shimmer;
-* edges are anti-aliased;
+* edges are anti-aliased (MSAA);
 * the room's facing light is evaluated per vertex instead of per triangle;
 * soft room texels are not sorted back to front (the software pass sorts).
 

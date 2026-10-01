@@ -96,7 +96,21 @@ struct GpuScreenQuad final {
     bool additive{};
 };
 
+// Picture quality of the GPU pass (Settings -> Graphics). The software
+// rasteriser has none of these.
+struct GpuViewOptions final {
+    int msaa_samples{4};  // 0 (off), 2, 4, 8, 16; capped by the chip and target memory
+    bool mipmaps{true};   // mipmapped sampling (smooth: trilinear, pixel: nearest mip)
+    int anisotropy{8};    // 1 (off) .. 16; smooth textures only, capped by the chip
+};
+
+struct GpuCapabilities final {
+    int max_samples{};
+    float max_anisotropy{};  // 0: no anisotropic filtering
+};
+
 struct GpuViewFrame final {
+    GpuViewOptions options{};
     int width{};
     int height{};
     std::array<std::uint8_t, 3> background{};
@@ -143,6 +157,8 @@ public:
     [[nodiscard]] virtual bool draw(const GpuViewFrame& frame, RgbaImage& image) = 0;
     // "OpenGL ES 3.2 / Adreno (TM) ...", empty when unavailable.
     [[nodiscard]] virtual std::string describe() = 0;
+    // Limits of the chip (zeros when unavailable).
+    [[nodiscard]] virtual GpuCapabilities capabilities() { return {}; }
 };
 
 // The process-wide backend (nullptr: software only) and the user switch.
@@ -150,6 +166,8 @@ void set_gpu_view_backend(GpuViewBackend* backend) noexcept;
 [[nodiscard]] GpuViewBackend* gpu_view_backend() noexcept;
 void set_gpu_view_enabled(bool enabled) noexcept;
 [[nodiscard]] bool gpu_view_enabled() noexcept;
+void set_gpu_view_options(const GpuViewOptions& options) noexcept;
+[[nodiscard]] GpuViewOptions gpu_view_options() noexcept;
 
 struct GpuViewStats final {
     std::uint64_t gpu_frames{};

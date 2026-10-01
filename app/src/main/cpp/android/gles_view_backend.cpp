@@ -228,6 +228,12 @@ public:
         return description_;
     }
 
+    dmcresource::GpuCapabilities capabilities() override {
+        const std::lock_guard lock{mutex_};
+        if (!initialize()) return {};
+        return {static_cast<int>(max_samples_), max_anisotropy_};
+    }
+
 private:
     struct Texture final {
         GLuint id{};
@@ -343,14 +349,13 @@ private:
                               reinterpret_cast<const void*>(offsetof(GpuScreenVertex, rgba)));
         glBindVertexArray(0);
 
-        // Pixel (original) look and the smooth one: trilinear + anisotropic.
+        // Pixel (original) look and the smooth one; filters follow the
+        // Graphics settings (apply_sampler_options).
         glGenSamplers(1, &nearest_);
-        glSamplerParameteri(nearest_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glSamplerParameteri(nearest_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glSamplerParameteri(nearest_, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glSamplerParameteri(nearest_, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glGenSamplers(1, &smooth_);
-        glSamplerParameteri(smooth_, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glSamplerParameteri(smooth_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glSamplerParameteri(smooth_, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glSamplerParameteri(smooth_, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -358,7 +363,7 @@ private:
         if (extensions.find("GL_EXT_texture_filter_anisotropic") != std::string::npos) {
             GLfloat most = 1.0F;
             glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &most);
-            glSamplerParameterf(smooth_, GL_TEXTURE_MAX_ANISOTROPY_EXT, std::min(8.0F, most));
+            max_anisotropy_ = most;
         }
         glGetIntegerv(GL_MAX_SAMPLES, &max_samples_);
         glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_target_);
@@ -385,19 +390,43 @@ private:
         glBindVertexArray(0);
     }
 
-    // Colour + depth/stencil target, multisampled when it fits; a plain
+    // Mipmaps and anisotropy from the Graphics settings, set when they change.
+    void apply_sampler_options(const dmcresource::GpuViewOptions& options) {
+        const int anisotropy = max_anisotropy_ >= 1.0F ? std::clamp(options.anisotropy, 1, 16) : 1;
+        if (sampler_mipmaps_ == static_cast<int>(options.mipmaps) && sampler_anisotropy_ == anisotropy) return;
+        glSamplerParameteri(nearest_, GL_TEXTURE_MIN_FILTER, options.mipmaps ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
+        glSamplerParameteri(smooth_, GL_TEXTURE_MIN_FILTER, options.mipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        if (max_anisotropy_ >= 1.0F) {
+            glSamplerParameterf(smooth_, GL_TEXTURE_MAX_ANISOTROPY_EXT,
+                                std::min(static_cast<float>(anisotropy), max_anisotropy_));
+        }
+        sampler_mipmaps_ = static_cast<int>(options.mipmaps);
+        sampler_anisotropy_ = anisotropy;
+    }
+
+    // Colour + depth/stencil target, multisampled as the settings ask when
+    // the chip and the memory allow it (about 256 MiB of samples); a plain
     // target the samples resolve into and the pixels are read from.
-    bool ensure_target(int width, int height) {
+    bool ensure_target(int width, int height, int requested_samples) {
         if (width > max_target_ || height > max_target_) return false;
         const auto pixels = static_cast<long long>(width) * height;
-        int samples = pixels <= 2'600'000LL ? 4 : (pixels <= 9'000'000LL ? 2 : 0);
-        samples = std::min(samples, static_cast<int>(max_samples_));
-        if (width == target_width_ && height == target_height_ && samples == target_samples_ && fbo_ != 0U) {
+        const long long memory_cap = (256LL << 20) / (pixels * 8LL);
+        int samples = 0;
+        for (int s = 2; s <= 16; s *= 2) {
+            if (s <= requested_samples && s <= max_samples_ && s <= memory_cap) samples = s;
+        }
+        // Compared with what was asked last time, so a target that had to
+        // fall back to fewer samples is not rebuilt every frame.
+        if (width == target_width_ && height == target_height_ && samples == target_request_ && fbo_ != 0U) {
             return true;
         }
         destroy_target();
-        for (;; samples = samples > 1 ? samples / 2 : 0) {
-            if (build_target(width, height, samples)) return true;
+        const int request = samples;
+        for (;; samples = samples > 2 ? samples / 2 : 0) {
+            if (build_target(width, height, samples)) {
+                target_request_ = request;
+                return true;
+            }
             destroy_target();
             if (samples == 0) return false;
         }
@@ -444,6 +473,7 @@ private:
         fbo_ = resolve_fbo_ = color_ = depth_ = resolve_color_ = 0U;
         target_width_ = target_height_ = 0;
         target_samples_ = -1;
+        target_request_ = -1;
         glGetError();
     }
 
@@ -550,7 +580,8 @@ private:
     bool draw_current(const GpuViewFrame& frame, RgbaImage& image) {
         ++frame_number_;
         glGetError();
-        if (!ensure_target(frame.width, frame.height)) return false;
+        if (!ensure_target(frame.width, frame.height, frame.options.msaa_samples)) return false;
+        apply_sampler_options(frame.options);
         glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
         glViewport(0, 0, frame.width, frame.height);
         glDisable(GL_SCISSOR_TEST);
@@ -734,9 +765,11 @@ private:
     GLuint model_vao_{}, room_vao_{}, aux_vao_{}, screen_vao_{};
     GLuint nearest_{}, smooth_{};
     GLint max_samples_{0}, max_target_{4096}, max_texture_{4096};
+    float max_anisotropy_{0.0F};
+    int sampler_mipmaps_{-1}, sampler_anisotropy_{-1};
 
     GLuint fbo_{}, color_{}, depth_{}, resolve_fbo_{}, resolve_color_{};
-    int target_width_{}, target_height_{}, target_samples_{-1};
+    int target_width_{}, target_height_{}, target_samples_{-1}, target_request_{-1};
 
     bool room_cached_{false};
     dmcresource::GpuRoomKey room_key_{};

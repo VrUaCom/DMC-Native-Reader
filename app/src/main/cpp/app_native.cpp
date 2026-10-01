@@ -1238,6 +1238,31 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, j
     dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
 }
 
+// Graphics settings of the GPU pass: MSAA samples (0 = off), mipmaps,
+// anisotropic filtering (1 = off).
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuOptions(JNIEnv*, jclass, jint msaa, jboolean mipmaps,
+                                                            jint anisotropy) {
+    dmcresource::set_gpu_view_options({static_cast<int>(msaa), mipmaps == JNI_TRUE, static_cast<int>(anisotropy)});
+}
+
+// The chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_gpuCapabilities(JNIEnv* env, jclass) {
+    jint values[2] = {0, 0};
+    try {
+        (void)g_gles_backend_installed;
+        if (auto* backend = dmcresource::gpu_view_backend()) {
+            const auto caps = backend->capabilities();
+            values[0] = caps.max_samples;
+            values[1] = static_cast<jint>(caps.max_anisotropy);
+        }
+    } catch (...) {}
+    jintArray out = env->NewIntArray(2);
+    if (out != nullptr) env->SetIntArrayRegion(out, 0, 2, values);
+    return out;
+}
+
 // "GPU: OpenGL ES 3.2 / Adreno (TM) ...", "CPU (software)", ... plus the
 // frame counts so far.
 extern "C" JNIEXPORT jstring JNICALL

@@ -1543,6 +1543,9 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
 
 std::atomic<GpuViewBackend*> g_gpu_backend{nullptr};
 std::atomic<bool> g_gpu_enabled{true};
+std::atomic<int> g_gpu_msaa{GpuViewOptions{}.msaa_samples};
+std::atomic<bool> g_gpu_mipmaps{GpuViewOptions{}.mipmaps};
+std::atomic<int> g_gpu_anisotropy{GpuViewOptions{}.anisotropy};
 std::atomic<std::uint64_t> g_gpu_frames{0U};
 std::atomic<std::uint64_t> g_cpu_frames{0U};
 std::atomic<std::uint64_t> g_gpu_failures{0U};
@@ -1832,6 +1835,7 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
                              const std::vector<ImagePreview>* textures) {
     static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
     GpuViewFrame out;
+    out.options = gpu_view_options();
     out.width = width;
     out.height = height;
     const auto& bg = kBackgrounds[view.background & 3U];
@@ -1919,6 +1923,16 @@ void set_gpu_view_backend(GpuViewBackend* backend) noexcept { g_gpu_backend.stor
 GpuViewBackend* gpu_view_backend() noexcept { return g_gpu_backend.load(); }
 void set_gpu_view_enabled(bool enabled) noexcept { g_gpu_enabled.store(enabled); }
 bool gpu_view_enabled() noexcept { return g_gpu_enabled.load(); }
+
+void set_gpu_view_options(const GpuViewOptions& options) noexcept {
+    g_gpu_msaa.store(std::clamp(options.msaa_samples, 0, 16));
+    g_gpu_mipmaps.store(options.mipmaps);
+    g_gpu_anisotropy.store(std::clamp(options.anisotropy, 1, 16));
+}
+
+GpuViewOptions gpu_view_options() noexcept {
+    return {g_gpu_msaa.load(), g_gpu_mipmaps.load(), g_gpu_anisotropy.load()};
+}
 
 GpuViewStats gpu_view_stats() noexcept {
     return {g_gpu_frames.load(), g_cpu_frames.load(), g_gpu_failures.load()};
