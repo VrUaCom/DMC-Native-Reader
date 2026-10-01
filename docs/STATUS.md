@@ -217,6 +217,12 @@ APK verifier.
     every emulated spawn event of the 74 real records and of three synthetic
     scenarios (`generator_test`) (`docs/research/dmc3-generator-exe-v76.md`).
     Fixed seed; the G -> G path is not emulator-checked.
+  - **Effect trigger recon (v77):** the enemy event channel (handler
+    `0x1401C3130`, codes -> effects from an emulator run), the AI command
+    tables of em000..em007, the sand death schedule, Nevan's spawn helpers,
+    the player / weapon spawn sites and the stage keywords `beff`, `SET LIGHT`
+    and `DOOR` are mapped in `docs/research/dmc3-effect-triggers-recon-v77.md`.
+    Nothing new is drawn yet.
   - **Missing buildings in the render (the "LOD" report):** the room pass
     dropped triangles whose vertex normals pointed away from the camera, and
     stage normals are not reliable (whole far buildings faced "away"). There

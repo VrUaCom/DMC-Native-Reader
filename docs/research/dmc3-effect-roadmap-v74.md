@@ -20,18 +20,20 @@
   is missing its particle part.
 - ~~**G records**~~ (generators, 96 bytes): ported in v76, see
   `dmc3-generator-exe-v76.md`.
-- **Enemy triggers.** Spawn sites of the effect API (`0x1402E7A90 / AB0 /
-  CA0 / A80`) counted in `dmc3.exe` by class, code laid out per class
-  (`spawnmap.py`, scratch tool): `CEm000` 998 sites in 567 functions, 70 of
-  them in the single state function `0x1401C34C8`. The triggers are class-specific
-  state logic, as for CEm034; none is traced besides CEm034.
-- **Weapons and Dante.** `plwp_sword*.pac` carry an FXBANK, `pl000.pac` none;
-  the player classes that spawn from it are not traced.
-- **Stage:** `beff` (break effects), `# SET LIGHT`, doors, hit attributes.
+- **Enemy triggers.** Mapped in `dmc3-effect-triggers-recon-v77.md`. (The
+  earlier count "CEm000: 998 sites, 70 in `0x1401C34C8`" was wrong: the class
+  spans started at a shared base function; `0x1401C34C8` is part of the
+  generic enemy event handler `0x1401C3130`.) em000..em008 send event codes
+  from their AI commands and death code; Nevan spawns from a 39-state update.
+- **Weapons and Dante.** Constant spawns in CPlDante, the player projectiles
+  and CPlWp2Sword; the other plwp ids likely come from `CEfcPub` id
+  arithmetic (recon v77).
+- **Stage:** `beff` / `bmodel`, `# SET LIGHT` and `# DOOR` decoded (recon v77), not used yet.
 
 ## Suggested order
 
 1. ~~P records~~ (done for every corpus record, v75).
 2. ~~G records~~ (done, v76).
-3. One enemy class end to end (CEm000 state function `0x1401C34C8`).
-4. Player weapon effects.
+3. em000 family attack and death effects (recon v77, sections 3-4).
+4. Stage `beff` / `bmodel` toggle and the `SET LIGHT` light.
+5. Nevan states; CEfcPub and the weapon trails.
