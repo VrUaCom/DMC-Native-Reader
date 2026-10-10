@@ -1,4 +1,5 @@
 #include "dmcresource/dmc_resource.h"
+#include "dmcresource/texture_reencode.h"
 
 #include <algorithm>
 #include <cctype>
@@ -9,6 +10,7 @@
 
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/effect_bank.h"
+#include "dmcresource/font.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -75,6 +77,10 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Evt, true, "EventTbl", "event-script", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.eventtbl");
     }
+    if (magic4(bytes, size, 'H', 'I', 'T', 'S')) {
+        return result(Format::Hits, true, "HITS", "environment-collision", "inspection",
+                      "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.hits");
+    }
 
     if (magic4(bytes, size, 'P', 'A', 'C', '\0')) {
         return result(Format::Pac, true, "PAC", "archive", "child-resources",
@@ -116,6 +122,13 @@ ProbeResult probe(std::string_view filename,
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mot");
     }
 
+    // FON bitmap fonts: no tag; the layout closing exactly is the identity
+    // (pages 1..P, glyph numbers 1..G, then whole glyphs of one size).
+    if (bytes != nullptr && font::looks_like_font(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Fon, true, "FON", "font", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.fon");
+    }
+
     // PTX and descriptor-wrapped textures have no standalone four-byte identity
     // gate. Extensions are routing candidates only; the texture module validates
     // bytes before accepting them. DMC3 HD also keeps legacy .tm2 logical names
@@ -147,6 +160,13 @@ ProbeResult probe(std::string_view filename,
     if (extension == "ptx") {
         return result(Format::Ptx, false, "PTX", "texture", "child-resources",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
+    }
+    // One gfxTexture + DDS without a bundle header (.tm2 under another name).
+    if (bytes != nullptr && size != 0U &&
+        texture_reencode::is_wrapped_texture(
+            std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size})) {
+        return result(Format::Dds, true, "DDS", "texture", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "image/vnd-ms.dds");
     }
     // Collision shape tables (ICollisionHandle, 0x14005C260): 80-byte records.
     if (bytes != nullptr &&
@@ -194,6 +214,7 @@ const char* format_name(Format format) noexcept {
     case Format::Dds: return "DDS";
     case Format::Ptx: return "PTX";
     case Format::Evt: return "EventTbl";
+    case Format::Hits: return "HITS";
     case Format::Pac: return "PAC";
     case Format::Mot: return "MOT";
     case Format::Pnst: return "PNST";
@@ -204,6 +225,7 @@ const char* format_name(Format format) noexcept {
     case Format::CollisionShapes: return "COLSHAPE";
     case Format::AttackIndex: return "COLINDEX";
     case Format::EffectBank: return "FXBANK";
+    case Format::Fon: return "FON";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

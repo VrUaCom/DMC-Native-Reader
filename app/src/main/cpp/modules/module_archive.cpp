@@ -21,6 +21,7 @@
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/texture_reencode.h"
 #include "dmcresource/resource_limits.h"
 
 namespace dmcresource {
@@ -52,6 +53,7 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         return {Format::Pnst, "PNST", "pnst"};
     }
     if (magic_at(bytes, size, 0U, "EVT\0")) return {Format::Evt, "EventTbl", "bin"};
+    if (magic_at(bytes, size, 0U, "HITS")) return {Format::Hits, "HITS", "hits"};
     if (magic_at(bytes, size, 4U, "MOT\0")) return {Format::Mot, "MOT", "mot"};
     if (magic_at(bytes, size, 0U, "SHW ")) {
         return {Format::Shw, "SHW", "shw", true};
@@ -66,6 +68,11 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             const auto parsed = ptx_compat::parse_texture_bundle(
                 std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
             if (parsed.ok()) return {Format::Ptx, "PTX", "ptx"};
+            // One gfxTexture + DDS without a bundle header (id5000.pac slot 23).
+            if (texture_reencode::is_wrapped_texture(
+                    std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size})) {
+                return {Format::Dds, "TEX", "tm2"};
+            }
         } catch (...) {
         }
         try {
@@ -148,7 +155,7 @@ PipelineResult run_pac_module(const NativeModule& module,
         entries.kind = InspectionKind::Collection;
 
         std::size_t populated = 0U;
-        std::size_t by_format[16]{};
+        std::size_t by_format[32]{};
         std::size_t shadows = 0U;
         for (const auto& entry : document.entries) {
             if (!entry.populated || entry.size == 0U || !entry.valid(document.container_size)) {
@@ -177,7 +184,8 @@ PipelineResult run_pac_module(const NativeModule& module,
                     break;
                 }
             }
-            ++by_format[static_cast<std::size_t>(kind.format) & 15U];
+            const auto format_index = static_cast<std::size_t>(kind.format);
+            if (format_index < std::size(by_format)) ++by_format[format_index];
             if (kind.shadow) ++shadows;
 
             ChildResource child;
@@ -188,6 +196,9 @@ PipelineResult run_pac_module(const NativeModule& module,
             child.source_span = SourceSpan{entry.offset, entry.size};
             child.probe = dmcresource::probe(child.suggested_filename, payload, payload_size);
             child.capabilities = capability(ResourceCapability::Inspection);
+            if (kind.format == Format::Hits) {
+                child.capabilities = child.capabilities | ResourceCapability::Collision;
+            }
             child.source_bytes.assign(payload, payload + payload_size);
             child.detail = std::string{kind.family} + " payload in " + family + " slot " +
                            std::to_string(entry.slot_index) + " (" + size_text(entry.size) + ")";
@@ -218,6 +229,7 @@ PipelineResult run_pac_module(const NativeModule& module,
                << " MOD=" << by_format[static_cast<std::size_t>(Format::Mod)]
                << " PTX=" << by_format[static_cast<std::size_t>(Format::Ptx)]
                << " MOT=" << by_format[static_cast<std::size_t>(Format::Mot)]
+               << " HITS=" << by_format[static_cast<std::size_t>(Format::Hits)]
                << " PAC=" << (by_format[static_cast<std::size_t>(Format::Pac)] +
                               by_format[static_cast<std::size_t>(Format::Pnst)])
                << " SHW=" << shadows;

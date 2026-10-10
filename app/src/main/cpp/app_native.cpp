@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <unordered_set>
@@ -10,6 +11,8 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -19,16 +22,21 @@
 #include <vector>
 
 #include "dmcresource/collision_debug.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/enemy_effects.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/view_gpu.h"
+#include "dmcresource/view_benchmark.h"
+#include "android/gles_view_backend.h"
 
 namespace {
 
@@ -102,6 +110,29 @@ std::unordered_set<Session*>& live_sessions() noexcept {
 }
 
 using SessionLock = std::lock_guard<std::recursive_mutex>;
+
+// Fly camera of the view (stages, collision views): set from the UI thread,
+// read by every frame, pick and benchmark so they all see the same camera.
+struct FlyCamera final {
+    bool on{};
+    dmcresource::Vec3 eye{};
+};
+std::mutex& fly_mutex() noexcept {
+    static std::mutex mutex;
+    return mutex;
+}
+FlyCamera& fly_camera() noexcept {
+    static FlyCamera camera;
+    return camera;
+}
+
+dmcresource::ViewControls view_controls(float pan_x, float pan_y, float room_yaw, jboolean follow, float dolly) {
+    dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
+    const std::lock_guard lock{fly_mutex()};
+    controls.fly = fly_camera().on;
+    controls.eye = fly_camera().eye;
+    return controls;
+}
 
 Session* from_handle(jlong handle) noexcept {
     auto* session = reinterpret_cast<Session*>(static_cast<std::uintptr_t>(handle));
@@ -528,12 +559,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderEx(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jobject target) {
+        jboolean follow, jfloat dolly, jobject target) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
     if (session == nullptr) return JNI_FALSE;
     try {
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         const auto image = dmcresource::render_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
@@ -550,7 +581,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat motion_frame, jobject buffer) {
+        jboolean follow, jfloat dolly, jfloat motion_frame, jobject buffer) {
     const SessionLock jni_lock{session_mutex()};
     Session* session = from_handle(handle);
     if (session == nullptr || buffer == nullptr) return 0;
@@ -560,7 +591,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
             !dmcresource::motion::apply_motion_frame(session, motion_frame)) {
             status = 2;
         }
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         const auto image = dmcresource::render_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
@@ -576,6 +607,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
     } catch (...) { return 0; }
 }
 
+// Camera distance (model units) at dolly 0, for the gesture readout; 0 when
+// nothing is framed. The limit is the session's largest dolly.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraMetrics(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    const jfloat values[2] = {dmcresource::session_camera_distance(session),
+                              dmcresource::session_dolly_limit(session)};
+    jfloatArray out = env->NewFloatArray(2);
+    if (out != nullptr) env->SetFloatArrayRegion(out, 0, 2, values);
+    return out;
+}
+
 // What is under image pixel (x, y): "model|<joint>", "room|<joint>",
 // "placed|<joint>" (place = true and an upward room surface was hit: the model now
 // stands there) or "none|<joint>"; <joint> is empty when no joint is near.
@@ -584,12 +628,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_pickView(
         JNIEnv* env, jclass, jlong handle, jint requested_width,
         jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat x, jfloat y, jboolean place) {
+        jboolean follow, jfloat dolly, jfloat x, jfloat y, jboolean place) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
     if (session == nullptr) return nullptr;
     try {
-        const dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE};
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         const auto pick = dmcresource::pick_session(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls, x, y);
@@ -771,9 +815,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const auto* session = from_handle(handle);
-    // SHW hulls, or the mesh fallback for any renderable model.
-    return session != nullptr && (session->renderable || !session->shadow_bindings.empty()) ? JNI_TRUE
-                                                                                              : JNI_FALSE;
+    // Only real shadow files (SHW hulls bound to the model, e.g. Dante's or
+    // Vergil's PAC): no button for anything else (a stage scene is the floor
+    // itself, a collision view has none).
+    return session != nullptr && session->stage == nullptr && !session->shadow_bindings.empty()
+               ? JNI_TRUE
+               : JNI_FALSE;
 }
 
 // Viewer room (stage_room.h): built from a file descriptor, kept natively and
@@ -794,6 +841,127 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
     } catch (...) { return nullptr; }
 }
 
+// The stage's effect bank (st*_effect.pac): the layout's effects play from it.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoomEffects(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return nullptr;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return nullptr;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto host = dmcresource::stage_room::make_effect_host(name, mapped.data(), mapped.size());
+        if (!host) return nullptr;
+        std::string detail = std::to_string(host->effect_banks.front().bank.records.size()) + " effect records, " +
+                             std::to_string(host->effect_banks.front().textures.size()) + " textures";
+        dmcresource::stage_room::set_effect_host(std::move(host));
+        return env->NewStringUTF(detail.c_str());
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoomEffects(JNIEnv*, jclass) {
+    dmcresource::stage_room::set_effect_host(nullptr);
+}
+
+// True when the room drawn with the session has scrolling textures (a stage's
+// clouds): the viewer then redraws on a timer.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomAnimated(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return JNI_FALSE;
+    const bool has_host = dmcresource::stage_room::effect_host() != nullptr;
+    if (session->stage != nullptr) {
+        const auto& stage = dmcresource::stage_room::shown(*session->stage);
+        return !stage.uv_scrolls.empty() || (has_host && !stage.effects.empty()) ? JNI_TRUE : JNI_FALSE;
+    }
+    const auto room = dmcresource::stage_room::shown(dmcresource::stage_room::current());
+    return room && (!room->uv_scrolls.empty() || (has_host && !room->effects.empty())) ? JNI_TRUE : JNI_FALSE;
+}
+
+// Break toggle (stage_room::set_broken): whether the stage scene or room drawn
+// with the session has breakable layout objects, and switching it.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomBreakable(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session != nullptr && session->stage != nullptr) {
+        return session->stage->broken != nullptr ? JNI_TRUE : JNI_FALSE;
+    }
+    const auto room = dmcresource::stage_room::current();
+    return room && room->broken ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setRoomBroken(JNIEnv*, jclass, jboolean broken) {
+    dmcresource::stage_room::set_broken(broken == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomBroken(JNIEnv*, jclass) {
+    return dmcresource::stage_room::broken() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Kinds (distinct flag values) of the HITS shown with the session: its own
+// file, its stage scene, or the room around it. One string per kind:
+// "flags|records|floors|walls|ceilings|rgb".
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_collisionKinds(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    std::vector<dmcresource::environment_collision::Kind> kinds;
+    try {
+        if (session != nullptr && session->hits != nullptr) {
+            kinds = dmcresource::environment_collision::kinds(*session->hits);
+        } else if (session != nullptr && session->stage != nullptr) {
+            kinds = session->stage->collision_kinds;
+        } else if (const auto room = dmcresource::stage_room::current()) {
+            kinds = room->collision_kinds;
+        }
+        jclass string_class = env->FindClass("java/lang/String");
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(kinds.size()), string_class, nullptr);
+        for (std::size_t i = 0; i < kinds.size(); ++i) {
+            const auto color = dmcresource::collision_kind_color(i);
+            char text[128];
+            std::snprintf(text, sizeof text, "%u|%zu|%zu|%zu|%zu|%u", kinds[i].flags, kinds[i].count,
+                          kinds[i].floors, kinds[i].walls, kinds[i].ceilings,
+                          (static_cast<unsigned>(color[0]) << 16U) | (static_cast<unsigned>(color[1]) << 8U) |
+                              static_cast<unsigned>(color[2]));
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), env->NewStringUTF(text));
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// A stage archive opened as its assembled scene (stage_room::open_stage);
+// 0 when it is not a stage.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return 0;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return 0;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto stage = dmcresource::stage_room::open_stage(name, mapped.data(), mapped.size());
+        if (!stage) return 0;
+        const SessionLock jni_lock{session_mutex()};
+        return to_handle(stage.release());
+    } catch (...) { return 0; }
+}
+
+// HITS sources of a stage scene session (its own collision view).
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageCollisionSourceCount(
+        JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    return session != nullptr && session->stage != nullptr
+               ? static_cast<jint>(session->stage->collision_sources.size())
+               : 0;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoom(JNIEnv*, jclass) {
     dmcresource::stage_room::set_current(nullptr);
@@ -809,6 +977,12 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_nextRoomSpot(JNIEnv*, jclass) {
     dmcresource::stage_room::set_spot(dmcresource::stage_room::spot() + 1U);
     return static_cast<jint>(dmcresource::stage_room::spot());
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomCollisionSourceCount(JNIEnv*, jclass) {
+    const auto room = dmcresource::stage_room::current();
+    return room ? static_cast<jint>(room->collision_sources.size()) : 0;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -853,6 +1027,35 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_selectCollisionAttack(
         if (!dmcresource::collision::select_collision_attack(session, attack)) return env->NewStringUTF("");
         return env->NewStringUTF(dmcresource::collision::describe_collision_selection(*session).c_str());
     } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_classEventNames(
+        JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto names = dmcresource::motion::class_event_names(from_handle(handle));
+        jclass string_class = env->FindClass("java/lang/String");
+        if (string_class == nullptr) return nullptr;
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t index = 0U; index < names.size(); ++index) {
+            jstring value = env->NewStringUTF(names[index]);
+            if (value == nullptr) return nullptr;
+            env->SetObjectArrayElement(out, static_cast<jsize>(index), value);
+            env->DeleteLocalRef(value);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_triggerClassEvent(
+        JNIEnv*, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    if (index < 0) return JNI_FALSE;
+    return dmcresource::motion::trigger_class_event(from_handle(handle), static_cast<std::size_t>(index))
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL
@@ -951,4 +1154,297 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_nonCanonicalNotes(
         }
         return env->NewStringUTF(joined.c_str());
     } catch (...) { return env->NewStringUTF(""); }
+}
+
+// ---- Texture format change (Spider texture re-encode action) ----
+
+namespace {
+
+std::string& last_reencode_detail() noexcept {
+    static std::string detail;
+    return detail;
+}
+
+jobjectArray to_string_array(JNIEnv* env, const std::vector<std::string>& values) {
+    jclass string_class = env->FindClass("java/lang/String");
+    if (string_class == nullptr) return nullptr;
+    jobjectArray out = env->NewObjectArray(static_cast<jsize>(values.size()), string_class, nullptr);
+    if (out == nullptr) return nullptr;
+    for (std::size_t i = 0U; i < values.size(); ++i) {
+        jstring s = env->NewStringUTF(values[i].c_str());
+        env->SetObjectArrayElement(out, static_cast<jsize>(i), s);
+        if (s != nullptr) env->DeleteLocalRef(s);
+    }
+    return out;
+}
+
+}  // namespace
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_textureFormatNames(JNIEnv* env, jclass) {
+    try {
+        std::vector<std::string> names;
+        for (const auto& c : dmcresource::spider::actions::texture_format_choices()) names.push_back(c.name);
+        return to_string_array(env, names);
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_textureFormatLabels(JNIEnv* env, jclass) {
+    try {
+        std::vector<std::string> labels;
+        for (const auto& c : dmcresource::spider::actions::texture_format_choices()) labels.push_back(c.label);
+        return to_string_array(env, labels);
+    } catch (...) { return nullptr; }
+}
+
+// Opens the re-encoded result as a new session (0 on failure; the reason,
+// naming the failed Spider step, is in reencodeTexturesDetail()). A session
+// opened from a PAC slot rebuilds its PAC natively (Black Widow
+// ReencodeRebuildsContainer); the shell passes nothing about containers.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_reencodeTextures(
+        JNIEnv* env, jclass, jlong handle, jstring format, jboolean force_dx10) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const Session* target = from_handle(handle);
+        std::string detail;
+        auto result = dmcresource::spider::actions::reencode_textures(
+            target, to_utf8(env, format), force_dx10 == JNI_TRUE, &detail);
+        last_reencode_detail() = detail;
+        return result ? to_handle(result.release()) : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_reencodeTexturesDetail(JNIEnv* env, jclass) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return env->NewStringUTF(last_reencode_detail().c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_sourceFileName(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    try {
+        return env->NewStringUTF(session != nullptr ? session->source_name.c_str() : "");
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+// Writes the session's file (an authored result) to a writable descriptor.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_writeSource(JNIEnv*, jclass, jlong handle, jint fd) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr || !session->authored || session->source_bytes == nullptr || fd < 0) return JNI_FALSE;
+    const auto& bytes = *session->source_bytes;
+    std::size_t written = 0U;
+    while (written < bytes.size()) {
+        const auto n = ::write(fd, bytes.data() + written, bytes.size() - written);
+        if (n <= 0) return JNI_FALSE;
+        written += static_cast<std::size_t>(n);
+    }
+    return ::ftruncate(fd, static_cast<off_t>(bytes.size())) == 0 || written == bytes.size() ? JNI_TRUE : JNI_FALSE;
+}
+
+// ---- Renderer: GPU (OpenGL ES 3 on the device's graphics chip) or CPU.
+
+namespace {
+// The backend is registered when the library loads; its EGL context is made
+// on the first frame drawn.
+const bool g_gles_backend_installed = (dmcviewer::install_gles_view_backend(), true);
+}  // namespace
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, jboolean enabled) {
+    dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
+}
+
+// Graphics settings of the GPU pass: MSAA samples (0 = off), mipmaps,
+// anisotropic filtering (1 = off).
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuOptions(JNIEnv*, jclass, jint msaa, jboolean mipmaps,
+                                                            jint anisotropy) {
+    dmcresource::set_gpu_view_options({static_cast<int>(msaa), mipmaps == JNI_TRUE, static_cast<int>(anisotropy)});
+}
+
+// The chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_gpuCapabilities(JNIEnv* env, jclass) {
+    jint values[2] = {0, 0};
+    try {
+        (void)g_gles_backend_installed;
+        if (auto* backend = dmcresource::gpu_view_backend()) {
+            const auto caps = backend->capabilities();
+            values[0] = caps.max_samples;
+            values[1] = static_cast<jint>(caps.max_anisotropy);
+        }
+    } catch (...) {}
+    jintArray out = env->NewIntArray(2);
+    if (out != nullptr) env->SetIntArrayRegion(out, 0, 2, values);
+    return out;
+}
+
+// "GPU: OpenGL ES 3.2 / Adreno (TM) ...", "CPU (software)", ... plus the
+// frame counts so far.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_rendererInfo(JNIEnv* env, jclass) {
+    try {
+        (void)g_gles_backend_installed;
+        const auto stats = dmcresource::gpu_view_stats();
+        const auto text = dmcresource::view_renderer_description() + "\nFrames: " +
+            std::to_string(stats.gpu_frames) + " GPU, " + std::to_string(stats.cpu_frames) + " CPU" +
+            (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "");
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+// ---- Frame buffers in native memory ------------------------------------------
+//
+// ByteBuffer.allocateDirect lives in the Java heap on Android (a non-movable
+// array), whose limit two 8K frames (2 x ~120 MB) exceed, so the viewer kept
+// falling back to 6K. These buffers come from the native heap instead; the
+// view frees each one exactly once when it is no longer in use.
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_allocateFrameBuffer(JNIEnv* env, jclass, jlong bytes) {
+    if (bytes <= 0) return nullptr;
+    void* memory = std::malloc(static_cast<std::size_t>(bytes));
+    if (memory == nullptr) return nullptr;
+    jobject buffer = env->NewDirectByteBuffer(memory, bytes);
+    if (buffer == nullptr) std::free(memory);
+    return buffer;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_freeFrameBuffer(JNIEnv* env, jclass, jobject buffer) {
+    if (buffer != nullptr) std::free(env->GetDirectBufferAddress(buffer));
+}
+
+// ---- Benchmark ------------------------------------------------------------------
+
+// The viewer's frame loop without the screen, as fast as it goes for
+// `seconds`: pose the motion (motion_start NaN: no motion), render with the
+// gesture controls, copy the pixels out like renderToBuffer. Returns the
+// report (format_view_benchmark) with the renderer and `settings` in it.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
+        JNIEnv* env, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly,
+        jfloat motion_start, jfloat seconds, jstring settings) {
+    dmcresource::ViewBenchmarkResult result;
+    int out_width = 0, out_height = 0;
+    try {
+        std::vector<std::uint8_t> pixels;
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
+        float end_frame = 0.0F, loop_start = 0.0F;
+        {
+            const SessionLock jni_lock{session_mutex()};
+            const Session* session = from_handle(handle);
+            if (session == nullptr) return env->NewStringUTF("Nothing to draw.");
+            if (std::isfinite(motion_start)) {
+                end_frame = dmcresource::motion::motion_end_frame(session);
+                loop_start = dmcresource::motion::motion_loop_start_frame(session);
+            }
+        }
+        dmcresource::ViewBenchmarkOptions options;
+        options.seconds = std::clamp(static_cast<double>(seconds), 1.0, 120.0);
+        result = dmcresource::run_view_benchmark(options, [&](int index) {
+            // The lock is taken per frame, as the render thread does, so the
+            // UI thread is never kept waiting for the whole run.
+            const SessionLock jni_lock{session_mutex()};
+            Session* session = from_handle(handle);
+            if (session == nullptr) return false;
+            if (std::isfinite(motion_start)) {
+                // One game frame (60 per second) per drawn frame, looping like the viewer.
+                float frame = motion_start + static_cast<float>(index);
+                if (end_frame > 0.0F && frame > end_frame) {
+                    const float span = end_frame - loop_start;
+                    frame = span > 0.0F ? loop_start + std::fmod(frame - end_frame, span) : end_frame;
+                }
+                (void)dmcresource::motion::apply_motion_frame(session, frame);
+            }
+            const auto image = dmcresource::render_session(
+                session, width, height, dmcresource::benchmark_yaw(yaw, index), pitch, zoom,
+                static_cast<std::uint32_t>(render_flags), controls);
+            if (image.pixels.empty()) return false;
+            out_width = image.width;
+            out_height = image.height;
+            pixels.resize(image.pixels.size());
+            std::memcpy(pixels.data(), image.pixels.data(), image.pixels.size());
+            return true;
+        });
+        // Leave the pose where the run started.
+        if (std::isfinite(motion_start)) {
+            const SessionLock jni_lock{session_mutex()};
+            if (Session* session = from_handle(handle)) (void)dmcresource::motion::apply_motion_frame(session, motion_start);
+        }
+    } catch (...) {
+        result.stopped = true;
+    }
+    try {
+        const auto text = dmcresource::format_view_benchmark(
+            result, dmcresource::view_renderer_description(), out_width, out_height, to_utf8(env, settings));
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF("Benchmark failed."); }
+}
+
+// ---- Fly camera ---------------------------------------------------------------
+
+// Where the camera of that view stands (orbit or fly): {x, y, z}, or null.
+// The fly camera starts here, so the picture does not jump when it begins.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraEye(
+        JNIEnv* env, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly) {
+    try {
+        const SessionLock jni_lock{session_mutex()};
+        const Session* session = from_handle(handle);
+        const auto eye = dmcresource::session_camera_eye(session, width, height, yaw, pitch, zoom,
+            static_cast<std::uint32_t>(render_flags), view_controls(pan_x, pan_y, room_yaw, follow, dolly));
+        if (!eye) return nullptr;
+        const jfloat values[3] = {eye->x, eye->y, eye->z};
+        jfloatArray out = env->NewFloatArray(3);
+        if (out != nullptr) env->SetFloatArrayRegion(out, 0, 3, values);
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// Turns the fly camera on at `eye` (or off: the orbit camera again).
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setFlyCamera(JNIEnv*, jclass, jboolean on, jfloat x, jfloat y,
+                                                           jfloat z) {
+    const std::lock_guard lock{fly_mutex()};
+    fly_camera().on = on == JNI_TRUE;
+    fly_camera().eye = {x, y, z};
+}
+
+// Moves the fly camera: `forward` along the view (pitch included), `strafe`
+// to screen right, `rise` straight up, in model units. Returns the new eye.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_flyMove(JNIEnv* env, jclass, jfloat yaw, jfloat pitch,
+                                                      jfloat forward, jfloat strafe, jfloat rise) {
+    dmcresource::Vec3 eye;
+    {
+        const std::lock_guard lock{fly_mutex()};
+        auto& camera = fly_camera();
+        camera.eye = dmcresource::fly_move(camera.eye, yaw, pitch, forward, strafe, rise);
+        eye = camera.eye;
+    }
+    const jfloat values[3] = {eye.x, eye.y, eye.z};
+    jfloatArray out = env->NewFloatArray(3);
+    if (out != nullptr) env->SetFloatArrayRegion(out, 0, 3, values);
+    return out;
+}
+
+// A collision view: a .hits file, or a stage / model whose HITS are loaded.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_hasEnvironmentCollision(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    return session != nullptr && session->hits != nullptr ? JNI_TRUE : JNI_FALSE;
 }

@@ -2,9 +2,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+
+#include "dmcresource/motion/effect_runtime.h"
 
 namespace dmcresource {
 struct Session;
@@ -17,6 +21,8 @@ struct MotionLoadReport final {
     bool ok{false};
     std::size_t animated_parts{};
     std::size_t static_parts{};
+    std::size_t synchronized_tracks{};
+    std::size_t deferred_tracks{};
     float end_frame{};
     std::string detail;
 };
@@ -55,6 +61,28 @@ void clear_motion(Session* session) noexcept;
 // same binding load_motion uses). Host-joint parts (coats) do not count.
 [[nodiscard]] bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept;
 
+// Retail 0x1402e7a90 mode=3 prepares the V423 parent by normalizing the
+// first three rows of the selected CEm034 slot20 world matrix. The actor's
+// render basis remains a separate transform.
+[[nodiscard]] Matrix4 shl02_effect_parent_matrix(
+    const Matrix4& slot20_node0) noexcept;
+
+// CEm034Shl02 shell world `age` ticks after its spawn from the slot20 world:
+// direction = slot20 X axis (0x14016F610 drops the translation), origin =
+// slot20 translation + (18.6,0,12), align-Z basis 0x14032FD90, 30 units per
+// tick for at most the 120-tick lifetime. Target steering (from tick 10) is
+// gameplay context the standalone Reader does not have: the direction is held.
+[[nodiscard]] Matrix4 shl02_shell_world(
+    const Matrix4& slot20_node0, float age) noexcept;
+
+// CEm034Shl04 grenade position `age` ticks after its spawn (0x1401756E0):
+// pos += vel, vel.y = min(vel.y - 1, 30) per tick, the Reader's room floor
+// (y = 0) standing in for the stage raycast 0x1402C64F0 with its mirror /
+// 0.5 restitution response; at rest below |v| = 10; frozen once the fuse
+// runs out.
+[[nodiscard]] Vec3 shl04_grenade_position(Vec3 origin, Vec3 velocity,
+                                          float fuse, float age) noexcept;
+
 // MotionScript playback is intentionally separate from raw MOT playback.
 // A PAC may retain multiple independent script controllers; each script button
 // can address only MOTs referenced by that script's resource table.
@@ -67,5 +95,59 @@ void clear_motion(Session* session) noexcept;
 [[nodiscard]] MotionLoadReport load_scripted_motion(Session* session,
                                                     std::size_t script_index,
                                                     std::size_t motion_index) noexcept;
+
+using ScriptControllerId = std::size_t;
+
+// Generic Script Play frame boundary. `motion_index` is optional: when left at
+// max, the bound script action or canonical script link/group map resolves the
+// MOT. Bank/action can be supplied when the caller already has script identity.
+struct ScriptActionId final {
+    std::size_t bank{std::numeric_limits<std::size_t>::max()};
+    std::size_t action{std::numeric_limits<std::size_t>::max()};
+    std::size_t motion_index{std::numeric_limits<std::size_t>::max()};
+};
+
+// One controller/action in a synchronized Script Play set. Each track keeps
+// its own controller/resource resolution while all tracks are evaluated at
+// the caller's shared script frame.
+struct ScriptTrackAction final {
+    ScriptControllerId controller{};
+    ScriptActionId action{};
+};
+
+[[nodiscard]] RuntimeStepResult run_script_frame(
+    Session* session,
+    ScriptControllerId controller,
+    ScriptActionId action,
+    float frame) noexcept;
+
+// Generic multi-controller Script Play boundary. Unknown/unresolved tracks
+// are deferred; confirmed tracks remain playable and share one frame.
+[[nodiscard]] RuntimeStepResult run_synchronized_script_frame(
+    Session* session,
+    std::span<const ScriptTrackAction> tracks,
+    float frame) noexcept;
+
+// Script action of the current non-Lady Script Play (script archive slot,
+// bank, action); empty for raw MOT playback.
+struct CurrentScriptAction final {
+    std::uint32_t script_slot{};
+    std::size_t bank{};
+    std::size_t action{};
+};
+[[nodiscard]] std::optional<CurrentScriptAction> current_script_action(
+    const Session* session) noexcept;
+
+[[nodiscard]] std::span<const RuntimeEffectInstance> active_effect_instances(
+    const Session* session) noexcept;
+[[nodiscard]] std::span<const RuntimeEffectInstance>
+presentation_effect_instances(const Session* session) noexcept;
+[[nodiscard]] std::span<const RuntimeEffectEvent> effect_events(
+    const Session* session) noexcept;
+
+// Presentation toggle only. It never changes script events, lifetime or
+// active instance state.
+void set_effects_visible(Session* session, bool visible) noexcept;
+[[nodiscard]] bool effects_visible(const Session* session) noexcept;
 
 }  // namespace dmcresource::motion

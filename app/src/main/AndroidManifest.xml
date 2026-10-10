@@ -3,6 +3,8 @@
     <application
         android:allowBackup="false"
         android:extractNativeLibs="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="DMC Native Reader"
         android:theme="@style/AppTheme">
 

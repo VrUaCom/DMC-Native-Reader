@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/texture_reencode.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/skeleton_rig.h"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
@@ -6,13 +7,19 @@
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/format_views.h"
 #include "dmcresource/neutral_texture.h"
 #include "dmcresource/raster_card.h"
+#include "dmcresource/matrix_ops.h"
+#include "dmcresource/particle_sprt.h"
+#include "dmcresource/generator.h"
 
 #include <span>
+#include <chrono>
+#include <array>
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
@@ -439,6 +446,9 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .hierarchy_node_count = session->scene.nodes.size(),
         .part_texture_attachment_available = has_attachable_composite_part(session),
         .png_export_available = session_png_export_available(session),
+        .texture_reencode_available = session->source_bytes != nullptr,
+        .authored_source_available = session->authored && session->source_bytes != nullptr,
+        .reencode_rebuilds_container = session->container_source != nullptr,
     });
 }
 
@@ -528,6 +538,25 @@ std::unique_ptr<Session> open_binary_session(std::string_view name,
 
 }  // namespace
 
+namespace {
+
+// Keeps the source bytes of resources whose textures can be re-encoded
+// (Spider texture re-encode action); everything else keeps no copy.
+void retain_texture_source(Session* session, std::string_view name,
+                           const std::uint8_t* bytes, std::size_t size) noexcept {
+    if (session == nullptr || bytes == nullptr || size == 0U) return;
+    try {
+        const auto span = std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size};
+        if (!texture_reencode::holds_textures(span)) return;
+        session->source_bytes = std::make_shared<const std::vector<std::uint8_t>>(bytes, bytes + size);
+        session->source_name = std::string{name};
+    } catch (...) {
+        session->source_bytes.reset();
+    }
+}
+
+}  // namespace
+
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
     auto pipeline = dmcresource::run_decode_pipeline(name, bytes, size);
@@ -551,8 +580,14 @@ std::unique_ptr<Session> open_session(std::string_view name,
             ": texture descriptors were written by a community tool; the canonical "
             "validator rejects them, the viewer reads header, sector spans and DDS only");
     }
+    if (session && session->probe.format == Format::Hits && bytes != nullptr) {
+        if (auto parsed = environment_collision::parse(name, 0U, std::span<const std::uint8_t>{bytes, size})) {
+            session->hits = std::make_shared<const environment_collision::Source>(std::move(*parsed));
+        }
+    }
     retain_lazy_child_sources(session.get(), bytes, size);
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
+    retain_texture_source(session.get(), name, bytes, size);
     return session;
 }
 
@@ -721,11 +756,656 @@ struct PreparedView final {
     Mesh presentation_mesh;
     std::vector<std::uint32_t> presentation_texture_slots;
     std::vector<ImagePreview> presentation_textures;
+    std::vector<ViewState::EffectSprite> effect_sprites;
     bool dynamic_presentation{};
     std::vector<Vec3> floor_shadow;
     std::vector<Vec3> collision_lines;
+    std::vector<Vec3> room_collision_lines;
+    std::vector<std::uint8_t> room_collision_kinds;
+    HierarchyOverlay stage_hierarchy;
+    std::shared_ptr<const Session> effect_host;  // keeps the stage bank's textures alive
     std::shared_ptr<const stage_room::Room> room;
 };
+
+[[nodiscard]] const Session::EffectBank* find_effect_bank(
+    const Session& session, std::uint32_t slot) noexcept {
+    const auto it = std::find_if(
+        session.effect_banks.begin(), session.effect_banks.end(),
+        [slot](const Session::EffectBank& bank) {
+            return bank.resource_slot == slot;
+        });
+    return it == session.effect_banks.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] const effect_bank::Record* find_effect_record(
+    const Session& session, char kind, std::uint16_t id,
+    std::uint32_t slot) noexcept {
+    const auto* bank = find_effect_bank(session, slot);
+    if (bank == nullptr) return nullptr;
+    const auto it = std::find_if(
+        bank->bank.records.begin(), bank->bank.records.end(),
+        [kind, id](const effect_bank::Record& record) {
+            return record.kind == kind && record.id == id;
+        });
+    return it == bank->bank.records.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] const ImagePreview* find_effect_texture(
+    const Session& session, std::uint32_t slot, std::uint16_t id) noexcept {
+    const auto* bank = find_effect_bank(session, slot);
+    if (bank == nullptr) return nullptr;
+    const auto it = std::find_if(
+        bank->textures.begin(), bank->textures.end(),
+        [id](const Session::EffectTexture& texture) { return texture.id == id; });
+    return it == bank->textures.end() ? nullptr : &it->image;
+}
+
+[[nodiscard]] char effect_kind_for_dispatch(
+    std::uint8_t dispatch_kind) noexcept;
+
+[[nodiscard]] bool effect_child_shape_is_valid(
+    const motion::EffectChildRef& child) noexcept;
+
+[[nodiscard]] Matrix4 effect_child_matrix(
+    const motion::EffectChildRef& child) noexcept {
+    constexpr float kDegreesToRadians = 0.017453292519943295769F;
+    const std::array<float, 3> translation = child.translation;
+    const std::array<float, 3> rotation = {
+        child.rotation_degrees[0] * kDegreesToRadians,
+        child.rotation_degrees[1] * kDegreesToRadians,
+        child.rotation_degrees[2] * kDegreesToRadians};
+    Matrix4 out = motion::attach_local_matrix_zyx(translation, rotation);
+    // The V registrar stores a scale triplet. DMC3's row-vector transform
+    // domain applies those factors to the three local basis rows.
+    for (std::size_t component = 0U; component < 3U; ++component) {
+        const float scale = child.scale[component];
+        if (!std::isfinite(scale)) return Matrix4{};
+        for (std::size_t column = 0U; column < 3U; ++column) {
+            out.values[component * 4U + column] *= scale;
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] bool compose_effect_world(
+    const Matrix4& parent, const motion::EffectChildRef& child,
+    Matrix4* out) noexcept {
+    if (out == nullptr || !effect_child_shape_is_valid(child)) return false;
+    const auto local = effect_child_matrix(child);
+    // Same local*parent order as the canonical MOD world transform builder.
+    return matrix_ops::multiply(local, parent, out);
+}
+
+[[nodiscard]] const effect_bank::Record* find_animation_record(
+    const Session& session, std::uint32_t slot, std::uint16_t id) noexcept {
+    return find_effect_record(session, 'A', id, slot);
+}
+
+[[nodiscard]] char effect_kind_for_dispatch(
+    std::uint8_t dispatch_kind) noexcept {
+    switch (dispatch_kind) {
+    case 0U: return 'P';
+    case 1U: return 'E';
+    case 2U: return 'G';
+    case 3U: return 'V';
+    default: return '\0';
+    }
+}
+
+[[nodiscard]] std::uint8_t dispatch_kind_for_effect_kind(
+    char effect_kind) noexcept {
+    switch (effect_kind) {
+    case 'P': return 0U;
+    case 'E': return 1U;
+    case 'G': return 2U;
+    case 'V': return 3U;
+    default: return 0xFFU;
+    }
+}
+
+[[nodiscard]] bool effect_child_shape_is_valid(
+    const motion::EffectChildRef& child) noexcept {
+    if (effect_kind_for_dispatch(child.dispatch_kind) != child.effect_kind) {
+        return false;
+    }
+    for (const float value : child.translation) {
+        if (!std::isfinite(value)) return false;
+    }
+    for (const float value : child.rotation_degrees) {
+        if (!std::isfinite(value)) return false;
+    }
+    for (const float value : child.scale) {
+        if (!std::isfinite(value)) return false;
+    }
+    return true;
+}
+
+// Camera forward of the view being prepared (same mirrored basis as the
+// renderer). Mode-2 axial billboards turn their width toward it.
+thread_local Vec3 g_effect_view_forward{0.0F, 0.0F, 1.0F};
+thread_local Vec3 g_effect_view_right{1.0F, 0.0F, 0.0F};
+thread_local Vec3 g_effect_view_up{0.0F, 1.0F, 0.0F};
+
+void set_effect_view_basis(float yaw, float pitch) noexcept {
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cp = std::cos(pitch);
+    const float sp = std::sin(pitch);
+    // The renderer's mirrored camera basis (view_renderer.cpp, effect quads).
+    g_effect_view_right = {-cy, 0.0F, -sy};
+    g_effect_view_up = {0.0F, cp, -sp};
+    // forward = right x up.
+    g_effect_view_forward = {sy * cp, -cy * sp, -cy * cp};
+}
+
+[[nodiscard]] Vec3 effect_row_transform(const Vec3& p, const Matrix4& m) noexcept {
+    return {
+        p.x * m.values[0] + p.y * m.values[4] + p.z * m.values[8] + m.values[12],
+        p.x * m.values[1] + p.y * m.values[5] + p.z * m.values[9] + m.values[13],
+        p.x * m.values[2] + p.y * m.values[6] + p.z * m.values[10] + m.values[14],
+    };
+}
+
+[[nodiscard]] bool append_effect_sprite(
+    const Session& session, const motion::EffectChildRef& child,
+    const Matrix4& world,
+    std::vector<ViewState::EffectSprite>* out) {
+    if (out == nullptr || child.effect_kind != 'E') return true;
+    const auto* record = find_effect_record(
+        session, 'E', child.effect_id, child.resource_slot);
+    if (record == nullptr) return false;
+    const auto descriptor = effect_bank::effect_descriptor(*record);
+    if (!descriptor.has_value()) return false;
+    // CEffect draw 0x1402E5C70 dispatches modes 0/1/2/5; modes 3 and 4 draw
+    // nothing. Modes 0 and 5 keep their undecoded resource contracts.
+    if (descriptor->mode != 1U && descriptor->mode != 2U) return true;
+
+    effect_bank::SpriteFrame frame = descriptor->rectangle;
+    std::uint16_t texture_id = descriptor->texture;
+    if (descriptor->animation_gate == 1U && descriptor->animation != 0xFFFFU) {
+        const auto* animation_record = find_animation_record(
+            session, child.resource_slot, descriptor->animation);
+        if (animation_record != nullptr) {
+            const auto animation = effect_bank::sprite_animation(*animation_record);
+            if (animation.has_value() && !animation->frames.empty()) {
+                texture_id = animation->texture;
+                // A's local animation clock is advanced by the E runtime,
+                // not by MotionScript/actor age. Until that EXE clock is
+                // bridged, retain the exact A/T dependency and show its
+                // canonical first atlas frame instead of guessing a frame
+                // rate or treating script frames as effect ticks.
+                frame = animation->frames.front();
+            }
+        }
+    }
+    if (frame.w == 0U || frame.h == 0U) return true;
+    const auto* texture = find_effect_texture(
+        session, child.resource_slot, texture_id);
+    if (texture == nullptr || !texture->available()) return false;
+    const float inv_w = 1.0F / static_cast<float>(texture->width);
+    const float inv_h = 1.0F / static_cast<float>(texture->height);
+    ViewState::EffectSprite sprite{
+        world,
+        texture,
+        static_cast<float>(frame.w),
+        static_cast<float>(frame.h),
+        static_cast<float>(frame.x) * inv_w,
+        static_cast<float>(frame.y) * inv_h,
+        static_cast<float>(frame.x + frame.w) * inv_w,
+        static_cast<float>(frame.y + frame.h) * inv_h};
+    if (!descriptor->geometry_known) {
+        out->push_back(sprite);
+        return true;
+    }
+    const auto& a = descriptor->size;
+    const auto& b = descriptor->pivot;
+    const auto& scale = descriptor->scale;
+    if (descriptor->mode == 1U) {
+        // 0x1402E5D00: camera-facing, extents x in [-Bx, Ax-Bx], y in
+        // [-By, Ay-By], scaled by |row i| of the effect world times the
+        // record scale (0x1402E5FC2 loop).
+        const auto row_length = [&world](std::size_t row) {
+            const float* r = &world.values[row * 4U];
+            return std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        };
+        const float sx = row_length(0U) * std::fabs(scale[0]);
+        const float sy = row_length(1U) * std::fabs(scale[1]);
+        if (!(sx > 0.0F) || !(sy > 0.0F) || !(a[0] > 0.0F) || !(a[1] > 0.0F)) {
+            return true;
+        }
+        sprite.extents = true;
+        sprite.left = -b[0] * sx;
+        sprite.right = (a[0] - b[0]) * sx;
+        sprite.bottom = -b[1] * sy;
+        sprite.top = (a[1] - b[1]) * sy;
+        if (scale[0] < 0.0F) std::swap(sprite.u0, sprite.u1);
+        if (scale[1] < 0.0F) std::swap(sprite.v0, sprite.v1);
+        out->push_back(sprite);
+        return true;
+    }
+    // 0x1402E69E0: quad -B, -B+U, -B+U+V, -B+V with U = (Ax,0,Az),
+    // V = (0,Ay,0), transformed by S (record scale), R(D) (0x1403304A0,
+    // Rz*Ry*Rx) and the effect world.
+    constexpr float kDegreesToRadians = 0.017453292519943295769F;
+    const Matrix4 rotation = motion::attach_local_matrix_zyx(
+        {0.0F, 0.0F, 0.0F},
+        {descriptor->rotation_degrees[0] * kDegreesToRadians,
+         descriptor->rotation_degrees[1] * kDegreesToRadians,
+         descriptor->rotation_degrees[2] * kDegreesToRadians});
+    Matrix4 local_to_world;
+    if (!matrix_ops::multiply(rotation, world, &local_to_world)) return true;
+    const auto place = [&](float x, float y, float z) {
+        return effect_row_transform(
+            {x * scale[0], y * scale[1], z * scale[2]}, local_to_world);
+    };
+    Vec3 c0 = place(-b[0], -b[1], -b[2]);
+    Vec3 c1 = place(a[0] - b[0], -b[1], a[2] - b[2]);
+    Vec3 c2 = place(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    Vec3 c3 = place(-b[0], a[1] - b[1], -b[2]);
+    if (descriptor->orientation != 0U) {
+        // Variants 1..3 rebuild the width axis from the camera (cross
+        // products at 0x1402E6CB8): keep the U edge, turn V to face the view.
+        const Vec3 axis{c1.x - c0.x, c1.y - c0.y, c1.z - c0.z};
+        const Vec3 width_edge{c3.x - c0.x, c3.y - c0.y, c3.z - c0.z};
+        const float width = std::sqrt(width_edge.x * width_edge.x +
+                                      width_edge.y * width_edge.y +
+                                      width_edge.z * width_edge.z);
+        const auto& f = g_effect_view_forward;
+        Vec3 side{axis.y * f.z - axis.z * f.y, axis.z * f.x - axis.x * f.z,
+                  axis.x * f.y - axis.y * f.x};
+        const float side_length = std::sqrt(side.x * side.x + side.y * side.y + side.z * side.z);
+        if (side_length > 1.0e-6F && width > 0.0F) {
+            const float k = width / side_length;
+            side = {side.x * k, side.y * k, side.z * k};
+            const Vec3 mid{0.5F * (c0.x + c3.x), 0.5F * (c0.y + c3.y), 0.5F * (c0.z + c3.z)};
+            c0 = {mid.x - 0.5F * side.x, mid.y - 0.5F * side.y, mid.z - 0.5F * side.z};
+            c3 = {mid.x + 0.5F * side.x, mid.y + 0.5F * side.y, mid.z + 0.5F * side.z};
+            c1 = {c0.x + axis.x, c0.y + axis.y, c0.z + axis.z};
+            c2 = {c3.x + axis.x, c3.y + axis.y, c3.z + axis.z};
+        }
+    }
+    sprite.oriented = true;
+    sprite.corners = {c0, c1, c2, c3};
+    out->push_back(sprite);
+    return true;
+}
+
+// P records of class 3 (CPtclSprt00): a 12-quad burst simulated from tick 0
+// to the entry's age (the EXE integrates 1.0 per 60 Hz update; the first
+// update runs on the frame the entry appears). The draw is a pure function of
+// age and the record, so the simulation is replayed per frame. Random draws
+// use a fixed per-record seed: the retail generator is not reproducible
+// across runs either. Classes other than 3 keep returning without drawing.
+[[nodiscard]] bool append_effect_particles(
+    const Session& session, const motion::EffectChildRef& child,
+    const Matrix4& world, float age,
+    std::vector<ViewState::EffectSprite>* out) {
+    if (out == nullptr || child.effect_kind != 'P') return true;
+    const auto* record = find_effect_record(
+        session, 'P', child.effect_id, child.resource_slot);
+    if (record == nullptr) return false;
+    const auto def = particle::parse(record->bytes);
+    if (!def.has_value()) return true;
+    particle::Animation timing;
+    const ImagePreview* texture = nullptr;
+    const effect_bank::SpriteAnimation* animation_ptr = nullptr;
+    std::optional<effect_bank::SpriteAnimation> animation;
+    if (def->cls == 3U) {
+        const auto* animation_record =
+            find_animation_record(session, child.resource_slot, def->animation);
+        if (animation_record == nullptr) return true;
+        animation = effect_bank::sprite_animation(*animation_record);
+        if (!animation.has_value() || animation->frames.empty()) return true;
+        animation_ptr = &*animation;
+        texture = find_effect_texture(session, child.resource_slot, animation->texture);
+        if (texture == nullptr || !texture->available()) return true;
+        timing.frame_time = animation->frame_time;
+        timing.last_frame = static_cast<std::uint8_t>(
+            std::min<std::size_t>(animation->frames.size() - 1U, 255U));
+        timing.loop = animation->loop;
+        timing.loop_frame = animation->loop_frame;
+        timing.frame_count = static_cast<std::uint32_t>(animation->frames.size());
+    }
+    const std::uint32_t seed =
+        (static_cast<std::uint32_t>(child.effect_id) + 1U) * 2654435761U ^
+        (child.resource_slot * 40503U);
+    particle::Simulation simulation(*def, timing, seed);
+    const int updates = static_cast<int>(std::min(std::floor(age), 600.0F)) + 1;
+    for (int i = 0; i < updates; ++i) {
+        if (!simulation.update(world)) return true;  // expired
+    }
+    particle::Camera camera;
+    camera.right = g_effect_view_right;
+    camera.up = g_effect_view_up;
+    camera.forward = g_effect_view_forward;
+    std::vector<particle::Quad> quads;
+    simulation.quads(world, camera, &quads);
+    float u0 = 0.0F, v0 = 0.0F, u1 = 1.0F, v1 = 1.0F;
+    if (animation_ptr != nullptr) {
+        const auto& frame = animation_ptr->frames[std::min<std::size_t>(
+            simulation.frame(), animation_ptr->frames.size() - 1U)];
+        if (frame.w == 0U || frame.h == 0U) return true;
+        const float inv_w = 1.0F / static_cast<float>(texture->width);
+        const float inv_h = 1.0F / static_cast<float>(texture->height);
+        // 0x140313EA0: u1 / v1 reach the last texel of the cell (size - 1).
+        u0 = static_cast<float>(frame.x) * inv_w;
+        v0 = static_cast<float>(frame.y) * inv_h;
+        u1 = static_cast<float>(frame.x + frame.w - 1U) * inv_w;
+        v1 = static_cast<float>(frame.y + frame.h - 1U) * inv_h;
+    }
+    for (const auto& quad : quads) {
+        ViewState::EffectSprite sprite{};
+        sprite.world = world;
+        sprite.texture = texture;
+        sprite.solid = texture == nullptr;
+        sprite.u0 = u0;
+        sprite.v0 = v0;
+        sprite.u1 = u1;
+        sprite.v1 = v1;
+        sprite.oriented = true;
+        sprite.corners = quad.corners;
+        sprite.per_vertex = true;
+        sprite.corner_tint = quad.rgba;
+        sprite.line = quad.line;
+        sprite.additive = quad.additive;
+        out->push_back(sprite);
+    }
+    return true;
+}
+
+bool collect_effect_children(
+    const Session& session, const motion::RuntimeEffectInstance& instance,
+    const motion::EffectChildRef& child, const Matrix4& parent_world,
+    float age, std::vector<ViewState::EffectSprite>* out, std::size_t depth);
+
+// G records (CGenerator): an invisible spawner replayed from tick 0 to the
+// entry's age; every spawn is a child effect (P, E, G or V) drawn at its own
+// age. The generator ticks once per 60 Hz update with the entry's current
+// world (earlier ticks reuse it: an approximation for moving owners). Random
+// draws use a fixed per-record seed (the retail generator is unseeded).
+[[nodiscard]] bool append_effect_generator(
+    const Session& session, const motion::RuntimeEffectInstance& instance,
+    const motion::EffectChildRef& child, const Matrix4& world, float age,
+    std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
+    const auto* record = find_effect_record(
+        session, 'G', child.effect_id, child.resource_slot);
+    if (record == nullptr) return false;
+    const auto def = generator::parse(record->bytes);
+    if (!def.has_value()) return true;
+    std::optional<generator::Clip> clip;
+    if (def->motion == 1U) {
+        const auto* clip_record = find_effect_record(
+            session, 'C', def->clip, child.resource_slot);
+        if (clip_record != nullptr) clip = generator::parse_clip(clip_record->bytes);
+    }
+    std::uint32_t state = (static_cast<std::uint32_t>(child.effect_id) + 1U) * 2654435761U ^
+                          (child.resource_slot * 40503U) ^ 0x9E3779B9U;
+    generator::Simulation simulation(
+        *def,
+        [&state]() {
+            state = state * 1664525U + 1013904223U;  // 0x140059390 stand-in
+            return state;
+        },
+        clip.has_value() ? &*clip : nullptr);
+    const int ticks = static_cast<int>(std::min(std::floor(age), 600.0F)) + 1;
+    std::vector<generator::Spawn> spawns;
+    for (int i = 0; i < ticks; ++i) {
+        if (!simulation.step(world, &spawns)) break;
+    }
+    // Many spawns of a fast generator are long dead: keep the newest ones.
+    constexpr std::size_t kMaxSpawns = 160U;
+    const std::size_t first = spawns.size() > kMaxSpawns ? spawns.size() - kMaxSpawns : 0U;
+    const auto ticks_run = static_cast<float>(simulation.tick());
+    for (std::size_t i = first; i < spawns.size(); ++i) {
+        const auto& spawn = spawns[i];
+        const char kind = effect_kind_for_dispatch(spawn.kind);
+        if (kind == '\0') continue;
+        // The creator runs inside tick `spawn.tick`; the child updates from the next one.
+        const float child_age = ticks_run - static_cast<float>(spawn.tick) - 1.0F;
+        if (child_age < 0.0F) continue;
+        motion::EffectChildRef spawned;
+        spawned.effect_kind = kind;
+        spawned.effect_id = spawn.id;
+        spawned.resource_slot = child.resource_slot;
+        spawned.dispatch_kind = spawn.kind;
+        spawned.scale = {1.0F, 1.0F, 1.0F};
+        spawned.evidence = child.evidence;
+        Matrix4 parent;
+        parent.values = spawn.matrix;
+        if (spawn.follow) {
+            Matrix4 composed;
+            Matrix4 live;
+            live.values = simulation.parent_world();
+            if (!matrix_ops::multiply(parent, live, &composed)) continue;
+            parent = composed;
+        }
+        if (find_effect_record(session, kind, spawn.id, child.resource_slot) == nullptr) continue;
+        (void)collect_effect_children(session, instance, spawned, parent, child_age, out, depth + 1U);
+    }
+    return true;
+}
+
+// V-local clock (0x140324A80): every update first adds dt (0x1403261B0,
+// 1.0 per 60 Hz tick at unit speed) to V+0xF0, then spawns each entry whose
+// signed i16 +0x04 threshold is below the accumulator. The spawn update is
+// state 0 (0x140324C50) and only zeroes the accumulator, so an entry with
+// threshold a appears at V age floor(a) + 1 (age 1 for a <= 0). Script frames
+// are the same 60 Hz ticks.
+[[nodiscard]] float effect_entry_spawn_age(std::int16_t activation) noexcept {
+    return static_cast<float>(activation < 0 ? 0 : activation) + 1.0F;
+}
+
+bool collect_effect_children(
+    const Session& session, const motion::RuntimeEffectInstance& instance,
+    const motion::EffectChildRef& child, const Matrix4& parent_world,
+    float age, std::vector<ViewState::EffectSprite>* out, std::size_t depth) {
+    if (out == nullptr || depth >= 16U ||
+        !effect_child_shape_is_valid(child) ||
+        find_effect_record(session, child.effect_kind, child.effect_id,
+                           child.resource_slot) == nullptr) {
+        return false;
+    }
+    // `age` is this entry's own age: not spawned yet below zero.
+    if (!(age >= 0.0F)) return true;
+    Matrix4 world;
+    if (!compose_effect_world(parent_world, child, &world)) return false;
+    if (child.effect_kind == 'E') {
+        const auto* record = find_effect_record(
+            session, 'E', child.effect_id, child.resource_slot);
+        const auto descriptor = record == nullptr
+            ? std::optional<effect_bank::EffectDescriptor>{}
+            : effect_bank::effect_descriptor(*record);
+        // CEffect retires once its +0x80 countdown is negative: drawn for
+        // ages 0..lifetime. A +0x84 record is held until its V is retired.
+        if (descriptor.has_value() && descriptor->lifetime_known &&
+            !descriptor->held_by_parent &&
+            age > static_cast<float>(descriptor->lifetime_ticks)) {
+            return true;
+        }
+        return append_effect_sprite(session, child, world, out);
+    }
+    if (child.effect_kind == 'P') {
+        return append_effect_particles(session, child, world, age, out);
+    }
+    if (child.effect_kind == 'G') {
+        return append_effect_generator(session, instance, child, world, age, out, depth);
+    }
+    if (child.effect_kind != 'V') return true;
+    // Profile bindings may already carry the reverse-confirmed graph (Lady
+    // currently does). Generic profiles are also allowed to provide only the
+    // V root: in that case decode the exact child dispatch table from the
+    // retained FXBANK record. No semantic name or guessed child is introduced.
+    std::vector<motion::EffectChildRef> decoded_children;
+    std::span<const motion::EffectChildRef> children = child.children;
+    if (children.empty()) {
+        const auto* record = find_effect_record(
+            session, 'V', child.effect_id, child.resource_slot);
+        const auto composite = record == nullptr
+            ? std::optional<effect_bank::CompositeRecord>{}
+            : effect_bank::composite_record(*record);
+        if (composite.has_value()) {
+            decoded_children.reserve(composite->entries.size());
+            for (const auto& entry : composite->entries) {
+                const char kind = effect_kind_for_dispatch(entry.dispatch_kind);
+                if (kind == '\0') return false;
+                motion::EffectChildRef decoded;
+                decoded.effect_kind = kind;
+                decoded.effect_id = entry.id;
+                decoded.resource_slot = child.resource_slot;
+                decoded.dispatch_kind = entry.dispatch_kind;
+                decoded.translation = entry.translation;
+                decoded.rotation_degrees = entry.rotation_degrees;
+                decoded.scale = entry.scale;
+                decoded.evidence = child.evidence;
+                decoded.activation_offset = entry.activation_offset;
+                decoded_children.push_back(decoded);
+            }
+            children = decoded_children;
+        }
+    }
+    for (const auto& nested : children) {
+        if (!collect_effect_children(
+                session, instance, nested, world,
+                age - effect_entry_spawn_age(nested.activation_offset),
+                out, depth + 1U)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool build_effect_presentation(
+    const Session& session, PreparedView* out) {
+    if (out == nullptr || session.effect_runtime == nullptr ||
+        session.effect_banks.empty()) return false;
+    try {
+        set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
+        std::vector<ViewState::EffectSprite> staged;
+        for (const auto& instance : session.effect_runtime->presentation_instances()) {
+            const auto& source = instance.source;
+            if (!source.world_authoritative) continue;
+            if (!source.children.empty()) {
+                // The binding's child span is the root V's entry table.
+                for (const auto& child : source.children) {
+                    if (!collect_effect_children(
+                            session, instance, child, source.world,
+                            instance.age -
+                                effect_entry_spawn_age(child.activation_offset),
+                            &staged, 0U)) {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            // A generic profile may register an E/V root without a prebuilt
+            // child span. Resolve that root through the same raw bank path.
+            motion::EffectChildRef root;
+            root.effect_kind = source.effect_kind;
+            root.effect_id = static_cast<std::uint16_t>(source.effect_id);
+            root.resource_slot = source.resource_slot;
+            root.dispatch_kind =
+                dispatch_kind_for_effect_kind(source.effect_kind);
+            root.evidence = source.evidence;
+            root.scale = {1.0F, 1.0F, 1.0F};
+            if (!collect_effect_children(
+                    session, instance, root, source.world, instance.age,
+                    &staged, 0U)) {
+                return false;
+            }
+        }
+        if (staged.empty()) return false;
+        out->effect_sprites.insert(
+            out->effect_sprites.end(), staged.begin(), staged.end());
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Longest time (game frames) an effect shows: E lifetimes (+0x80) added to
+// the V entry spawn ages; a record held by its parent counts 90.
+[[nodiscard]] float effect_extent(const Session& host, char kind, std::uint16_t id, std::uint32_t slot,
+                                  int depth) noexcept {
+    if (depth > 8) return 0.0F;
+    const auto* record = find_effect_record(host, kind, id, slot);
+    if (record == nullptr) return 0.0F;
+    if (kind == 'E') {
+        const auto descriptor = effect_bank::effect_descriptor(*record);
+        if (!descriptor.has_value()) return 0.0F;
+        if (descriptor->lifetime_known && !descriptor->held_by_parent) {
+            return static_cast<float>(descriptor->lifetime_ticks);
+        }
+        return 90.0F;
+    }
+    if (kind == 'P') {
+        const auto def = particle::parse(record->bytes);
+        if (!def.has_value()) return 0.0F;
+        return def->life >= 0 ? static_cast<float>(def->life) + 1.0F : 90.0F;
+    }
+    if (kind == 'G') {
+        const auto def = generator::parse(record->bytes);
+        if (!def.has_value()) return 0.0F;
+        // Spawning lasts `life` ticks (endless: assume a few seconds), then the
+        // last child plays out.
+        const float spawning = def->endless ? 300.0F : static_cast<float>(std::max(def->life, 0));
+        const char child = effect_kind_for_dispatch(def->child_kind);
+        const float tail = child == '\0' ? 0.0F : effect_extent(host, child, def->child_id, slot, depth + 1);
+        return static_cast<float>(def->first_delay > 0 ? def->first_delay : 0) + spawning + tail;
+    }
+    if (kind != 'V') return 0.0F;
+    const auto composite = effect_bank::composite_record(*record);
+    if (!composite.has_value()) return 0.0F;
+    float longest = 0.0F;
+    for (const auto& entry : composite->entries) {
+        const char child = effect_kind_for_dispatch(entry.dispatch_kind);
+        if (child == '\0') continue;
+        longest = std::max(longest, effect_entry_spawn_age(entry.activation_offset) +
+                                        effect_extent(host, child, entry.id, slot, depth + 1));
+    }
+    return longest;
+}
+
+// The effects the stage layout keeps on its objects, played in a loop from
+// the stage's effect bank, placed with the room.
+void append_room_effects(const stage_room::Room& room, const std::shared_ptr<const Session>& host,
+                         const stage_room::Placement& placement, float room_time, PreparedView* out) {
+    if (out == nullptr || !host || room.effects.empty() || !(room_time > 0.0F)) return;
+    set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
+    motion::RuntimeEffectInstance instance;
+    std::vector<ViewState::EffectSprite> staged;
+    std::size_t index = 0U;
+    for (const auto& effect : room.effects) {
+        ++index;
+        if (effect.kind != 'V' && effect.kind != 'E') continue;
+        motion::EffectChildRef root;
+        root.effect_kind = effect.kind;
+        root.effect_id = effect.id;
+        root.resource_slot = 0U;
+        root.dispatch_kind = dispatch_kind_for_effect_kind(effect.kind);
+        root.evidence = motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
+        root.scale = {1.0F, 1.0F, 1.0F};
+        const float extent = effect_extent(*host, effect.kind, effect.id, 0U, 0);
+        float age = 0.0F;
+        if (effect.once) {
+            // A broken object's beff plays once from the break toggle.
+            age = stage_room::broken_frames();
+            if (age < 0.0F || age > std::max(extent, 1.0F)) continue;
+        } else {
+            const float period = std::clamp(extent + 20.0F, 60.0F, 600.0F);
+            // Each effect keeps its own phase so neighbours do not pulse together.
+            age = std::fmod(room_time + static_cast<float>(index) * 17.0F, period);
+        }
+        Matrix4 world;
+        const Vec3 x = stage_room::room_direction_to_model(placement, {1.0F, 0.0F, 0.0F});
+        const Vec3 z = stage_room::room_direction_to_model(placement, {0.0F, 0.0F, 1.0F});
+        const Vec3 at = stage_room::room_to_model(placement, effect.position);
+        world.values = {x.x, x.y, x.z, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, z.x, z.y, z.z, 0.0F, at.x, at.y, at.z, 1.0F};
+        (void)collect_effect_children(*host, instance, root, world, age, &staged, 0U);
+    }
+    if (staged.empty()) return;
+    out->effect_host = host;
+    out->effect_sprites.insert(out->effect_sprites.end(), staged.begin(), staged.end());
+}
 
 [[nodiscard]] Vec3 transform_dynamic_vertex(
     const Vec3& p, const Matrix4& m) noexcept {
@@ -1164,6 +1844,31 @@ struct DynamicVertexInfluences final {
     return out->dynamic_presentation;
 }
 
+constexpr float kDollyMin = -2.0F;
+constexpr std::uint32_t kRoomAnimateBit = 1U << 15U;
+constexpr int kMaxRenderSide = 8192;
+constexpr std::uint32_t kMeshLineShift = 16U;
+constexpr std::uint32_t kCollisionLineShift = 22U;
+
+// Room texture scrolls run on a wall clock (game frames, 60 per second) while
+// the animate bit is set.
+void set_room_animation(ViewState* view, const std::vector<stage_room::Room::UvScroll>& scrolls,
+                        bool has_effects, std::uint32_t flags) {
+    static thread_local std::vector<ViewState::RoomScroll> converted;
+    converted.clear();
+    if ((flags & kRoomAnimateBit) == 0U || (scrolls.empty() && !has_effects)) {
+        view->room_scrolls = {};
+        view->room_time = 0.0F;
+        return;
+    }
+    for (const auto& scroll : scrolls) converted.push_back({scroll.texture, scroll.u_per_frame, scroll.v_per_frame});
+    view->room_scrolls = converted;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    // Wrapped, so the float keeps its precision over a long session.
+    view->room_time = static_cast<float>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now).count() % 3600000LL) * 0.06F + 1.0F;
+}
+
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
                   PreparedView* out) {
@@ -1182,9 +1887,29 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.background = static_cast<std::uint8_t>((flags >> kRenderBackgroundShift) & 3U);
     view.pan_x = std::isfinite(controls.pan_x) ? std::clamp(controls.pan_x, -20.0F, 20.0F) : 0.0F;
     view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;
+    view.dolly = std::isfinite(controls.dolly)
+        ? std::clamp(controls.dolly, kDollyMin, session_dolly_limit(&session)) : 0.0F;
+    if (controls.fly && std::isfinite(controls.eye.x) && std::isfinite(controls.eye.y) &&
+        std::isfinite(controls.eye.z)) {
+        view.fly = true;
+        view.fly_eye = controls.eye;
+        view.pan_x = view.pan_y = 0.0F;
+        view.dolly = 0.0F;
+    }
 
-    out->width = std::clamp(requested_width, 64, 1024);
-    out->height = std::clamp(requested_height, 64, 1024);
+    // Up to 8K (7680 x 4320); the viewer asks for the size its Resolution
+    // setting chose.
+    out->width = std::clamp(requested_width, 64, kMaxRenderSide);
+    out->height = std::clamp(requested_height, 64, kMaxRenderSide);
+    // Line widths travel in the render flags: mesh lines in bits 16-21,
+    // collision lines in bits 22-27 (image pixels, 0 = 1).
+    {
+        // Room wire opacity: bits 28-31 hold tenths + 1 (0 = not set).
+        const auto coded = (flags >> 28U) & 15U;
+        if (coded != 0U) view.room_wire_opacity = static_cast<float>(std::min(coded - 1U, 10U)) / 10.0F;
+    }
+    view.mesh_line_px = std::max(1, static_cast<int>((flags >> kMeshLineShift) & 63U));
+    view.collision_line_px = std::max(1, static_cast<int>((flags >> kCollisionLineShift) & 63U));
     out->hierarchy = !view.uv_layout && has_render_flag(flags, RenderFlag::Hierarchy) &&
             session.hierarchy_overlay.available()
         ? &session.hierarchy_overlay
@@ -1197,12 +1922,14 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         out->textures = out->presentation_textures.empty()
             ? nullptr : &out->presentation_textures;
     }
+    (void)build_effect_presentation(session, out);
+    view.effect_sprites = out->effect_sprites;
 
     const auto& rest = view.framing_vertices.empty() ? std::span<const Vec3>{session.render_mesh.vertices}
                                                      : view.framing_vertices;
     // Camera follow: frame the model where its motion has taken it (x/z of
     // the vertex centre against the rest pose; height stays put).
-    if (controls.follow && !view.framing_vertices.empty() && !session.render_mesh.vertices.empty()) {
+    if (controls.follow && !view.fly && !view.framing_vertices.empty() && !session.render_mesh.vertices.empty()) {
         double rx = 0.0, rz = 0.0, cx = 0.0, cz = 0.0;
         for (const auto& v : view.framing_vertices) {
             rx += v.x;
@@ -1218,14 +1945,18 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     }
 
     // SHW footprint on a floor under the feet (lowest rest vertex).
-    if (!view.uv_layout && has_render_flag(flags, RenderFlag::Shadows)) {
+    // A collision view (.hits) stands on nothing: no floor under it.
+    const bool collision_view = session.hits != nullptr && session.shadow_bindings.empty();
+    if (!view.uv_layout && session.stage == nullptr && !collision_view &&
+        has_render_flag(flags, RenderFlag::Shadows)) {
         float floor_y = std::numeric_limits<float>::infinity();
         for (const auto& v : rest) floor_y = std::min(floor_y, v.y);
         if (std::isfinite(floor_y)) {
-            // SHW hulls when the archive has them, else the mesh itself.
-            out->floor_shadow = session.shadow_bindings.empty()
-                ? shadow::mesh_floor_shadow(session.render_mesh, shadow::kViewerLightDirection, floor_y)
-                : shadow::floor_shadow_triangles(session, shadow::kViewerLightDirection, floor_y);
+            // Shadows come only from shadow files (SHW hulls); without them
+            // the model just stands on the floor.
+            if (!session.shadow_bindings.empty()) {
+                out->floor_shadow = shadow::floor_shadow_triangles(session, shadow::kViewerLightDirection, floor_y);
+            }
             view.floor = true;
             view.floor_y = floor_y;
             view.floor_shadow = out->floor_shadow;
@@ -1234,36 +1965,96 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     // Room (stage_room.h): the chosen stage around the model, its floor spot
     // (or the point placed by a double tap) under the model's feet, turned
     // about that spot by the twist gesture; a stage itself has no room.
-    if (!view.uv_layout && !view.wireframe && has_render_flag(flags, RenderFlag::Room) &&
+    if (!view.uv_layout && has_render_flag(flags, RenderFlag::Room) &&
         !stage_room::is_stage_session(session)) {
-        out->room = stage_room::current();
+        out->room = stage_room::shown(stage_room::current());
     }
     if (out->room && !rest.empty()) {
-        double sx = 0.0, sz = 0.0;
-        float low = std::numeric_limits<float>::infinity();
-        for (const auto& v : rest) {
-            sx += v.x;
-            sz += v.z;
-            low = std::min(low, v.y);
-        }
-        const auto n = static_cast<double>(rest.size());
-        const Vec3 spot = stage_room::spot_position();
+        const auto placement = stage_room::placement_for(rest, controls.room_yaw);
         view.room_mesh = &out->room->mesh;
         view.room_texture_slots = &out->room->triangle_texture_slots;
         view.room_textures = &out->room->textures;
         view.room_translucent_triangles = &out->room->translucent_triangles;
-        view.room_pivot = spot;
+        set_room_animation(&view, out->room->uv_scrolls, !out->room->effects.empty() && stage_room::effect_host() != nullptr, flags);
+        append_room_effects(*out->room, stage_room::effect_host(), placement, view.room_time, out);
+        view.effect_sprites = out->effect_sprites;
+        view.room_pivot = placement.pivot;
+        view.room_yaw = placement.yaw;
+        view.room_offset = placement.offset;
+        // The drawn room is the collision world of this session's runtime.
+        if (!view.uv_layout && !out->room->collision_sources.empty()) {
+            stage_room::set_active_collision(&session, out->room, placement);
+        } else {
+            stage_room::clear_active_collision(&session);
+        }
+    } else if (!view.uv_layout) {
+        stage_room::clear_active_collision(&session);
+    }
+    // A stage opened as its scene: its merged mesh is drawn by the room pass
+    // (near-plane clipped), turned about the floor spot by the twist gesture.
+    if (!view.uv_layout && session.stage != nullptr) {
+        const auto& stage = stage_room::shown(*session.stage);
+        view.room_mesh = &stage.mesh;
+        view.room_texture_slots = &stage.triangle_texture_slots;
+        view.room_textures = &stage.textures;
+        view.room_translucent_triangles = &stage.translucent_triangles;
+        set_room_animation(&view, stage.uv_scrolls, !stage.effects.empty() && stage_room::effect_host() != nullptr, flags);
+        append_room_effects(stage, stage_room::effect_host(), stage_room::Placement{view.room_pivot, std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F, {}}, view.room_time, out);
+        view.effect_sprites = out->effect_sprites;
+        view.room_pivot = stage.spots.empty() ? Vec3{} : stage.spots.front();
         view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
-        view.room_offset = {static_cast<float>(sx / n) - spot.x, low - spot.y, static_cast<float>(sz / n) - spot.z};
+        view.room_offset = {};
+        view.room_wire_main = true;
+        // The joint hierarchy follows the twist like the meshes.
+        if (out->hierarchy != nullptr && &session.hierarchy_overlay == out->hierarchy) {
+            out->stage_hierarchy = session.hierarchy_overlay;
+            const stage_room::Placement turn{view.room_pivot, view.room_yaw, {}};
+            for (auto& point : out->stage_hierarchy.points) point = stage_room::room_to_model(turn, point);
+            out->hierarchy = &out->stage_hierarchy;
+        }
     }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
         out->collision_lines = collision::posed_collision_lines(session);
         view.overlay_lines = out->collision_lines;
     }
+    if (!view.uv_layout && out->room != nullptr &&
+        has_render_flag(flags, RenderFlag::RoomCollision) &&
+        !out->room->collision_lines.empty()) {
+        out->room_collision_lines = out->room->collision_lines;
+        view.room_collision_lines = out->room_collision_lines;
+        view.room_collision_kinds = out->room->collision_line_kinds;
+    }
+    // A HITS file opened on its own: the record edges outline its surfaces.
+    if (!view.uv_layout && session.hits != nullptr && session.renderable &&
+        out->room_collision_lines.empty()) {
+        out->room_collision_lines = environment_collision::debug_lines(*session.hits);
+        const auto kinds = environment_collision::kinds(*session.hits);
+        out->room_collision_kinds = environment_collision::debug_line_kinds(*session.hits, kinds);
+        view.room_collision_lines = out->room_collision_lines;
+        view.room_collision_kinds = out->room_collision_kinds;
+    }
+    // A stage opened as its scene shows its own HITS in place.
+    if (!view.uv_layout && session.stage != nullptr &&
+        has_render_flag(flags, RenderFlag::RoomCollision) &&
+        !session.stage->collision_lines.empty()) {
+        out->room_collision_lines = session.stage->collision_lines;
+        view.room_collision_lines = out->room_collision_lines;
+        view.room_collision_kinds = session.stage->collision_line_kinds;
+    }
 }
 
 }  // namespace
+
+float session_camera_distance(const Session* session) noexcept {
+    if (session == nullptr) return 0.0F;
+    const auto rest = motion::motion_rest_vertices(session);
+    return framing_camera_distance(rest.empty() ? std::span<const Vec3>{session->render_mesh.vertices} : rest);
+}
+
+float session_dolly_limit(const Session* session) noexcept {
+    return session != nullptr && session->stage != nullptr ? 4.0F : 0.9F;
+}
 
 RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags) {
@@ -1278,8 +2069,8 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
         *session->uv_map_index < session->uv_gallery->maps.size()) {
         return render_uv_map(session->uv_gallery->coordinates,
             session->uv_gallery->maps[*session->uv_map_index].indices,
-            std::clamp(requested_width, 64, 1024),
-            std::clamp(requested_height, 64, 1024), zoom);
+            std::clamp(requested_width, 64, kMaxRenderSide),
+            std::clamp(requested_height, 64, kMaxRenderSide), zoom);
     }
     if (!session->renderable) return {};
     PreparedView prepared;
@@ -1290,6 +2081,17 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
             : session->render_mesh;
     return render_view(presented, prepared.width, prepared.height, prepared.view,
                        prepared.hierarchy, prepared.texture_slots, prepared.textures);
+}
+
+std::optional<Vec3> session_camera_eye(const Session* session, int requested_width, int requested_height,
+                                       float yaw, float pitch, float zoom, std::uint32_t render_flags,
+                                       const ViewControls& controls) {
+    if (session == nullptr || !session->renderable || session->uv_gallery) return std::nullopt;
+    PreparedView prepared;
+    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    const Mesh& presented = prepared.dynamic_presentation ? prepared.presentation_mesh : session->render_mesh;
+    if (presented.vertices.empty()) return std::nullopt;
+    return view_camera_eye(presented, prepared.width, prepared.height, prepared.view);
 }
 
 SessionPick pick_session(const Session* session, int requested_width, int requested_height, float yaw,

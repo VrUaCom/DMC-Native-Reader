@@ -8,6 +8,7 @@
 #include "dmc_rengine/analysis/mot/channel_binding.hpp"
 #include "dmc_rengine/analysis/mot/key_decode.hpp"
 #include "dmc_rengine/analysis/mot/track_evaluation.hpp"
+#include "dmc_rengine/formats/mot/abi.hpp"
 #include "dmc_rengine/formats/mot/parser.hpp"
 
 namespace dmcresource::motion {
@@ -22,6 +23,15 @@ struct Selection final {
     bool segment{false};
     std::int32_t cache{};
 };
+
+[[nodiscard]] std::uint16_t read_u16(
+    std::span<const std::byte> bytes,
+    std::size_t offset) noexcept {
+    return static_cast<std::uint16_t>(
+        std::to_integer<std::uint16_t>(bytes[offset + 0U]) |
+        static_cast<std::uint16_t>(
+            std::to_integer<std::uint16_t>(bytes[offset + 1U]) << 8U));
+}
 
 // 0x1402E8FB0: identical control flow to the compression-3 search 0x1402E8C80
 // with a 4-byte key stride. Times are the low 15 bits of the control word.
@@ -132,23 +142,49 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
         // joint and binds only joints whose motion group (+0xF8) is the one
         // being evaluated; joints of other groups skip their tracks. A MOT
         // whose domain covers the leading joints therefore drives a model
-        // with extra trailing joints when those joints belong to motion groups
-        // none of the covered joints uses (em000 bodies: 22-node MOTs, node 22
-        // in group 2). The extra joints keep their rest locals.
-        const auto domain = static_cast<std::size_t>(parsed.document->channel_domain_count);
-        if (domain != node_count) {
-            if (domain == 0U || domain > node_count || rig.motion_group_by_node.size() != node_count) {
+        // with the model's initialized joint count. The compatibility case
+        // below is therefore based on the serialized mask padding, not on a
+        // character-specific motion-group guess.
+        const auto declared_domain = static_cast<std::size_t>(
+            parsed.document->channel_domain_count);
+        if (declared_domain == 0U || declared_domain > node_count) {
+            return std::unexpected(ClipError::NodeCountMismatch);
+        }
+
+        // The EXE binding loop at 0x140310A80 iterates the initialized
+        // CMotion joint count, not the MOT's declared mask count. It advances
+        // the mask pointer once per joint. For a shorter MOT domain, the
+        // aligned header tail supplies zero masks for the remaining model
+        // nodes; em034 slot11 MOTs are the canonical 2-mask/3-node example.
+        // Accept that structural case only when the physical zero padding is
+        // present. Never synthesize a missing mask outside the serialized
+        // header or reinterpret non-zero padding.
+        auto binding_document = *parsed.document;
+        if (declared_domain < node_count) {
+            const auto required_mask_end =
+                mot::HeaderAbi::channel_mask_table +
+                node_count * sizeof(std::uint16_t);
+            if (required_mask_end > binding_document.header_size ||
+                required_mask_end > mot_bytes.size()) {
                 return std::unexpected(ClipError::NodeCountMismatch);
             }
-            for (std::size_t extra = domain; extra < node_count; ++extra) {
-                for (std::size_t covered = 0U; covered < domain; ++covered) {
-                    if (rig.motion_group_by_node[covered] == rig.motion_group_by_node[extra]) {
-                        return std::unexpected(ClipError::NodeCountMismatch);
-                    }
+            binding_document.channel_domain_count =
+                static_cast<std::uint16_t>(node_count);
+            binding_document.channel_masks.reserve(node_count);
+            for (std::size_t index = declared_domain;
+                 index < node_count;
+                 ++index) {
+                const auto mask_offset = mot::HeaderAbi::channel_mask_table +
+                    index * sizeof(std::uint16_t);
+                if (read_u16(mot_bytes, mask_offset) != 0U) {
+                    return std::unexpected(ClipError::NodeCountMismatch);
                 }
+                binding_document.channel_masks.push_back(0U);
             }
         }
-        const auto binding = mot_analysis::project_normal_binding(*parsed.document, domain);
+
+        const auto binding = mot_analysis::project_normal_binding(
+            binding_document, node_count);
         if (!binding.has_value()) return std::unexpected(ClipError::BindingRejected);
 
         MotionClip clip;
