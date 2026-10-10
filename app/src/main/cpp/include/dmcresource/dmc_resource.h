@@ -27,6 +27,7 @@ enum class Format : std::uint8_t {
     CollisionShapes,
     AttackIndex,
     EffectBank,
+    Fon,
 };
 
 struct ProbeResult {

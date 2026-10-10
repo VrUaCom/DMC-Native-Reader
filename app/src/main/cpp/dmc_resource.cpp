@@ -10,6 +10,7 @@
 
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/effect_bank.h"
+#include "dmcresource/font.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -121,6 +122,13 @@ ProbeResult probe(std::string_view filename,
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mot");
     }
 
+    // FON bitmap fonts: no tag; the layout closing exactly is the identity
+    // (pages 1..P, glyph numbers 1..G, then whole glyphs of one size).
+    if (bytes != nullptr && font::looks_like_font(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Fon, true, "FON", "font", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.fon");
+    }
+
     // PTX and descriptor-wrapped textures have no standalone four-byte identity
     // gate. Extensions are routing candidates only; the texture module validates
     // bytes before accepting them. DMC3 HD also keeps legacy .tm2 logical names
@@ -217,6 +225,7 @@ const char* format_name(Format format) noexcept {
     case Format::CollisionShapes: return "COLSHAPE";
     case Format::AttackIndex: return "COLINDEX";
     case Format::EffectBank: return "FXBANK";
+    case Format::Fon: return "FON";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

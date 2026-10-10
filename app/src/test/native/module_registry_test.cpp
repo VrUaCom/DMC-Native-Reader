@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 17U);
+    assert(modules.size() == 18U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -86,6 +86,11 @@ int main() {
 
     const auto* fxbank = NativeModuleRegistry::find("FXBANK");
     assert(fxbank != nullptr && fxbank->format == Format::EffectBank && !fxbank->renderable);
+
+    // FON bitmap fonts: an inspection and an image (the glyph sheet), no scene.
+    const auto* fon = NativeModuleRegistry::find("FON");
+    assert(fon != nullptr && fon->format == Format::Fon && !fon->renderable);
+    assert(has_capability(fon->capabilities, ResourceCapability::ImagePreview));
 
     // EFM effect models: own family, MOD document route (0x1402F7A90).
     const auto* efm = NativeModuleRegistry::find("EFM");

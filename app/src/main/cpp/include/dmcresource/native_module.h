@@ -72,5 +72,6 @@ public:
 [[nodiscard]] NativeModule colshape_module() noexcept;
 [[nodiscard]] NativeModule colindex_module() noexcept;
 [[nodiscard]] NativeModule effect_bank_module() noexcept;
+[[nodiscard]] NativeModule font_module() noexcept;
 
 }  // namespace dmcresource

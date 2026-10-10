@@ -25,6 +25,7 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         colshape_module(),
         colindex_module(),
         effect_bank_module(),
+        font_module(),
     };
     return registry;
 }
