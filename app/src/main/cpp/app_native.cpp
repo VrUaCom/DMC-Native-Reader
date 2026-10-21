@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <mutex>
 #include <unordered_set>
 #include "dmcresource/resource_limits.h"
@@ -26,6 +27,7 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/stage_markers.h"
+#include "dmcresource/camera_control.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
@@ -120,24 +122,14 @@ using SessionLock = std::lock_guard<std::recursive_mutex>;
 
 // Fly camera of the view (stages, collision views): set from the UI thread,
 // read by every frame, pick and benchmark so they all see the same camera.
-struct FlyCamera final {
-    bool on{};
-    dmcresource::Vec3 eye{};
-};
-std::mutex& fly_mutex() noexcept {
-    static std::mutex mutex;
-    return mutex;
-}
-FlyCamera& fly_camera() noexcept {
-    static FlyCamera camera;
-    return camera;
-}
-
+// The camera state (fly eye, orbit pivot) is the core's (camera_control.h).
 dmcresource::ViewControls view_controls(float pan_x, float pan_y, float room_yaw, jboolean follow, float dolly) {
     dmcresource::ViewControls controls{pan_x, pan_y, room_yaw, follow == JNI_TRUE, dolly};
-    const std::lock_guard lock{fly_mutex()};
-    controls.fly = fly_camera().on;
-    controls.eye = fly_camera().eye;
+    const auto camera = dmcresource::camera::current();
+    controls.fly = camera.fly;
+    controls.eye = camera.eye;
+    controls.has_pivot = camera.has_pivot;
+    controls.pivot = camera.pivot;
     return controls;
 }
 
@@ -1675,50 +1667,75 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
 
 // ---- Fly camera ---------------------------------------------------------------
 
-// Where the camera of that view stands (orbit or fly): {x, y, z}, or null.
-// The fly camera starts here, so the picture does not jump when it begins.
-extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_cameraEye(
-        JNIEnv* env, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
+// Fly camera (camera_control.h): the core places the eye where the orbit
+// camera stands, flies it, and on the way back leaves the orbit turning round
+// the point it looked at. Java forwards fingers and stores the angles it gets.
+
+namespace {
+jfloatArray floats(JNIEnv* env, std::initializer_list<float> values) {
+    jfloatArray out = env->NewFloatArray(static_cast<jsize>(values.size()));
+    if (out != nullptr) env->SetFloatArrayRegion(out, 0, static_cast<jsize>(values.size()), values.begin());
+    return out;
+}
+}  // namespace
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_enterFly(
+        JNIEnv*, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
         jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly) {
     try {
         const SessionLock jni_lock{session_mutex()};
-        const Session* session = from_handle(handle);
-        const auto eye = dmcresource::session_camera_eye(session, width, height, yaw, pitch, zoom,
+        const auto eye = dmcresource::session_camera_eye(from_handle(handle), width, height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), view_controls(pan_x, pan_y, room_yaw, follow, dolly));
-        if (!eye) return nullptr;
-        const jfloat values[3] = {eye->x, eye->y, eye->z};
-        jfloatArray out = env->NewFloatArray(3);
-        if (out != nullptr) env->SetFloatArrayRegion(out, 0, 3, values);
+        if (!eye) return JNI_FALSE;
+        dmcresource::camera::enter_fly(*eye);
+        return JNI_TRUE;
+    } catch (...) { return JNI_FALSE; }
+}
+
+// The orbit pose after the flight: {yaw, pitch, pan x, pan y, dolly}.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_leaveFly(JNIEnv* env, jclass, jlong handle, jfloat yaw, jfloat pitch) {
+    const SessionLock jni_lock{session_mutex()};
+    dmcresource::camera::leave_fly(yaw, pitch, dmcresource::session_camera_distance(from_handle(handle)));
+    return floats(env, {yaw, pitch, 0.0F, 0.0F, 0.0F});
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_resetCamera(JNIEnv*, jclass) {
+    dmcresource::camera::reset();
+}
+
+// One frame of flying from the two sticks (finger offsets from their bases in
+// pixels, held or not): {yaw, pitch, move boost, move zone}.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_flyTick(
+        JNIEnv* env, jclass, jlong handle, jfloat yaw, jfloat pitch, jboolean move_held, jfloat move_dx,
+        jfloat move_dy, jboolean look_held, jfloat look_dx, jfloat look_dy, jfloat density, jfloat dt) {
+    namespace camera = dmcresource::camera;
+    const auto move = move_held == JNI_TRUE ? camera::stick_response(move_dx, move_dy, density)
+                                            : camera::StickResponse{};
+    const auto look = look_held == JNI_TRUE ? camera::stick_response(look_dx, look_dy, density)
+                                            : camera::StickResponse{};
+    float speed = 1.0F;
+    {
+        const SessionLock jni_lock{session_mutex()};
+        // Full stick crosses the framed distance in about two seconds.
+        speed = std::max(1.0F, dmcresource::session_camera_distance(from_handle(handle)) * 0.5F);
+    }
+    const auto step = camera::fly_tick(yaw, pitch, move, look, dt, speed);
+    return floats(env, {step.yaw, step.pitch, move.boost, static_cast<float>(move.zone)});
+}
+
+// The joystick rings for the HUD (pixels): knob travel, dead band, zones.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stickZoneRadii(JNIEnv* env, jclass, jfloat density) {
+    try {
+        const auto radii = dmcresource::camera::stick_zone_radii(density);
+        jfloatArray out = env->NewFloatArray(static_cast<jsize>(radii.size()));
+        if (out != nullptr) env->SetFloatArrayRegion(out, 0, static_cast<jsize>(radii.size()), radii.data());
         return out;
     } catch (...) { return nullptr; }
-}
-
-// Turns the fly camera on at `eye` (or off: the orbit camera again).
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setFlyCamera(JNIEnv*, jclass, jboolean on, jfloat x, jfloat y,
-                                                           jfloat z) {
-    const std::lock_guard lock{fly_mutex()};
-    fly_camera().on = on == JNI_TRUE;
-    fly_camera().eye = {x, y, z};
-}
-
-// Moves the fly camera: `forward` along the view (pitch included), `strafe`
-// to screen right, `rise` straight up, in model units. Returns the new eye.
-extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_flyMove(JNIEnv* env, jclass, jfloat yaw, jfloat pitch,
-                                                      jfloat forward, jfloat strafe, jfloat rise) {
-    dmcresource::Vec3 eye;
-    {
-        const std::lock_guard lock{fly_mutex()};
-        auto& camera = fly_camera();
-        camera.eye = dmcresource::fly_move(camera.eye, yaw, pitch, forward, strafe, rise);
-        eye = camera.eye;
-    }
-    const jfloat values[3] = {eye.x, eye.y, eye.z};
-    jfloatArray out = env->NewFloatArray(3);
-    if (out != nullptr) env->SetFloatArrayRegion(out, 0, 3, values);
-    return out;
 }
 
 // A collision view: a .hits file, or a stage / model whose HITS are loaded.

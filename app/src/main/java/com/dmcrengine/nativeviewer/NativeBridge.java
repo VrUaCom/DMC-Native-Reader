@@ -215,13 +215,20 @@ public final class NativeBridge {
             float motionStart, float seconds, String settings);
     /** What draws the frames ("GPU: OpenGL ES 3.2 / Adreno ...") and the frame counts. */
     public static native String rendererInfo();
-    /** Where the camera of that view stands (orbit or fly): {x, y, z}, or null. */
-    public static native float[] cameraEye(long handle, int width, int height, float yaw, float pitch,
+    // Camera (core camera_control): fly eye, orbit pivot, joystick response.
+    /** The fly camera on, where the orbit camera of that view stands. */
+    public static native boolean enterFly(long handle, int width, int height, float yaw, float pitch,
             float zoom, int flags, float panX, float panY, float roomYaw, boolean follow, float dolly);
-    /** Fly camera on at (x, y, z), or off (the orbit camera again); every frame and pick uses it. */
-    public static native void setFlyCamera(boolean on, float x, float y, float z);
-    /** Moves the fly camera (forward along the view, strafe to screen right, rise up); returns the eye. */
-    public static native float[] flyMove(float yaw, float pitch, float forward, float strafe, float rise);
+    /** Back to orbit round where the flight looked: {yaw, pitch, panX, panY, dolly}. */
+    public static native float[] leaveFly(long handle, float yaw, float pitch);
+    /** Orbit the framed model again (Reset view, another file). */
+    public static native void resetCamera();
+    /** One frame of flying from the sticks' finger offsets (px): {yaw, pitch, moveBoost, moveZone}. */
+    public static native float[] flyTick(long handle, float yaw, float pitch,
+            boolean moveHeld, float moveDx, float moveDy, boolean lookHeld, float lookDx, float lookDy,
+            float density, float dtSeconds);
+    /** Joystick rings in px: knob travel, dead band, then each boost zone's end. */
+    public static native float[] stickZoneRadii(float density);
     /** A collision view: a .hits file, or a session whose HITS are loaded. */
     public static native boolean hasEnvironmentCollision(long handle);
 }

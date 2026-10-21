@@ -170,6 +170,10 @@ struct ViewState {
     // framed centre. Pan, dolly and the follow shift do not apply.
     bool fly{false};
     Vec3 fly_eye{};
+    // Orbit about this point instead of the framed centre (left by a flight,
+    // camera_control.h); pan and dolly still apply.
+    bool has_orbit_pivot{false};
+    Vec3 orbit_pivot{};
 };
 
 // World directions of the view camera at yaw / pitch (the same mirrored

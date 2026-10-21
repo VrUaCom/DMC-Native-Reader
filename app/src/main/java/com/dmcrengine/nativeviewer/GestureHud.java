@@ -73,14 +73,14 @@ final class GestureHud {
         boolean active;
         float baseX, baseY, knobX, knobY;
         float alpha;
+        float boost = 1f;
+        int zone;
     }
     private final Stick[] sticks = {new Stick(), new Stick()};
+    // Rings of the boost zones past the knob's travel (px), from the core:
+    // travel, dead band end, then each active and rest zone's end.
+    private float[] stickZones = new float[0];
     private long sticksFrameMs;
-
-    /** Travel of a joystick knob: the outer ring of the dolly's rings. */
-    static float stickRadius(float density) {
-        return 49f * density;
-    }
 
     GestureHud(float density, float scaledDensity) {
         this.density = density;
@@ -165,6 +165,17 @@ final class GestureHud {
         stick.baseY = by;
         stick.knobX = kx;
         stick.knobY = ky;
+    }
+
+    /** The boost zone rings, as the core sized them for this screen. */
+    void setStickZones(float[] radii) {
+        stickZones = radii == null ? new float[0] : radii;
+    }
+
+    /** The boost the core gave joystick `index` this frame, and the zone it is in. */
+    void setStickBoost(int index, float boost, int zone) {
+        sticks[index].boost = boost;
+        sticks[index].zone = zone;
     }
 
     /** The finger left joystick `index`: it fades out. */
@@ -425,6 +436,25 @@ final class GestureHud {
             if (stick.alpha <= 0.002f) continue;
             final float ease = stick.alpha * stick.alpha * (3f - 2f * stick.alpha);
             holdRings(canvas, stick.baseX, stick.baseY, ease);
+            // Boost zones: shown once the finger leaves the knob's travel;
+            // active zones brighter, the reached ones brightest.
+            final float reach = (float) Math.hypot(stick.knobX - stick.baseX, stick.knobY - stick.baseY);
+            if (stickZones.length > 2 && reach > stickZones[0]) {
+                for (int i = 1; i < stickZones.length; ++i) {
+                    final boolean activeEnd = i % 2 == 0;  // ends of active zones: 2, 4, ...
+                    final boolean reached = reach >= stickZones[i];
+                    ring(canvas, stick.baseX, stick.baseY, stickZones[i], reached ? 1.5f : 1.0f,
+                            reached ? 0x90ffd27a : (activeEnd ? 0x38ffd27a : 0x1effffff), ease);
+                }
+                if (stick.boost > 1.01f) {
+                    final String label = String.format(Locale.US, "\u00d7%.1f", stick.boost);
+                    caption.setTextAlign(Paint.Align.CENTER);
+                    captionOutline.setTextAlign(Paint.Align.CENTER);
+                    final float y = stick.knobY - 24f * density;
+                    canvas.drawText(label, stick.knobX, y, captionOutline);
+                    canvas.drawText(label, stick.knobX, y, caption);
+                }
+            }
             // Knob: a soft disc with a bright rim under the finger.
             final float k = 14f * density;
             fill.setColor(withAlpha(OUTLINE, ease * 0.8f));

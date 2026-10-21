@@ -2088,6 +2088,9 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.fly_eye = controls.eye;
         view.pan_x = view.pan_y = 0.0F;
         view.dolly = 0.0F;
+    } else if (controls.has_pivot) {
+        view.has_orbit_pivot = true;
+        view.orbit_pivot = controls.pivot;
     }
 
     // Up to 8K (7680 x 4320); the viewer asks for the size its Resolution

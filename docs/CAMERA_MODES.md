@@ -31,15 +31,27 @@ collision is shown) switches orbit ↔ fly; the same button goes back.
   descends (flight).
 * Dead zone 12 %, quadratic response; full stick crosses the framed distance
   in about two seconds; turning 1.8 rad/s, tilting 1.2 rad/s.
-* Opening another file, Reset view or leaving the stage / collision view
-  returns to the orbit camera.
+* **Boost zones past the ring.** The knob follows the finger out of its
+  ring. Past the ring an 18 dp dead band keeps the speed, then active zones
+  (28 dp, the multiplier climbs by one across each) and rest zones (14 dp,
+  it holds) follow in turn, up to x6. The HUD draws the zone rings once the
+  finger leaves the ring and shows the multiplier over the knob.
+* **Back to orbit keeps the place.** Leaving fly sets the orbit pivot one
+  framing distance ahead of the eye along the view; the orbit camera then
+  stands where the flight ended, looking the same way, and turns round that
+  point. Reset view and opening another file frame the model again.
 
-Core: `ViewState::fly` / `fly_eye`, `camera_basis`, `fly_move`,
-`view_camera_eye` (`view_renderer.h`), `ViewControls::fly` / `eye` and
-`session_camera_eye` (`resource_session.h`). Every frame, pick and benchmark
-reads the same fly state (JNI `setFlyCamera`, `flyMove`, `cameraEye`). Test:
-`fly_camera_test.cpp` (switching keeps the picture to 0.02 px, forward is the
-image centre, right / up are screen right / up, turning keeps the eye).
+Core: `camera_control.h` owns the fly eye, the orbit pivot, the stick
+response with its zones and the fly step (`enter_fly`, `leave_fly`,
+`reset`, `stick_response`, `stick_zone_radii`, `fly_tick`); the frame reads
+them through `ViewControls::fly` / `eye` / `has_pivot` / `pivot` and
+`ViewState::fly` / `fly_eye` / `orbit_pivot` (`view_frame`). Android
+forwards finger offsets and the screen density (JNI `enterFly`, `leaveFly`,
+`resetCamera`, `flyTick`, `stickZoneRadii`) and draws what it gets. Tests:
+`fly_camera_test.cpp`, `camera_control_test.cpp` (back to orbit stands at
+the flight's end within 0.05 units and turns round the pivot; the zones
+give x1.5 half through the first, hold x2 across its rest zone, cap at x6;
+a boosted move covers six times the ground).
 
 ## Shadow button
 

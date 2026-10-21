@@ -354,6 +354,10 @@ struct ViewControls final {
     // follow are ignored while it flies.
     bool fly{};
     Vec3 eye{};
+    // Orbit pivot left by a flight (camera_control.h): the orbit turns round
+    // it instead of the framed model.
+    bool has_pivot{};
+    Vec3 pivot{};
 };
 
 // World position of the camera of that view (the start of a fly camera).

@@ -112,9 +112,14 @@ CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int h
                         view.fly_eye.z + basis.forward.z * cd};
         return frame;
     }
-    frame.center.x += view.frame_shift.x;
-    frame.center.y += view.frame_shift.y;
-    frame.center.z += view.frame_shift.z;
+    if (view.has_orbit_pivot && std::isfinite(view.orbit_pivot.x) && std::isfinite(view.orbit_pivot.y) &&
+        std::isfinite(view.orbit_pivot.z)) {
+        frame.center = view.orbit_pivot;
+    } else {
+        frame.center.x += view.frame_shift.x;
+        frame.center.y += view.frame_shift.y;
+        frame.center.z += view.frame_shift.z;
+    }
     frame.pan_x = view.pan_x * frame.radius;
     frame.pan_y = view.pan_y * frame.radius;
     // Dolly: a camera move along the view axis.

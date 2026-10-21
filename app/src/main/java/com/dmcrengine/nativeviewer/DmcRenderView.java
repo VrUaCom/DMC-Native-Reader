@@ -110,7 +110,6 @@ public final class DmcRenderView extends View {
     // sideways), right half: look (turn, tilt). Flying forward follows the
     // view, so looking up and pushing forward climbs.
     private boolean flyMode;
-    private float flySpeed = 100.0f;  // model units per second at full stick
     private final int[] stickId = {MotionEvent.INVALID_POINTER_ID, MotionEvent.INVALID_POINTER_ID};
     private final float[] stickBaseX = new float[2], stickBaseY = new float[2];
     private final float[] stickX = new float[2], stickY = new float[2];
@@ -122,22 +121,23 @@ public final class DmcRenderView extends View {
                 return;
             }
             final long now = SystemClock.uptimeMillis();
-            final float dt = Math.min(0.05f, Math.max(0.0f, (now - flyLastMs) / 1000.0f));
+            final float dt = Math.max(0.0f, (now - flyLastMs) / 1000.0f);
             flyLastMs = now;
-            final float[] move = stickVector(0);
-            final float[] look = stickVector(1);
-            boolean changed = false;
-            if (look[0] != 0.0f || look[1] != 0.0f) {
-                yaw -= look[0] * 1.8f * dt;     // push right: turn right
-                pitch = Math.max(-1.55f, Math.min(1.55f, pitch - look[1] * 1.2f * dt));  // push up: look up
-                changed = true;
+            // The core turns the finger offsets into motion (dead zone,
+            // response, boost zones past the ring) and moves its eye.
+            final boolean moveHeld = stickId[0] != MotionEvent.INVALID_POINTER_ID;
+            final boolean lookHeld = stickId[1] != MotionEvent.INVALID_POINTER_ID;
+            final float[] step = NativeBridge.flyTick(session, yaw, pitch,
+                    moveHeld, stickX[0] - stickBaseX[0], stickY[0] - stickBaseY[0],
+                    lookHeld, stickX[1] - stickBaseX[1], stickY[1] - stickBaseY[1],
+                    getResources().getDisplayMetrics().density, dt);
+            if (step != null && step.length >= 4) {
+                final boolean changed = step[0] != yaw || step[1] != pitch || moveHeld;
+                yaw = step[0];
+                pitch = step[1];
+                hud.setStickBoost(0, step[2], (int) step[3]);
+                if (changed) renderThrottled(false);
             }
-            if (move[0] != 0.0f || move[1] != 0.0f) {
-                final float step = flySpeed * dt;
-                NativeBridge.flyMove(yaw, pitch, -move[1] * step, move[0] * step, 0.0f);
-                changed = true;
-            }
-            if (changed) renderThrottled(false);
             postOnAnimation(this);
         }
     };
@@ -538,6 +538,7 @@ public final class DmcRenderView extends View {
     public void setSession(long newSession) {
         pauseMotion();
         if (flyMode) leaveFly();
+        NativeBridge.resetCamera();
         ++generation;
         synchronized (renderLock) {
             pendingRequest = null;
@@ -611,19 +612,17 @@ public final class DmcRenderView extends View {
         if (on == flyMode) return true;
         if (on) {
             if (session == 0 || staticImagePreview || isUvLayoutVisible()) return false;
-            final float[] eye = NativeBridge.cameraEye(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
-                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly);
-            if (eye == null || eye.length < 3) return false;
-            final float[] metrics = NativeBridge.cameraMetrics(session);
-            final float distance = metrics != null && metrics.length > 0 ? metrics[0] : 0.0f;
-            // Full stick crosses the framed distance in about two seconds.
-            flySpeed = Math.max(1.0f, distance * 0.5f);
+            // The core puts the fly eye where the orbit camera stands.
+            if (!NativeBridge.enterFly(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
+                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly)) {
+                return false;
+            }
+            hud.setStickZones(NativeBridge.stickZoneRadii(getResources().getDisplayMetrics().density));
             removeCallbacks(spinTick);
             spinYaw = 0.0f;
             spinPitch = 0.0f;
             endDolly();
             hud.reset();
-            NativeBridge.setFlyCamera(true, eye[0], eye[1], eye[2]);
             flyMode = true;
         } else {
             leaveFly();
@@ -632,38 +631,25 @@ public final class DmcRenderView extends View {
         return true;
     }
 
+    /** Back to orbit: the core leaves the orbit turning round where the flight looked, and says the pose. */
     private void leaveFly() {
         flyMode = false;
-        NativeBridge.setFlyCamera(false, 0.0f, 0.0f, 0.0f);
+        final float[] pose = NativeBridge.leaveFly(session, yaw, pitch);
+        if (pose != null && pose.length >= 5) {
+            yaw = pose[0];
+            pitch = pose[1];
+            panX = pose[2];
+            panY = pose[3];
+            dolly = pose[4];
+        }
         for (int side = 0; side < 2; ++side) releaseStick(side);
         removeCallbacks(flyTick);
         touching = false;
     }
 
-    /** Stick deflection, x right / y down, each -1..1 (dead zone, softer near the centre). */
-    private float[] stickVector(int side) {
-        if (stickId[side] == MotionEvent.INVALID_POINTER_ID) return new float[]{0.0f, 0.0f};
-        final float radius = GestureHud.stickRadius(getResources().getDisplayMetrics().density);
-        float x = (stickX[side] - stickBaseX[side]) / radius;
-        float y = (stickY[side] - stickBaseY[side]) / radius;
-        final float length = (float) Math.hypot(x, y);
-        if (length < 0.12f) return new float[]{0.0f, 0.0f};
-        final float clamped = Math.min(1.0f, length);
-        final float scaled = (clamped - 0.12f) / 0.88f;
-        final float k = scaled * scaled / length;  // quadratic: fine control near the centre
-        return new float[]{x * k, y * k};
-    }
-
+    /** The knob follows the finger, out into the boost zones the HUD draws. */
     private void showStick(int side) {
-        final float radius = GestureHud.stickRadius(getResources().getDisplayMetrics().density);
-        float dx = stickX[side] - stickBaseX[side];
-        float dy = stickY[side] - stickBaseY[side];
-        final float length = (float) Math.hypot(dx, dy);
-        if (length > radius) {
-            dx *= radius / length;
-            dy *= radius / length;
-        }
-        hud.showStick(side, stickBaseX[side], stickBaseY[side], stickBaseX[side] + dx, stickBaseY[side] + dy);
+        hud.showStick(side, stickBaseX[side], stickBaseY[side], stickX[side], stickY[side]);
     }
 
     private void releaseStick(int side) {
@@ -730,6 +716,7 @@ public final class DmcRenderView extends View {
 
     public void resetView() {
         if (flyMode) leaveFly();
+        NativeBridge.resetCamera();
         yaw = DEFAULT_YAW;
         pitch = -0.45f;
         zoom = 1.0f;
