@@ -13,6 +13,8 @@ public final class NativeBridge {
     public static native long composeMods(long[] handles, String[] names);
     public static native void close(long handle);
     public static native String info(long handle);
+    public static native String buildIdentity();
+    public static native String diagnostics(long handle);
 
     // Spider Black Widow is the single Android application/UI-state contract.
     // Java must not reconstruct policy from raw capabilities or diagnostics.
@@ -20,6 +22,17 @@ public final class NativeBridge {
 
     public static native int compositePartCount(long handle);
     public static native String compositePartName(long handle, int index);
+
+    // Native-authoritative read-only projection for Android presentation.
+    // Java displays this state but does not reconstruct placement/binding semantics.
+    public static native String compositePartState(long handle, int index);
+
+    public static native int compositePartNodeCount(long handle, int partIndex);
+    public static native String compositePartNodeName(long handle, int partIndex, int nodeIndex);
+    public static native int compositePartDefaultAttachmentSelector(long handle, int partIndex);
+    public static native String attachModPartToHostJoint(
+            long handle, int hostPartIndex, int childPartIndex, int hostJointIndex);
+    public static native String resetModPartPlacement(long handle, int childPartIndex);
 
     public static native int imagePreviewWidth(long handle);
     public static native int imagePreviewHeight(long handle);
