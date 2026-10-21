@@ -28,6 +28,14 @@ enum class Format : std::uint8_t {
     AttackIndex,
     EffectBank,
     Fon,
+    // Stage configuration members (stNNNcfg.pac), by their tags.
+    StagePos,
+    StageEve,
+    StageCam,
+    StageItm,
+    StageSte,
+    StageEst,
+    StageSef,
 };
 
 struct ProbeResult {

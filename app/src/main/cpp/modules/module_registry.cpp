@@ -7,7 +7,8 @@
 namespace dmcresource {
 
 const std::vector<NativeModule>& NativeModuleRegistry::modules() {
-    static const std::vector<NativeModule> registry{
+    static const std::vector<NativeModule> registry = [] {
+        std::vector<NativeModule> modules{
         scm_module(),
         mod_module(),
         texture_module(Format::Dds),
@@ -26,7 +27,10 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         colindex_module(),
         effect_bank_module(),
         font_module(),
-    };
+        };
+        for (auto&& module : stage_config_modules()) modules.push_back(module);
+        return modules;
+    }();
     return registry;
 }
 

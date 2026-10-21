@@ -11,6 +11,7 @@
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/font.h"
+#include "dmcresource/stage_config.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -122,6 +123,22 @@ ProbeResult probe(std::string_view filename,
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mot");
     }
 
+    // Stage configuration members: a three-letter tag and a zero byte (POS,
+    // EVE, CAM, ITM, STE, EST, SEF); the module reads the rest from the bytes.
+    if (stage_config::Kind kind{};
+        bytes != nullptr && stage_config::identify(std::span<const std::uint8_t>{bytes, size}, &kind)) {
+        static constexpr const char* kMime[] = {
+            "application/vnd.dmc.pos", "application/vnd.dmc.eve", "application/vnd.dmc.cam",
+            "application/vnd.dmc.itm", "application/vnd.dmc.ste", "application/vnd.dmc.est",
+            "application/vnd.dmc.sef"};
+        static constexpr Format kFormat[] = {Format::StagePos, Format::StageEve, Format::StageCam,
+                                             Format::StageItm, Format::StageSte, Format::StageEst,
+                                             Format::StageSef};
+        const auto index = static_cast<std::size_t>(kind);
+        return result(kFormat[index], true, stage_config::kind_name(kind), "stage-config", "image-preview",
+                      "STRUCTURAL_CONFIRMED", kMime[index]);
+    }
+
     // FON bitmap fonts: no tag; the layout closing exactly is the identity
     // (pages 1..P, glyph numbers 1..G, then whole glyphs of one size).
     if (bytes != nullptr && font::looks_like_font(std::span<const std::uint8_t>{bytes, size})) {
@@ -226,6 +243,13 @@ const char* format_name(Format format) noexcept {
     case Format::AttackIndex: return "COLINDEX";
     case Format::EffectBank: return "FXBANK";
     case Format::Fon: return "FON";
+    case Format::StagePos: return "POS";
+    case Format::StageEve: return "EVE";
+    case Format::StageCam: return "CAM";
+    case Format::StageItm: return "ITM";
+    case Format::StageSte: return "STE";
+    case Format::StageEst: return "EST";
+    case Format::StageSef: return "SEF";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

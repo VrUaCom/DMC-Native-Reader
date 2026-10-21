@@ -73,5 +73,7 @@ public:
 [[nodiscard]] NativeModule colindex_module() noexcept;
 [[nodiscard]] NativeModule effect_bank_module() noexcept;
 [[nodiscard]] NativeModule font_module() noexcept;
+// POS, EVE, CAM, ITM, STE, EST, SEF: one module each, one implementation.
+[[nodiscard]] std::vector<NativeModule> stage_config_modules() noexcept;
 
 }  // namespace dmcresource
