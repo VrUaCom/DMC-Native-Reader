@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "dmcresource/mesh.h"
@@ -50,9 +52,32 @@ struct StickResponse final {
 };
 // The finger `dx`, `dy` pixels from the stick's base on a screen of `density`.
 [[nodiscard]] StickResponse stick_response(float dx_px, float dy_px, float density) noexcept;
-// Ring radii in pixels for the HUD: the knob's travel, then the end of the
-// dead band, then the end of every active and rest zone in turn.
+// Ring radii in pixels: the knob's travel, then the end of the dead band,
+// then the end of every active and rest zone in turn. The zones are felt, not
+// drawn: the HUD shows only the stick.
 [[nodiscard]] std::vector<float> stick_zone_radii(float density);
+// Where the HUD draws the knob for that finger: on the finger inside the
+// ring, on the ring past it (the boost zones beyond are not shown).
+[[nodiscard]] std::pair<float, float> stick_knob(float dx_px, float dy_px, float density) noexcept;
+
+// ---- which gesture owns a touch ---------------------------------------------
+
+// Zoom (pinch), dolly and camera turn never act together: the first of them
+// that engages owns the touch until every finger lifts.
+enum class Gesture : std::uint8_t { None = 0, Zoom = 1, Dolly = 2, Turn = 3 };
+// A pinch engages once it has changed the zoom by this much since the touch
+// began; smaller changes are provisional and undone if dolly or turn takes over.
+inline constexpr float kZoomEngage = 0.04F;
+
+// Dolly or turn wants the touch: true (and it owns it) when nothing else does.
+[[nodiscard]] bool claim_gesture(Gesture gesture) noexcept;
+// The pinch moved the zoom from `touch_zoom` (at the touch's start) to
+// `next`: may it apply? While the fingers are still `settling` (the pair or
+// the three have not chosen their gesture yet) a pinch never takes the touch.
+[[nodiscard]] bool zoom_step(float touch_zoom, float next, bool settling) noexcept;
+[[nodiscard]] Gesture touch_owner() noexcept;
+// Every finger lifted (or the touch was cancelled).
+void end_touch() noexcept;
 
 // One frame of flying: the look stick turns (1.8 rad/s) and tilts
 // (1.2 rad/s); the move stick moves the eye `speed` model units per second

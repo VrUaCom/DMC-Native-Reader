@@ -1714,14 +1714,29 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_flyTick(
     return floats(env, {step.yaw, step.pitch, move.boost, static_cast<float>(move.zone)});
 }
 
-// The joystick rings for the HUD (pixels): knob travel, dead band, zones.
+// Where the HUD draws a stick's knob for a finger offset (px): {dx, dy}.
 extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_stickZoneRadii(JNIEnv* env, jclass, jfloat density) {
-    try {
-        const auto radii = dmcresource::camera::stick_zone_radii(density);
-        jfloatArray out = env->NewFloatArray(static_cast<jsize>(radii.size()));
-        if (out != nullptr) env->SetFloatArrayRegion(out, 0, static_cast<jsize>(radii.size()), radii.data());
-        return out;
-    } catch (...) { return nullptr; }
+Java_com_dmcrengine_nativeviewer_NativeBridge_stickKnob(JNIEnv* env, jclass, jfloat dx, jfloat dy, jfloat density) {
+    const auto knob = dmcresource::camera::stick_knob(dx, dy, density);
+    return floats(env, {knob.first, knob.second});
+}
+
+// One gesture per touch (core camera_control): dolly 2, turn 3 ask for it.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_claimGesture(JNIEnv*, jclass, jint gesture) {
+    if (gesture < 0 || gesture > 3) return JNI_FALSE;
+    return dmcresource::camera::claim_gesture(static_cast<dmcresource::camera::Gesture>(gesture)) ? JNI_TRUE
+                                                                                                    : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_zoomStep(JNIEnv*, jclass, jfloat touch_zoom, jfloat next,
+                                                       jboolean settling) {
+    return dmcresource::camera::zoom_step(touch_zoom, next, settling == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_endTouch(JNIEnv*, jclass) {
+    dmcresource::camera::end_touch();
 }
 

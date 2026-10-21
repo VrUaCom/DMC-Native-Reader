@@ -135,7 +135,6 @@ public final class DmcRenderView extends View {
                 final boolean changed = step[0] != yaw || step[1] != pitch || moveHeld;
                 yaw = step[0];
                 pitch = step[1];
-                hud.setStickBoost(0, step[2], (int) step[3]);
                 if (changed) renderThrottled(false);
             }
             postOnAnimation(this);
@@ -146,6 +145,7 @@ public final class DmcRenderView extends View {
     private float pairStartX0, pairStartY0, pairStartX1, pairStartY1;
     private int pairId0, pairId1;
     private float zoomAtPair;
+    private float touchZoom = 1.0f;  // the zoom when the touch began
     private float dragLastY;
     private final GestureHud hud;
     private boolean scrubbing;
@@ -256,8 +256,13 @@ public final class DmcRenderView extends View {
                                 || multiMode == MULTI_CLOSE_PAN || tripleMode == TRIPLE_TURN) {
                             return false;
                         }
-                        zoom *= detector.getScaleFactor();
-                        zoom = Math.max(GestureHud.ZOOM_MIN, Math.min(GestureHud.ZOOM_MAX, zoom));
+                        final float next = Math.max(GestureHud.ZOOM_MIN,
+                                Math.min(GestureHud.ZOOM_MAX, zoom * detector.getScaleFactor()));
+                        // The core keeps zoom, dolly and turn apart: once one
+                        // owns the touch the others wait for every finger to lift.
+                        final boolean settling = multiMode == MULTI_UNDECIDED || tripleMode == TRIPLE_UNDECIDED;
+                        if (!NativeBridge.zoomStep(touchZoom, next, settling)) return false;
+                        zoom = next;
                         if (multiMode != MULTI_UNDECIDED) {
                             hud.showZoom(zoom, detector.getFocusX(), detector.getFocusY(), getWidth(), getHeight());
                             invalidate();
@@ -617,7 +622,6 @@ public final class DmcRenderView extends View {
                     renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly)) {
                 return false;
             }
-            hud.setStickZones(NativeBridge.stickZoneRadii(getResources().getDisplayMetrics().density));
             removeCallbacks(spinTick);
             spinYaw = 0.0f;
             spinPitch = 0.0f;
@@ -647,9 +651,13 @@ public final class DmcRenderView extends View {
         touching = false;
     }
 
-    /** The knob follows the finger, out into the boost zones the HUD draws. */
+    /** Only the stick is shown: the core puts the knob on the finger, or on the ring past it. */
     private void showStick(int side) {
-        hud.showStick(side, stickBaseX[side], stickBaseY[side], stickX[side], stickY[side]);
+        final float[] knob = NativeBridge.stickKnob(stickX[side] - stickBaseX[side],
+                stickY[side] - stickBaseY[side], getResources().getDisplayMetrics().density);
+        final float kx = knob != null && knob.length >= 2 ? knob[0] : 0.0f;
+        final float ky = knob != null && knob.length >= 2 ? knob[1] : 0.0f;
+        hud.showStick(side, stickBaseX[side], stickBaseY[side], stickBaseX[side] + kx, stickBaseY[side] + ky);
     }
 
     private void releaseStick(int side) {
@@ -1238,6 +1246,8 @@ public final class DmcRenderView extends View {
                 downTime = event.getEventTime();
                 maxPointers = 1;
                 scrubbing = false;
+                NativeBridge.endTouch();
+                touchZoom = zoom;
                 multiShift = 0.0f;
                 multiShiftTaken = false;
                 turnUsed = false;
@@ -1340,6 +1350,7 @@ public final class DmcRenderView extends View {
                 endTurn();
                 endDolly();
                 multiMode = MULTI_NORMAL;
+                NativeBridge.endTouch();
                 finishGesture(event, density);
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
                 renderThrottled(true);
@@ -1350,6 +1361,7 @@ public final class DmcRenderView extends View {
                 endTurn();
                 endDolly();
                 multiMode = MULTI_NORMAL;
+                NativeBridge.endTouch();
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
                 scrubbing = false;
                 recycleVelocity();
@@ -1558,7 +1570,13 @@ public final class DmcRenderView extends View {
             if (Math.signum(dxA) == Math.signum(dxB) && Math.abs(dxA) > 2.0f * slop) tripleMode = TRIPLE_NORMAL;
             return;
         }
+        if (!NativeBridge.claimGesture(NativeBridge.GESTURE_TURN)) {
+            tripleMode = TRIPLE_NORMAL;  // a pinch or a dolly owns this touch
+            return;
+        }
         tripleMode = TRIPLE_TURN;
+        zoom = touchZoom;  // undo the pinch detector's provisional zoom
+        hud.reset();
         turnUsed = true;
         turnHoldId = tripleIds[still];
         turnIdA = tripleIds[a];
@@ -1646,7 +1664,8 @@ public final class DmcRenderView extends View {
         final boolean oppositeHalves = (event.getX(held) < getWidth() * 0.5f)
                 != (event.getX(dragged) < getWidth() * 0.5f);
         if (enabled(G_DOLLY) && !(firstMoved && secondMoved) && oppositeHalves
-                && Math.abs(dragDy) > 1.4f * Math.abs(dragDx) && session != 0) {
+                && Math.abs(dragDy) > 1.4f * Math.abs(dragDx) && session != 0
+                && NativeBridge.claimGesture(NativeBridge.GESTURE_DOLLY)) {
             multiMode = MULTI_DOLLY;
             holdId = event.getPointerId(held);
             dragId = event.getPointerId(dragged);

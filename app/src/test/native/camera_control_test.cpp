@@ -97,6 +97,29 @@ int main() {
     const auto rings = camera::stick_zone_radii(density);
     assert(rings.size() == 2U + 2U * camera::kBoostSteps && rings[0] == ring);
     for (std::size_t i = 1; i < rings.size(); ++i) assert(rings[i] > rings[i - 1]);
+    // The knob is drawn on the finger inside the ring, on the ring past it.
+    const auto inside = camera::stick_knob(30.0F, 40.0F, density);
+    assert(inside.first == 30.0F && inside.second == 40.0F);
+    const auto clamped = camera::stick_knob(0.0F, -5000.0F, density);
+    assert(clamped.first == 0.0F && std::fabs(clamped.second + ring) < 1.0e-3F);
+
+    // ---- one gesture per touch ----
+    camera::end_touch();
+    // A small pinch is provisional: dolly can still take the touch, then no zoom.
+    assert(camera::zoom_step(1.0F, 1.01F, false) && camera::touch_owner() == camera::Gesture::None);
+    assert(camera::claim_gesture(camera::Gesture::Dolly));
+    assert(!camera::zoom_step(1.0F, 1.5F, false) && !camera::claim_gesture(camera::Gesture::Turn));
+    camera::end_touch();
+    // A real pinch owns the touch: no dolly, no turn until every finger lifts.
+    assert(camera::zoom_step(1.0F, 1.2F, false) && camera::touch_owner() == camera::Gesture::Zoom);
+    assert(!camera::claim_gesture(camera::Gesture::Dolly) && !camera::claim_gesture(camera::Gesture::Turn));
+    assert(camera::zoom_step(1.0F, 0.5F, false));
+    camera::end_touch();
+    // While the fingers are settling a pinch never takes the touch.
+    assert(camera::zoom_step(1.0F, 1.5F, true) && camera::touch_owner() == camera::Gesture::None);
+    assert(camera::claim_gesture(camera::Gesture::Turn) && camera::claim_gesture(camera::Gesture::Turn));
+    assert(!camera::zoom_step(1.0F, 1.5F, false));
+    camera::end_touch();
     // A boosted move covers more ground in the same time.
     camera::enter_fly({0.0F, 0.0F, 0.0F});
     const auto slow = camera::fly_tick(0.0F, 0.0F, camera::stick_response(0.0F, -ring, density), {}, 0.05F, 100.0F);

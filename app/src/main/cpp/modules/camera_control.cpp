@@ -11,6 +11,7 @@ namespace {
 
 std::mutex g_mutex;
 State g_state;
+Gesture g_owner{Gesture::None};
 
 // Inside the ring: a 12 % dead zone and a quadratic response, fine control
 // near the centre.
@@ -92,6 +93,42 @@ std::vector<float> stick_zone_radii(float density) {
         radii.push_back(r);
     }
     return radii;
+}
+
+std::pair<float, float> stick_knob(float dx_px, float dy_px, float density) noexcept {
+    const float radius = kStickRadiusDp * std::max(0.1F, density);
+    const float distance = std::hypot(dx_px, dy_px);
+    if (!std::isfinite(distance)) return {0.0F, 0.0F};
+    if (distance <= radius) return {dx_px, dy_px};
+    return {dx_px / distance * radius, dy_px / distance * radius};
+}
+
+bool claim_gesture(Gesture gesture) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (gesture == Gesture::None) return false;
+    if (g_owner == Gesture::None) g_owner = gesture;
+    return g_owner == gesture;
+}
+
+bool zoom_step(float touch_zoom, float next, bool settling) noexcept {
+    const std::lock_guard lock{g_mutex};
+    if (g_owner == Gesture::Zoom) return true;
+    if (g_owner != Gesture::None) return false;
+    if (!settling && touch_zoom > 0.0F && next > 0.0F && std::isfinite(touch_zoom) && std::isfinite(next)
+        && std::abs(std::log(next / touch_zoom)) >= kZoomEngage) {
+        g_owner = Gesture::Zoom;
+    }
+    return true;
+}
+
+Gesture touch_owner() noexcept {
+    const std::lock_guard lock{g_mutex};
+    return g_owner;
+}
+
+void end_touch() noexcept {
+    const std::lock_guard lock{g_mutex};
+    g_owner = Gesture::None;
 }
 
 FlyStep fly_tick(float yaw_radians, float pitch_radians, const StickResponse& move, const StickResponse& look,

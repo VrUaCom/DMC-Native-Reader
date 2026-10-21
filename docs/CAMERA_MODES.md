@@ -34,8 +34,9 @@ collision is shown) switches orbit ↔ fly; the same button goes back.
 * **Boost zones past the ring.** The knob follows the finger out of its
   ring. Past the ring an 18 dp dead band keeps the speed, then active zones
   (28 dp, the multiplier climbs by one across each) and rest zones (14 dp,
-  it holds) follow in turn, up to x6. The HUD draws the zone rings once the
-  finger leaves the ring and shows the multiplier over the knob.
+  it holds) follow in turn, up to x6. The zones are felt, not drawn: the HUD
+  shows only the stick, its knob on the finger inside the ring and on the
+  ring past it (`stick_knob`).
 * **Back to orbit keeps the place.** Leaving fly sets the orbit pivot one
   framing distance ahead of the eye along the view; the orbit camera then
   stands where the flight ended, looking the same way, and turns round that
@@ -43,15 +44,26 @@ collision is shown) switches orbit ↔ fly; the same button goes back.
 
 Core: `camera_control.h` owns the fly eye, the orbit pivot, the stick
 response with its zones and the fly step (`enter_fly`, `leave_fly`,
-`reset`, `stick_response`, `stick_zone_radii`, `fly_tick`); the frame reads
+`reset`, `stick_response`, `stick_zone_radii`, `stick_knob`, `fly_tick`); the frame reads
 them through `ViewControls::fly` / `eye` / `has_pivot` / `pivot` and
 `ViewState::fly` / `fly_eye` / `orbit_pivot` (`view_frame`). Android
 forwards finger offsets and the screen density (JNI `enterFly`, `leaveFly`,
-`resetCamera`, `flyTick`, `stickZoneRadii`) and draws what it gets. Tests:
+`resetCamera`, `flyTick`, `stickKnob`) and draws what it gets. Tests:
 `fly_camera_test.cpp`, `camera_control_test.cpp` (back to orbit stands at
 the flight's end within 0.05 units and turns round the pivot; the zones
 give x1.5 half through the first, hold x2 across its rest zone, cap at x6;
 a boosted move covers six times the ground).
+
+### One gesture per touch
+
+Pinch zoom, dolly (hold one finger, slide the other) and camera turn (hold
+one finger, twist two round it) never act together. The first of them that
+engages owns the touch until every finger lifts (`camera::claim_gesture`,
+`zoom_step`, `end_touch`). A pinch engages once it has moved the zoom by
+4 % since the touch began; smaller changes, and any change while the two or
+three fingers are still choosing their gesture, are provisional and undone
+when dolly or turn takes the touch. Android asks before each step (JNI
+`claimGesture`, `zoomStep`, `endTouch`). Test: `camera_control_test.cpp`.
 
 ## Shadow button
 

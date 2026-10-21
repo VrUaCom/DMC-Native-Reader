@@ -226,6 +226,15 @@ public final class NativeBridge {
     public static native float[] flyTick(long handle, float yaw, float pitch,
             boolean moveHeld, float moveDx, float moveDy, boolean lookHeld, float lookDx, float lookDy,
             float density, float dtSeconds);
-    /** Joystick rings in px: knob travel, dead band, then each boost zone's end. */
-    public static native float[] stickZoneRadii(float density);
+    /** Where the HUD draws a stick's knob for a finger offset (px): {dx, dy}. */
+    public static native float[] stickKnob(float dx, float dy, float density);
+    // One gesture per touch: zoom, dolly and camera turn never act together.
+    public static final int GESTURE_DOLLY = 2;
+    public static final int GESTURE_TURN = 3;
+    /** Dolly or turn asks for the touch; false when another gesture owns it. */
+    public static native boolean claimGesture(int gesture);
+    /** May the pinch move the zoom from the touch's start to `next`? */
+    public static native boolean zoomStep(float touchZoom, float next, boolean settling);
+    /** Every finger lifted. */
+    public static native void endTouch();
 }
