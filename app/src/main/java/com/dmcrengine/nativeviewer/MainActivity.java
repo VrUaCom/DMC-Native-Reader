@@ -366,13 +366,11 @@ public final class MainActivity extends Activity {
                 !renderView.isUvLayoutVisible() && stageScene,
                 renderView.isRoomCollisionVisible());
 
-        // Stage configuration (spawn points, zones, paths): over a stage scene
-        // or the room around a model.
-        final boolean configLoaded = !NativeBridge.stageConfigSummary().isEmpty();
+        // Stage configuration: Black Widow decides when it applies and whether
+        // its markers show.
         syncToggleButton(stageConfigButton,
-                hasSession && !renderView.isUvLayoutVisible()
-                        && (stageScene || NativeBridge.isStageSession(session) || (roomLoaded && roomShown())),
-                configLoaded && NativeBridge.stageMarkersVisible());
+                hasSession && blackWidowState.canLoadStageConfig && !renderView.isUvLayoutVisible(),
+                blackWidowState.stageMarkersShown);
 
         // Camera mode (stages and collision views): orbit <-> fly.
         final boolean flyAvailable = hasSession && !renderView.isUvLayoutVisible()
@@ -389,9 +387,7 @@ public final class MainActivity extends Activity {
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
                 renderView.isUvLayoutVisible());
 
-        syncToggleButton(soundButton,
-                hasSession && NativeBridge.soundCount(session) > 0,
-                soundTrack != null);
+        syncToggleButton(soundButton, hasSession && blackWidowState.canPlaySound, soundTrack != null);
 
         setToolAvailable(infoButton,
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
@@ -686,31 +682,19 @@ public final class MainActivity extends Activity {
         });
         addToolButton(bar, stageCollisionButton);
 
-        // Stage configuration: the spawn points, event and camera zones, items
-        // and stage elements of a stNNNcfg.pac drawn over the stage. First tap
-        // picks the file, then taps show / hide; a long press offers the rest.
-        // Holding a marker in the view opens its card.
-        stageConfigButton = makeSquareButton("\u2691", "Stage config: spawn points and zones", 20f);
-        stageConfigButton.setOnClickListener(v -> {
-            if (NativeBridge.stageConfigSummary().isEmpty()) {
-                pickStageConfig();
-                return;
-            }
-            final boolean show = !NativeBridge.stageMarkersVisible();
-            NativeBridge.setStageMarkersVisible(show);
-            notice(show ? "Stage config shown: " + NativeBridge.stageConfigSummary()
-                         : "Stage config hidden", Toast.LENGTH_SHORT);
-            renderView.renderNow();
-            applyResourceUiState();
-        });
+        // Stage configuration over the stage (Spider stage actions): the tap and
+        // the long-press menu are native actions; this shell only forwards them.
+        stageConfigButton = makeSquareButton("\u2691", "Stage config", 20f);
+        stageConfigButton.setOnClickListener(v -> handleOutcome(NativeBridge.stageConfigTool()));
         stageConfigButton.setOnLongClickListener(v -> {
-            stageConfigOptions();
+            showNativeMenu(NativeBridge.stageConfigMenu(),
+                    id -> handleOutcome(NativeBridge.runStageConfigMenu(id)));
             return true;
         });
         addToolButton(bar, stageConfigButton);
 
-        // Sound (VAG): tap plays / stops; a long press picks which sound of
-        // the file. The core decodes the PS-ADPCM to PCM.
+        // Sound: the core decodes it to PCM and names it; the platform player
+        // plays it (tap: play / stop, long press: which sound).
         soundButton = makeSquareButton("\u25B6", "Play sound", 20f);
         soundButton.setOnClickListener(v -> {
             if (soundTrack != null) {
@@ -721,7 +705,11 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         soundButton.setOnLongClickListener(v -> {
-            chooseSound();
+            if (session == 0) return true;
+            showNativeMenu(NativeBridge.soundMenu(session), id -> {
+                playSound(id);
+                applyResourceUiState();
+            });
             return true;
         });
         addToolButton(bar, soundButton);
@@ -1453,32 +1441,33 @@ public final class MainActivity extends Activity {
             notice(text, Toast.LENGTH_SHORT);
         }
 
-        @Override public void onStageMarker(int marker) {
-            showStageMarkerCard(marker);
+        @Override public void onActionOutcome(ActionOutcome outcome) {
+            handleOutcome(outcome);
         }
     };
 
+    /** Plays one sound the core decoded; the platform player is the only thing done here. */
     private void playSound(int index) {
         stopSound();
         if (session == 0) return;
-        final short[] samples = NativeBridge.soundSamples(session, index);
-        final int rate = NativeBridge.soundSampleRate(session, index);
-        if (samples == null || samples.length == 0 || rate <= 0) {
-            notice("This sound holds no samples", Toast.LENGTH_SHORT);
+        final SoundPcm pcm = NativeBridge.soundPcm(session, index);
+        if (pcm == null) return;
+        if (pcm.samples.length == 0 || pcm.sampleRate <= 0) {
+            if (!pcm.message.isEmpty()) notice(pcm.message, Toast.LENGTH_SHORT);
             return;
         }
         try {
             final android.media.AudioTrack track = new android.media.AudioTrack.Builder()
                     .setAudioFormat(new android.media.AudioFormat.Builder()
                             .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
-                            .setSampleRate(rate)
+                            .setSampleRate(pcm.sampleRate)
                             .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
                             .build())
                     .setTransferMode(android.media.AudioTrack.MODE_STATIC)
-                    .setBufferSizeInBytes(samples.length * 2)
+                    .setBufferSizeInBytes(pcm.samples.length * 2)
                     .build();
-            track.write(samples, 0, samples.length);
-            track.setNotificationMarkerPosition(samples.length);
+            track.write(pcm.samples, 0, pcm.samples.length);
+            track.setNotificationMarkerPosition(pcm.samples.length);
             track.setPlaybackPositionUpdateListener(new android.media.AudioTrack.OnPlaybackPositionUpdateListener() {
                 @Override public void onMarkerReached(android.media.AudioTrack t) {
                     runOnUiThread(() -> {
@@ -1493,11 +1482,9 @@ public final class MainActivity extends Activity {
             soundTrack = track;
             soundIndex = index;
             track.play();
-            final String title = NativeBridge.soundTitle(session, index);
-            notice("\u25B6 " + (title == null ? "Sound" : title), Toast.LENGTH_SHORT);
+            if (!pcm.message.isEmpty()) notice(pcm.message, Toast.LENGTH_SHORT);
         } catch (Exception error) {
             soundTrack = null;
-            notice("Could not play the sound", Toast.LENGTH_SHORT);
         }
     }
 
@@ -1512,24 +1499,23 @@ public final class MainActivity extends Activity {
         track.release();
     }
 
-    private void chooseSound() {
-        if (session == 0) return;
-        final int count = NativeBridge.soundCount(session);
-        if (count <= 0) return;
-        final String[] titles = new String[count];
-        for (int i = 0; i < count; ++i) {
-            final String title = NativeBridge.soundTitle(session, i);
-            titles[i] = title == null ? "Sound " + i : title;
+    /** A menu the core wrote: its title, line and items; the picked item's id goes back. */
+    private void showNativeMenu(NativeMenu menu, java.util.function.IntConsumer onPick) {
+        if (menu == null || menu.ids.length == 0) return;
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(menu.title);
+        if (menu.message.isEmpty()) {
+            builder.setItems(menu.labels, (d, which) -> onPick.accept(menu.ids[which]));
+        } else {
+            // A message and a list cannot share an AlertDialog: the items go to buttons.
+            builder.setMessage(menu.message);
+            if (menu.ids.length > 0) builder.setPositiveButton(menu.labels[0], (d, w) -> onPick.accept(menu.ids[0]));
+            if (menu.ids.length > 1) builder.setNeutralButton(menu.labels[1], (d, w) -> onPick.accept(menu.ids[1]));
+            if (menu.ids.length > 2) builder.setNegativeButton(menu.labels[2], (d, w) -> onPick.accept(menu.ids[2]));
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Play which sound")
-                .setItems(titles, (d, which) -> {
-                    playSound(which);
-                    applyResourceUiState();
-                })
-                .show();
+        builder.show();
     }
 
+    /** Platform step of the stage-config action: the system file picker. */
     private void pickStageConfig() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -1537,73 +1523,67 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, REQUEST_STAGE_CONFIG);
     }
 
+    /** The picked file goes to the native load action as a descriptor. */
     private void loadStageConfig(Uri uri) {
-        final String name = displayName(uri);
-        String summary = null;
+        ActionOutcome outcome = null;
         try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
-            if (pfd != null) summary = NativeBridge.loadStageConfig(pfd.getFd(), name);
+            outcome = NativeBridge.loadStageConfig(pfd == null ? -1 : pfd.getFd(), displayName(uri));
         } catch (Exception ignored) {
-            summary = null;
+            outcome = NativeBridge.loadStageConfig(-1, displayName(uri));
         }
-        if (summary == null) {
-            notice("No stage configuration in " + name
-                    + " (a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE file)", Toast.LENGTH_LONG);
-            return;
+        handleOutcome(outcome);
+    }
+
+    /** Carries out the one platform step a native action names, and shows its line. */
+    private void handleOutcome(ActionOutcome outcome) {
+        if (outcome == null) return;
+        if (!outcome.message.isEmpty()) notice(outcome.message, Toast.LENGTH_LONG);
+        switch (outcome.step) {
+            case ActionOutcome.STEP_PICK_STAGE_CONFIG:
+                pickStageConfig();
+                break;
+            case ActionOutcome.STEP_SHOW_MARKER_CARD:
+                showMarkerCard(outcome.marker);
+                break;
+            case ActionOutcome.STEP_OPEN_SESSION:
+                if (outcome.session != 0) navigateToSession(outcome.session, outcome.title);
+                break;
+            default:
+                break;
         }
-        notice("Stage config: " + summary + ". Hold a marker to see it.", Toast.LENGTH_LONG);
         renderView.renderNow();
         applyResourceUiState();
     }
 
-    private void stageConfigOptions() {
-        final String summary = NativeBridge.stageConfigSummary();
-        if (summary.isEmpty()) {
-            pickStageConfig();
-            return;
+    /** The held marker's card as the core wrote it; its buttons go back to the core. */
+    private void showMarkerCard(int marker) {
+        final MarkerCard card = NativeBridge.markerCard(marker);
+        if (card == null) return;
+        final StringBuilder body = new StringBuilder();
+        for (int i = 0; i < card.names.length && i < card.values.length; ++i) {
+            if (body.length() > 0) body.append('\n');
+            body.append(card.names[i]).append(": ").append(card.values[i]);
         }
-        final boolean shown = NativeBridge.stageMarkersVisible();
-        new AlertDialog.Builder(this)
-                .setTitle("Stage config")
-                .setMessage(summary)
-                .setPositiveButton("Load another", (d, w) -> pickStageConfig())
-                .setNeutralButton(shown ? "Hide" : "Show", (d, w) -> {
-                    NativeBridge.setStageMarkersVisible(!shown);
-                    renderView.renderNow();
-                    applyResourceUiState();
-                })
-                .setNegativeButton("Remove", (d, w) -> {
-                    NativeBridge.clearStageConfig();
-                    renderView.renderNow();
-                    applyResourceUiState();
-                    notice("Stage config removed", Toast.LENGTH_SHORT);
-                })
-                .show();
-    }
-
-    /** The held marker's card: what it is, its values and its file, with a way to open the file. */
-    private void showStageMarkerCard(int marker) {
-        final String card = NativeBridge.stageMarkerCard(marker);
-        if (card == null || card.isEmpty()) return;
-        final int newline = card.indexOf('\n');
-        final String title = newline < 0 ? card : card.substring(0, newline);
-        final String body = newline < 0 ? "" : card.substring(newline + 1);
-        new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setMessage(body)
-                .setPositiveButton("Open file", (d, w) -> {
-                    final long file = NativeBridge.openStageMarkerFile(marker);
-                    if (file == 0) {
-                        notice("Could not open the file", Toast.LENGTH_LONG);
-                        return;
-                    }
-                    navigateToSession(file, title + " \u00b7 file");
-                })
-                .setNegativeButton("Close", null)
-                .setOnDismissListener(d -> {
-                    NativeBridge.selectStageMarker(-1);
-                    renderView.renderNow();
-                })
-                .show();
+        final boolean[] answered = {false};
+        final AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle(card.title)
+                .setMessage(body.toString());
+        final NativeMenu buttons = card.actions;
+        if (buttons != null) {
+            for (int i = 0; i < buttons.ids.length && i < 2; ++i) {
+                final int id = buttons.ids[i];
+                final android.content.DialogInterface.OnClickListener click = (d, w) -> {
+                    answered[0] = true;
+                    handleOutcome(NativeBridge.runMarkerCardAction(marker, id));
+                };
+                if (i == 0) builder.setPositiveButton(buttons.labels[i], click);
+                else builder.setNegativeButton(buttons.labels[i], click);
+            }
+        }
+        builder.setOnDismissListener(d -> {
+            if (!answered[0]) handleOutcome(NativeBridge.runMarkerCardAction(marker, 0));
+        });
+        builder.show();
     }
 
     /** PNG into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
@@ -3667,18 +3647,14 @@ public final class MainActivity extends Activity {
 
     private Bitmap bitmapForSession(long handle) {
         if (handle == 0) return null;
-        BlackWidowState state = BlackWidowState.fromNative(NativeBridge.blackWidowState(handle));
         final int width;
         final int height;
-        if (state.uvMapView) {
-            final int[] size = NativeBridge.uvExportSize(handle);
-            if (size == null || size.length < 2) return null;
-            width = size[0];
-            height = size[1];
-        } else {
-            width = NativeBridge.imagePreviewWidth(handle);
-            height = NativeBridge.imagePreviewHeight(handle);
-        }
+        // The core chooses the picture and its size (a UV map at its
+        // texture's resolution, anything else its preview).
+        final int[] size = NativeBridge.exportImageSize(handle);
+        if (size == null || size.length < 2) return null;
+        width = size[0];
+        height = size[1];
 
         final long expected = (long) width * (long) height;
         if (width <= 0 || height <= 0 || expected <= 0L || expected > Integer.MAX_VALUE) {
@@ -3692,9 +3668,7 @@ public final class MainActivity extends Activity {
             return null;
         }
 
-        final boolean filled = state.uvMapView
-                ? NativeBridge.renderUvExport(handle, bitmap)
-                : NativeBridge.imagePreview(handle, bitmap);
+        final boolean filled = NativeBridge.renderExportImage(handle, bitmap);
         if (!filled) {
             bitmap.recycle();
             return null;

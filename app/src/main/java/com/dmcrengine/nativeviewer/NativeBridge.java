@@ -78,10 +78,6 @@ public final class NativeBridge {
     public static native int childResourcePreviewHeight(long handle, int index);
     public static native boolean childResourcePreview(long handle, int index, Bitmap target);
     public static native long openUvGallery(long handle);
-    /** PNG size of an opened UV map {width, height}, chosen by the core from its texture. */
-    public static native int[] uvExportSize(long handle);
-    /** Draws the UV map's PNG (texture rectangle filling the bitmap) into a bitmap of uvExportSize. */
-    public static native boolean renderUvExport(long handle, Bitmap target);
     public static native long openChild(long handle, int index);
 
     // Android allocates/reuses the destination Bitmap. JNI writes native RGBA
@@ -94,31 +90,26 @@ public final class NativeBridge {
     public static native long assemblePac(long handle, String archiveName);
     /** A stage archive (st*.pac) as its assembled scene; 0 when it is not a stage. */
     public static native long openStage(int fd, String filename);
-    // Sounds of a session (VAG chunks), decoded by the core to 16-bit mono PCM.
-    public static native int soundCount(long handle);
-    public static native String soundTitle(long handle, int index);
-    public static native int soundSampleRate(long handle, int index);
-    public static native short[] soundSamples(long handle, int index);
-
-    // Stage configuration (stNNNcfg.pac or one POS/EVE/CAM/ITM/STE/EST/SEF)
-    // drawn over the room or the stage scene; the core reads and decides.
-    /** Loads it and makes it current; what it holds in one line, null when it holds nothing. */
-    public static native String loadStageConfig(int fd, String filename);
-    public static native void clearStageConfig();
-    /** What the current stage configuration holds; empty when none is loaded. */
-    public static native String stageConfigSummary();
-    public static native void setStageMarkersVisible(boolean visible);
-    public static native boolean stageMarkersVisible();
-    /** The marker under the point (render pixels), now selected; -1 when none is near. */
-    public static native int pickStageMarker(long handle, int width, int height,
-                                             float yaw, float pitch, float zoom, int renderFlags,
-                                             float panX, float panY, float roomYaw, boolean follow,
-                                             float dolly, float x, float y);
-    public static native void selectStageMarker(int marker);
-    /** Title on the first line, then "name: value" lines. */
-    public static native String stageMarkerCard(int marker);
-    /** The file the marker comes from, opened as its own resource. */
-    public static native long openStageMarkerFile(int marker);
+    // Spider stage / sound / export actions: the core decides and writes
+    // every line; the shell carries out the named platform step.
+    public static native ActionOutcome loadStageConfig(int fd, String filename);
+    public static native ActionOutcome stageConfigTool();
+    public static native NativeMenu stageConfigMenu();
+    public static native ActionOutcome runStageConfigMenu(int id);
+    /** The view held at a point (render pixels): marker card, joint, or scrub. */
+    public static native ActionOutcome holdView(long handle, int width, int height,
+                                                float yaw, float pitch, float zoom, int renderFlags,
+                                                float panX, float panY, float roomYaw, boolean follow,
+                                                float dolly, float x, float y,
+                                                boolean joints, boolean scrub);
+    public static native MarkerCard markerCard(int marker);
+    /** id 0: the card went away. */
+    public static native ActionOutcome runMarkerCardAction(int marker, int id);
+    public static native NativeMenu soundMenu(long handle);
+    public static native SoundPcm soundPcm(long handle, int index);
+    /** The exported picture's {width, height}, chosen by the core. */
+    public static native int[] exportImageSize(long handle);
+    public static native boolean renderExportImage(long handle, Bitmap target);
     /** HITS sources of a stage scene session. */
     public static native int stageCollisionSourceCount(long handle);
     // handles[0] = character PAC, the rest are added (plwp_*.pac weapons hang

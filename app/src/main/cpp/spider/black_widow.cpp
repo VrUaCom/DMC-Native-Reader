@@ -92,6 +92,12 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::CanSaveSource, session.authored_source_available);
     set_if(&state, StateFlag::ReencodeRebuildsContainer,
            session.texture_reencode_available && session.reencode_rebuilds_container);
+    const bool stage_config = session.stage_drawn && !session.uv_map_view;
+    set_if(&state, StateFlag::CanLoadStageConfig, stage_config);
+    set_if(&state, StateFlag::StageConfigLoaded, stage_config && session.stage_config_loaded);
+    set_if(&state, StateFlag::StageMarkersShown,
+           stage_config && session.stage_config_loaded && session.stage_markers_visible);
+    set_if(&state, StateFlag::CanPlaySound, session.sound_count != 0U);
     set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
     set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;

@@ -37,6 +37,10 @@ public final class BlackWidowState {
     private static final long CAN_REENCODE_TEXTURES = 1L << 25;
     private static final long CAN_SAVE_SOURCE = 1L << 26;
     private static final long REENCODE_REBUILDS_CONTAINER = 1L << 27;
+    private static final long CAN_LOAD_STAGE_CONFIG = 1L << 28;
+    private static final long STAGE_CONFIG_LOADED = 1L << 29;
+    private static final long STAGE_MARKERS_SHOWN = 1L << 30;
+    private static final long CAN_PLAY_SOUND = 1L << 31;
 
     public final long bits;
     public final boolean canRender;
@@ -65,6 +69,10 @@ public final class BlackWidowState {
     public final boolean canReencodeTextures;
     public final boolean canSaveSource;
     public final boolean reencodeRebuildsContainer;
+    public final boolean canLoadStageConfig;
+    public final boolean stageConfigLoaded;
+    public final boolean stageMarkersShown;
+    public final boolean canPlaySound;
     public final boolean canAddModelPart;
     public final boolean canStageCompanion;
 
@@ -96,6 +104,10 @@ public final class BlackWidowState {
         canReencodeTextures = has(bits, CAN_REENCODE_TEXTURES);
         canSaveSource = has(bits, CAN_SAVE_SOURCE);
         reencodeRebuildsContainer = has(bits, REENCODE_REBUILDS_CONTAINER);
+        canLoadStageConfig = has(bits, CAN_LOAD_STAGE_CONFIG);
+        stageConfigLoaded = has(bits, STAGE_CONFIG_LOADED);
+        stageMarkersShown = has(bits, STAGE_MARKERS_SHOWN);
+        canPlaySound = has(bits, CAN_PLAY_SOUND);
         canAddModelPart = has(bits, CAN_ADD_MODEL_PART);
         canStageCompanion = has(bits, CAN_STAGE_COMPANION);
     }

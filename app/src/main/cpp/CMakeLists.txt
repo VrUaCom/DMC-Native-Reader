@@ -152,6 +152,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     spider/session_compose_actions.cpp
     spider/session_texture_actions.cpp
     spider/texture_reencode_actions.cpp
+    spider/stage_actions.cpp
     view_renderer.cpp
 )
 

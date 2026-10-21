@@ -59,8 +59,8 @@ public final class DmcRenderView extends View {
         void onToggleUi();
         void onScreenshot(Bitmap image);
         void onGestureNotice(String text);
-        /** A stage configuration marker was held (its index in the core). */
-        void onStageMarker(int marker);
+        /** A native action answered a gesture (a held marker's card, ...). */
+        void onActionOutcome(ActionOutcome outcome);
     }
 
     private GestureListener gestureListener;
@@ -310,31 +310,23 @@ public final class DmcRenderView extends View {
 
             @Override public void onLongPress(MotionEvent e) {
                 if (!singleFingerGesture()) return;
-                // A held spawn point, zone or path of the stage configuration
-                // opens its card; nothing else happens on that press.
-                final int marker = pickStageMarker(e.getX(), e.getY());
-                if (marker >= 0) {
-                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                    if (!staticImagePreview) renderNow();
-                    if (gestureListener != null) gestureListener.onStageMarker(marker);
-                    return;
-                }
-                String text = "";
-                if (enabled(G_BONE)) {
-                    final String hit = pick(e.getX(), e.getY(), false);
-                    final int bar = hit.indexOf('|');
-                    if (bar >= 0 && bar + 1 < hit.length()) text = "\ud83e\uddb4 " + hit.substring(bar + 1);
-                }
-                if (enabled(G_SCRUB) && session != 0 && NativeBridge.hasMotion(session)) {
+                // The core decides what the press means (a stage-config
+                // marker, then the joint, then scrubbing) and writes the line.
+                final ActionOutcome outcome = hold(e.getX(), e.getY());
+                if (outcome == null) return;
+                if (outcome.step == ActionOutcome.STEP_START_SCRUB) {
                     scrubbing = true;
                     scrubWasPlaying = motionPlaying;
                     pauseMotion();
                     scrubFrame = lastMotionFrame;
-                    text = text.isEmpty() ? "Scrub: drag sideways" : text + " \u00b7 drag to scrub";
                 }
-                if (!text.isEmpty()) {
-                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                    notice(text);
+                if (outcome.step == ActionOutcome.STEP_NONE && outcome.message.isEmpty()) return;
+                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                if (outcome.step == ActionOutcome.STEP_SHOW_MARKER_CARD) {
+                    if (!staticImagePreview) renderNow();
+                    if (gestureListener != null) gestureListener.onActionOutcome(outcome);
+                } else if (!outcome.message.isEmpty()) {
+                    notice(outcome.message);
                 }
             }
         });
@@ -370,13 +362,13 @@ public final class DmcRenderView extends View {
     }
 
     /** What is under a view pixel ("model|joint", "room|…", "placed|…", "none|…"). */
-    private int pickStageMarker(float viewX, float viewY) {
-        if (session == 0 || getWidth() <= 0 || getHeight() <= 0 || !NativeBridge.stageMarkersVisible()) return -1;
+    private ActionOutcome hold(float viewX, float viewY) {
+        if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return null;
         final int rw = renderWidth();
         final int rh = renderHeight();
-        return NativeBridge.pickStageMarker(session, rw, rh, yaw, pitch, zoom,
+        return NativeBridge.holdView(session, rw, rh, yaw, pitch, zoom,
                 renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly,
-                viewX * rw / getWidth(), viewY * rh / getHeight());
+                viewX * rw / getWidth(), viewY * rh / getHeight(), enabled(G_BONE), enabled(G_SCRUB));
     }
 
     private String pick(float viewX, float viewY, boolean place) {

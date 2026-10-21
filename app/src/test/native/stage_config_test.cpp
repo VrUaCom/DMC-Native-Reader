@@ -10,6 +10,8 @@
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/native_module.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/stage_config.h"
@@ -237,6 +239,55 @@ int main() {
         assert(stage_marker_card(99).empty() && !open_stage_marker_file(-1));
         stage_markers::set_current(nullptr);
         assert(stage_config_summary().empty());
+
+        // ---- the same flow through the Spider actions and Black Widow ----
+        namespace act = dmcresource::spider::actions;
+        namespace widow = dmcresource::spider::black_widow;
+        auto state = black_widow_state(&stage);
+        assert(widow::has_state(state, widow::StateFlag::CanLoadStageConfig));
+        assert(!widow::has_state(state, widow::StateFlag::StageConfigLoaded));
+        // No configuration: the tool asks the shell for the file picker.
+        assert(act::stage_config_tool().step == act::ShellStep::PickStageConfig);
+        assert(act::stage_config_menu().items.size() == 1U);
+        const auto bad = act::load_stage_config("noise.bin", std::vector<std::uint8_t>(64, 7U).data(), 64U);
+        assert(!bad.ok && bad.message.find("No stage configuration in noise.bin") == 0U);
+        const auto loaded = act::load_stage_config("st100cfg.pac", cfg.data(), cfg.size());
+        assert(loaded.ok && loaded.step == act::ShellStep::None && loaded.message.find("2 spawn points") != std::string::npos);
+        state = black_widow_state(&stage);
+        assert(widow::has_state(state, widow::StateFlag::StageConfigLoaded) &&
+               widow::has_state(state, widow::StateFlag::StageMarkersShown));
+        // Tool: hide, then show; the menu offers load / hide / remove.
+        assert(act::stage_config_tool().message == "Stage config hidden");
+        assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageMarkersShown));
+        assert(act::stage_config_tool().message.rfind("Stage config shown", 0) == 0U);
+        const auto menu = act::stage_config_menu();
+        assert(menu.items.size() == 3U && menu.items[1].label == "Hide");
+        assert(act::run_stage_config_menu(menu.items[0].id).step == act::ShellStep::PickStageConfig);
+        // Holding spawn point 1 asks for its card; the card's rows and buttons.
+        int held = -1;
+        for (int y = 0; y < 240 && held < 0; y += 2) {
+            for (int x = 0; x < 320 && held < 0; x += 2) {
+                const auto hold = act::hold_view(&stage, 320, 240, 0.4F, -0.6F, 1.0F, 0U, controls,
+                                                 static_cast<float>(x), static_cast<float>(y), true, true);
+                if (hold.step == act::ShellStep::ShowMarkerCard && hold.marker == 1) held = hold.marker;
+            }
+        }
+        assert(held == 1 && stage_markers::selected() == 1);
+        const auto spider_card = act::marker_card(1);
+        assert(spider_card.title == "Spawn point 1" && spider_card.actions.size() == 2U &&
+               spider_card.rows.back().first == "File");
+        std::unique_ptr<Session> opened;
+        const auto open = act::run_marker_card_action(1, spider_card.actions[0].id, &opened);
+        assert(open.step == act::ShellStep::OpenSession && opened && open.title == "Spawn point 1 \xC2\xB7 file");
+        assert(stage_markers::selected() == -1);
+        // The opened POS exports its map at the map's size.
+        assert(act::export_image_size(opened.get()).first == 1080);
+        assert(act::render_export_image(opened.get()).width == 1080);
+        // Sky: nothing held, no scrub without a motion.
+        const auto sky = act::hold_view(&stage, 320, 240, 0.4F, -0.6F, 1.0F, 0U, controls, 2.0F, 2.0F, true, true);
+        assert(sky.step == act::ShellStep::None && sky.message.empty());
+        assert(act::run_stage_config_menu(menu.items[2].id).message == "Stage config removed");
+        assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
     }
 
     // Truncated or foreign bytes are not taken.

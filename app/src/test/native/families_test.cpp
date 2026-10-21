@@ -10,6 +10,8 @@
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/native_module.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/spider/black_widow.h"
+#include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/sound.h"
 
 using namespace dmcresource;
@@ -161,6 +163,16 @@ int main() {
         assert(session_sound_samples(session.get(), 5U).empty());
         auto silent = open_session("lig.lig", lig.bytes.data(), lig.bytes.size());
         assert(silent && session_sound_count(silent.get()) == 0U);
+        // Black Widow offers playback; the Spider actions name and decode.
+        namespace widow = dmcresource::spider::black_widow;
+        namespace act = dmcresource::spider::actions;
+        assert(widow::has_state(black_widow_state(session.get()), widow::StateFlag::CanPlaySound));
+        assert(!widow::has_state(black_widow_state(silent.get()), widow::StateFlag::CanPlaySound));
+        const auto menu = act::sound_menu(session.get());
+        assert(menu.items.size() == 2U && menu.items[1].id == 1 && menu.items[0].label.find("voice") != std::string::npos);
+        const auto pcm = act::sound_pcm(session.get(), 0);
+        assert(pcm.sample_rate == 22050U && pcm.samples.size() == 84U && pcm.message.find("voice") != std::string::npos);
+        assert(act::sound_pcm(session.get(), 9).samples.empty());
     }
     {
         const auto result = run_decode_pipeline("voice.vag", vag.bytes.data(), vag.bytes.size());

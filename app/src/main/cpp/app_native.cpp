@@ -26,6 +26,7 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/stage_markers.h"
+#include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/enemy_effects.h"
@@ -607,31 +608,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openChild(
     } catch (...) { return 0; }
 }
 
-// An opened UV map's PNG size, decided by the core from the texture painted
-// on it: {width, height}, or {0, 0} for any other session.
-extern "C" JNIEXPORT jintArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_uvExportSize(
-        JNIEnv* env, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const auto [width, height] = dmcresource::uv_map_export_size(from_handle(handle));
-    jintArray out = env->NewIntArray(2);
-    if (out == nullptr) return nullptr;
-    const jint values[2] = {static_cast<jint>(width), static_cast<jint>(height)};
-    env->SetIntArrayRegion(out, 0, 2, values);
-    return out;
-}
-
-// The UV map's PNG: the texture rectangle filling a bitmap of uvExportSize.
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_renderUvExport(
-        JNIEnv* env, jclass, jlong handle, jobject target) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        const auto image = dmcresource::render_uv_map_export(from_handle(handle));
-        return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
-    } catch (...) { return JNI_FALSE; }
-}
-
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_openUvGallery(
         JNIEnv*, jclass, jlong handle) {
@@ -1068,142 +1044,191 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
     } catch (...) { return 0; }
 }
 
-// ---- Sounds of a session (VAG) ----
+// ---- Spider stage / sound / export actions (spider/stage_actions.h) ----
+//
+// JNI only maps handles, file descriptors and bitmaps and hands the typed
+// results to passive Java records; every decision and every line of text
+// comes from the C++ action.
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_soundCount(JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        return static_cast<jint>(dmcresource::session_sound_count(from_handle(handle)));
-    } catch (...) { return 0; }
+namespace {
+
+namespace stage_actions = dmcresource::spider::actions;
+
+jstring utf(JNIEnv* env, const std::string& text) { return env->NewStringUTF(text.c_str()); }
+
+jobjectArray utf_array(JNIEnv* env, const std::vector<std::string>& values) {
+    jclass string_class = env->FindClass("java/lang/String");
+    jobjectArray out = env->NewObjectArray(static_cast<jsize>(values.size()), string_class, nullptr);
+    for (std::size_t i = 0; out != nullptr && i < values.size(); ++i) {
+        jstring value = utf(env, values[i]);
+        env->SetObjectArrayElement(out, static_cast<jsize>(i), value);
+        env->DeleteLocalRef(value);
+    }
+    return out;
 }
 
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_soundTitle(JNIEnv* env, jclass, jlong handle, jint index) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        if (index < 0) return nullptr;
-        return env->NewStringUTF(
-            dmcresource::session_sound_title(from_handle(handle), static_cast<std::size_t>(index)).c_str());
-    } catch (...) { return nullptr; }
+jintArray int_array(JNIEnv* env, const std::vector<int>& values) {
+    jintArray out = env->NewIntArray(static_cast<jsize>(values.size()));
+    if (out != nullptr && !values.empty()) {
+        env->SetIntArrayRegion(out, 0, static_cast<jsize>(values.size()), reinterpret_cast<const jint*>(values.data()));
+    }
+    return out;
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_soundSampleRate(JNIEnv*, jclass, jlong handle, jint index) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        if (index < 0) return 0;
-        return static_cast<jint>(
-            dmcresource::session_sound_rate(from_handle(handle), static_cast<std::size_t>(index)));
-    } catch (...) { return 0; }
+// ActionOutcome(boolean ok, int step, String message, int marker, String title, long session)
+jobject outcome_object(JNIEnv* env, const stage_actions::ActionOutcome& o, jlong opened = 0) {
+    jclass type = env->FindClass("com/dmcrengine/nativeviewer/ActionOutcome");
+    if (type == nullptr) return nullptr;
+    jmethodID make = env->GetMethodID(type, "<init>", "(ZILjava/lang/String;ILjava/lang/String;J)V");
+    if (make == nullptr) return nullptr;
+    return env->NewObject(type, make, o.ok ? JNI_TRUE : JNI_FALSE, static_cast<jint>(o.step), utf(env, o.message),
+                          static_cast<jint>(o.marker), utf(env, o.title), opened);
 }
 
-// 16-bit mono PCM of one sound, decoded by the core.
-extern "C" JNIEXPORT jshortArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_soundSamples(JNIEnv* env, jclass, jlong handle, jint index) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        if (index < 0) return nullptr;
-        const auto samples =
-            dmcresource::session_sound_samples(from_handle(handle), static_cast<std::size_t>(index));
-        if (samples.empty()) return nullptr;
-        jshortArray out = env->NewShortArray(static_cast<jsize>(samples.size()));
-        if (out == nullptr) return nullptr;
-        env->SetShortArrayRegion(out, 0, static_cast<jsize>(samples.size()),
-                                 reinterpret_cast<const jshort*>(samples.data()));
-        return out;
-    } catch (...) { return nullptr; }
+// NativeMenu(String title, String message, int[] ids, String[] labels)
+jobject menu_object(JNIEnv* env, const stage_actions::Menu& menu) {
+    jclass type = env->FindClass("com/dmcrengine/nativeviewer/NativeMenu");
+    if (type == nullptr) return nullptr;
+    jmethodID make = env->GetMethodID(type, "<init>", "(Ljava/lang/String;Ljava/lang/String;[I[Ljava/lang/String;)V");
+    if (make == nullptr) return nullptr;
+    std::vector<int> ids;
+    std::vector<std::string> labels;
+    for (const auto& item : menu.items) {
+        ids.push_back(item.id);
+        labels.push_back(item.label);
+    }
+    return env->NewObject(type, make, utf(env, menu.title), utf(env, menu.message), int_array(env, ids),
+                          utf_array(env, labels));
 }
 
-// ---- Stage configuration over the room / stage scene (stage_markers.h) ----
+}  // namespace
 
-// Reads a stNNNcfg.pac or one member (POS, EVE, CAM, ITM, STE, EST, SEF) and
-// makes it the configuration drawn over the viewer's room or stage scene.
-// Returns what it holds in one line; null when the file holds no member.
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(
-        JNIEnv* env, jclass, jint fd, jstring filename) {
-    if (fd < 0) return nullptr;
-    ReadOnlyMap mapped(fd);
-    if (!mapped.valid()) return nullptr;
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(JNIEnv* env, jclass, jint fd, jstring filename) {
+    stage_actions::ActionOutcome outcome;
     try {
         const auto name = to_utf8(env, filename);
-        auto config = dmcresource::stage_markers::load_stage_config(
-            name, std::span<const std::uint8_t>{mapped.data(), mapped.size()});
-        if (config == nullptr) return nullptr;
-        const SessionLock jni_lock{session_mutex()};
-        dmcresource::stage_markers::set_current(std::move(config));
-        dmcresource::stage_markers::set_visible(true);
-        return env->NewStringUTF(dmcresource::stage_config_summary().c_str());
-    } catch (...) { return nullptr; }
+        if (fd >= 0) {
+            ReadOnlyMap mapped(fd);
+            const SessionLock jni_lock{session_mutex()};
+            outcome = stage_actions::load_stage_config(name, mapped.valid() ? mapped.data() : nullptr,
+                                                       mapped.valid() ? mapped.size() : 0U);
+        } else {
+            outcome = stage_actions::load_stage_config(name, nullptr, 0U);
+        }
+    } catch (...) {
+    }
+    return outcome_object(env, outcome);
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_clearStageConfig(JNIEnv*, jclass) {
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageConfigTool(JNIEnv* env, jclass) {
     const SessionLock jni_lock{session_mutex()};
-    dmcresource::stage_markers::set_current(nullptr);
+    return outcome_object(env, stage_actions::stage_config_tool());
 }
 
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_stageConfigSummary(JNIEnv* env, jclass) {
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageConfigMenu(JNIEnv* env, jclass) {
     const SessionLock jni_lock{session_mutex()};
     try {
-        return env->NewStringUTF(dmcresource::stage_config_summary().c_str());
+        return menu_object(env, stage_actions::stage_config_menu());
     } catch (...) { return nullptr; }
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setStageMarkersVisible(JNIEnv*, jclass, jboolean visible) {
-    dmcresource::stage_markers::set_visible(visible == JNI_TRUE);
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_runStageConfigMenu(JNIEnv* env, jclass, jint id) {
+    const SessionLock jni_lock{session_mutex()};
+    return outcome_object(env, stage_actions::run_stage_config_menu(id));
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_holdView(
+        JNIEnv* env, jclass, jlong handle, jint requested_width,
+        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
+        jboolean follow, jfloat dolly, jfloat x, jfloat y, jboolean joints, jboolean scrub) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
+    return outcome_object(env, stage_actions::hold_view(from_handle(handle), requested_width, requested_height, yaw,
+                                                        pitch, zoom, static_cast<std::uint32_t>(render_flags),
+                                                        controls, x, y, joints == JNI_TRUE, scrub == JNI_TRUE));
+}
+
+// MarkerCard(String title, String[] names, String[] values, NativeMenu actions)
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_markerCard(JNIEnv* env, jclass, jint marker) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto card = stage_actions::marker_card(marker);
+        if (card.title.empty()) return nullptr;
+        std::vector<std::string> names, values;
+        for (const auto& [name, value] : card.rows) {
+            names.push_back(name);
+            values.push_back(value);
+        }
+        stage_actions::Menu buttons{.title = card.title, .message = {}, .items = card.actions};
+        jclass type = env->FindClass("com/dmcrengine/nativeviewer/MarkerCard");
+        if (type == nullptr) return nullptr;
+        jmethodID make = env->GetMethodID(
+            type, "<init>",
+            "(Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;Lcom/dmcrengine/nativeviewer/NativeMenu;)V");
+        if (make == nullptr) return nullptr;
+        return env->NewObject(type, make, utf(env, card.title), utf_array(env, names), utf_array(env, values),
+                              menu_object(env, buttons));
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_runMarkerCardAction(JNIEnv* env, jclass, jint marker, jint id) {
+    const SessionLock jni_lock{session_mutex()};
+    std::unique_ptr<Session> opened;
+    const auto outcome = stage_actions::run_marker_card_action(marker, id, &opened);
+    return outcome_object(env, outcome, opened ? to_handle(opened.release()) : 0);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_soundMenu(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return menu_object(env, stage_actions::sound_menu(from_handle(handle)));
+    } catch (...) { return nullptr; }
+}
+
+// SoundPcm(int sampleRate, short[] samples, String message)
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_soundPcm(JNIEnv* env, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto pcm = stage_actions::sound_pcm(from_handle(handle), index);
+        jshortArray samples = env->NewShortArray(static_cast<jsize>(pcm.samples.size()));
+        if (samples == nullptr) return nullptr;
+        if (!pcm.samples.empty()) {
+            env->SetShortArrayRegion(samples, 0, static_cast<jsize>(pcm.samples.size()),
+                                     reinterpret_cast<const jshort*>(pcm.samples.data()));
+        }
+        jclass type = env->FindClass("com/dmcrengine/nativeviewer/SoundPcm");
+        if (type == nullptr) return nullptr;
+        jmethodID make = env->GetMethodID(type, "<init>", "(I[SLjava/lang/String;)V");
+        if (make == nullptr) return nullptr;
+        return env->NewObject(type, make, static_cast<jint>(pcm.sample_rate), samples, utf(env, pcm.message));
+    } catch (...) { return nullptr; }
+}
+
+// The picture a session exports: {width, height}, chosen by the core.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_exportImageSize(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto [width, height] = stage_actions::export_image_size(from_handle(handle));
+    return int_array(env, {width, height});
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_stageMarkersVisible(JNIEnv*, jclass) {
-    return dmcresource::stage_markers::visible() ? JNI_TRUE : JNI_FALSE;
-}
-
-// The stage configuration marker under image point (x, y) of that view,
-// which becomes the selected one (drawn white); -1 when none is near.
-extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_pickStageMarker(
-        JNIEnv*, jclass, jlong handle, jint requested_width,
-        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
-        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat dolly, jfloat x, jfloat y) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return -1;
-    try {
-        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
-        const auto pick = dmcresource::pick_session(
-            session, requested_width, requested_height, yaw, pitch, zoom,
-            static_cast<std::uint32_t>(render_flags), controls, x, y);
-        dmcresource::stage_markers::set_selected(pick.marker);
-        return pick.marker;
-    } catch (...) { return -1; }
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_selectStageMarker(JNIEnv*, jclass, jint marker) {
-    dmcresource::stage_markers::set_selected(marker);
-}
-
-// The held marker's card: title on the first line, then "name: value" lines.
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_stageMarkerCard(JNIEnv* env, jclass, jint marker) {
+Java_com_dmcrengine_nativeviewer_NativeBridge_renderExportImage(JNIEnv* env, jclass, jlong handle, jobject target) {
     const SessionLock jni_lock{session_mutex()};
     try {
-        return env->NewStringUTF(dmcresource::stage_marker_card(marker).c_str());
-    } catch (...) { return nullptr; }
-}
-
-// The file a marker comes from, opened as its own resource (Info and map).
-extern "C" JNIEXPORT jlong JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_openStageMarkerFile(JNIEnv*, jclass, jint marker) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        return to_handle(dmcresource::open_stage_marker_file(marker).release());
-    } catch (...) { return 0; }
+        return image_to_bitmap(env, target, stage_actions::render_export_image(from_handle(handle))) ? JNI_TRUE
+                                                                                                     : JNI_FALSE;
+    } catch (...) { return JNI_FALSE; }
 }
 
 // HITS sources of a stage scene session (its own collision view).

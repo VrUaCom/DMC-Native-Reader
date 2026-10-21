@@ -430,6 +430,12 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
 [[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
         const Session* session) noexcept {
     if (session == nullptr) return 0U;
+    std::size_t sounds = 0U;
+    try {
+        if (session->sound_bytes != nullptr) sounds = session_sound_count(session);
+    } catch (...) {
+        sounds = 0U;
+    }
     return dmcresource::spider::black_widow::evaluate_model_session({
         .capabilities = session->capabilities,
         .renderable = session->renderable,
@@ -451,6 +457,11 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .texture_reencode_available = session->source_bytes != nullptr,
         .authored_source_available = session->authored && session->source_bytes != nullptr,
         .reencode_rebuilds_container = session->container_source != nullptr,
+        .stage_drawn = session->renderable &&
+                       (session->stage != nullptr || stage_room::current() != nullptr),
+        .stage_config_loaded = stage_markers::current() != nullptr,
+        .stage_markers_visible = stage_markers::visible(),
+        .sound_count = sounds,
     });
 }
 

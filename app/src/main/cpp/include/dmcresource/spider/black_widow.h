@@ -41,6 +41,12 @@ enum class StateFlag : std::uint64_t {
     CanReencodeTextures        = 1ULL << 25U,
     CanSaveSource              = 1ULL << 26U,
     ReencodeRebuildsContainer  = 1ULL << 27U,
+    // Stage configuration over a stage scene or the room around a model.
+    CanLoadStageConfig         = 1ULL << 28U,
+    StageConfigLoaded          = 1ULL << 29U,
+    StageMarkersShown          = 1ULL << 30U,
+    // A sound the shell can play (PCM from the core).
+    CanPlaySound               = 1ULL << 31U,
 };
 
 using StateBits = std::uint64_t;
@@ -72,6 +78,11 @@ struct ModelSessionView final {
     bool texture_reencode_available{};
     bool authored_source_available{};
     bool reencode_rebuilds_container{};
+    // A stage is drawn: the session is a stage scene or a room is loaded.
+    bool stage_drawn{};
+    bool stage_config_loaded{};
+    bool stage_markers_visible{};
+    std::size_t sound_count{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral
