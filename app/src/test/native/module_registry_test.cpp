@@ -10,7 +10,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 25U);
+    assert(modules.size() == 35U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -99,10 +99,12 @@ int main() {
     const auto efm_probe = probe("renamed.bin", efm_magic.data(), efm_magic.size());
     assert(efm_probe.format == Format::Mod && std::string_view{efm_probe.family} == "EFM");
 
-    // Removed/archived families must not leak back into the clean registry.
-    for (const std::string_view family : {
-             "TXT", ".index", "DCA", "LIG", "LIG2",
-             "NBZ", "MRP"}) {
+    // Stage text, name lists, DCA and LIG2 came back with readers that check
+    // their bytes (module_families.cpp); the old LIG alias, NBZ and MRP did not.
+    for (const std::string_view family : {"TXT", ".index", "DCA", "LIG2"}) {
+        assert(NativeModuleRegistry::find(family) != nullptr);
+    }
+    for (const std::string_view family : {"LIG", "NBZ", "MRP"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 

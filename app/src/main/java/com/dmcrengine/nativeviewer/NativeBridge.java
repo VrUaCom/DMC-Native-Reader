@@ -81,6 +81,12 @@ public final class NativeBridge {
     public static native long assemblePac(long handle, String archiveName);
     /** A stage archive (st*.pac) as its assembled scene; 0 when it is not a stage. */
     public static native long openStage(int fd, String filename);
+    // Sounds of a session (VAG chunks), decoded by the core to 16-bit mono PCM.
+    public static native int soundCount(long handle);
+    public static native String soundTitle(long handle, int index);
+    public static native int soundSampleRate(long handle, int index);
+    public static native short[] soundSamples(long handle, int index);
+
     // Stage configuration (stNNNcfg.pac or one POS/EVE/CAM/ITM/STE/EST/SEF)
     // drawn over the room or the stage scene; the core reads and decides.
     /** Loads it and makes it current; what it holds in one line, null when it holds nothing. */

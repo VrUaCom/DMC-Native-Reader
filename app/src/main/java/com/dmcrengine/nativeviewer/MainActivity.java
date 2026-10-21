@@ -113,6 +113,9 @@ public final class MainActivity extends Activity {
     private Button collisionButton;
     private Button stageCollisionButton;
     private Button stageConfigButton;
+    private Button soundButton;
+    private android.media.AudioTrack soundTrack;
+    private int soundIndex;
     private Button flyButton;
     private Button breakButton;
     // Position in the collision cycle: -1 all attacks, then each used id.
@@ -360,6 +363,10 @@ public final class MainActivity extends Activity {
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
                 renderView.isUvLayoutVisible());
+
+        syncToggleButton(soundButton,
+                hasSession && NativeBridge.soundCount(session) > 0,
+                soundTrack != null);
 
         setToolAvailable(infoButton,
                 hasSession ? blackWidowState.canInspect : !infoText.isEmpty());
@@ -676,6 +683,23 @@ public final class MainActivity extends Activity {
             return true;
         });
         addToolButton(bar, stageConfigButton);
+
+        // Sound (VAG): tap plays / stops; a long press picks which sound of
+        // the file. The core decodes the PS-ADPCM to PCM.
+        soundButton = makeSquareButton("\u25B6", "Play sound", 20f);
+        soundButton.setOnClickListener(v -> {
+            if (soundTrack != null) {
+                stopSound();
+            } else {
+                playSound(soundIndex);
+            }
+            applyResourceUiState();
+        });
+        soundButton.setOnLongClickListener(v -> {
+            chooseSound();
+            return true;
+        });
+        addToolButton(bar, soundButton);
 
         // Camera mode: orbit (turn round the model / stage) or fly (joysticks
         // under the fingers: left moves, right looks). The same button goes back.
@@ -1408,6 +1432,78 @@ public final class MainActivity extends Activity {
             showStageMarkerCard(marker);
         }
     };
+
+    private void playSound(int index) {
+        stopSound();
+        if (session == 0) return;
+        final short[] samples = NativeBridge.soundSamples(session, index);
+        final int rate = NativeBridge.soundSampleRate(session, index);
+        if (samples == null || samples.length == 0 || rate <= 0) {
+            notice("This sound holds no samples", Toast.LENGTH_SHORT);
+            return;
+        }
+        try {
+            final android.media.AudioTrack track = new android.media.AudioTrack.Builder()
+                    .setAudioFormat(new android.media.AudioFormat.Builder()
+                            .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(rate)
+                            .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                            .build())
+                    .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(samples.length * 2)
+                    .build();
+            track.write(samples, 0, samples.length);
+            track.setNotificationMarkerPosition(samples.length);
+            track.setPlaybackPositionUpdateListener(new android.media.AudioTrack.OnPlaybackPositionUpdateListener() {
+                @Override public void onMarkerReached(android.media.AudioTrack t) {
+                    runOnUiThread(() -> {
+                        if (soundTrack == t) {
+                            stopSound();
+                            applyResourceUiState();
+                        }
+                    });
+                }
+                @Override public void onPeriodicNotification(android.media.AudioTrack t) { }
+            });
+            soundTrack = track;
+            soundIndex = index;
+            track.play();
+            final String title = NativeBridge.soundTitle(session, index);
+            notice("\u25B6 " + (title == null ? "Sound" : title), Toast.LENGTH_SHORT);
+        } catch (Exception error) {
+            soundTrack = null;
+            notice("Could not play the sound", Toast.LENGTH_SHORT);
+        }
+    }
+
+    private void stopSound() {
+        final android.media.AudioTrack track = soundTrack;
+        soundTrack = null;
+        if (track == null) return;
+        try {
+            track.stop();
+        } catch (Exception ignored) {
+        }
+        track.release();
+    }
+
+    private void chooseSound() {
+        if (session == 0) return;
+        final int count = NativeBridge.soundCount(session);
+        if (count <= 0) return;
+        final String[] titles = new String[count];
+        for (int i = 0; i < count; ++i) {
+            final String title = NativeBridge.soundTitle(session, i);
+            titles[i] = title == null ? "Sound " + i : title;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Play which sound")
+                .setItems(titles, (d, which) -> {
+                    playSound(which);
+                    applyResourceUiState();
+                })
+                .show();
+    }
 
     private void pickStageConfig() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -2748,6 +2844,7 @@ public final class MainActivity extends Activity {
     }
 
     private void activateSession(long handle, String name) {
+        stopSound();
         session = handle;
         selectedMotionIndex = -1;
         selectedScriptIndex = -1;
@@ -3301,6 +3398,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        stopSound();
         closeAllSessions();
         super.onDestroy();
     }

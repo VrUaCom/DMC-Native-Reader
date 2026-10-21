@@ -127,6 +127,8 @@ struct Session {
     // by such an action: their source_bytes are the file to save.
     std::shared_ptr<const std::vector<std::uint8_t>> source_bytes;
     std::string source_name;
+    // A sound resource (VAG): its bytes, decoded on demand by session_sound.
+    std::shared_ptr<const std::vector<std::uint8_t>> sound_bytes;
     bool authored{};
     // Set when the session was opened from a slot of a PAC that kept its
     // bytes: the container a texture re-encode rebuilds, so the result is the
@@ -357,6 +359,13 @@ struct SessionPick final {
     int marker{-1};
     std::string marker_title;
 };
+
+// Sounds of a session (the chunks of a VAG): how many, the name and sample
+// rate of one, and its samples as 16-bit mono PCM (empty for a bad index).
+[[nodiscard]] std::size_t session_sound_count(const Session* session);
+[[nodiscard]] std::string session_sound_title(const Session* session, std::size_t index);
+[[nodiscard]] std::uint32_t session_sound_rate(const Session* session, std::size_t index);
+[[nodiscard]] std::vector<std::int16_t> session_sound_samples(const Session* session, std::size_t index);
 
 // The current stage configuration's marker as a card: its title, then its
 // fields, then the file it comes from; empty for an index out of range.

@@ -977,6 +977,53 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
     } catch (...) { return 0; }
 }
 
+// ---- Sounds of a session (VAG) ----
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_soundCount(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return static_cast<jint>(dmcresource::session_sound_count(from_handle(handle)));
+    } catch (...) { return 0; }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_soundTitle(JNIEnv* env, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        if (index < 0) return nullptr;
+        return env->NewStringUTF(
+            dmcresource::session_sound_title(from_handle(handle), static_cast<std::size_t>(index)).c_str());
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_soundSampleRate(JNIEnv*, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        if (index < 0) return 0;
+        return static_cast<jint>(
+            dmcresource::session_sound_rate(from_handle(handle), static_cast<std::size_t>(index)));
+    } catch (...) { return 0; }
+}
+
+// 16-bit mono PCM of one sound, decoded by the core.
+extern "C" JNIEXPORT jshortArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_soundSamples(JNIEnv* env, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        if (index < 0) return nullptr;
+        const auto samples =
+            dmcresource::session_sound_samples(from_handle(handle), static_cast<std::size_t>(index));
+        if (samples.empty()) return nullptr;
+        jshortArray out = env->NewShortArray(static_cast<jsize>(samples.size()));
+        if (out == nullptr) return nullptr;
+        env->SetShortArrayRegion(out, 0, static_cast<jsize>(samples.size()),
+                                 reinterpret_cast<const jshort*>(samples.data()));
+        return out;
+    } catch (...) { return nullptr; }
+}
+
 // ---- Stage configuration over the room / stage scene (stage_markers.h) ----
 
 // Reads a stNNNcfg.pac or one member (POS, EVE, CAM, ITM, STE, EST, SEF) and

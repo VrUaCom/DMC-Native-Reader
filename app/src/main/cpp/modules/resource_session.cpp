@@ -8,6 +8,7 @@
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/stage_markers.h"
+#include "dmcresource/sound.h"
 #include "dmcresource/environment_collision.h"
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/collision_debug.h"
@@ -589,6 +590,9 @@ std::unique_ptr<Session> open_session(std::string_view name,
     retain_lazy_child_sources(session.get(), bytes, size);
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     retain_texture_source(session.get(), name, bytes, size);
+    if (session && session->probe.format == Format::Vag && bytes != nullptr) {
+        session->sound_bytes = std::make_shared<const std::vector<std::uint8_t>>(bytes, bytes + size);
+    }
     return session;
 }
 
@@ -2178,6 +2182,33 @@ SessionPick pick_session(const Session* session, int requested_width, int reques
     }
     return out;
 }
+std::size_t session_sound_count(const Session* session) {
+    if (session == nullptr || session->sound_bytes == nullptr) return 0U;
+    return sound::read_vag(*session->sound_bytes).size();
+}
+
+std::string session_sound_title(const Session* session, std::size_t index) {
+    if (session == nullptr || session->sound_bytes == nullptr) return {};
+    const auto chunks = sound::read_vag(*session->sound_bytes);
+    if (index >= chunks.size()) return {};
+    const auto& c = chunks[index];
+    return "Sound " + std::to_string(index) + (c.name.empty() ? "" : " - " + c.name) + " (" +
+           std::to_string(c.sample_rate) + " Hz)";
+}
+
+std::uint32_t session_sound_rate(const Session* session, std::size_t index) {
+    if (session == nullptr || session->sound_bytes == nullptr) return 0U;
+    const auto chunks = sound::read_vag(*session->sound_bytes);
+    return index < chunks.size() ? chunks[index].sample_rate : 0U;
+}
+
+std::vector<std::int16_t> session_sound_samples(const Session* session, std::size_t index) {
+    if (session == nullptr || session->sound_bytes == nullptr) return {};
+    const auto chunks = sound::read_vag(*session->sound_bytes);
+    if (index >= chunks.size()) return {};
+    return sound::decode_vag(*session->sound_bytes, chunks[index]);
+}
+
 std::string stage_marker_card(int marker) {
     const auto config = stage_markers::current();
     if (config == nullptr || marker < 0 || static_cast<std::size_t>(marker) >= config->markers.size()) return {};

@@ -1,3 +1,4 @@
+#include "dmcresource/stage_config.h"
 #include "dmcresource/native_module.h"
 
 #include <cmath>
@@ -58,6 +59,25 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "SHW ")) {
         return {Format::Shw, "SHW", "shw", true};
     }
+    // Stage configuration members and the tagged stage / sound families.
+    if (stage_config::Kind kind{};
+        bytes != nullptr && stage_config::identify(std::span<const std::uint8_t>{bytes, size}, &kind)) {
+        static constexpr Format kFormat[] = {Format::StagePos, Format::StageEve, Format::StageCam,
+                                             Format::StageItm, Format::StageSte, Format::StageEst,
+                                             Format::StageSef};
+        static constexpr const char* kExtension[] = {"pos", "eve", "cam", "itm", "ste", "est", "sef"};
+        const auto index = static_cast<std::size_t>(kind);
+        return {kFormat[index], stage_config::kind_name(kind), kExtension[index]};
+    }
+    if (magic_at(bytes, size, 0U, "LIG2")) return {Format::Lig2, "LIG2", "lig"};
+    if (magic_at(bytes, size, 0U, "DCA\0")) return {Format::Dca, "DCA", "dca"};
+    if (magic_at(bytes, size, 0U, "dbsT")) return {Format::SoundTable, "dbsT", "tsb"};
+    if (magic_at(bytes, size, 0U, "ff&A")) return {Format::FloatTable, "ff&A", "ff"};
+    if (magic_at(bytes, size, 0U, "VAGp")) return {Format::Vag, "VAG", "vag"};
+    if (magic_at(bytes, size, 0U, "SPUM") && magic_at(bytes, size, 4U, "APDT")) {
+        return {Format::SpuMap, "SPUMAPDT", "bin"};
+    }
+    if (magic_at(bytes, size, 4U, "HID\0")) return {Format::Hid, "HID", "hid"};
     if (bytes != nullptr && size > 0U) {
         const std::string_view text{reinterpret_cast<const char*>(bytes), size};
         if (motion::looks_like_tsc(text)) return {Format::Tsc, "TSC", "tsc"};

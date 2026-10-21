@@ -5,6 +5,7 @@
 #include <cctype>
 #include <span>
 #include <sstream>
+#include <cstring>
 #include <string>
 #include <string_view>
 
@@ -12,6 +13,9 @@
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/font.h"
 #include "dmcresource/stage_config.h"
+#include "dmcresource/sound.h"
+#include "dmc_rengine/formats/so/graph.hpp"
+#include "dmc_rengine/formats/stage_txt.hpp"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
@@ -19,6 +23,49 @@
 
 namespace dmcresource {
 namespace {
+
+// Stage room setup text: clean lexing and at least one stage directive.
+[[nodiscard]] bool looks_like_stage_text(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() > (4U << 20U)) return false;
+    const auto lex = dmc::rengine::formats::stage_txt::Lexer::scan(std::as_bytes(bytes));
+    if (!lex.ok()) return false;
+    using dmc::rengine::formats::stage_txt::TokenKind;
+    for (const auto kind : {TokenKind::directive_set, TokenKind::door, TokenKind::box_in, TokenKind::next_room}) {
+        if (!lex.by_kind(kind).empty()) return true;
+    }
+    return false;
+}
+
+// A slot name list: an optional PNST line, then file names (a stem, a dot,
+// an extension of 2-5 letters or digits), one a line; NUL only as padding.
+[[nodiscard]] bool looks_like_name_index(std::string_view text) {
+    if (text.size() > (1U << 20U)) return false;
+    while (!text.empty() && text.back() == '\0') text.remove_suffix(1U);
+    std::size_t names = 0U, at = 0U;
+    bool first = true;
+    while (at < text.size()) {
+        auto end = text.find('\n', at);
+        if (end == std::string_view::npos) end = text.size();
+        auto line = text.substr(at, end - at);
+        at = end + 1U;
+        while (!line.empty() && line.back() == '\r') line.remove_suffix(1U);
+        if (line.empty()) continue;
+        if (first && line == "PNST") { first = false; continue; }
+        first = false;
+        const auto dot = line.rfind('.');
+        if (dot == std::string_view::npos || dot == 0U || line.size() - dot - 1U < 2U || line.size() - dot - 1U > 5U) {
+            return false;
+        }
+        for (const char c : line) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                            c == '_' || c == '-' || c == '.' || c == '\\' || c == '/';
+            if (!ok) return false;
+        }
+        ++names;
+    }
+    return names >= 1U;
+}
+
 
 std::string lower_extension(std::string_view filename) {
     const auto dot = filename.find_last_of('.');
@@ -90,6 +137,13 @@ ProbeResult probe(std::string_view filename,
     // PNST: same relative-slot layout as PAC (weapon archives obj\\plwp_*.pac
     // use it despite the .pac name).
     // Effect bank (loader 0x1402C04C0): a PNST whose slot 0 is the manifest.
+    // A slot name list may open with a "PNST" line; it is text, not the
+    // container (whose +4 is a binary slot count).
+    if (magic4(bytes, size, 'P', 'N', 'S', 'T') &&
+        looks_like_name_index(std::string_view{reinterpret_cast<const char*>(bytes), size})) {
+        return result(Format::NameIndex, true, ".index", "name-list", "inspection",
+                      "STRUCTURAL_CONFIRMED", "text/vnd.dmc.index");
+    }
     if (magic4(bytes, size, 'P', 'N', 'S', 'T') &&
         effect_bank::looks_like_bank(std::span<const std::uint8_t>{bytes, size})) {
         return result(Format::EffectBank, true, "FXBANK", "effect", "child-resources",
@@ -116,11 +170,51 @@ ProbeResult probe(std::string_view filename,
             return result(Format::Clt, true, "CLT", "cloth", "inspection",
                           "EXE_CONFIRMED", "text/vnd.dmc.clt");
         }
+        // Stage room setup text: lexes cleanly and carries #SET / DOOR /
+        // BOXIN / NEXTROOM; a slot name list (.index): file names, one a line.
+        if (looks_like_stage_text(std::span<const std::uint8_t>{bytes, size})) {
+            return result(Format::StageText, true, "TXT", "stage-text", "inspection",
+                          "STRUCTURAL_CONFIRMED", "text/vnd.dmc.stage");
+        }
+        if (looks_like_name_index(text)) {
+            return result(Format::NameIndex, true, ".index", "name-list", "inspection",
+                          "STRUCTURAL_CONFIRMED", "text/vnd.dmc.index");
+        }
     }
     // MOT keeps its identity at +0x04 after the u32 header size.
     if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'M', 'O', 'T', '\0')) {
         return result(Format::Mot, true, "MOT", "animation", "inspection",
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.mot");
+    }
+
+    // Tagged stage and enemy families (stage corpus reverse notes).
+    if (magic4(bytes, size, 'L', 'I', 'G', '2')) {
+        return result(Format::Lig2, true, "LIG2", "lighting", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.lig2");
+    }
+    if (magic4(bytes, size, 'D', 'C', 'A', '\0')) {
+        return result(Format::Dca, true, "DCA", "stage-records", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.dca");
+    }
+    if (magic4(bytes, size, 'd', 'b', 's', 'T')) {
+        return result(Format::SoundTable, true, "dbsT", "sound", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.tsb");
+    }
+    if (magic4(bytes, size, 'f', 'f', '&', 'A')) {
+        return result(Format::FloatTable, true, "ff&A", "table", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ff");
+    }
+    if (bytes != nullptr && sound::looks_like_vag(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Vag, true, "VAG", "sound", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "audio/vnd.sony.vag");
+    }
+    if (bytes != nullptr && size >= 8U && std::memcmp(bytes, "SPUMAPDT", 8U) == 0) {
+        return result(Format::SpuMap, true, "SPUMAPDT", "sound", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.spumap");
+    }
+    if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'H', 'I', 'D', '\0')) {
+        return result(Format::Hid, true, "HID", "dispatch", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.hid");
     }
 
     // Stage configuration members: a three-letter tag and a zero byte (POS,
@@ -208,6 +302,19 @@ ProbeResult probe(std::string_view filename,
                           "STRUCTURAL_CONFIRMED", "application/vnd.dmc.ptx");
         }
     }
+    // SO graphs carry no tag; the reader's own shape check identifies them,
+    // last of all so that every tag and extension route goes first.
+    if (bytes != nullptr && size > 0U) {
+        const auto raw = std::as_bytes(std::span<const std::uint8_t>{bytes, size});
+        // The SO "volume table" and "link table" of dmc-rengine-cpp are the
+        // collision shape tables and attack indices read above (COLSHAPE,
+        // COLINDEX, from the EXE); only the graph is its own family.
+        if (dmc::rengine::formats::so::graph::recognizes(raw)) {
+            return result(Format::SoGraph, true, "SO-GRAPH", "graph", "inspection",
+                          "CORPUS_CONFIRMED", "application/vnd.dmc.so");
+        }
+    }
+
     return {};
 }
 
@@ -250,6 +357,16 @@ const char* format_name(Format format) noexcept {
     case Format::StageSte: return "STE";
     case Format::StageEst: return "EST";
     case Format::StageSef: return "SEF";
+    case Format::Lig2: return "LIG2";
+    case Format::Dca: return "DCA";
+    case Format::StageText: return "TXT";
+    case Format::NameIndex: return ".index";
+    case Format::SoGraph: return "SO-GRAPH";
+    case Format::SoundTable: return "dbsT";
+    case Format::FloatTable: return "ff&A";
+    case Format::Hid: return "HID";
+    case Format::SpuMap: return "SPUMAPDT";
+    case Format::Vag: return "VAG";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

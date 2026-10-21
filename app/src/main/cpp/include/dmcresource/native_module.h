@@ -75,5 +75,7 @@ public:
 [[nodiscard]] NativeModule font_module() noexcept;
 // POS, EVE, CAM, ITM, STE, EST, SEF: one module each, one implementation.
 [[nodiscard]] std::vector<NativeModule> stage_config_modules() noexcept;
+// LIG2, DCA, stage text, .index, SO graph, dbsT, ff&A, HID, SPUMAPDT, VAG.
+[[nodiscard]] std::vector<NativeModule> family_modules() noexcept;
 
 }  // namespace dmcresource

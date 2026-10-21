@@ -29,6 +29,7 @@ const std::vector<NativeModule>& NativeModuleRegistry::modules() {
         font_module(),
         };
         for (auto&& module : stage_config_modules()) modules.push_back(module);
+        for (auto&& module : family_modules()) modules.push_back(module);
         return modules;
     }();
     return registry;

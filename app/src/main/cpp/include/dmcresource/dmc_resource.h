@@ -36,6 +36,17 @@ enum class Format : std::uint8_t {
     StageSte,
     StageEst,
     StageSef,
+    // Further stage and enemy families (module_families.cpp).
+    Lig2,
+    Dca,
+    StageText,
+    NameIndex,
+    SoGraph,
+    SoundTable,
+    FloatTable,
+    Hid,
+    SpuMap,
+    Vag,
 };
 
 struct ProbeResult {
