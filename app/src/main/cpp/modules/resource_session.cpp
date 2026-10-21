@@ -2062,15 +2062,32 @@ RgbaImage render_session(const Session* session, int requested_width,
                           ViewControls{});
 }
 
+std::pair<int, int> uv_map_export_size(const Session* session) noexcept {
+    if (session == nullptr || !session->uv_gallery || !session->uv_map_index ||
+        *session->uv_map_index >= session->uv_gallery->maps.size()) {
+        return {0, 0};
+    }
+    return uv_map_export_size(session->uv_gallery->maps[*session->uv_map_index]);
+}
+
+RgbaImage render_uv_map_export(const Session* session) {
+    const auto [width, height] = uv_map_export_size(session);
+    if (width <= 0 || height <= 0) return {};
+    const auto& map = session->uv_gallery->maps[*session->uv_map_index];
+    return render_uv_map_export(session->uv_gallery->coordinates, map.indices, width, height,
+                                map.texture_width, map.texture_height);
+}
+
 RgbaImage render_session(const Session* session, int requested_width, int requested_height, float yaw,
                          float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls) {
     if (session == nullptr) return {};
     if (session->uv_gallery && session->uv_map_index &&
         *session->uv_map_index < session->uv_gallery->maps.size()) {
-        return render_uv_map(session->uv_gallery->coordinates,
-            session->uv_gallery->maps[*session->uv_map_index].indices,
+        const auto& map = session->uv_gallery->maps[*session->uv_map_index];
+        return render_uv_map(session->uv_gallery->coordinates, map.indices,
             std::clamp(requested_width, 64, kMaxRenderSide),
-            std::clamp(requested_height, 64, kMaxRenderSide), zoom);
+            std::clamp(requested_height, 64, kMaxRenderSide), zoom,
+            map.texture_width, map.texture_height);
     }
     if (!session->renderable) return {};
     PreparedView prepared;

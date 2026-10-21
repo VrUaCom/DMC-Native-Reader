@@ -18,6 +18,17 @@ bool valid_child(const Session* session, int index) noexcept {
 }
 constexpr std::uint32_t kThumbnailSize = 256U;
 
+// A UV tile in the texture's proportions, its longer side kThumbnailSize.
+std::pair<std::uint32_t, std::uint32_t> uv_thumbnail_size(const UvMap& map) noexcept {
+    if (map.texture_width == 0U || map.texture_height == 0U) return {kThumbnailSize, kThumbnailSize};
+    const auto longer = std::max(map.texture_width, map.texture_height);
+    const auto scale = [&](std::uint32_t side) {
+        return std::max<std::uint32_t>(
+            1U, static_cast<std::uint32_t>(static_cast<std::uint64_t>(side) * kThumbnailSize / longer));
+    };
+    return {scale(map.texture_width), scale(map.texture_height)};
+}
+
 ImagePreview square_thumbnail(const ImagePreview& source) {
     if (!source.available()) return {};
 
@@ -235,6 +246,15 @@ std::unique_ptr<Session> open_uv_gallery(const Session* model) {
     auto gallery = std::make_shared<UvGallery>(build_uv_gallery(
         model->render_mesh, model->render_triangle_texture_slots));
     if (gallery->maps.empty()) return nullptr;
+    // Each layout takes the proportions of the texture painted on it: the
+    // render bank's texture at the triangles' slot.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> texture_sizes;
+    texture_sizes.reserve(model->attached_textures.size());
+    for (const auto& texture : model->attached_textures) {
+        texture_sizes.emplace_back(texture.available() ? texture.width : 0U,
+                                   texture.available() ? texture.height : 0U);
+    }
+    bind_uv_texture_sizes(*gallery, texture_sizes);
     auto session = std::make_unique<Session>();
     session->uv_gallery = std::move(gallery);
     session->capabilities = capability(ResourceCapability::ChildResources) |
@@ -255,13 +275,16 @@ std::string session_child_title(const Session* session, int index) {
     if (!session->uv_gallery) return session->children[index].title;
     const auto& map = session->uv_gallery->maps[index];
     return "UV · Slot " + std::to_string(map.texture_slot) + " · " +
+           uv_map_proportion(map) + " · " +
            std::to_string(map.indices.size() / 3U) + " triangles";
 }
 
 std::pair<std::uint32_t, std::uint32_t> session_child_preview_size(
     const Session* session, int index) noexcept {
     if (!valid_child(session, index)) return {};
-    if (session->uv_gallery) return {kThumbnailSize, kThumbnailSize};
+    if (session->uv_gallery) {
+        return uv_thumbnail_size(session->uv_gallery->maps[static_cast<std::size_t>(index)]);
+    }
 
     const auto& child = session->children[static_cast<std::size_t>(index)];
     if (child.image_preview.available()) {
@@ -301,8 +324,11 @@ const ImagePreview* session_child_preview(
     }
     if (!scratch) return nullptr;
     const auto& gallery = *session->uv_gallery;
-    auto image = render_uv_map(gallery.coordinates, gallery.maps[index].indices,
-                               kThumbnailSize, kThumbnailSize, 1.0F);
+    const auto& map = gallery.maps[static_cast<std::size_t>(index)];
+    const auto [thumb_w, thumb_h] = uv_thumbnail_size(map);
+    auto image = render_uv_map(gallery.coordinates, map.indices,
+                               static_cast<int>(thumb_w), static_cast<int>(thumb_h), 1.0F,
+                               map.texture_width, map.texture_height);
     *scratch = {static_cast<std::uint32_t>(image.width),
                 static_cast<std::uint32_t>(image.height), std::move(image.pixels)};
     return scratch;

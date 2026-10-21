@@ -389,10 +389,23 @@ void marker(RgbaImage& image, P2 point, std::uint8_t shade, int width = 1) {
     return true;
 }
 
+// UV space is the texture's rectangle: u across its width, v down its height
+// (sample_texture reads row v * height from the top), so a layout is drawn in
+// texels of the texture it was painted for. `texture_width/height` 0 means the
+// texture is unknown and the rectangle is drawn square.
+// View framing fits the layout's extent with a margin; export framing maps the
+// 0..1 rectangle onto the whole image, so the PNG lies over the texture.
 void draw_uv_layout(std::span<const Vec2> coordinates,
                     std::span<const std::uint32_t> indices,
-                    const ViewState& view, RgbaImage* image) {
+                    const ViewState& view, RgbaImage* image,
+                    std::uint32_t texture_width = 0U,
+                    std::uint32_t texture_height = 0U,
+                    bool export_frame = false) {
     if (image == nullptr || coordinates.empty() || indices.size() < 3U) return;
+
+    const bool known = texture_width != 0U && texture_height != 0U;
+    const float aspect_u = known ? static_cast<float>(texture_width) : 1.0F;
+    const float aspect_v = known ? static_cast<float>(texture_height) : 1.0F;
 
     float min_u = 0.0F;
     float min_v = 0.0F;
@@ -408,31 +421,39 @@ void draw_uv_layout(std::span<const Vec2> coordinates,
         max_v = std::max(max_v, uv.v);
     }
 
-    const float span_u = std::max(1.0e-5F, max_u - min_u);
-    const float span_v = std::max(1.0e-5F, max_v - min_v);
-    const float padding = 0.08F * static_cast<float>(
-        std::min(image->width, image->height));
-    const float usable_w = std::max(
-        1.0F, static_cast<float>(image->width) - 2.0F * padding);
-    const float usable_h = std::max(
-        1.0F, static_cast<float>(image->height) - 2.0F * padding);
-    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
-    const float scale = std::min(usable_w / span_u, usable_h / span_v) * zoom;
-    const float center_u = (min_u + max_u) * 0.5F;
-    const float center_v = (min_v + max_v) * 0.5F;
-
+    // x = origin_x + u * scale_x, y = origin_y + v * scale_y.
+    float origin_x = 0.0F;
+    float origin_y = 0.0F;
+    float scale_x = static_cast<float>(image->width);
+    float scale_y = static_cast<float>(image->height);
+    if (!export_frame) {
+        // Extent in texel units, so one uniform scale keeps the proportions.
+        const float span_x = std::max(1.0e-5F, (max_u - min_u) * aspect_u);
+        const float span_y = std::max(1.0e-5F, (max_v - min_v) * aspect_v);
+        const float padding = 0.08F * static_cast<float>(
+            std::min(image->width, image->height));
+        const float usable_w = std::max(
+            1.0F, static_cast<float>(image->width) - 2.0F * padding);
+        const float usable_h = std::max(
+            1.0F, static_cast<float>(image->height) - 2.0F * padding);
+        const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+        const float scale = std::min(usable_w / span_x, usable_h / span_y) * zoom;
+        scale_x = aspect_u * scale;
+        scale_y = aspect_v * scale;
+        origin_x = static_cast<float>(image->width) * 0.5F - (min_u + max_u) * 0.5F * scale_x;
+        origin_y = static_cast<float>(image->height) * 0.5F - (min_v + max_v) * 0.5F * scale_y;
+    }
     const auto map_uv = [&](float u, float v) -> P2 {
-        return {
-            static_cast<float>(image->width) * 0.5F + (u - center_u) * scale,
-            static_cast<float>(image->height) * 0.5F - (v - center_v) * scale,
-            0.0F,
-        };
+        return {origin_x + u * scale_x, origin_y + v * scale_y, 0.0F};
     };
 
-    const P2 uv00 = map_uv(0.0F, 0.0F);
-    const P2 uv10 = map_uv(1.0F, 0.0F);
-    const P2 uv11 = map_uv(1.0F, 1.0F);
-    const P2 uv01 = map_uv(0.0F, 1.0F);
+    // The texture's rectangle; in an export it is the image border.
+    const P2 uv00 = export_frame ? P2{0.0F, 0.0F, 0.0F} : map_uv(0.0F, 0.0F);
+    const P2 uv11 = export_frame
+        ? P2{static_cast<float>(image->width - 1), static_cast<float>(image->height - 1), 0.0F}
+        : map_uv(1.0F, 1.0F);
+    const P2 uv10{uv11.x, uv00.y, 0.0F};
+    const P2 uv01{uv00.x, uv11.y, 0.0F};
     line(*image, uv00, uv10, 80);
     line(*image, uv10, uv11, 80);
     line(*image, uv11, uv01, 80);
@@ -1237,11 +1258,20 @@ void for_row_bands(int height, Band&& band) {
 }  // namespace
 
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
-    std::span<const std::uint32_t> indices, int width, int height, float zoom) {
+    std::span<const std::uint32_t> indices, int width, int height, float zoom,
+    std::uint32_t texture_width, std::uint32_t texture_height) {
     auto image = make_canvas(width, height);
     ViewState view;
     view.zoom = zoom;
-    draw_uv_layout(coordinates, indices, view, &image);
+    draw_uv_layout(coordinates, indices, view, &image, texture_width, texture_height);
+    return image;
+}
+
+RgbaImage render_uv_map_export(std::span<const Vec2> coordinates,
+    std::span<const std::uint32_t> indices, int width, int height,
+    std::uint32_t texture_width, std::uint32_t texture_height) {
+    auto image = make_canvas(width, height);
+    draw_uv_layout(coordinates, indices, ViewState{}, &image, texture_width, texture_height, true);
     return image;
 }
 

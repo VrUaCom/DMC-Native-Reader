@@ -275,6 +275,11 @@ struct Session {
     const std::uint8_t* bytes, std::size_t size);
 [[nodiscard]] std::unique_ptr<Session> session_from_child(const ChildResource& child);
 [[nodiscard]] std::unique_ptr<Session> open_uv_gallery(const Session* model);
+// An opened UV map's PNG: its pixel size (the texture's resolution, see
+// uv_map_export_size(const UvMap&); 0 x 0 for any other session) and the image,
+// the texture rectangle filling it so the drawing overlays the texture.
+[[nodiscard]] std::pair<int, int> uv_map_export_size(const Session* session) noexcept;
+[[nodiscard]] RgbaImage render_uv_map_export(const Session* session);
 
 // Low-level composition primitive used by the Spider session-action layer.
 // Platform/JNI callers must use spider::actions::compose_mod_sessions instead.

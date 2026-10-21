@@ -515,6 +515,31 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openChild(
     } catch (...) { return 0; }
 }
 
+// An opened UV map's PNG size, decided by the core from the texture painted
+// on it: {width, height}, or {0, 0} for any other session.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_uvExportSize(
+        JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto [width, height] = dmcresource::uv_map_export_size(from_handle(handle));
+    jintArray out = env->NewIntArray(2);
+    if (out == nullptr) return nullptr;
+    const jint values[2] = {static_cast<jint>(width), static_cast<jint>(height)};
+    env->SetIntArrayRegion(out, 0, 2, values);
+    return out;
+}
+
+// The UV map's PNG: the texture rectangle filling a bitmap of uvExportSize.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_renderUvExport(
+        JNIEnv* env, jclass, jlong handle, jobject target) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto image = dmcresource::render_uv_map_export(from_handle(handle));
+        return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
+    } catch (...) { return JNI_FALSE; }
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_openUvGallery(
         JNIEnv*, jclass, jlong handle) {

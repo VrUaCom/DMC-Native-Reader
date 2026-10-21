@@ -71,7 +71,6 @@ public final class MainActivity extends Activity {
 
     private static final int TOOL_SIZE_DP = 48;
     private static final int TOOL_GAP_DP = 4;
-    private static final int UV_EXPORT_SIZE = 1024;
 
     private static final class NavigationEntry {
         final long session;
@@ -3039,8 +3038,10 @@ public final class MainActivity extends Activity {
         final int width;
         final int height;
         if (state.uvMapView) {
-            width = UV_EXPORT_SIZE;
-            height = UV_EXPORT_SIZE;
+            final int[] size = NativeBridge.uvExportSize(handle);
+            if (size == null || size.length < 2) return null;
+            width = size[0];
+            height = size[1];
         } else {
             width = NativeBridge.imagePreviewWidth(handle);
             height = NativeBridge.imagePreviewHeight(handle);
@@ -3059,7 +3060,7 @@ public final class MainActivity extends Activity {
         }
 
         final boolean filled = state.uvMapView
-                ? NativeBridge.render(handle, width, height, 0.0f, 0.0f, 1.0f, 0, bitmap)
+                ? NativeBridge.renderUvExport(handle, bitmap)
                 : NativeBridge.imagePreview(handle, bitmap);
         if (!filled) {
             bitmap.recycle();

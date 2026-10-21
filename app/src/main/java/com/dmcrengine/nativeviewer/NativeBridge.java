@@ -65,6 +65,10 @@ public final class NativeBridge {
     public static native int childResourcePreviewHeight(long handle, int index);
     public static native boolean childResourcePreview(long handle, int index, Bitmap target);
     public static native long openUvGallery(long handle);
+    /** PNG size of an opened UV map {width, height}, chosen by the core from its texture. */
+    public static native int[] uvExportSize(long handle);
+    /** Draws the UV map's PNG (texture rectangle filling the bitmap) into a bitmap of uvExportSize. */
+    public static native boolean renderUvExport(long handle, Bitmap target);
     public static native long openChild(long handle, int index);
 
     // Android allocates/reuses the destination Bitmap. JNI writes native RGBA

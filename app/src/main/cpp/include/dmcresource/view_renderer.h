@@ -179,8 +179,17 @@ struct CameraBasis final {
 // Framing distance (model units) of the camera at dolly 0 for these vertices.
 [[nodiscard]] float framing_camera_distance(std::span<const Vec3> vertices) noexcept;
 
+// A UV layout in the proportions of the texture it was painted for
+// (texture_width x texture_height texels; 0 x 0 draws it square), framed
+// for viewing: the layout's extent fitted with a margin, scaled by `zoom`.
 RgbaImage render_uv_map(std::span<const Vec2> coordinates,
-    std::span<const std::uint32_t> indices, int width, int height, float zoom);
+    std::span<const std::uint32_t> indices, int width, int height, float zoom,
+    std::uint32_t texture_width = 0U, std::uint32_t texture_height = 0U);
+// The same layout framed for a PNG: the 0..1 texture rectangle fills the
+// image exactly (v down, as the texture is sampled), so it overlays the texture.
+RgbaImage render_uv_map_export(std::span<const Vec2> coordinates,
+    std::span<const std::uint32_t> indices, int width, int height,
+    std::uint32_t texture_width, std::uint32_t texture_height);
 
 RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const ViewState& view,
