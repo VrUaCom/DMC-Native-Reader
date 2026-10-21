@@ -462,6 +462,18 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .stage_config_loaded = stage_markers::current() != nullptr,
         .stage_markers_visible = stage_markers::visible(),
         .sound_count = sounds,
+        // Only real shadow files (SHW hulls bound to the model): a stage
+        // scene is the floor itself, a collision view has none.
+        .shadow_bindings = session->stage == nullptr && !session->shadow_bindings.empty(),
+        .hitboxes = session->collision != nullptr,
+        .stage_collision = session->stage != nullptr && !session->stage->collision_sources.empty(),
+        .fly_space = session->renderable &&
+                     (session->stage != nullptr || stage_room::is_stage_session(*session) ||
+                      session->hits != nullptr || stage_room::current() != nullptr),
+        .breakable = session->stage != nullptr ? session->stage->broken != nullptr
+                                               : (stage_room::current() != nullptr &&
+                                                  stage_room::current()->broken != nullptr),
+        .broken = stage_room::broken(),
     });
 }
 

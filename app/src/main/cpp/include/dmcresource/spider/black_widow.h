@@ -47,6 +47,13 @@ enum class StateFlag : std::uint64_t {
     StageMarkersShown          = 1ULL << 30U,
     // A sound the shell can play (PCM from the core).
     CanPlaySound               = 1ULL << 31U,
+    // View tools of the opened session.
+    CanShowShadows             = 1ULL << 32U,  // SHW hulls bound to the model
+    CanShowHitboxes            = 1ULL << 33U,  // attack collision shapes on its bones
+    CanShowStageCollision      = 1ULL << 34U,  // a stage scene with HITS
+    CanFly                     = 1ULL << 35U,  // a stage, a room or a collision view
+    CanBreakRoom               = 1ULL << 36U,  // the stage / room has a broken state
+    RoomBroken                 = 1ULL << 37U,  // ... and it is shown broken
 };
 
 using StateBits = std::uint64_t;
@@ -83,6 +90,12 @@ struct ModelSessionView final {
     bool stage_config_loaded{};
     bool stage_markers_visible{};
     std::size_t sound_count{};
+    bool shadow_bindings{};
+    bool hitboxes{};
+    bool stage_collision{};
+    bool fly_space{};       // a stage scene, a stage archive, a room or HITS
+    bool breakable{};
+    bool broken{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral

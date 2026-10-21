@@ -41,6 +41,12 @@ public final class BlackWidowState {
     private static final long STAGE_CONFIG_LOADED = 1L << 29;
     private static final long STAGE_MARKERS_SHOWN = 1L << 30;
     private static final long CAN_PLAY_SOUND = 1L << 31;
+    private static final long CAN_SHOW_SHADOWS = 1L << 32;
+    private static final long CAN_SHOW_HITBOXES = 1L << 33;
+    private static final long CAN_SHOW_STAGE_COLLISION = 1L << 34;
+    private static final long CAN_FLY = 1L << 35;
+    private static final long CAN_BREAK_ROOM = 1L << 36;
+    private static final long ROOM_BROKEN = 1L << 37;
 
     public final long bits;
     public final boolean canRender;
@@ -73,6 +79,12 @@ public final class BlackWidowState {
     public final boolean stageConfigLoaded;
     public final boolean stageMarkersShown;
     public final boolean canPlaySound;
+    public final boolean canShowShadows;
+    public final boolean canShowHitboxes;
+    public final boolean canShowStageCollision;
+    public final boolean canFly;
+    public final boolean canBreakRoom;
+    public final boolean roomBroken;
     public final boolean canAddModelPart;
     public final boolean canStageCompanion;
 
@@ -108,6 +120,12 @@ public final class BlackWidowState {
         stageConfigLoaded = has(bits, STAGE_CONFIG_LOADED);
         stageMarkersShown = has(bits, STAGE_MARKERS_SHOWN);
         canPlaySound = has(bits, CAN_PLAY_SOUND);
+        canShowShadows = has(bits, CAN_SHOW_SHADOWS);
+        canShowHitboxes = has(bits, CAN_SHOW_HITBOXES);
+        canShowStageCollision = has(bits, CAN_SHOW_STAGE_COLLISION);
+        canFly = has(bits, CAN_FLY);
+        canBreakRoom = has(bits, CAN_BREAK_ROOM);
+        roomBroken = has(bits, ROOM_BROKEN);
         canAddModelPart = has(bits, CAN_ADD_MODEL_PART);
         canStageCompanion = has(bits, CAN_STAGE_COMPANION);
     }

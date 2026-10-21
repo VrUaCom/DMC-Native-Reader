@@ -98,6 +98,13 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::StageMarkersShown,
            stage_config && session.stage_config_loaded && session.stage_markers_visible);
     set_if(&state, StateFlag::CanPlaySound, session.sound_count != 0U);
+    const bool view_tools = !session.uv_map_view;
+    set_if(&state, StateFlag::CanShowShadows, view_tools && session.shadow_bindings);
+    set_if(&state, StateFlag::CanShowHitboxes, view_tools && session.hitboxes);
+    set_if(&state, StateFlag::CanShowStageCollision, view_tools && session.stage_collision);
+    set_if(&state, StateFlag::CanFly, view_tools && session.fly_space);
+    set_if(&state, StateFlag::CanBreakRoom, view_tools && session.breakable);
+    set_if(&state, StateFlag::RoomBroken, view_tools && session.breakable && session.broken);
     set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
     set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;

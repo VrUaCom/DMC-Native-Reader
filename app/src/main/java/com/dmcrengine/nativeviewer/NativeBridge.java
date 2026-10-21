@@ -149,7 +149,6 @@ public final class NativeBridge {
     public static native void clearMotion(long handle);
 
     // SHW shadow hulls bound to the assembled models (drawn with RENDER_SHADOWS).
-    public static native boolean hasShadows(long handle);
 
     // Attack collision shapes on the body bones (drawn with RENDER_COLLISION):
     // used attack ids, and the selection (-1 = every attack) with its label.
@@ -188,18 +187,14 @@ public final class NativeBridge {
     /** Number of independently retained HITS environment-collision sources. */
     public static native int roomCollisionSourceCount();
     public static native boolean isStageSession(long handle);
-    public static native boolean hasCollision(long handle);
     public static native int[] collisionAttackIds(long handle);
     public static native String selectCollisionAttack(long handle, int attack);
     /** Class events the playing enemy accepts (em000 family: "Death"). */
     public static native String[] classEventNames(long handle);
     /** Sends class event {@code index}; false unless a Script Play action runs. */
     public static native boolean triggerClassEvent(long handle, int index);
-    /** True when the stage scene / room drawn with the session has BREAK objects. */
-    public static native boolean roomBreakable(long handle);
     /** Draws breakable stage objects broken (bmodel + one-shot beff) or intact. */
     public static native void setRoomBroken(boolean broken);
-    public static native boolean roomBroken();
 
     /** Draws the view on the graphics chip (OpenGL ES 3) when true, else on the CPU. */
     public static native void setGpuRendering(boolean enabled);
@@ -233,6 +228,4 @@ public final class NativeBridge {
             float density, float dtSeconds);
     /** Joystick rings in px: knob travel, dead band, then each boost zone's end. */
     public static native float[] stickZoneRadii(float density);
-    /** A collision view: a .hits file, or a session whose HITS are loaded. */
-    public static native boolean hasEnvironmentCollision(long handle);
 }

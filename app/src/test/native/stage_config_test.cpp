@@ -245,6 +245,12 @@ int main() {
         namespace act = dmcresource::spider::actions;
         namespace widow = dmcresource::spider::black_widow;
         auto state = black_widow_state(&stage);
+        // View tools of a stage scene: fly, no shadows / hitboxes; no HITS, no broken state here.
+        assert(widow::has_state(state, widow::StateFlag::CanFly));
+        assert(!widow::has_state(state, widow::StateFlag::CanShowShadows) &&
+               !widow::has_state(state, widow::StateFlag::CanShowHitboxes) &&
+               !widow::has_state(state, widow::StateFlag::CanShowStageCollision) &&
+               !widow::has_state(state, widow::StateFlag::CanBreakRoom));
         assert(widow::has_state(state, widow::StateFlag::CanLoadStageConfig));
         assert(!widow::has_state(state, widow::StateFlag::StageConfigLoaded));
         // No configuration: the tool asks the shell for the file picker.

@@ -897,19 +897,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_hasMotion(
     return dmcresource::motion::has_motion(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_hasShadows(
-        JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const auto* session = from_handle(handle);
-    // Only real shadow files (SHW hulls bound to the model, e.g. Dante's or
-    // Vergil's PAC): no button for anything else (a stage scene is the floor
-    // itself, a collision view has none).
-    return session != nullptr && session->stage == nullptr && !session->shadow_bindings.empty()
-               ? JNI_TRUE
-               : JNI_FALSE;
-}
-
 // Viewer room (stage_room.h): built from a file descriptor, kept natively and
 // drawn around every non-stage model while RenderFlag::Room is set.
 extern "C" JNIEXPORT jstring JNICALL
@@ -967,27 +954,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_roomAnimated(JNIEnv*, jclass, jlon
     return room && (!room->uv_scrolls.empty() || (has_host && !room->effects.empty())) ? JNI_TRUE : JNI_FALSE;
 }
 
-// Break toggle (stage_room::set_broken): whether the stage scene or room drawn
-// with the session has breakable layout objects, and switching it.
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_roomBreakable(JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session != nullptr && session->stage != nullptr) {
-        return session->stage->broken != nullptr ? JNI_TRUE : JNI_FALSE;
-    }
-    const auto room = dmcresource::stage_room::current();
-    return room && room->broken ? JNI_TRUE : JNI_FALSE;
-}
-
 extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_setRoomBroken(JNIEnv*, jclass, jboolean broken) {
     dmcresource::stage_room::set_broken(broken == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_roomBroken(JNIEnv*, jclass) {
-    return dmcresource::stage_room::broken() ? JNI_TRUE : JNI_FALSE;
 }
 
 // Kinds (distinct flag values) of the HITS shown with the session: its own
@@ -1289,14 +1258,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_isStageSession(
     const SessionLock jni_lock{session_mutex()};
     const auto* session = from_handle(handle);
     return session != nullptr && dmcresource::stage_room::is_stage_session(*session) ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_hasCollision(
-        JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const auto* session = from_handle(handle);
-    return session != nullptr && session->collision != nullptr ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
@@ -1764,10 +1725,3 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_stickZoneRadii(JNIEnv* env, jclass
     } catch (...) { return nullptr; }
 }
 
-// A collision view: a .hits file, or a stage / model whose HITS are loaded.
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_hasEnvironmentCollision(JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const auto* session = from_handle(handle);
-    return session != nullptr && session->hits != nullptr ? JNI_TRUE : JNI_FALSE;
-}

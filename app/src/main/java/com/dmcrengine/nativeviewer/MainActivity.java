@@ -317,6 +317,9 @@ public final class MainActivity extends Activity {
     }
 
     private void applyResourceUiState() {
+        // Black Widow state also follows core-global view state (room broken,
+        // stage markers, the room loaded): read it fresh for every refresh.
+        refreshBlackWidowState();
         final boolean hasSession = session != 0;
         applyPrimaryPresentation();
 
@@ -348,34 +351,17 @@ public final class MainActivity extends Activity {
                 hierarchyAvailable || blackWidowState.canInspectHierarchy,
                 renderView.isHierarchyVisible());
 
-        syncToggleButton(shadowButton,
-                hasSession && NativeBridge.hasShadows(session) && !renderView.isUvLayoutVisible(),
-                renderView.isShadowVisible());
-
-        syncToggleButton(collisionButton,
-                hasSession && NativeBridge.hasCollision(session) && !renderView.isUvLayoutVisible(),
+        // View tools: Black Widow decides which ones the session offers.
+        final boolean viewTools = hasSession && !renderView.isUvLayoutVisible();
+        syncToggleButton(shadowButton, viewTools && blackWidowState.canShowShadows, renderView.isShadowVisible());
+        syncToggleButton(collisionButton, viewTools && blackWidowState.canShowHitboxes,
                 renderView.isCollisionVisible());
-
-        // Stage collision (HITS of the room): the button appears once a stage
-        // with collision is the room around the opened model.
-        final boolean stageScene = hasSession && NativeBridge.stageCollisionSourceCount(session) > 0;
-        // Only a stage has its collision button; a model seen in a room does not
-        // (the room's HITS stay switchable in Settings).
-        syncToggleButton(stageCollisionButton,
-                !renderView.isUvLayoutVisible() && stageScene,
+        syncToggleButton(stageCollisionButton, viewTools && blackWidowState.canShowStageCollision,
                 renderView.isRoomCollisionVisible());
-
-
-        // Camera mode (stages and collision views): orbit <-> fly.
-        final boolean flyAvailable = hasSession && !renderView.isUvLayoutVisible()
-                && (stageScene || NativeBridge.isStageSession(session)
-                    || NativeBridge.hasEnvironmentCollision(session) || renderView.isRoomCollisionVisible());
+        final boolean flyAvailable = viewTools && blackWidowState.canFly;
         if (!flyAvailable && renderView.isFlyMode()) renderView.setFlyMode(false);
         syncToggleButton(flyButton, flyAvailable, renderView.isFlyMode());
-
-        syncToggleButton(breakButton,
-                hasSession && !renderView.isUvLayoutVisible() && NativeBridge.roomBreakable(session),
-                NativeBridge.roomBroken());
+        syncToggleButton(breakButton, viewTools && blackWidowState.canBreakRoom, blackWidowState.roomBroken);
 
         syncToggleButton(uvButton,
                 hasSession && (blackWidowState.canShowUv || blackWidowState.canInspectUv),
@@ -619,7 +605,7 @@ public final class MainActivity extends Activity {
 
         shadowButton = makeSquareButton("\u25D0", "Shadows (SHW)", 20f);
         shadowButton.setOnClickListener(v -> {
-            if (session == 0 || !NativeBridge.hasShadows(session)) return;
+            if (session == 0 || !blackWidowState.canShowShadows) return;
             renderView.toggleShadows();
             applyResourceUiState();
         });
@@ -628,7 +614,7 @@ public final class MainActivity extends Activity {
         // Hitboxes: off -> every attack -> each attack id in turn -> off.
         collisionButton = makeSquareButton("\u25CE", "Attack collision (hitboxes)", 20f);
         collisionButton.setOnClickListener(v -> {
-            if (session == 0 || !NativeBridge.hasCollision(session)) return;
+            if (session == 0 || !blackWidowState.canShowHitboxes) return;
             final int[] ids = NativeBridge.collisionAttackIds(session);
             if (ids == null) return;
             if (!renderView.isCollisionVisible()) {
@@ -714,8 +700,8 @@ public final class MainActivity extends Activity {
         // bmodel, the break effect played once) or intact.
         breakButton = makeSquareButton("\u2716", "Break stage objects", 18f);
         breakButton.setOnClickListener(v -> {
-            if (session == 0 || !NativeBridge.roomBreakable(session)) return;
-            final boolean broken = !NativeBridge.roomBroken();
+            if (session == 0 || !blackWidowState.canBreakRoom) return;
+            final boolean broken = !blackWidowState.roomBroken;
             NativeBridge.setRoomBroken(broken);
             notice(broken ? "Stage objects broken" : "Stage objects intact", Toast.LENGTH_SHORT);
             applyResourceUiState();
