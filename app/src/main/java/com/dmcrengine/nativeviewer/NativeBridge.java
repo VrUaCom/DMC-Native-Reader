@@ -14,6 +14,8 @@ public final class NativeBridge {
     public static native void close(long handle);
     public static native String info(long handle);
     public static native String buildIdentity();
+    /** The start screen's Info, written by the core (version passed in). */
+    public static native String welcomeText(String appVersion);
     public static native String diagnostics(long handle);
 
     // Spider Black Widow is the single Android application/UI-state contract.
@@ -93,9 +95,6 @@ public final class NativeBridge {
     // Spider stage / sound / export actions: the core decides and writes
     // every line; the shell carries out the named platform step.
     public static native ActionOutcome loadStageConfig(int fd, String filename);
-    public static native ActionOutcome stageConfigTool();
-    public static native NativeMenu stageConfigMenu();
-    public static native ActionOutcome runStageConfigMenu(int id);
     /** The view held at a point (render pixels): marker card, joint, or scrub. */
     public static native ActionOutcome holdView(long handle, int width, int height,
                                                 float yaw, float pitch, float zoom, int renderFlags,
@@ -107,6 +106,11 @@ public final class NativeBridge {
     public static native ActionOutcome runMarkerCardAction(int marker, int id);
     public static native NativeMenu soundMenu(long handle);
     public static native SoundPcm soundPcm(long handle, int index);
+    /** The ⋮ menu for this session, from the facts only the shell holds. */
+    public static native CompanionMenu companionMenu(long handle, boolean rootScene, boolean assembledPacSource,
+                                                     boolean stageSource, boolean roomLoaded, boolean roomShown);
+    /** Runs a ⋮ item the core carries out (stage config); others answer STEP_NONE. */
+    public static native ActionOutcome runCompanionAction(int id);
     /** The exported picture's {width, height}, chosen by the core. */
     public static native int[] exportImageSize(long handle);
     public static native boolean renderExportImage(long handle, Bitmap target);

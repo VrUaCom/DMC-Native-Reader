@@ -5,6 +5,8 @@
 
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/native_module.h"
+#include "dmcresource/spider/app_info.h"
+#include <string>
 
 int main() {
     using namespace dmcresource;
@@ -125,6 +127,13 @@ int main() {
     assert(!probe("stage.pac", nullptr, 0U).recognized);
     assert(!probe("stage.txt", nullptr, 0U).recognized);
     assert(!probe("model.shw", nullptr, 0U).recognized);
+
+    // The start Info lists every registered family, grouped, from the registry.
+    const auto welcome = spider::actions::welcome_text("9.9.9", "abc123");
+    assert(welcome.rfind("DMC Native Reader 9.9.9\nNative build: abc123", 0) == 0U);
+    for (const auto& module : modules) assert(welcome.find(module.family) != std::string::npos);
+    assert(welcome.find("Stage: POS, EVE, CAM") != std::string::npos);
+    assert(welcome.find("Unpromoted") == std::string::npos);
 
     return 0;
 }

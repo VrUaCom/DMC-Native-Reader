@@ -133,7 +133,6 @@ public final class MainActivity extends Activity {
     private Button shadowButton;
     private Button collisionButton;
     private Button stageCollisionButton;
-    private Button stageConfigButton;
     private Button soundButton;
     private android.media.AudioTrack soundTrack;
     private int soundIndex;
@@ -366,11 +365,6 @@ public final class MainActivity extends Activity {
                 !renderView.isUvLayoutVisible() && stageScene,
                 renderView.isRoomCollisionVisible());
 
-        // Stage configuration: Black Widow decides when it applies and whether
-        // its markers show.
-        syncToggleButton(stageConfigButton,
-                hasSession && blackWidowState.canLoadStageConfig && !renderView.isUvLayoutVisible(),
-                blackWidowState.stageMarkersShown);
 
         // Camera mode (stages and collision views): orbit <-> fly.
         final boolean flyAvailable = hasSession && !renderView.isUvLayoutVisible()
@@ -681,17 +675,6 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, stageCollisionButton);
-
-        // Stage configuration over the stage (Spider stage actions): the tap and
-        // the long-press menu are native actions; this shell only forwards them.
-        stageConfigButton = makeSquareButton("\u2691", "Stage config", 20f);
-        stageConfigButton.setOnClickListener(v -> handleOutcome(NativeBridge.stageConfigTool()));
-        stageConfigButton.setOnLongClickListener(v -> {
-            showNativeMenu(NativeBridge.stageConfigMenu(),
-                    id -> handleOutcome(NativeBridge.runStageConfigMenu(id)));
-            return true;
-        });
-        addToolButton(bar, stageConfigButton);
 
         // Sound: the core decodes it to PCM and names it; the platform player
         // plays it (tap: play / stop, long press: which sound).
@@ -1710,66 +1693,64 @@ public final class MainActivity extends Activity {
         popup.setOutsideTouchable(true);
         popup.setElevation(dp(8));
 
+        // The core decides the items and names them; this shell lays them out
+        // and runs the platform step of the picked id.
+        final CompanionMenu menu = NativeBridge.companionMenu(session, isRootScene(),
+                assembledPacUri != null, stagePacUri != null, roomLoaded, roomShown());
+        if (menu == null) return;
         LinearLayout icons = new LinearLayout(this);
         icons.setOrientation(LinearLayout.HORIZONTAL);
-        final java.util.function.BiConsumer<Button, Runnable> addIcon = (button, action) -> {
-            button.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+        for (int i = 0; menu.shortcuts != null && i < menu.shortcuts.ids.length; ++i) {
+            final int id = menu.shortcuts.ids[i];
+            final String glyph = i < menu.shortcuts.icons.length ? menu.shortcuts.icons[i] : "";
+            final Button button = makeSquareButton(glyph, menu.shortcuts.labels[i], 22f);
+            if (menu.isDimmed(id)) button.setAlpha(0.5f);
+            button.setOnClickListener(v -> { popup.dismiss(); runCompanion(id); });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
             params.setMarginEnd(dp(6));
             icons.addView(button, params);
-        };
-        addIcon.accept(makeSquareButton("⚙", "Settings", 22f), this::showSettingsDialog);
-        addIcon.accept(makeSquareButton("\u270b", "Gestures", 22f), this::showGesturesDialog);
-        if (roomLoaded) {
-            Button room = makeSquareButton("⌂", roomShown() ? "Hide the room" : "Show the room", 22f);
-            room.setAlpha(roomShown() ? 1f : 0.5f);
-            addIcon.accept(room, this::roomToggle);
-            if (NativeBridge.roomSpotCount() > 1) {
-                addIcon.accept(makeSquareButton("⇄", "Next floor spot", 20f), this::roomNextSpot);
-            }
         }
         panel.addView(icons);
-
-        final java.util.function.BiConsumer<String, Runnable> addRow = (text, action) -> {
+        for (int i = 0; menu.rows != null && i < menu.rows.ids.length; ++i) {
+            final int id = menu.rows.ids[i];
             TextView row = new TextView(this);
-            row.setText(text);
+            row.setText(menu.rows.labels[i]);
             row.setTextSize(16f);
             row.setTextColor(0xffe8eaf0);
             row.setPadding(dp(8), dp(12), dp(16), dp(12));
-            row.setOnClickListener(v -> { popup.dismiss(); action.run(); });
+            row.setOnClickListener(v -> { popup.dismiss(); runCompanion(id); });
             panel.addView(row);
-        };
-        addRow.accept("Open / replace resource", this::chooseFile);
-        if (session != 0 && blackWidowState.canReencodeTextures) {
-            addRow.accept("Texture format (BC1…BC7)…", this::showTextureFormatDialog);
         }
-        if (session != 0 && blackWidowState.canSaveSource) {
-            addRow.accept("Save file…", this::chooseSaveSource);
-        }
-        if (isRootScene() && assembledPacUri != null) {
-            addRow.accept("Add weapon / .PAC…", this::chooseAdditionalPac);
-            addRow.accept("Browse .PAC files…", this::browseAssembledPac);
-        }
-        if (isRootScene() && stagePacUri != null) {
-            addRow.accept("Browse .PAC files…", () -> browsePac(stagePacUri));
-            addRow.accept("Stage effects (st*_effect.pac)…", this::roomEffectsChoose);
-        }
-        if (hasModCompositionContext()) addRow.accept("Add .MOD part(s)", this::chooseAdditionalMods);
-        if (hasCompositePlacementContext()) {
-            addRow.accept("Composite parts / state…", this::showCompositePartsDialog);
-            addRow.accept("Place MOD part on host joint…", this::showPlaceModPartDialog);
-            addRow.accept("Reset MOD part placement…", this::showResetModPlacementDialog);
-        }
-        if (isRootScene() && canAttachPtx()) addRow.accept("Attach .PTX texture", this::choosePtxForCurrentSession);
-        if (isRootScene() && blackWidowState.canStageCompanion) {
-            addRow.accept("Add animation / motion…", () -> chooseStagedAssets(REQUEST_STAGE_MOTION, true));
-            addRow.accept("Add texture asset (.TM2 / .DDS / …)", () -> chooseStagedAssets(REQUEST_STAGE_TEXTURE, true));
-            addRow.accept("Add physics resource…", () -> chooseStagedAssets(REQUEST_STAGE_PHYSICS, true));
-            addRow.accept("Add cloth resource…", () -> chooseStagedAssets(REQUEST_STAGE_CLOTH, true));
-            addRow.accept("Add other companion…", () -> chooseStagedAssets(REQUEST_STAGE_OTHER, true));
-        }
-        addRow.accept("Diagnostics / build info…", this::showDiagnosticsDialog);
         popup.showAsDropDown(anchor);
+    }
+
+    /** A ⋮ item: the core's own actions go back to it; the rest are platform steps. */
+    private void runCompanion(int id) {
+        switch (id) {
+            case CompanionMenu.SETTINGS: showSettingsDialog(); break;
+            case CompanionMenu.GESTURES: showGesturesDialog(); break;
+            case CompanionMenu.ROOM_TOGGLE: roomToggle(); break;
+            case CompanionMenu.NEXT_ROOM_SPOT: roomNextSpot(); break;
+            case CompanionMenu.OPEN_FILE: chooseFile(); break;
+            case CompanionMenu.TEXTURE_FORMAT: showTextureFormatDialog(); break;
+            case CompanionMenu.SAVE_FILE: chooseSaveSource(); break;
+            case CompanionMenu.ADD_PAC: chooseAdditionalPac(); break;
+            case CompanionMenu.BROWSE_ASSEMBLED_PAC: browseAssembledPac(); break;
+            case CompanionMenu.BROWSE_STAGE_PAC: if (stagePacUri != null) browsePac(stagePacUri); break;
+            case CompanionMenu.STAGE_EFFECTS: roomEffectsChoose(); break;
+            case CompanionMenu.ADD_MOD_PARTS: chooseAdditionalMods(); break;
+            case CompanionMenu.COMPOSITE_PARTS: showCompositePartsDialog(); break;
+            case CompanionMenu.PLACE_MOD_PART: showPlaceModPartDialog(); break;
+            case CompanionMenu.RESET_MOD_PLACEMENT: showResetModPlacementDialog(); break;
+            case CompanionMenu.ATTACH_PTX: choosePtxForCurrentSession(); break;
+            case CompanionMenu.STAGE_MOTION: chooseStagedAssets(REQUEST_STAGE_MOTION, true); break;
+            case CompanionMenu.STAGE_TEXTURE: chooseStagedAssets(REQUEST_STAGE_TEXTURE, true); break;
+            case CompanionMenu.STAGE_PHYSICS: chooseStagedAssets(REQUEST_STAGE_PHYSICS, true); break;
+            case CompanionMenu.STAGE_CLOTH: chooseStagedAssets(REQUEST_STAGE_CLOTH, true); break;
+            case CompanionMenu.STAGE_OTHER: chooseStagedAssets(REQUEST_STAGE_OTHER, true); break;
+            case CompanionMenu.DIAGNOSTICS: showDiagnosticsDialog(); break;
+            default: handleOutcome(NativeBridge.runCompanionAction(id)); break;
+        }
     }
 
     /** Copies the picked stage into app storage (it is reloaded on start). */
@@ -3176,13 +3157,9 @@ public final class MainActivity extends Activity {
         pendingExportSession = 0;
         pendingInfoExportText = "";
         resetCompositionState();
-        setInfo("DMC Native Reader " + BuildConfig.VERSION_NAME + "\n"
-                + "Native build: " + nativeBuildIdentity() + "\n"
-                + "Architecture v2 core: MOD / SCM / DDS / PTX / PAC / MOT (read-only).\n"
-                + "Unpromoted DMC families are intentionally excluded from main.\n\n"
-                + "Open a supported resource from My Files or use ↑.\n"
-                + "Select multiple canonical MOD files to compose them in one scene.\n"
-                + "Use ⋮ for model parts, PTX, animations and staged future companions.");
+        // The core writes the start Info from its module registry.
+        final String welcome = NativeBridge.welcomeText(BuildConfig.VERSION_NAME);
+        setInfo(welcome == null ? "DMC Native Reader " + BuildConfig.VERSION_NAME : welcome);
         applyResourceUiState();
     }
 

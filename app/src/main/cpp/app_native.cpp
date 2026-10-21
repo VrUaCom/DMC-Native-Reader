@@ -29,6 +29,8 @@
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/camera_control.h"
 #include "dmcresource/spider/stage_actions.h"
+#include "dmcresource/spider/app_info.h"
+#include "dmcresource/spider/companion_menu.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/enemy_effects.h"
@@ -1036,6 +1038,16 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
     } catch (...) { return 0; }
 }
 
+// The start screen's Info, written by the core from the module registry.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_welcomeText(JNIEnv* env, jclass, jstring app_version) {
+    try {
+        return env->NewStringUTF(
+            dmcresource::spider::actions::welcome_text(to_utf8(env, app_version), DMC_NATIVE_READER_BUILD_SHA)
+                .c_str());
+    } catch (...) { return nullptr; }
+}
+
 // ---- Spider stage / sound / export actions (spider/stage_actions.h) ----
 //
 // JNI only maps handles, file descriptors and bitmaps and hands the typed
@@ -1077,20 +1089,22 @@ jobject outcome_object(JNIEnv* env, const stage_actions::ActionOutcome& o, jlong
                           static_cast<jint>(o.marker), utf(env, o.title), opened);
 }
 
-// NativeMenu(String title, String message, int[] ids, String[] labels)
+// NativeMenu(String title, String message, int[] ids, String[] labels, String[] icons)
 jobject menu_object(JNIEnv* env, const stage_actions::Menu& menu) {
     jclass type = env->FindClass("com/dmcrengine/nativeviewer/NativeMenu");
     if (type == nullptr) return nullptr;
-    jmethodID make = env->GetMethodID(type, "<init>", "(Ljava/lang/String;Ljava/lang/String;[I[Ljava/lang/String;)V");
+    jmethodID make = env->GetMethodID(
+        type, "<init>", "(Ljava/lang/String;Ljava/lang/String;[I[Ljava/lang/String;[Ljava/lang/String;)V");
     if (make == nullptr) return nullptr;
     std::vector<int> ids;
-    std::vector<std::string> labels;
+    std::vector<std::string> labels, icons;
     for (const auto& item : menu.items) {
         ids.push_back(item.id);
         labels.push_back(item.label);
+        icons.push_back(item.icon);
     }
     return env->NewObject(type, make, utf(env, menu.title), utf(env, menu.message), int_array(env, ids),
-                          utf_array(env, labels));
+                          utf_array(env, labels), utf_array(env, icons));
 }
 
 }  // namespace
@@ -1111,26 +1125,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(JNIEnv* env, jclas
     } catch (...) {
     }
     return outcome_object(env, outcome);
-}
-
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_stageConfigTool(JNIEnv* env, jclass) {
-    const SessionLock jni_lock{session_mutex()};
-    return outcome_object(env, stage_actions::stage_config_tool());
-}
-
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_stageConfigMenu(JNIEnv* env, jclass) {
-    const SessionLock jni_lock{session_mutex()};
-    try {
-        return menu_object(env, stage_actions::stage_config_menu());
-    } catch (...) { return nullptr; }
-}
-
-extern "C" JNIEXPORT jobject JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_runStageConfigMenu(JNIEnv* env, jclass, jint id) {
-    const SessionLock jni_lock{session_mutex()};
-    return outcome_object(env, stage_actions::run_stage_config_menu(id));
 }
 
 extern "C" JNIEXPORT jobject JNICALL
@@ -1204,6 +1198,38 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_soundPcm(JNIEnv* env, jclass, jlon
         if (make == nullptr) return nullptr;
         return env->NewObject(type, make, static_cast<jint>(pcm.sample_rate), samples, utf(env, pcm.message));
     } catch (...) { return nullptr; }
+}
+
+// The ⋮ menu (spider/companion_menu.h). CompanionMenu(NativeMenu shortcuts,
+// NativeMenu rows, int[] dimmed).
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
+        JNIEnv* env, jclass, jlong handle, jboolean root_scene, jboolean assembled_pac_source,
+        jboolean stage_source, jboolean room_loaded, jboolean room_shown) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto menu = dmcresource::spider::actions::companion_menu(
+            from_handle(handle), {.root_scene = root_scene == JNI_TRUE,
+                                  .assembled_pac_source = assembled_pac_source == JNI_TRUE,
+                                  .stage_source = stage_source == JNI_TRUE,
+                                  .room_loaded = room_loaded == JNI_TRUE,
+                                  .room_shown = room_shown == JNI_TRUE});
+        jclass type = env->FindClass("com/dmcrengine/nativeviewer/CompanionMenu");
+        if (type == nullptr) return nullptr;
+        jmethodID make = env->GetMethodID(
+            type, "<init>", "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
+        if (make == nullptr) return nullptr;
+        stage_actions::Menu shortcuts{.title = {}, .message = {}, .items = menu.shortcuts};
+        stage_actions::Menu rows{.title = {}, .message = {}, .items = menu.rows};
+        return env->NewObject(type, make, menu_object(env, shortcuts), menu_object(env, rows),
+                              int_array(env, menu.dimmed));
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_runCompanionAction(JNIEnv* env, jclass, jint id) {
+    const SessionLock jni_lock{session_mutex()};
+    return outcome_object(env, dmcresource::spider::actions::run_companion_action(id));
 }
 
 // The picture a session exports: {width, height}, chosen by the core.

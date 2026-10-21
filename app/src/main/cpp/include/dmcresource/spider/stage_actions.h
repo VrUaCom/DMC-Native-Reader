@@ -38,6 +38,7 @@ struct ActionOutcome final {
 struct MenuItem final {
     int id{};
     std::string label;
+    std::string icon;  // a glyph for square shortcuts; empty for rows
 };
 struct Menu final {
     std::string title;

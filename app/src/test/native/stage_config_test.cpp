@@ -12,6 +12,7 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/spider/stage_actions.h"
+#include "dmcresource/spider/companion_menu.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/stage_config.h"
@@ -286,6 +287,32 @@ int main() {
         // Sky: nothing held, no scrub without a motion.
         const auto sky = act::hold_view(&stage, 320, 240, 0.4F, -0.6F, 1.0F, 0U, controls, 2.0F, 2.0F, true, true);
         assert(sky.step == act::ShellStep::None && sky.message.empty());
+        // The ⋮ menu carries the stage config rows (no toolbar button), decided by the core.
+        {
+            const act::ShellFacts facts{.root_scene = true, .assembled_pac_source = false, .stage_source = true,
+                                        .room_loaded = false, .room_shown = false};
+            const auto companions = act::companion_menu(&stage, facts);
+            const auto has_row = [&](act::Companion id) {
+                for (const auto& row : companions.rows) if (row.id == static_cast<int>(id)) return true;
+                return false;
+            };
+            assert(has_row(act::Companion::StageConfigLoad) && has_row(act::Companion::StageConfigToggle) &&
+                   has_row(act::Companion::StageConfigRemove) && has_row(act::Companion::BrowseStagePac));
+            assert(!has_row(act::Companion::AddPac));
+            assert(companions.shortcuts.size() == 2U && !companions.shortcuts[0].icon.empty());
+            assert(act::run_companion_action(static_cast<int>(act::Companion::StageConfigToggle)).message ==
+                   "Stage config hidden");
+            assert(act::run_companion_action(static_cast<int>(act::Companion::StageConfigLoad)).step ==
+                   act::ShellStep::PickStageConfig);
+            assert(act::run_companion_action(static_cast<int>(act::Companion::OpenFile)).step == act::ShellStep::None);
+            act::run_companion_action(static_cast<int>(act::Companion::StageConfigToggle));
+            // A model with no stage around offers no stage config row.
+            Session lone;
+            assert(!act::companion_menu(&lone, facts).rows.empty());
+            for (const auto& row : act::companion_menu(&lone, facts).rows) {
+                assert(row.id != static_cast<int>(act::Companion::StageConfigLoad));
+            }
+        }
         assert(act::run_stage_config_menu(menu.items[2].id).message == "Stage config removed");
         assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
     }
