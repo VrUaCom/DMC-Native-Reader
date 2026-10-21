@@ -7,6 +7,7 @@
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/stage_markers.h"
 #include "dmcresource/environment_collision.h"
 #include "dmcresource/texture_companion.h"
 #include "dmcresource/collision_debug.h"
@@ -765,6 +766,9 @@ struct PreparedView final {
     HierarchyOverlay stage_hierarchy;
     std::shared_ptr<const Session> effect_host;  // keeps the stage bank's textures alive
     std::shared_ptr<const stage_room::Room> room;
+    // The stage configuration drawn over the room or stage scene, and its lines.
+    std::shared_ptr<const stage_markers::StageConfig> stage_config;
+    stage_markers::Overlay marker_overlay;
 };
 
 [[nodiscard]] const Session::EffectBank* find_effect_bank(
@@ -2042,6 +2046,16 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.room_collision_lines = out->room_collision_lines;
         view.room_collision_kinds = session.stage->collision_line_kinds;
     }
+    // The stage configuration's spawn points, zones and paths over the room
+    // or the stage scene (stage_markers.h).
+    if (!view.uv_layout && stage_markers::visible() && (out->room != nullptr || session.stage != nullptr)) {
+        out->stage_config = stage_markers::current();
+        if (out->stage_config != nullptr) {
+            out->marker_overlay = stage_markers::build_overlay(*out->stage_config, stage_markers::selected());
+            view.marker_lines = out->marker_overlay.lines;
+            view.marker_labels = out->marker_overlay.labels;
+        }
+    }
 }
 
 }  // namespace
@@ -2126,6 +2140,24 @@ SessionPick pick_session(const Session* session, int requested_width, int reques
     out.room_floor = pick.room_floor;
     out.room_point = pick.room_point;
     out.joint = pick.joint;
+    // A held stage configuration marker: the nearest drawn anchor within a
+    // finger's reach.
+    if (prepared.stage_config != nullptr) {
+        const auto& config = *prepared.stage_config;
+        std::vector<Vec3> anchors;
+        std::vector<std::size_t> owners;
+        for (std::size_t m = 0; m < config.markers.size(); ++m) {
+            for (const auto& anchor : stage_markers::pick_anchors(config, config.markers[m])) {
+                anchors.push_back(anchor);
+                owners.push_back(m);
+            }
+        }
+        const auto projected =
+            project_room_points(session->render_mesh, prepared.width, prepared.height, prepared.view, anchors);
+        const float reach = std::max(24.0F, 0.06F * static_cast<float>(std::min(prepared.width, prepared.height)));
+        out.marker = stage_markers::nearest_marker(projected, owners, x, y, reach);
+        if (out.marker >= 0) out.marker_title = config.markers[static_cast<std::size_t>(out.marker)].title;
+    }
     if (pick.joint >= 0 && static_cast<std::size_t>(pick.joint) < session->scene.nodes.size()) {
         // Composite scenes list their parts' nodes one part after another.
         std::string part;
@@ -2146,4 +2178,38 @@ SessionPick pick_session(const Session* session, int requested_width, int reques
     }
     return out;
 }
+std::string stage_marker_card(int marker) {
+    const auto config = stage_markers::current();
+    if (config == nullptr || marker < 0 || static_cast<std::size_t>(marker) >= config->markers.size()) return {};
+    const auto& m = config->markers[static_cast<std::size_t>(marker)];
+    std::string card = m.title + "\n" + m.description();
+    if (m.member < config->members.size()) card += "\nFile: " + config->members[m.member].name;
+    return card;
+}
+
+std::unique_ptr<Session> open_stage_marker_file(int marker) {
+    const auto config = stage_markers::current();
+    if (config == nullptr || marker < 0 || static_cast<std::size_t>(marker) >= config->markers.size()) return nullptr;
+    const auto member = config->markers[static_cast<std::size_t>(marker)].member;
+    if (member >= config->members.size()) return nullptr;
+    const auto& file = config->members[member];
+    return open_session(file.name, file.bytes->data(), file.bytes->size());
+}
+
+std::string stage_config_summary() {
+    const auto config = stage_markers::current();
+    if (config == nullptr) return {};
+    std::vector<std::pair<stage_config::Kind, std::size_t>> counts;
+    for (const auto& marker : config->markers) {
+        auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == marker.source; });
+        if (it == counts.end()) counts.emplace_back(marker.source, 1U);
+        else ++it->second;
+    }
+    std::string text = config->name + ": " + std::to_string(config->members.size()) + " file(s)";
+    for (const auto& [kind, count] : counts) {
+        text += ", " + std::to_string(count) + " " + stage_markers::kind_meaning(kind);
+    }
+    return text;
+}
+
 }  // namespace dmcresource

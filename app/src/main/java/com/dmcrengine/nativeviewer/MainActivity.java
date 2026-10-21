@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private static final String EFFECTS_FILE = "room_effects.bin";
     private static final int REQUEST_EXPORT_INFO = 1013;
     private static final int REQUEST_SAVE_SOURCE = 1015;
+    private static final int REQUEST_STAGE_CONFIG = 1016;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -111,6 +112,7 @@ public final class MainActivity extends Activity {
     private Button shadowButton;
     private Button collisionButton;
     private Button stageCollisionButton;
+    private Button stageConfigButton;
     private Button flyButton;
     private Button breakButton;
     // Position in the collision cycle: -1 all attacks, then each used id.
@@ -335,6 +337,14 @@ public final class MainActivity extends Activity {
         syncToggleButton(stageCollisionButton,
                 !renderView.isUvLayoutVisible() && stageScene,
                 renderView.isRoomCollisionVisible());
+
+        // Stage configuration (spawn points, zones, paths): over a stage scene
+        // or the room around a model.
+        final boolean configLoaded = !NativeBridge.stageConfigSummary().isEmpty();
+        syncToggleButton(stageConfigButton,
+                hasSession && !renderView.isUvLayoutVisible()
+                        && (stageScene || NativeBridge.isStageSession(session) || (roomLoaded && roomShown())),
+                configLoaded && NativeBridge.stageMarkersVisible());
 
         // Camera mode (stages and collision views): orbit <-> fly.
         final boolean flyAvailable = hasSession && !renderView.isUvLayoutVisible()
@@ -643,6 +653,29 @@ public final class MainActivity extends Activity {
             applyResourceUiState();
         });
         addToolButton(bar, stageCollisionButton);
+
+        // Stage configuration: the spawn points, event and camera zones, items
+        // and stage elements of a stNNNcfg.pac drawn over the stage. First tap
+        // picks the file, then taps show / hide; a long press offers the rest.
+        // Holding a marker in the view opens its card.
+        stageConfigButton = makeSquareButton("\u2691", "Stage config: spawn points and zones", 20f);
+        stageConfigButton.setOnClickListener(v -> {
+            if (NativeBridge.stageConfigSummary().isEmpty()) {
+                pickStageConfig();
+                return;
+            }
+            final boolean show = !NativeBridge.stageMarkersVisible();
+            NativeBridge.setStageMarkersVisible(show);
+            notice(show ? "Stage config shown: " + NativeBridge.stageConfigSummary()
+                         : "Stage config hidden", Toast.LENGTH_SHORT);
+            renderView.renderNow();
+            applyResourceUiState();
+        });
+        stageConfigButton.setOnLongClickListener(v -> {
+            stageConfigOptions();
+            return true;
+        });
+        addToolButton(bar, stageConfigButton);
 
         // Camera mode: orbit (turn round the model / stage) or fly (joysticks
         // under the fingers: left moves, right looks). The same button goes back.
@@ -1370,7 +1403,87 @@ public final class MainActivity extends Activity {
         @Override public void onGestureNotice(String text) {
             notice(text, Toast.LENGTH_SHORT);
         }
+
+        @Override public void onStageMarker(int marker) {
+            showStageMarkerCard(marker);
+        }
     };
+
+    private void pickStageConfig() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_STAGE_CONFIG);
+    }
+
+    private void loadStageConfig(Uri uri) {
+        final String name = displayName(uri);
+        String summary = null;
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+            if (pfd != null) summary = NativeBridge.loadStageConfig(pfd.getFd(), name);
+        } catch (Exception ignored) {
+            summary = null;
+        }
+        if (summary == null) {
+            notice("No stage configuration in " + name
+                    + " (a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE file)", Toast.LENGTH_LONG);
+            return;
+        }
+        notice("Stage config: " + summary + ". Hold a marker to see it.", Toast.LENGTH_LONG);
+        renderView.renderNow();
+        applyResourceUiState();
+    }
+
+    private void stageConfigOptions() {
+        final String summary = NativeBridge.stageConfigSummary();
+        if (summary.isEmpty()) {
+            pickStageConfig();
+            return;
+        }
+        final boolean shown = NativeBridge.stageMarkersVisible();
+        new AlertDialog.Builder(this)
+                .setTitle("Stage config")
+                .setMessage(summary)
+                .setPositiveButton("Load another", (d, w) -> pickStageConfig())
+                .setNeutralButton(shown ? "Hide" : "Show", (d, w) -> {
+                    NativeBridge.setStageMarkersVisible(!shown);
+                    renderView.renderNow();
+                    applyResourceUiState();
+                })
+                .setNegativeButton("Remove", (d, w) -> {
+                    NativeBridge.clearStageConfig();
+                    renderView.renderNow();
+                    applyResourceUiState();
+                    notice("Stage config removed", Toast.LENGTH_SHORT);
+                })
+                .show();
+    }
+
+    /** The held marker's card: what it is, its values and its file, with a way to open the file. */
+    private void showStageMarkerCard(int marker) {
+        final String card = NativeBridge.stageMarkerCard(marker);
+        if (card == null || card.isEmpty()) return;
+        final int newline = card.indexOf('\n');
+        final String title = newline < 0 ? card : card.substring(0, newline);
+        final String body = newline < 0 ? "" : card.substring(newline + 1);
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(body)
+                .setPositiveButton("Open file", (d, w) -> {
+                    final long file = NativeBridge.openStageMarkerFile(marker);
+                    if (file == 0) {
+                        notice("Could not open the file", Toast.LENGTH_LONG);
+                        return;
+                    }
+                    navigateToSession(file, title + " \u00b7 file");
+                })
+                .setNegativeButton("Close", null)
+                .setOnDismissListener(d -> {
+                    NativeBridge.selectStageMarker(-1);
+                    renderView.renderNow();
+                })
+                .show();
+    }
 
     /** PNG into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
     private void saveScreenshot(Bitmap image) {
@@ -2426,6 +2539,10 @@ public final class MainActivity extends Activity {
 
         if (requestCode == REQUEST_ROOM) {
             if (data != null && data.getData() != null) chooseRoom(data.getData());
+            return;
+        }
+        if (requestCode == REQUEST_STAGE_CONFIG) {
+            if (data != null && data.getData() != null) loadStageConfig(data.getData());
             return;
         }
         if (requestCode == REQUEST_ROOM_EFFECTS) {

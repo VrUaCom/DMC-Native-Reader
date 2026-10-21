@@ -81,6 +81,25 @@ public final class NativeBridge {
     public static native long assemblePac(long handle, String archiveName);
     /** A stage archive (st*.pac) as its assembled scene; 0 when it is not a stage. */
     public static native long openStage(int fd, String filename);
+    // Stage configuration (stNNNcfg.pac or one POS/EVE/CAM/ITM/STE/EST/SEF)
+    // drawn over the room or the stage scene; the core reads and decides.
+    /** Loads it and makes it current; what it holds in one line, null when it holds nothing. */
+    public static native String loadStageConfig(int fd, String filename);
+    public static native void clearStageConfig();
+    /** What the current stage configuration holds; empty when none is loaded. */
+    public static native String stageConfigSummary();
+    public static native void setStageMarkersVisible(boolean visible);
+    public static native boolean stageMarkersVisible();
+    /** The marker under the point (render pixels), now selected; -1 when none is near. */
+    public static native int pickStageMarker(long handle, int width, int height,
+                                             float yaw, float pitch, float zoom, int renderFlags,
+                                             float panX, float panY, float roomYaw, boolean follow,
+                                             float dolly, float x, float y);
+    public static native void selectStageMarker(int marker);
+    /** Title on the first line, then "name: value" lines. */
+    public static native String stageMarkerCard(int marker);
+    /** The file the marker comes from, opened as its own resource. */
+    public static native long openStageMarkerFile(int marker);
     /** HITS sources of a stage scene session. */
     public static native int stageCollisionSourceCount(long handle);
     // handles[0] = character PAC, the rest are added (plwp_*.pac weapons hang

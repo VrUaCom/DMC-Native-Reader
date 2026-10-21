@@ -59,6 +59,8 @@ public final class DmcRenderView extends View {
         void onToggleUi();
         void onScreenshot(Bitmap image);
         void onGestureNotice(String text);
+        /** A stage configuration marker was held (its index in the core). */
+        void onStageMarker(int marker);
     }
 
     private GestureListener gestureListener;
@@ -308,6 +310,15 @@ public final class DmcRenderView extends View {
 
             @Override public void onLongPress(MotionEvent e) {
                 if (!singleFingerGesture()) return;
+                // A held spawn point, zone or path of the stage configuration
+                // opens its card; nothing else happens on that press.
+                final int marker = pickStageMarker(e.getX(), e.getY());
+                if (marker >= 0) {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    if (!staticImagePreview) renderNow();
+                    if (gestureListener != null) gestureListener.onStageMarker(marker);
+                    return;
+                }
                 String text = "";
                 if (enabled(G_BONE)) {
                     final String hit = pick(e.getX(), e.getY(), false);
@@ -359,6 +370,15 @@ public final class DmcRenderView extends View {
     }
 
     /** What is under a view pixel ("model|joint", "room|…", "placed|…", "none|…"). */
+    private int pickStageMarker(float viewX, float viewY) {
+        if (session == 0 || getWidth() <= 0 || getHeight() <= 0 || !NativeBridge.stageMarkersVisible()) return -1;
+        final int rw = renderWidth();
+        final int rh = renderHeight();
+        return NativeBridge.pickStageMarker(session, rw, rh, yaw, pitch, zoom,
+                renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly,
+                viewX * rw / getWidth(), viewY * rh / getHeight());
+    }
+
     private String pick(float viewX, float viewY, boolean place) {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return "none|";
         final int rw = renderWidth();

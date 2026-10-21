@@ -1,6 +1,9 @@
 #include "dmcresource/stage_markers.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <mutex>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -8,6 +11,7 @@
 #include <utility>
 
 #include "dmcresource/raster_card.h"
+#include "dmcresource/texture_reencode.h"
 
 namespace dmcresource::stage_markers {
 namespace {
@@ -299,7 +303,7 @@ ImagePreview render_plan(std::span<const Marker> markers, std::string_view title
         }
         case Shape::Point: {
             const auto [px, py] = to_px(m.points.front());
-            for (int radius = 1; radius <= 4 * label_scale; ++radius) canvas.circle(px, py, radius, color);
+            canvas.circle(px, py, 4 * label_scale, color);
             if (std::isfinite(m.heading_degrees)) {
                 // Heading about Y: 0 looks down +Z.
                 const float radians = m.heading_degrees * 3.14159265F / 180.0F;
@@ -313,6 +317,185 @@ ImagePreview render_plan(std::span<const Marker> markers, std::string_view title
         }
     }
     return canvas.take();
+}
+
+// ---- the viewer's stage configuration --------------------------------------
+
+namespace {
+
+using RoomPoint = dmcresource::Vec3;
+
+std::mutex g_mutex;
+std::shared_ptr<const StageConfig> g_current;
+std::atomic<bool> g_visible{true};
+std::atomic<int> g_selected{-1};
+
+[[nodiscard]] RoomPoint room(const stage_config::Vec3& p) noexcept { return {p.x, p.y, p.z}; }
+
+void collect(std::string_view name, std::span<const std::uint8_t> bytes, int depth, StageConfig& config) {
+    Kind kind{};
+    if (stage_config::identify(bytes, &kind)) {
+        config.members.push_back({std::string{name} + " (" + stage_config::kind_name(kind) + ")", kind,
+                                  std::make_shared<const std::vector<std::uint8_t>>(bytes.begin(), bytes.end())});
+        return;
+    }
+    if (depth >= 3) return;
+    const auto slots = texture_reencode::read_pac_slots(std::as_bytes(bytes));
+    if (!slots) return;
+    for (std::size_t slot = 0; slot < slots->size(); ++slot) {
+        const auto& extent = (*slots)[slot];
+        if (extent.offset == 0U || extent.size == 0U) continue;
+        collect(std::string{name} + " / slot " + std::to_string(slot),
+                bytes.subspan(static_cast<std::size_t>(extent.offset), static_cast<std::size_t>(extent.size)),
+                depth + 1, config);
+    }
+}
+
+[[nodiscard]] std::array<std::uint8_t, 3> rgb3(Rgb c) noexcept { return {c.r, c.g, c.b}; }
+
+}  // namespace
+
+std::shared_ptr<const StageConfig> load_stage_config(std::string_view name, std::span<const std::uint8_t> bytes) {
+    auto config = std::make_shared<StageConfig>();
+    config->name = std::string{name};
+    collect(name, bytes, 0, *config);
+    if (config->members.empty()) return nullptr;
+    for (std::size_t member = 0; member < config->members.size(); ++member) {
+        const auto& m = config->members[member];
+        auto markers = read_markers(m.kind, *m.bytes);
+        for (auto& marker : markers) {
+            marker.member = member;
+            config->markers.push_back(std::move(marker));
+        }
+    }
+    float min_x = std::numeric_limits<float>::max(), max_x = std::numeric_limits<float>::lowest();
+    float min_z = min_x, max_z = max_x;
+    for (const auto& marker : config->markers) {
+        for (const auto& p : marker.points) {
+            if (!std::isfinite(p.x) || !std::isfinite(p.z)) continue;
+            min_x = std::min(min_x, p.x); max_x = std::max(max_x, p.x);
+            min_z = std::min(min_z, p.z); max_z = std::max(max_z, p.z);
+        }
+    }
+    if (min_x <= max_x) config->extent = std::max({max_x - min_x, max_z - min_z, 1.0F});
+    return config;
+}
+
+void set_current(std::shared_ptr<const StageConfig> config) noexcept {
+    const std::lock_guard lock{g_mutex};
+    g_current = std::move(config);
+    g_selected.store(-1);
+}
+
+std::shared_ptr<const StageConfig> current() noexcept {
+    const std::lock_guard lock{g_mutex};
+    return g_current;
+}
+
+void set_visible(bool visible) noexcept { g_visible.store(visible); }
+bool visible() noexcept { return g_visible.load(); }
+void set_selected(int marker) noexcept { g_selected.store(marker); }
+int selected() noexcept { return g_selected.load(); }
+
+Overlay build_overlay(const StageConfig& config, int selected_marker) {
+    Overlay out;
+    // A post about as tall as a person on a stage of this span.
+    const float post = std::clamp(config.extent * 0.04F, 10.0F, 400.0F);
+    const float foot = post * 0.25F;
+    for (std::size_t index = 0; index < config.markers.size(); ++index) {
+        const auto& m = config.markers[index];
+        if (m.points.empty()) continue;
+        const bool chosen = static_cast<int>(index) == selected_marker;
+        const auto color = chosen ? std::array<std::uint8_t, 3>{255U, 255U, 255U} : rgb3(m.color);
+        const std::uint8_t width = chosen ? 3U : 1U;
+        const auto line = [&](const RoomPoint& a, const RoomPoint& b, std::uint8_t w) {
+            out.lines.push_back({a, b, color, static_cast<std::uint8_t>(chosen ? 3U : w)});
+        };
+        switch (m.shape) {
+        case Shape::Point: {
+            const auto base = room(m.points.front());
+            const RoomPoint top{base.x, base.y + post, base.z};
+            line(base, top, 2U);
+            line({base.x - foot, base.y, base.z}, {base.x + foot, base.y, base.z}, width);
+            line({base.x, base.y, base.z - foot}, {base.x, base.y, base.z + foot}, width);
+            if (std::isfinite(m.heading_degrees)) {
+                const float radians = m.heading_degrees * 3.14159265F / 180.0F;
+                const RoomPoint tip{base.x + std::sin(radians) * post * 0.6F, base.y + post * 0.1F,
+                               base.z + std::cos(radians) * post * 0.6F};
+                line({base.x, base.y + post * 0.1F, base.z}, tip, 2U);
+            }
+            out.labels.push_back({top, m.label, color});
+            break;
+        }
+        case Shape::Area: {
+            if (m.points.size() < 4U) break;
+            RoomPoint centre{};
+            for (std::size_t c = 0; c < 4U; ++c) {
+                const auto a = room(m.points[c]);
+                const auto b = room(m.points[(c + 1U) % 4U]);
+                const RoomPoint a_top{a.x, a.y + m.height, a.z};
+                const RoomPoint b_top{b.x, b.y + m.height, b.z};
+                line(a, b, width);
+                if (m.height > 0.0F) {
+                    line(a_top, b_top, width);
+                    line(a, a_top, width);
+                }
+                centre = {centre.x + a.x / 4.0F, centre.y + a.y / 4.0F, centre.z + a.z / 4.0F};
+            }
+            out.labels.push_back({{centre.x, centre.y + std::max(m.height, 0.0F), centre.z}, m.label, color});
+            break;
+        }
+        case Shape::Path: {
+            for (std::size_t p = 0; p + 1U < m.points.size(); ++p) line(room(m.points[p]), room(m.points[p + 1U]), 2U);
+            out.labels.push_back({room(m.points.front()), m.label, color});
+            break;
+        }
+        }
+    }
+    return out;
+}
+
+std::vector<RoomPoint> pick_anchors(const StageConfig& config, const Marker& marker) {
+    std::vector<RoomPoint> anchors;
+    if (marker.points.empty()) return anchors;
+    const float post = std::clamp(config.extent * 0.04F, 10.0F, 400.0F);
+    switch (marker.shape) {
+    case Shape::Point: {
+        const auto base = room(marker.points.front());
+        anchors = {base, {base.x, base.y + post * 0.5F, base.z}, {base.x, base.y + post, base.z}};
+        break;
+    }
+    case Shape::Area: {
+        RoomPoint centre{};
+        for (const auto& p : marker.points) {
+            anchors.push_back(room(p));
+            centre = {centre.x + p.x / 4.0F, centre.y + p.y / 4.0F, centre.z + p.z / 4.0F};
+        }
+        anchors.push_back(centre);
+        anchors.push_back({centre.x, centre.y + std::max(marker.height, 0.0F), centre.z});
+        break;
+    }
+    case Shape::Path:
+        for (const auto& p : marker.points) anchors.push_back(room(p));
+        break;
+    }
+    return anchors;
+}
+
+int nearest_marker(std::span<const std::optional<HierarchyScreenPoint>> anchors,
+                   std::span<const std::size_t> anchor_marker, float x, float y, float max_px) {
+    int best = -1;
+    float best_distance = max_px * max_px;
+    for (std::size_t i = 0; i < anchors.size() && i < anchor_marker.size(); ++i) {
+        if (!anchors[i]) continue;
+        const float dx = anchors[i]->x - x, dy = anchors[i]->y - y;
+        const float distance = dx * dx + dy * dy;
+        if (distance <= best_distance) {
+            best_distance = distance;
+            best = static_cast<int>(anchor_marker[i]);
+        }
+    }
+    return best;
 }
 
 }  // namespace dmcresource::stage_markers

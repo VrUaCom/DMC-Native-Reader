@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+#include <optional>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -42,6 +44,20 @@ using RenderFlags = std::uint32_t;
     return (mask & render_flag(value)) != 0U;
 }
 
+// A coloured line and a text label in room coordinates, drawn over the frame
+// like the room collision (stage configuration markers use them).
+struct OverlayLine final {
+    Vec3 a{};
+    Vec3 b{};
+    std::array<std::uint8_t, 3> color{255U, 255U, 255U};
+    std::uint8_t width{1U};  // multiples of the collision line width
+};
+struct OverlayLabel final {
+    Vec3 at{};
+    std::string text;
+    std::array<std::uint8_t, 3> color{255U, 255U, 255U};
+};
+
 struct ViewState {
     float yaw_radians{0.65f};
     float pitch_radians{-0.45f};
@@ -62,6 +78,9 @@ struct ViewState {
     std::span<const Vec3> room_collision_lines{};
     // Kind of each line pair of room_collision_lines (collision_kind_color).
     std::span<const std::uint8_t> room_collision_kinds{};
+    // Stage configuration markers in room coordinates (stage_markers.h).
+    std::span<const OverlayLine> marker_lines{};
+    std::span<const OverlayLabel> marker_labels{};
     // Line widths in image pixels: meshes (wireframe, room wire, bones) and
     // collisions (HITS, attack shapes).
     // Opacity of the room's wireframe lines when the room is only the backdrop
@@ -222,6 +241,11 @@ struct ViewPick {
 [[nodiscard]] ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& view,
                                  float x, float y, const HierarchyOverlay* hierarchy = nullptr,
                                  float max_joint_px = 28.0F);
+
+// Image positions of room points in that view (room placement applied);
+// nullopt for a point behind the camera.
+[[nodiscard]] std::vector<std::optional<HierarchyScreenPoint>> project_room_points(
+    const Mesh& mesh, int width, int height, const ViewState& view, std::span<const Vec3> room_points);
 
 [[nodiscard]] std::vector<HierarchyScreenPoint> project_hierarchy_points(
     const Mesh& mesh, const HierarchyOverlay& hierarchy, int width, int height,

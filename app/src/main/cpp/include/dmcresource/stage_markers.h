@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -10,6 +12,7 @@
 #include <vector>
 
 #include "dmcresource/image_preview.h"
+#include "dmcresource/view_renderer.h"
 #include "dmcresource/stage_config.h"
 
 // What a stage configuration member places in the world, as markers in stage
@@ -33,6 +36,7 @@ struct Rgb final {
 struct Marker final {
     stage_config::Kind source{stage_config::Kind::Pos};
     std::size_t record{};  // the record's index in its file
+    std::size_t member{};  // the file's index in StageConfig::members
     Shape shape{Shape::Point};
     std::vector<stage_config::Vec3> points;
     float height{};
@@ -62,5 +66,55 @@ struct Marker final {
 // numbered points with their heading, zone outlines, paths, and a legend.
 [[nodiscard]] ImagePreview render_plan(std::span<const Marker> markers, std::string_view title,
                                        int width = 1080, int height = 1080);
+
+// ---- A stage's configuration in the viewer --------------------------------
+
+// The members found in a stage configuration archive (or one member opened
+// on its own) and every marker they place.
+struct StageConfig final {
+    struct Member final {
+        std::string name;  // "st100cfg.pac / slot 3 (POS)"
+        stage_config::Kind kind{stage_config::Kind::Pos};
+        std::shared_ptr<const std::vector<std::uint8_t>> bytes;
+    };
+    std::string name;
+    std::vector<Member> members;
+    std::vector<Marker> markers;
+    float extent{1.0F};  // the markers' horizontal span, for drawing sizes
+};
+
+// Reads a stNNNcfg.pac (nested PACs to depth 3) or a single member; nullptr
+// when the bytes hold no member.
+[[nodiscard]] std::shared_ptr<const StageConfig> load_stage_config(std::string_view name,
+                                                                   std::span<const std::uint8_t> bytes);
+
+// The configuration drawn over the viewer's room or stage scene (shared by
+// every render; thread-safe), whether it shows, and the held marker.
+void set_current(std::shared_ptr<const StageConfig> config) noexcept;
+[[nodiscard]] std::shared_ptr<const StageConfig> current() noexcept;
+void set_visible(bool visible) noexcept;
+[[nodiscard]] bool visible() noexcept;
+void set_selected(int marker) noexcept;  // -1 none
+[[nodiscard]] int selected() noexcept;
+
+// The 3D drawing of the markers in room coordinates: spawn and placement
+// points as posts with a foot cross and a heading arrow, zones as boxes
+// from their floor to their height, paths as lines; the selected marker
+// is drawn white and wider. One label per marker.
+struct Overlay final {
+    std::vector<OverlayLine> lines;
+    std::vector<OverlayLabel> labels;
+};
+[[nodiscard]] Overlay build_overlay(const StageConfig& config, int selected_marker);
+
+// Points a finger can hold to pick a marker: a post's foot and top, a
+// zone's centre and corners, a path's points.
+[[nodiscard]] std::vector<Vec3> pick_anchors(const StageConfig& config, const Marker& marker);
+
+// The marker whose anchor is drawn nearest to image point (x, y), within
+// max_px; -1 when none. `anchors` are the projected anchors (nullopt behind
+// the camera) and `anchor_marker` the marker each belongs to.
+[[nodiscard]] int nearest_marker(std::span<const std::optional<HierarchyScreenPoint>> anchors,
+                                 std::span<const std::size_t> anchor_marker, float x, float y, float max_px);
 
 }  // namespace dmcresource::stage_markers

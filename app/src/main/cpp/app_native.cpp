@@ -25,6 +25,7 @@
 #include "dmcresource/environment_collision.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/stage_markers.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/enemy_effects.h"
@@ -973,6 +974,97 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
         if (!stage) return 0;
         const SessionLock jni_lock{session_mutex()};
         return to_handle(stage.release());
+    } catch (...) { return 0; }
+}
+
+// ---- Stage configuration over the room / stage scene (stage_markers.h) ----
+
+// Reads a stNNNcfg.pac or one member (POS, EVE, CAM, ITM, STE, EST, SEF) and
+// makes it the configuration drawn over the viewer's room or stage scene.
+// Returns what it holds in one line; null when the file holds no member.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return nullptr;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return nullptr;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto config = dmcresource::stage_markers::load_stage_config(
+            name, std::span<const std::uint8_t>{mapped.data(), mapped.size()});
+        if (config == nullptr) return nullptr;
+        const SessionLock jni_lock{session_mutex()};
+        dmcresource::stage_markers::set_current(std::move(config));
+        dmcresource::stage_markers::set_visible(true);
+        return env->NewStringUTF(dmcresource::stage_config_summary().c_str());
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearStageConfig(JNIEnv*, jclass) {
+    const SessionLock jni_lock{session_mutex()};
+    dmcresource::stage_markers::set_current(nullptr);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageConfigSummary(JNIEnv* env, jclass) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return env->NewStringUTF(dmcresource::stage_config_summary().c_str());
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setStageMarkersVisible(JNIEnv*, jclass, jboolean visible) {
+    dmcresource::stage_markers::set_visible(visible == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageMarkersVisible(JNIEnv*, jclass) {
+    return dmcresource::stage_markers::visible() ? JNI_TRUE : JNI_FALSE;
+}
+
+// The stage configuration marker under image point (x, y) of that view,
+// which becomes the selected one (drawn white); -1 when none is near.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_pickStageMarker(
+        JNIEnv*, jclass, jlong handle, jint requested_width,
+        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
+        jboolean follow, jfloat dolly, jfloat x, jfloat y) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return -1;
+    try {
+        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
+        const auto pick = dmcresource::pick_session(
+            session, requested_width, requested_height, yaw, pitch, zoom,
+            static_cast<std::uint32_t>(render_flags), controls, x, y);
+        dmcresource::stage_markers::set_selected(pick.marker);
+        return pick.marker;
+    } catch (...) { return -1; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_selectStageMarker(JNIEnv*, jclass, jint marker) {
+    dmcresource::stage_markers::set_selected(marker);
+}
+
+// The held marker's card: title on the first line, then "name: value" lines.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageMarkerCard(JNIEnv* env, jclass, jint marker) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return env->NewStringUTF(dmcresource::stage_marker_card(marker).c_str());
+    } catch (...) { return nullptr; }
+}
+
+// The file a marker comes from, opened as its own resource (Info and map).
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_openStageMarkerFile(JNIEnv*, jclass, jint marker) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return to_handle(dmcresource::open_stage_marker_file(marker).release());
     } catch (...) { return 0; }
 }
 

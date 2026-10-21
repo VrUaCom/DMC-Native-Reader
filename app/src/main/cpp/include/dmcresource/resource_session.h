@@ -353,7 +353,19 @@ struct SessionPick final {
     Vec3 room_point{};
     int joint{-1};
     std::string joint_name;
+    // The stage configuration marker held (stage_markers::current()), -1 none.
+    int marker{-1};
+    std::string marker_title;
 };
+
+// The current stage configuration's marker as a card: its title, then its
+// fields, then the file it comes from; empty for an index out of range.
+[[nodiscard]] std::string stage_marker_card(int marker);
+// Opens the file a marker of the current stage configuration comes from, as
+// its own resource (Info and its map); nullptr when there is none.
+[[nodiscard]] std::unique_ptr<Session> open_stage_marker_file(int marker);
+// What the current stage configuration holds, in one line; empty when none.
+[[nodiscard]] std::string stage_config_summary();
 
 [[nodiscard]] SessionPick pick_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,

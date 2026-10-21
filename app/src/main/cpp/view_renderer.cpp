@@ -1,6 +1,7 @@
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/view_gpu.h"
+#include "dmcresource/raster_card.h"
 
 #include <algorithm>
 #include <array>
@@ -1212,6 +1213,31 @@ void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
                   color[0], color[1], color[2], 255U, pen.collision_px);
     }
 
+    // Stage configuration markers: lines, then labels with a dark rim so they
+    // read over any texture.
+    for (const auto& marker_line : view.marker_lines) {
+        pen.line3(room_place(view, marker_line.a), room_place(view, marker_line.b), marker_line.color[0],
+                  marker_line.color[1], marker_line.color[2], 255U,
+                  std::clamp(pen.collision_px * static_cast<int>(marker_line.width), 1, 63));
+    }
+    if (!view.marker_labels.empty()) {
+        const int scale = std::max(1, std::min(pen.image.width, pen.image.height) / 360);
+        for (const auto& label : view.marker_labels) {
+            const Vec3 c = pen.to_cam(room_place(view, label.at));
+            if (c.z < pen.line_near) continue;
+            const auto p = pen.cam_point(c);
+            const int x = static_cast<int>(std::lround(p.x)) + 3 * scale;
+            const int y = static_cast<int>(std::lround(p.y)) - 9 * scale;
+            static constexpr std::array<std::array<int, 2>, 4> kRim{{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}};
+            for (const auto& [dx, dy] : kRim) {
+                raster::draw_text(pen.image.pixels, pen.image.width, pen.image.height, x + dx * scale,
+                                  y + dy * scale, label.text, raster::Rgb{10, 10, 12}, scale);
+            }
+            raster::draw_text(pen.image.pixels, pen.image.width, pen.image.height, x, y, label.text,
+                              raster::Rgb{label.color[0], label.color[1], label.color[2]}, scale);
+        }
+    }
+
     if (hierarchy != nullptr && hierarchy->available()) {
         for (const auto& edge_value : hierarchy->edges) {
             if (edge_value.parent >= hierarchy->points.size() || edge_value.child >= hierarchy->points.size()) continue;
@@ -2043,6 +2069,24 @@ Vec3 view_camera_eye(const Mesh& mesh, int width, int height, const ViewState& v
     return {frame.center.x + b.right.x * frame.pan_x + b.up.x * frame.pan_y - b.forward.x * cd,
             frame.center.y + b.right.y * frame.pan_x + b.up.y * frame.pan_y - b.forward.y * cd,
             frame.center.z + b.right.z * frame.pan_x + b.up.z * frame.pan_y - b.forward.z * cd};
+}
+
+std::vector<std::optional<HierarchyScreenPoint>> project_room_points(
+    const Mesh& mesh, int width, int height, const ViewState& view, std::span<const Vec3> room_points) {
+    std::vector<std::optional<HierarchyScreenPoint>> out(room_points.size());
+    if (mesh.vertices.empty()) return out;
+    RgbaImage frame_size;
+    frame_size.width = std::clamp(width, 1, 8192);
+    frame_size.height = std::clamp(height, 1, 8192);
+    const auto frame = view_frame(mesh, view, frame_size.width, frame_size.height);
+    const OverlayPen pen{frame_size, frame, view};
+    for (std::size_t i = 0; i < room_points.size(); ++i) {
+        const Vec3 c = pen.to_cam(room_place(view, room_points[i]));
+        if (c.z < pen.line_near) continue;
+        const auto p = pen.cam_point(c);
+        out[i] = HierarchyScreenPoint{p.x, p.y};
+    }
+    return out;
 }
 
 ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& view, float px, float py,
