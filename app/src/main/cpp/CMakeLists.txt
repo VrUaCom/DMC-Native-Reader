@@ -119,6 +119,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
     modules/motion/cloth_chain.cpp
+    modules/motion/model_cloth.cpp
     modules/motion/uv_scroll.cpp
     modules/motion/motion_script.cpp
     modules/motion/motion_chart.cpp

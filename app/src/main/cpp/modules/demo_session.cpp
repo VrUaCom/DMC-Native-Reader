@@ -13,7 +13,9 @@
 #include "dmc_rengine/formats/scm.hpp"
 #include "dmc_rengine/formats/scm_transform.hpp"
 #include "dmcresource/effect_host.h"
+#include "dmcresource/matrix_ops.h"
 #include "dmcresource/motion/motion_clip.h"
+#include "dmcresource/motion/model_cloth.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/stage_room.h"
@@ -115,6 +117,14 @@ void update_shot(Player& p) {
     o[13] = -(a[12] * o[1] + a[13] * o[5] + a[14] * o[9]);
     o[14] = -(a[12] * o[2] + a[13] * o[6] + a[14] * o[10]);
     return out;
+}
+
+[[nodiscard]] bool near_identity(const Matrix4& m) noexcept {
+    const Matrix4 identity{};
+    for (std::size_t i = 0; i < 16U; ++i) {
+        if (!(std::fabs(m.values[i] - identity.values[i]) < 1.0e-3F)) return false;
+    }
+    return true;
 }
 
 [[nodiscard]] Vec3 transform(const Vec3& p, const Matrix4& m) noexcept {
@@ -405,6 +415,84 @@ bool pose_stage_piece(Player& p, PlayerTrack& t) {
 // Poses every track at the player's frame: models into the scene (free
 // tracks first, then the ones hanging from a joint of an already posed
 // track), stage pieces into the room. Returns whether the room moved.
+// The cloth of a track at the player's frame: the .clt of the last Motion
+// clip set up to it that names one ("Cloth pl100_01.clt"), whether it runs
+// (the last "ClothMode": 1 simulates, as the hair, amulet and em105 parts
+// ask; 0 leaves the bones to the MOT, as m01_c00's coat, carried over the
+// shoulder, is baked; 0 until a clip says), and the last reset ("ResetClt" /
+// "ResetClt2", settled "ResetCltLevel" frames, 20 without).
+struct ClothCue final {
+    std::string file;
+    bool on{false};
+    float reset{-1.0F};
+    std::uint32_t level{20U};
+};
+
+[[nodiscard]] ClothCue cloth_cue(const Player& p, int track) {
+    ClothCue out;
+    const auto* list = p.doc.list("Motion", track);
+    if (list == nullptr) return out;
+    float set = -1.0F, mode_set = -1.0F;
+    for (const auto& clip : list->clips) {
+        if (clip.set_frame > p.frame) continue;
+        bool reset = false;
+        int level = -1;
+        for (const auto& [key, values] : clip.fields) {
+            if (key == "Cloth" && !values.empty() && clip.set_frame >= set) {
+                out.file = values.front();
+                set = clip.set_frame;
+            }
+            if (key == "ClothMode" && !values.empty() && clip.set_frame >= mode_set) {
+                out.on = std::atoi(values.front().c_str()) != 0;
+                mode_set = clip.set_frame;
+            }
+            if (key == "ResetClt" || key == "ResetClt2") reset = true;
+            if (key == "ResetCltLevel" && !values.empty()) level = std::atoi(values.front().c_str());
+        }
+        if (reset && clip.set_frame >= out.reset) {
+            out.reset = clip.set_frame;
+            out.level = level > 0 ? static_cast<std::uint32_t>(std::min(level, 600)) : 20U;
+        }
+    }
+    return out;
+}
+
+// Steps the track's cloth to the player's frame and writes its world
+// vertices: one solver step a game frame while the timeline plays forward; a
+// reset clip crossed, a jump (a scrub, a step back) or a new .clt restarts it
+// at the pose and settles it. False when the track has no cloth.
+[[nodiscard]] bool pose_cloth(const Player& p, PlayerTrack& t, const Session& model, const Matrix4& placement,
+                              std::vector<Vec3>* out) {
+    const auto cue = cloth_cue(p, t.track);
+    if (cue.file.empty() || !cue.on) {
+        t.cloth.reset();
+        t.cloth_file.clear();
+        return false;
+    }
+    if (cue.file != t.cloth_file) {
+        t.cloth_file = cue.file;
+        t.cloth_frame = -1.0F;
+        t.cloth.reset();
+        if (const auto* member = p.doc.member(cue.file)) {
+            const std::string_view text{reinterpret_cast<const char*>(p.bytes->data() + member->offset), member->size};
+            t.cloth = motion::make_model_cloth(model, text);
+        }
+    }
+    if (!t.cloth) return false;
+    std::uint32_t steps = 0U;
+    const float delta = p.frame - t.cloth_frame;
+    const bool crossed = cue.reset >= 0.0F && cue.reset > t.cloth_frame;
+    if (t.cloth_frame < 0.0F || delta < 0.0F || delta > 30.0F || crossed) {
+        t.cloth->state.initialized = false;
+        steps = cue.level;
+        t.cloth_frame = p.frame;
+    } else {
+        steps = static_cast<std::uint32_t>(delta);
+        t.cloth_frame += static_cast<float>(steps);
+    }
+    return motion::pose_model_cloth(model, placement, *t.cloth, steps, out);
+}
+
 bool pose_tracks(Session& scene, Player& p) {
     bool room_moved = false;
     auto& out = scene.render_mesh.vertices;
@@ -457,9 +545,20 @@ bool pose_tracks(Session& scene, Player& p) {
                     joint = &nodes[static_cast<std::size_t>(t.host_joint)].world;
                 }
             }
+            Matrix4 placement{};
+            if (joint != nullptr) {
+                const Matrix4 base = t.limb && model.scene.nodes.size() > 1U ? affine_inverse(model.scene.nodes[1].world)
+                                                                             : t.host_rest_inverse;
+                if (!matrix_ops::multiply(base, *joint, &placement)) placement = {};
+            }
+            t.placement = placement;
+            if (std::vector<Vec3> clothed; pose_cloth(p, t, model, placement, &clothed) && clothed.size() == t.vertex_count) {
+                std::copy(clothed.begin(), clothed.end(), out.begin() + static_cast<std::ptrdiff_t>(t.vertex_begin));
+                continue;
+            }
             for (std::size_t v = 0; v < t.vertex_count; ++v) {
                 const auto& src = model.render_mesh.vertices[v];
-                out[t.vertex_begin + v] = joint != nullptr ? transform(transform(src, t.host_rest_inverse), *joint) : src;
+                out[t.vertex_begin + v] = joint != nullptr ? transform(src, placement) : src;
             }
         }
     }
@@ -653,15 +752,40 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             models.clear();
         }
         for (std::size_t i = 0; i < tracks.size(); ++i) tracks[i].source = std::move(models[i]);
-        // Rest worlds of the joints the CnsPos models hang from.
+        // A CnsPos model's root sits on its joint: the inverse of the root's
+        // rest world (m01_c00: pl100_01's root rests at the head joint, at
+        // 0 166 -1; pl100_03's at 0, in the forearm's frame).
         for (auto& t : tracks) {
-            if (t.host_track < 0 || t.host_joint < 0) continue;
-            for (const auto& host : tracks) {
-                if (host.track != t.host_track || !host.source) continue;
-                const auto& nodes = host.source->scene.nodes;
-                if (static_cast<std::size_t>(t.host_joint) < nodes.size()) {
-                    t.host_rest_inverse = affine_inverse(nodes[static_cast<std::size_t>(t.host_joint)].world);
+            if (t.host_track < 0 || t.host_joint < 0 || !t.source || t.source->scene.nodes.empty()) continue;
+            t.host_rest_inverse = affine_inverse(t.source->scene.nodes.front().world);
+        }
+        // Limb parts ride the body joint their node 1 is: the joint of a model
+        // of the same character (pl100_03 and pl100_10 are both "pl100")
+        // whose child sits where the part's node 2 does (pl100_03's wrist
+        // 26.86 along x: pl100_10 joint 12 -> 13; pl100_04's: joint 8 -> 9).
+        for (auto& t : tracks) {
+            if (t.host_track >= 0 || !t.source) continue;
+            const auto& nodes = t.source->scene.nodes;
+            if (nodes.size() < 3U || nodes[1].parent != 0 || nodes[2].parent != 1 || !near_identity(nodes[0].world) ||
+                !near_identity(nodes[1].world)) {
+                continue;
+            }
+            const auto& w = nodes[2].local.values;
+            if (std::hypot(w[12], w[13], w[14]) < 1.0F) continue;
+            const auto stem = t.model.substr(0, t.model.find('_'));
+            for (const auto& body : tracks) {
+                if (&body == &t || !body.source || body.host_track >= 0 || body.model.substr(0, body.model.find('_')) != stem) {
+                    continue;
                 }
+                const auto& joints = body.source->scene.nodes;
+                for (std::size_t c = 0; c < joints.size() && !t.limb; ++c) {
+                    const auto& l = joints[c].local.values;
+                    if (joints[c].parent < 0 || std::hypot(l[12] - w[12], l[13] - w[13], l[14] - w[14]) > 0.05F) continue;
+                    t.host_track = body.track;
+                    t.host_joint = joints[c].parent;
+                    t.limb = true;
+                }
+                if (t.limb) break;
             }
         }
         if (!tracks.empty()) {
@@ -868,17 +992,21 @@ namespace {
     return m;
 }
 
-// The world of joint `joint` of track `track` now (a model's posed joint, a
-// stage piece's scene node); null when there is none.
-[[nodiscard]] const Matrix4* joint_world(const Player& p, int track, int joint) noexcept {
-    if (track < 0 || joint < 0) return nullptr;
+// The world of joint `joint` of track `track` now (a model's posed joint
+// where its placement puts it, a stage piece's scene node); none when there
+// is no such joint.
+[[nodiscard]] std::optional<Matrix4> joint_world(const Player& p, int track, int joint) noexcept {
+    if (track < 0 || joint < 0) return std::nullopt;
     for (const auto& t : p.tracks) {
         if (t.track != track || !t.source) continue;
         const auto& nodes = t.source->scene.nodes;
-        return static_cast<std::size_t>(joint) < nodes.size() ? &nodes[static_cast<std::size_t>(joint)].world
-                                                               : nullptr;
+        if (static_cast<std::size_t>(joint) >= nodes.size()) return std::nullopt;
+        const auto& node = nodes[static_cast<std::size_t>(joint)].world;
+        if (t.stage) return node;
+        Matrix4 out{};
+        return matrix_ops::multiply(node, t.placement, &out) ? std::optional<Matrix4>{out} : std::optional<Matrix4>{node};
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 constexpr std::size_t kMaxEffects = 96;
@@ -924,8 +1052,8 @@ std::vector<EffectShot> active_effects(const Session& session) {
                     p->doc.lists[static_cast<std::size_t>(line)].kind == "Model") {
                     track = p->doc.lists[static_cast<std::size_t>(line)].track;
                 }
-                const auto* joint = joint_world(*p, track, static_cast<int>(float_value(clip, "SpBoneNo", -1.0F)));
-                if (joint != nullptr) shot.world = multiply(shot.world, *joint);
+                const auto joint = joint_world(*p, track, static_cast<int>(float_value(clip, "SpBoneNo", -1.0F)));
+                if (joint) shot.world = multiply(shot.world, *joint);
             }
             out.push_back(shot);
             if (out.size() >= kMaxEffects) return out;

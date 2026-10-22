@@ -139,9 +139,27 @@ swapped for its broken version). The object index is the model's object
   while the body plays. Body MOTs of the lighter cutscene body variants
   have longer channel domains than the model; they drive its leading joints
   (`load_cutscene_motion`, as 0x140310A80 walks the model's joints).
-* `CnsPos track joint`: the model is authored at its host's rest pose and
-  follows the joint's move from rest (vertex x inverse rest world x current
-  world).
+* `CnsPos track joint`: the model's root sits on the joint (vertex x
+  inverse root rest world x joint world). Hair and heads (`pl100_01`,
+  `pl100_02`) are authored at the host's rest pose, their root resting where
+  the joint does; hands (`pl100_03` / `pl100_04` in m01_c00), the amulet
+  (`wp140_00`) and em105's parts are authored in the joint's own frame, root
+  at 0. Their MOTs leave the root alone (m01_c00's hand MOTs mask channels
+  0 and 1 out).
+* Limb parts without CnsPos (m01_s00's hands): a model whose node 1 is a
+  joint of a model of the same character (`pl100_03` and `pl100_10`, both
+  `pl100`), its node 2 at that joint's child offset (the wrist, 26.86 along
+  x: body joint 12 -> 13; `pl100_04`: 8 -> 9), rides the joint: vertex x
+  inverse node 1 world x joint world. Their MOTs put node 1 exactly on the
+  forearm while a clip plays; between clips the hand follows the arm instead
+  of staying behind.
+* Cloth: a Motion clip names a `.clt` (`Cloth pl100_01.clt`); with
+  `ClothMode 1` (the last clip that says, 0 before) its chain runs the solver
+  of `cloth_chain.h` in the world, one step a game frame (`model_cloth.h`):
+  Dante's hair and amulet, em105's sleeves. `ClothMode 0` leaves the bones to
+  the MOT (m01_c00's coat, carried over the shoulder, is baked). `ResetClt` /
+  `ResetClt2` restart it at the pose and settle it `ResetCltLevel` frames
+  (20); a scrub or a jump does the same.
 * Visibility, per object of every track (models and stage pieces): every
   Hide clip set up to the frame applies in order (H hides the model, D shows
   it, A applies its `.hid`: its objects take its states). The meshes draw the
@@ -172,7 +190,14 @@ the cuts.
 Shots stand over a shoulder or inside a model (`cm036`: the eye in Dante's
 head). The model pass clips its triangles at the near plane in camera space
 (the room pass and the GPU pass already did), so geometry at and behind the
-eye is cut, never projected across the picture.
+eye is cut, never projected across the picture. A camera inside the scene
+keeps its near plane at 0.2% of the framing radius (an orbit view keeps 5%):
+a cutscene frames its whole set, and 5% of m01_s00's was 56 units, a third
+of Dante.
+
+A taken camera flies from the shot's eye: pinch zooms, the two-finger dolly
+moves it along the view and the two-finger pan across it, scaled to the
+shot's target distance.
 
 ## Not yet
 

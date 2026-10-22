@@ -532,27 +532,10 @@ std::size_t attach_part_cloth(Session* session,
             part.scene.rig == nullptr || part.scene.rig->node_count() != part.scene.nodes.size()) {
             return 0U;
         }
-        auto blocks = parse_clt(clt_text);
-        if (blocks.empty()) return 0U;
-        const auto count = part.scene.rig->node_count();
-        auto state = std::make_shared<ClothState>();
-        state->params = blocks.front();
-        state->blocks = std::move(blocks);
-        state->sim.assign(count, {});
-        state->velocity.assign(count, {});
-        state->axis_by_node.assign(count, -1);
-        state->block_by_node.assign(count, 0U);
+        auto state = make_cloth_state(part.scene.rig->node_count(), clt_text);
+        if (state == nullptr) return 0U;
         std::size_t simulated = 0U;
-        // Every ClothNo block (0x1402CA1D0 reads ClothNum of them).
-        for (std::size_t b = 0U; b < state->blocks.size() && b < 255U; ++b) {
-            for (const auto& bone : state->blocks[b].bones) {
-                if (bone.node >= count || bone.node == 0U) continue;
-                if (state->axis_by_node[bone.node] < 0) ++simulated;
-                state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
-                state->block_by_node[bone.node] = static_cast<std::uint8_t>(b);
-            }
-        }
-        if (simulated == 0U) return 0U;
+        for (const auto axis : state->axis_by_node) simulated += axis >= 0 ? 1U : 0U;
         state->capsules.assign(capsules.begin(), capsules.end());
         const auto previous = part.placement.cloth;
         part.placement.cloth = state;

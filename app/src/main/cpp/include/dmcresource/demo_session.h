@@ -37,6 +37,14 @@ struct ObjectRange final {
 // demo_session.cpp.
 struct StageMotion;
 
+}  // namespace dmcresource::demo
+
+namespace dmcresource::motion {
+struct ModelCloth;
+}
+
+namespace dmcresource::demo {
+
 struct PlayerTrack final {
     int track{};
     std::string model;
@@ -57,10 +65,27 @@ struct PlayerTrack final {
     // (its own motion is relative to that joint); -1 when free.
     int host_track{-1};
     int host_joint{-1};
-    // The model is authored at the host's rest pose: it follows the joint's
-    // move from its rest world (vertex x inverse rest world x current world).
+    // The model's root sits on the joint: vertex x inverse root rest world x
+    // joint world. Hair and heads are authored at the host's rest pose (their
+    // root rests where the joint does); hands, the amulet (wp140_00) and
+    // em105's parts are authored in the joint's own frame (root at 0).
     Matrix4 host_rest_inverse{};
+    // A limb part (a hand, pl100_03 / pl100_04): its node 1 is the host
+    // joint itself (a body's forearm; the part's wrist, node 2, sits at that
+    // joint's child offset), so the part rides the joint whatever its own
+    // motion does with node 1 (m01_c00's hand MOTs leave it at rest, and a
+    // hand held between its clips would stay behind): vertex x inverse node 1
+    // world x joint world. Its own MOT turns the wrist and fingers.
+    bool limb{};
+    // Where the model's own space stands in the world now (identity for a
+    // free model): its joints' worlds are node world x placement.
+    Matrix4 placement{};
     std::shared_ptr<StageMotion> stage_motion;
+    // Cloth: the chain of the .clt the track's Motion clips name ("Cloth
+    // pl100_01.clt"), its file, and the timeline frame it has stepped to.
+    std::shared_ptr<motion::ModelCloth> cloth;
+    std::string cloth_file;
+    float cloth_frame{-1.0F};
     // The MOT bound now, and one that failed to bind (not retried).
     std::string motion;
     std::string failed_motion;
