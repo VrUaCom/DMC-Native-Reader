@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -41,6 +42,8 @@ struct StageMotion;
 
 namespace dmcresource::motion {
 struct ModelCloth;
+struct ModelSkin;
+struct Rope;
 }
 
 namespace dmcresource::video {
@@ -81,6 +84,9 @@ struct PlayerTrack final {
     // hand held between its clips would stay behind): vertex x inverse node 1
     // world x joint world. Its own MOT turns the wrist and fingers.
     bool limb{};
+    // The Model clip's Pos / Rot: the model's own space in its joint's (or
+    // the world's) frame.
+    Matrix4 offset{};
     // Where the model's own space stands in the world now (identity for a
     // free model): its joints' worlds are node world x placement.
     Matrix4 placement{};
@@ -90,6 +96,19 @@ struct PlayerTrack final {
     std::shared_ptr<motion::ModelCloth> cloth;
     std::string cloth_file;
     float cloth_frame{-1.0F};
+    // RefMotion: the model takes the node worlds of track `ref_track`'s
+    // model (its own skeleton is a copy: m03_b00's em125_07..14 on
+    // em125_00), skinned with `ref_skin`; -1 when it plays its own.
+    int ref_track{-1};
+    std::shared_ptr<motion::ModelSkin> ref_skin;
+    // ClothSim1D: a chain hung between joint rope_joint[0] of track
+    // rope_track[0] and joint rope_joint[1] of track rope_track[1] (a model's
+    // joint or a stage piece's node; -1 none), and the frame it stepped to.
+    std::string rope_file;
+    std::array<int, 2> rope_track{-1, -1};
+    std::array<int, 2> rope_joint{-1, -1};
+    std::shared_ptr<motion::Rope> rope;
+    float rope_frame{-1.0F};
     // The MOT bound now, and one that failed to bind (not retried).
     std::string motion;
     std::string failed_motion;
@@ -215,9 +234,10 @@ struct AudioFormat final {
 // ---- fade ----------------------------------------------------------------
 
 // The screen fade at the player's frame (Fade clips: "FadeType I" fades in
-// from DistRGBA over its life, "O" out to it and holds; DistRGBA alpha 128
-// is opaque, as PS2 alphas are): the colour and how much of it covers the
-// picture (0 none).
+// from DistRGBA over its life, "O" out to it, holding it only when it ends
+// the picture (a short O mid-cutscene is a cut through black); DistRGBA alpha
+// 128 is opaque, as PS2 alphas are): the colour and how much of it covers
+// the picture (0 none).
 struct Fade final {
     std::uint8_t r{}, g{}, b{};
     float amount{};

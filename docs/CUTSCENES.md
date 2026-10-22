@@ -80,9 +80,11 @@ first frame). `video.h` decodes it with a minimal FFmpeg
 
 `Fade` clips (`FadeType I` / `O`, `DistRGBA r g b a`, alpha 128 opaque as
 PS2 alphas are): I fades the picture in from the colour over the clip's
-life, O out to it and holds it. m01_v00 fades in over its first 60 frames
-and out over its last 60; the Reader lays the fade over the rendered
-picture (`fade_at`, `apply_fade`).
+life, O out to it, holding it past its clip only when it ends the picture
+(m03_s00 fades out over 10 frames at 6295 as a cut through black and plays
+on to its last fade at 8067). m01_v00 fades in over its first 60 frames and
+out over its last 60; the Reader lays the fade over the rendered picture
+(`fade_at`, `apply_fade`).
 
 ### Clip texts
 
@@ -182,14 +184,35 @@ swapped for its broken version). The object index is the model's object
   200.5 39.4, off its joint 3) follows the joint's move from its rest world
   (vertex x inverse joint rest world x joint world). Their MOTs leave the
   root alone (m01_c00's hand MOTs mask channels 0 and 1 out).
-* Limb parts without CnsPos (m01_s00's hands): a model whose node 1 is a
+* `Pos x y z` / `Rot x y z` (degrees) on the Model clip: the model's own
+  space in its joint's frame, built as the player's weapon records are
+  (m03_c00: Lady's wp110..wp113 on her joints 14, 16, 19).
+* `RefMotion n`: the model takes track n's node worlds (its skeleton is a
+  copy) and stands where that model does (m03_b00: Cerberus' em125_07..14
+  on em125_00..03).
+* `ClothSim1D file.clt` with `ClothSim1DCnsPos0 track joint` and
+  `ClothSim1DCnsPos1 track joint`: a chain hung between two joints (a
+  model's or a stage piece's): m03_b00's Cerberus chains (em125_05) from
+  its body to the stage, m03_b01's wp115_01. The .clt is its own dialect
+  (`ClothSim1D segments length`, Gravity, SpringForce, Damping, MaxSpeed,
+  FloorLevel, `Cut a b`); the chain's points are the model's nodes from
+  node 1 on, the ends ride the joints, the others fall and keep their rest
+  distances (`model_cloth.h`). When the far anchor is a stage the archive
+  comments out (st006.scm), that end holds where the rest pose put it.
+* `Crush` (m03_b01: Cerberus shatters from 1240 for 270 frames, hidden at
+  1509; options DELAY, GRAVITY, SPIN, BLINK, REDUCE): how the game cuts its
+  pieces (`Crush 0 QUARTER`) is not recovered; every crushed object flies
+  off as one piece, falls, turns, shrinks and blinks out.
+* Limb parts without CnsPos (m01_s00's hands, `plNNN_03` / `plNNN_04` only;
+  em125's parts share such offsets without being limbs): a model whose node 1 is a
   joint of a model of the same character (`pl100_03` and `pl100_10`, both
   `pl100`), its node 2 at that joint's child offset (the wrist, 26.86 along
   x: body joint 12 -> 13; `pl100_04`: 8 -> 9), rides the joint: vertex x
   inverse node 1 world x joint world. Their MOTs put node 1 exactly on the
   forearm while a clip plays; between clips the hand follows the arm instead
   of staying behind.
-* Cloth: a Motion clip names a `.clt` (`Cloth pl100_01.clt`; with none
+* Cloth: the Model clip names a track's own `.clt` (`Cloth
+  pl100_05_m03_b01.clt`), a Motion clip a later one (`Cloth pl100_01.clt`; with none
   named, a clip's `ClothMode 1` runs the model's own, `pl101_01.clt` for
   `pl101_01.mod`, as m01_v00 does) and its chain runs the solver of
   `cloth_chain.h` in the world, one step a game frame (`model_cloth.h`):
@@ -199,10 +222,13 @@ swapped for its broken version). The object index is the model's object
   carried over the shoulder, is baked). `ResetClt` /
   `ResetClt2` restart it at the pose and settle it `ResetCltLevel` frames
   (20); a scrub or a jump does the same.
-* Visibility, per object of every track (models and stage pieces): every
-  Hide clip set up to the frame applies in order (H hides the model, D shows
-  it, A applies its `.hid`: its objects take its states). The meshes draw the
-  shown objects' triangles only.
+* Visibility, per object of every track (models and stage pieces), on two
+  levels: the model (H hides it, D and A show it) and its objects (a clip's
+  `.hid` sets the states of the objects it lists, the others keep theirs).
+  Every Hide clip set up to the frame applies in order. m03_c00 hides Lady
+  (H at 938) and brings her back with only her bandage hidden (A
+  `pl102_00_houtai.hid` at 1164). The meshes draw the shown objects'
+  triangles only.
 * The camera: the covering Camera clip that started last; between clips the
   last one that ended holds its final pose. The view stands at the eye,
   looks at the target, and the field of view becomes the viewer's zoom

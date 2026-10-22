@@ -17,6 +17,7 @@
 #include "dmcresource/motion/motion_clip.h"
 #include "dmcresource/motion/model_cloth.h"
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/video.h"
@@ -130,6 +131,14 @@ void update_shot(Player& p) {
     o[13] = -(a[12] * o[1] + a[13] * o[5] + a[14] * o[9]);
     o[14] = -(a[12] * o[2] + a[13] * o[6] + a[14] * o[10]);
     return out;
+}
+
+// The player's hand models: "plNNN_03.mod" and "plNNN_04.mod".
+[[nodiscard]] bool player_hand(std::string_view model) noexcept {
+    return model.size() >= 8U && model[0] == 'p' && model[1] == 'l' && std::isdigit(static_cast<unsigned char>(model[2])) &&
+           std::isdigit(static_cast<unsigned char>(model[3])) && std::isdigit(static_cast<unsigned char>(model[4])) &&
+           model[5] == '_' && model[6] == '0' && (model[7] == '3' || model[7] == '4') &&
+           (model.size() == 8U || model[8] == '.');
 }
 
 [[nodiscard]] bool near_identity(const Matrix4& m) noexcept {
@@ -278,18 +287,21 @@ void hide_state(const Player& p, const PlayerTrack& t, std::vector<std::uint8_t>
     }
     std::stable_sort(applied.begin(), applied.end(),
                      [](const Clip* a, const Clip* b) { return a->set_frame < b->set_frame; });
+    // Two levels: the model (H hides it, D and A show it) and its objects
+    // (a clip's .hid sets the states of the objects it lists; the others
+    // keep theirs). m03_c00 hides Lady (H at 938) and brings her back with
+    // only her bandage hidden (A pl102_00_houtai.hid at 1164).
+    bool model = true;
     for (const auto* clip : applied) {
         const auto kind = clip->value("HideKind");
-        if (kind == "H" || kind == "D") {
-            std::fill(shown->begin(), shown->end(), static_cast<std::uint8_t>(kind == "D" ? 1U : 0U));
-            continue;
-        }
+        model = kind != "H";
         const auto* hid = p.doc.hide(clip->value("Hide"));
         if (hid == nullptr) continue;
         for (const auto& o : hid->objects) {
             if (o.object < shown->size()) (*shown)[o.object] = o.shown ? 1U : 0U;
         }
     }
+    if (!model) std::fill(shown->begin(), shown->end(), std::uint8_t{0U});
 }
 
 // Keeps the shown objects' triangles in the composite and in the room.
@@ -445,6 +457,10 @@ struct ClothCue final {
 
 [[nodiscard]] ClothCue cloth_cue(const Player& p, int track, std::string_view model) {
     ClothCue out;
+    // The Model clip names the track's own (m03_b01: Cloth pl100_05_m03_b01.clt).
+    if (const auto* models = p.doc.list("Model", track); models != nullptr && !models->clips.empty()) {
+        out.file = models->clips.front().value("Cloth");
+    }
     const auto* list = p.doc.list("Motion", track);
     if (list == nullptr) return out;
     float set = -1.0F, mode_set = -1.0F;
@@ -512,6 +528,162 @@ struct ClothCue final {
     return motion::pose_model_cloth(model, placement, *t.cloth, steps, out);
 }
 
+// RefMotion: the model takes its reference track's node worlds (model
+// space, its skeleton being a copy) and stands where that model does.
+void pose_borrowed(Player& p, PlayerTrack& t, std::vector<Vec3>& out) {
+    const PlayerTrack* ref = nullptr;
+    for (const auto& r : p.tracks) {
+        if (!r.stage && r.source && r.track == t.ref_track && &r != &t) ref = &r;
+    }
+    if (ref == nullptr) return;
+    auto& nodes = t.source->scene.nodes;
+    const auto& from = ref->source->scene.nodes;
+    Matrix4 placement{};
+    if (!matrix_ops::multiply(t.offset, ref->placement, &placement)) placement = ref->placement;
+    std::vector<Matrix4> worlds(nodes.size());
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        if (i < from.size()) nodes[i].world = from[i].world;
+        if (!matrix_ops::multiply(nodes[i].world, placement, &worlds[i])) worlds[i] = nodes[i].world;
+    }
+    t.placement = placement;
+    std::vector<Vec3> skinned;
+    if (motion::skin_model(*t.source, *t.ref_skin, worlds, &skinned) && skinned.size() == t.vertex_count &&
+        t.vertex_begin + t.vertex_count <= out.size()) {
+        std::copy(skinned.begin(), skinned.end(), out.begin() + static_cast<std::ptrdiff_t>(t.vertex_begin));
+    }
+}
+
+// ClothSim1D: the rope between its two joints, stepped to the player's frame
+// as cloth is (a reset clip crossed, a jump or the start restarts and
+// settles it).
+void pose_hung(Player& p, PlayerTrack& t, std::vector<Vec3>& out) {
+    std::array<std::optional<Vec3>, 2> ends;
+    for (std::size_t e = 0; e < 2U; ++e) {
+        if (t.rope_track[e] < 0 || t.rope_joint[e] < 0) continue;
+        for (const auto& h : p.tracks) {
+            if (h.track != t.rope_track[e] || !h.source || &h == &t) continue;
+            const auto& nodes = h.source->scene.nodes;
+            if (static_cast<std::size_t>(t.rope_joint[e]) >= nodes.size()) break;
+            const auto& w = nodes[static_cast<std::size_t>(t.rope_joint[e])].world;
+            Matrix4 placed = w;
+            if (!h.stage && !matrix_ops::multiply(w, h.placement, &placed)) placed = w;
+            ends[e] = Vec3{placed.values[12], placed.values[13], placed.values[14]};
+            break;
+        }
+    }
+    t.rope->hold_last = !ends[1] && t.rope_track[1] >= 0;
+    const auto cue = cloth_cue(p, t.track, t.model);
+    std::uint32_t steps = 0U;
+    const float delta = p.frame - t.rope_frame;
+    const bool crossed = cue.reset >= 0.0F && cue.reset > t.rope_frame;
+    if (t.rope_frame < 0.0F || delta < 0.0F || delta > 30.0F || crossed) {
+        t.rope->initialized = false;
+        steps = cue.level;
+        t.rope_frame = p.frame;
+    } else {
+        steps = static_cast<std::uint32_t>(delta);
+        t.rope_frame += static_cast<float>(steps);
+    }
+    std::vector<Vec3> hung;
+    if (motion::pose_rope(*t.source, *t.rope, ends[0] ? &*ends[0] : nullptr, ends[1] ? &*ends[1] : nullptr, steps,
+                          &hung) &&
+        hung.size() == t.vertex_count && t.vertex_begin + t.vertex_count <= out.size()) {
+        std::copy(hung.begin(), hung.end(), out.begin() + static_cast<std::ptrdiff_t>(t.vertex_begin));
+    }
+}
+
+// Crush (m03_b01: Cerberus shatters, "Crush 0 2; CrushOption 0 DELAY;
+// ... GRAVITY, SPIN, BLINK, REDUCE" from 1240 for 270 frames, hidden at
+// 1509). How the game cuts its pieces ("Crush 0 QUARTER" on the Model clip)
+// is not recovered: here every crushed object is one piece that flies from
+// the model's centre (DELAY: one after another), falls (GRAVITY), turns
+// (SPIN), shrinks to nothing (REDUCE) and blinks in its last third (BLINK).
+void apply_crush(const Player& p, const PlayerTrack& t, std::vector<Vec3>& out) {
+    const auto* list = p.doc.list("Motion", t.track);
+    if (list == nullptr || t.vertex_begin + t.vertex_count > out.size()) return;
+    const Clip* crush = nullptr;
+    for (const auto& clip : list->clips) {
+        if (!clip.covers(p.frame)) continue;
+        for (const auto& [key, values] : clip.fields) {
+            if (key == "Crush") crush = &clip;
+        }
+    }
+    if (crush == nullptr) return;
+    // Which objects, and their options ("ALL" or an object index).
+    struct Piece final {
+        bool on{}, delay{}, gravity{}, spin{}, blink{}, reduce{};
+    };
+    std::vector<Piece> pieces(t.objects.size());
+    const auto each = [&](const std::string& who, auto&& fn) {
+        for (std::size_t i = 0; i < t.objects.size(); ++i) {
+            if (who == "ALL" || std::atoi(who.c_str()) == static_cast<int>(t.objects[i].object)) fn(pieces[i]);
+        }
+    };
+    for (const auto& [key, values] : crush->fields) {
+        if (values.empty()) continue;
+        if (key == "Crush") each(values[0], [](Piece& c) { c.on = true; });
+        if (key == "CrushOption" && values.size() >= 2U) {
+            const auto& o = values[1];
+            each(values[0], [&o](Piece& c) {
+                c.delay = c.delay || o == "DELAY";
+                c.gravity = c.gravity || o == "GRAVITY";
+                c.spin = c.spin || o == "SPIN";
+                c.blink = c.blink || o == "BLINK";
+                c.reduce = c.reduce || o == "REDUCE";
+            });
+        }
+    }
+    // The model's centre and size, now.
+    Vec3 centre{};
+    for (std::size_t v = 0; v < t.vertex_count; ++v) {
+        const auto& q = out[t.vertex_begin + v];
+        centre = {centre.x + q.x, centre.y + q.y, centre.z + q.z};
+    }
+    const float inv = 1.0F / static_cast<float>(std::max<std::size_t>(t.vertex_count, 1U));
+    centre = {centre.x * inv, centre.y * inv, centre.z * inv};
+    float radius = 1.0F;
+    for (std::size_t v = 0; v < t.vertex_count; ++v) {
+        const auto& q = out[t.vertex_begin + v];
+        radius = std::max(radius, std::hypot(q.x - centre.x, q.y - centre.y, q.z - centre.z));
+    }
+    const float life = std::max(1.0F, crush->life * crush->clip_scale);
+    const float local = p.frame - crush->set_frame;
+    for (std::size_t i = 0; i < t.objects.size(); ++i) {
+        const auto& piece = pieces[i];
+        const auto& range = t.objects[i];
+        if (!piece.on || range.vertex_count == 0U) continue;
+        const float delay = piece.delay ? std::min(life * 0.5F, 6.0F * static_cast<float>(i)) : 0.0F;
+        const float tau = std::max(0.0F, local - delay);
+        const float span = std::max(1.0F, life - delay);
+        Vec3 c{};
+        for (std::size_t v = 0; v < range.vertex_count; ++v) {
+            const auto& q = out[t.vertex_begin + range.first_vertex + v];
+            c = {c.x + q.x, c.y + q.y, c.z + q.z};
+        }
+        const float k = 1.0F / static_cast<float>(range.vertex_count);
+        c = {c.x * k, c.y * k, c.z * k};
+        Vec3 away{c.x - centre.x, c.y - centre.y, c.z - centre.z};
+        const float l = std::hypot(away.x, away.y, away.z);
+        away = l > 1.0e-3F ? Vec3{away.x / l, away.y / l, away.z / l} : Vec3{0.0F, 1.0F, 0.0F};
+        const float speed = radius * 0.006F;
+        const float fall = piece.gravity ? 0.5F * radius * 0.0004F * tau * tau : 0.0F;
+        const Vec3 move{away.x * speed * tau, away.y * speed * tau + radius * 0.004F * tau - fall,
+                        away.z * speed * tau};
+        float size = piece.reduce ? std::max(0.0F, 1.0F - tau / span) : 1.0F;
+        if (piece.blink && tau > span * 0.66F && (static_cast<int>(tau) / 4) % 2 == 1) size = 0.0F;
+        const float angle = piece.spin ? tau * (0.05F + 0.013F * static_cast<float>(i % 5U)) : 0.0F;
+        const float ca = std::cos(angle), sa = std::sin(angle);
+        for (std::size_t v = 0; v < range.vertex_count; ++v) {
+            auto& q = out[t.vertex_begin + range.first_vertex + v];
+            // Turn about the piece's centre (about y, then x), shrink, move.
+            const float x = q.x - c.x, y = q.y - c.y, z = q.z - c.z;
+            const float x1 = ca * x + sa * z, z1 = -sa * x + ca * z;
+            const float y1 = ca * y - sa * z1, z2 = sa * y + ca * z1;
+            q = {c.x + x1 * size + move.x, c.y + y1 * size + move.y, c.z + z2 * size + move.z};
+        }
+    }
+}
+
 bool pose_tracks(Session& scene, Player& p) {
     bool room_moved = false;
     auto& out = scene.render_mesh.vertices;
@@ -529,6 +701,11 @@ bool pose_tracks(Session& scene, Player& p) {
             if (t.stage) {
                 done[i] = 1;
                 room_moved = pose_stage_piece(p, t) || room_moved;
+                continue;
+            }
+            // Borrowed poses and ropes stand once every other track does.
+            if ((t.ref_track >= 0 && t.ref_skin) || t.rope) {
+                done[i] = 1;
                 continue;
             }
             const int host = t.host_track >= 0 ? find(t.host_track) : -1;
@@ -564,11 +741,15 @@ bool pose_tracks(Session& scene, Player& p) {
                     joint = &nodes[static_cast<std::size_t>(t.host_joint)].world;
                 }
             }
-            Matrix4 placement{};
+            Matrix4 placement = t.offset;
             if (joint != nullptr) {
                 const Matrix4 base = t.limb && model.scene.nodes.size() > 1U ? affine_inverse(model.scene.nodes[1].world)
                                                                              : t.host_rest_inverse;
-                if (!matrix_ops::multiply(base, *joint, &placement)) placement = {};
+                Matrix4 on_joint{};
+                if (!matrix_ops::multiply(base, *joint, &on_joint) ||
+                    !matrix_ops::multiply(t.offset, on_joint, &placement)) {
+                    placement = {};
+                }
             }
             t.placement = placement;
             if (std::vector<Vec3> clothed; pose_cloth(p, t, model, placement, &clothed) && clothed.size() == t.vertex_count) {
@@ -577,9 +758,18 @@ bool pose_tracks(Session& scene, Player& p) {
             }
             for (std::size_t v = 0; v < t.vertex_count; ++v) {
                 const auto& src = model.render_mesh.vertices[v];
-                out[t.vertex_begin + v] = joint != nullptr ? transform(src, placement) : src;
+                out[t.vertex_begin + v] = transform(src, placement);
             }
         }
+    }
+    for (auto& t : p.tracks) {
+        if (!t.stage && t.source && t.ref_track >= 0 && t.ref_skin && !t.rope) pose_borrowed(p, t, out);
+    }
+    for (auto& t : p.tracks) {
+        if (!t.stage && t.source && t.rope) pose_hung(p, t, out);
+    }
+    for (const auto& t : p.tracks) {
+        if (!t.stage && t.source) apply_crush(p, t, out);
     }
     return room_moved;
 }
@@ -668,11 +858,31 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
                 continue;
             }
             if (opened->probe.format != Format::Mod) continue;
+            std::array<float, 3> offset_pos{}, offset_rot{};
             for (const auto& [key, values] : clip.fields) {
                 if (key == "CnsPos" && values.size() >= 2U) {
                     t.host_track = std::atoi(values[0].c_str());
                     t.host_joint = std::atoi(values[1].c_str());
                 }
+                if (key == "RefMotion" && !values.empty()) t.ref_track = std::atoi(values[0].c_str());
+                if (key == "ClothSim1D" && !values.empty()) t.rope_file = values[0];
+                for (int end = 0; end < 2; ++end) {
+                    if (key == (end == 0 ? "ClothSim1DCnsPos0" : "ClothSim1DCnsPos1") && values.size() >= 2U) {
+                        t.rope_track[static_cast<std::size_t>(end)] = std::atoi(values[0].c_str());
+                        t.rope_joint[static_cast<std::size_t>(end)] = std::atoi(values[1].c_str());
+                    }
+                }
+                if ((key == "Pos" || key == "Rot") && values.size() >= 3U) {
+                    auto& v = key == "Pos" ? offset_pos : offset_rot;
+                    for (std::size_t k = 0; k < 3U; ++k) v[k] = static_cast<float>(std::atof(values[k].c_str()));
+                }
+            }
+            // Pos / Rot (degrees): where the model's own space stands in its
+            // joint's (m03_c00: Lady's wp110..wp113 on her joints 14, 16, 19),
+            // built as the player's weapon records are.
+            if (offset_pos != std::array<float, 3>{} || offset_rot != std::array<float, 3>{}) {
+                for (auto& r : offset_rot) r *= kDegrees;
+                t.offset = motion::attach_local_matrix(offset_pos, offset_rot);
             }
             tracks.push_back(std::move(t));
             models.push_back(std::move(opened));
@@ -798,12 +1008,26 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
                 }
             }
         }
-        // Limb parts ride the body joint their node 1 is: the joint of a model
-        // of the same character (pl100_03 and pl100_10 are both "pl100")
-        // whose child sits where the part's node 2 does (pl100_03's wrist
-        // 26.86 along x: pl100_10 joint 12 -> 13; pl100_04's: joint 8 -> 9).
+        // Borrowed poses and ropes: their skins and chains.
         for (auto& t : tracks) {
-            if (t.host_track >= 0 || !t.source) continue;
+            if (!t.source) continue;
+            if (t.ref_track >= 0) t.ref_skin = motion::make_model_skin(*t.source);
+            if (!t.rope_file.empty()) {
+                if (const auto* member = doc->member(t.rope_file)) {
+                    t.rope = motion::make_rope(
+                        *t.source, std::string_view{reinterpret_cast<const char*>(source.data() + member->offset),
+                                                    member->size});
+                }
+            }
+        }
+        // The player's hands (plNNN_03, plNNN_04) ride the body joint their
+        // node 1 is: the joint of a model of the same character (pl100_03
+        // and pl100_10 are both "pl100") whose child sits where the hand's
+        // node 2 does (pl100_03's wrist 26.86 along x: pl100_10 joint 12 ->
+        // 13; pl100_04's: joint 8 -> 9). Only hands: em125's parts share
+        // such offsets without being limbs (m03_b00).
+        for (auto& t : tracks) {
+            if (t.host_track >= 0 || !t.source || !player_hand(t.model)) continue;
             const auto& nodes = t.source->scene.nodes;
             if (nodes.size() < 3U || nodes[1].parent != 0 || nodes[2].parent != 1 || !near_identity(nodes[0].world) ||
                 !near_identity(nodes[1].world)) {
@@ -813,7 +1037,8 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             if (std::hypot(w[12], w[13], w[14]) < 1.0F) continue;
             const auto stem = t.model.substr(0, t.model.find('_'));
             for (const auto& body : tracks) {
-                if (&body == &t || !body.source || body.host_track >= 0 || body.model.substr(0, body.model.find('_')) != stem) {
+                if (&body == &t || !body.source || body.host_track >= 0 || player_hand(body.model) ||
+                    body.model.substr(0, body.model.find('_')) != stem) {
                     continue;
                 }
                 const auto& joints = body.source->scene.nodes;
@@ -1234,6 +1459,12 @@ Fade fade_at(const Session& session) noexcept {
         }
         const float length = last->life * last->clip_scale;
         const float t = length > 0.0F ? std::clamp((p->frame - last->set_frame) / length, 0.0F, 1.0F) : 1.0F;
+        // A fade holds its colour past its clip only when it ends the
+        // picture: m03_s00 fades out over 10 frames at 6295 as a cut through
+        // black and plays on until its last fade at 8067.
+        const bool covering = p->frame < last->end_frame();
+        const bool ends_picture = last->end_frame() >= p->doc.end_frame - 1.0F;
+        if (!covering && !(ends_picture && !in)) return out;
         out.amount = alpha * (in ? 1.0F - t : t);
     } catch (...) {
         out.amount = 0.0F;
