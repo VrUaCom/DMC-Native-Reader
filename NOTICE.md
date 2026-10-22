@@ -22,3 +22,12 @@ For naming consistency in project documentation:
 - **Devil May Cry 3: Special Edition** is the game title.
 - **DMC3** may be used as shorthand after the full title has been established.
 - “Devil May Cry 3 HD Collection” is not used as a product title.
+
+## Third-party components
+
+- **stb_vorbis** (`app/src/main/cpp/third_party/stb_vorbis`): public domain
+  or MIT, Sean Barrett. Ogg Vorbis decoding.
+- **FFmpeg** 7.1.1 (`app/src/main/cpp/third_party/ffmpeg/README.md`): LGPL
+  2.1 or later, fetched from ffmpeg.org at build time and linked statically
+  in a minimal configuration (ASF demuxer, Windows Media decoders). Movie
+  decoding. Its source is the unmodified release tarball named there.

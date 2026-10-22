@@ -18,6 +18,7 @@
 #include "dmcresource/module_support.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/sound.h"
+#include "dmcresource/video.h"
 
 // The remaining stage and enemy families, each opening with its Info:
 // LIG2 lighting tables, DCA records, stage text (#SET, DOOR, BOXIN,
@@ -303,6 +304,42 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
                          " channel(s), " + seconds;
             return out;
         }
+        case Format::Wmv: {
+            auto out = start(module, probe, size, "WMV - movie (ASF)");
+            auto& root = out.inspection.root;
+            property(root, "Source", "HD release: the game's SFD movies, the EXE swapping the extension for .wmv",
+                     EvidenceLevel::ExeConfirmed);
+            std::string error;
+            auto movie = video::open_movie(std::make_shared<const std::vector<std::uint8_t>>(data.begin(), data.end()),
+                                           &error);
+            if (!movie) {
+                property(root, "Decoder", error);
+                out.detail = "WMV | " + error;
+                return out;
+            }
+            const auto& info = movie->info();
+            char text[96];
+            property(root, "Picture", std::to_string(info.width) + " x " + std::to_string(info.height));
+            std::snprintf(text, sizeof text, "%.2f s", info.duration);
+            property(root, "Length", text);
+            if (info.frame_rate > 0.0) {
+                std::snprintf(text, sizeof text, "%.3f", info.frame_rate);
+                property(root, "Frames a second", text);
+            }
+            property(root, "Video", info.video_codec);
+            property(root, "Sound", info.audio_codec.empty()
+                                        ? std::string{"none"}
+                                        : info.audio_codec + ", " + std::to_string(info.audio_rate) + " Hz, " +
+                                              std::to_string(info.audio_channels) + " channel(s)");
+            if (RgbaImage frame; movie->frame_at(0.0, &frame) && frame.width > 0 && frame.height > 0) {
+                out.image_preview.width = static_cast<std::uint32_t>(frame.width);
+                out.image_preview.height = static_cast<std::uint32_t>(frame.height);
+                out.image_preview.rgba8 = std::move(frame.pixels);
+            }
+            out.detail = "WMV | " + std::to_string(info.width) + "x" + std::to_string(info.height) + " " +
+                         info.video_codec + ", " + text;
+            return out;
+        }
         case Format::Vag: {
             const auto chunks = sound::read_vag(data);
             if (chunks.empty()) break;
@@ -366,6 +403,7 @@ std::vector<NativeModule> family_modules() noexcept {
         make("formats.spumap", "SPUMAPDT", Format::SpuMap),
         make("formats.sound.vag", "VAG", Format::Vag, true),
         make("formats.sound.ogg", "OGG", Format::Ogg, true),
+        make("formats.movie.wmv", "WMV", Format::Wmv, true),
     };
 }
 

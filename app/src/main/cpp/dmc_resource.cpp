@@ -15,6 +15,7 @@
 #include "dmcresource/font.h"
 #include "dmcresource/stage_config.h"
 #include "dmcresource/sound.h"
+#include "dmcresource/video.h"
 #include "dmc_rengine/formats/so/graph.hpp"
 #include "dmc_rengine/formats/stage_txt.hpp"
 #include "dmcresource/motion/cloth_chain.h"
@@ -224,6 +225,10 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Ogg, true, "OGG", "sound", "image-preview",
                       "STRUCTURAL_CONFIRMED", "audio/ogg");
     }
+    if (bytes != nullptr && video::looks_like_asf(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Wmv, true, "WMV", "movie", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "video/x-ms-wmv");
+    }
     if (bytes != nullptr && size >= 8U && std::memcmp(bytes, "SPUMAPDT", 8U) == 0) {
         return result(Format::SpuMap, true, "SPUMAPDT", "sound", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.spumap");
@@ -393,6 +398,7 @@ const char* format_name(Format format) noexcept {
     case Format::Demo: return "DEMO";
     case Format::DemoCamera: return "DEMO-CAM";
     case Format::DemoClips: return "CLIPS";
+    case Format::Wmv: return "WMV";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

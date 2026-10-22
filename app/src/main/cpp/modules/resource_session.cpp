@@ -617,6 +617,10 @@ std::unique_ptr<Session> open_session(std::string_view name,
     if (session && session->probe.format == Format::Demo && bytes != nullptr) {
         if (auto scene = demo::open_demo(std::move(*session), name, bytes, size)) return scene;
     }
+    // A movie opens as a timeline of its own (demo_session.h open_movie).
+    if (session && session->probe.format == Format::Wmv && bytes != nullptr) {
+        if (auto movie = demo::open_movie(std::move(*session), name, bytes, size)) return movie;
+    }
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     retain_texture_source(session.get(), name, bytes, size);
     if (session && (session->probe.format == Format::Vag || session->probe.format == Format::Ogg) && bytes != nullptr) {
@@ -2366,6 +2370,11 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
             std::clamp(requested_width, 64, kMaxRenderSide),
             std::clamp(requested_height, 64, kMaxRenderSide), zoom,
             map.texture_width, map.texture_height);
+    }
+    // A movie (or a cutscene's movie part) is the picture while it plays.
+    if (auto picture = demo::movie_picture(*session, std::clamp(requested_width, 64, kMaxRenderSide),
+                                           std::clamp(requested_height, 64, kMaxRenderSide))) {
+        return std::move(*picture);
     }
     if (!session->renderable) return {};
     PreparedView prepared;

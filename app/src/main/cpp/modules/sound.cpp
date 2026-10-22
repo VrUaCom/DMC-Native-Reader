@@ -186,4 +186,26 @@ std::vector<std::int16_t> mono(const Pcm& pcm) {
     return out;
 }
 
+Pcm resample(const Pcm& pcm, std::uint32_t sample_rate) {
+    if (pcm.sample_rate == sample_rate || pcm.sample_rate == 0U || sample_rate == 0U || pcm.channels == 0U) return pcm;
+    Pcm out;
+    out.sample_rate = sample_rate;
+    out.channels = pcm.channels;
+    const std::size_t frames = pcm.frames();
+    const auto count = static_cast<std::size_t>(static_cast<double>(frames) * sample_rate / pcm.sample_rate);
+    out.samples.resize(count * pcm.channels);
+    const double step = static_cast<double>(pcm.sample_rate) / sample_rate;
+    for (std::size_t f = 0; f < count; ++f) {
+        const double at = static_cast<double>(f) * step;
+        const auto i = static_cast<std::size_t>(at);
+        const double t = at - static_cast<double>(i);
+        const std::size_t j = i + 1U < frames ? i + 1U : i;
+        for (std::uint32_t c = 0; c < pcm.channels; ++c) {
+            const double a = pcm.samples[i * pcm.channels + c], b = pcm.samples[j * pcm.channels + c];
+            out.samples[f * pcm.channels + c] = static_cast<std::int16_t>(a + (b - a) * t);
+        }
+    }
+    return out;
+}
+
 }  // namespace dmcresource::sound

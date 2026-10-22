@@ -69,5 +69,8 @@ struct Pcm final {
 [[nodiscard]] std::optional<Pcm> decode_ogg(std::span<const std::uint8_t> bytes);
 // The channels averaged into one.
 [[nodiscard]] std::vector<std::int16_t> mono(const Pcm& pcm);
+// The sound at another sample rate (linear interpolation), so sounds of
+// different rates mix.
+[[nodiscard]] Pcm resample(const Pcm& pcm, std::uint32_t sample_rate);
 
 }  // namespace dmcresource::sound

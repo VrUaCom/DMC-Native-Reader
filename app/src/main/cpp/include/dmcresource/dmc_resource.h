@@ -52,6 +52,8 @@ enum class Format : std::uint8_t {
     Demo,
     DemoCamera,
     DemoClips,
+    // Movies (.wmv, ASF): the HD release's game movies (video.h).
+    Wmv,
 };
 
 struct ProbeResult {

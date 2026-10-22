@@ -7,6 +7,7 @@
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/video.h"
 
 namespace dmcresource::spider::actions {
 namespace {
@@ -80,6 +81,10 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     }
     // A cutscene's sound lives in .ogg files beside the archive.
     if (demo::is_demo(session)) add(menu.rows, Companion::CutsceneSound, "\xF0\x9F\x94\x8A Cutscene sound (.ogg)\xE2\x80\xA6");
+    // Its movie part, a .wmv beside it too (this build decodes movies).
+    if (demo::is_demo(session) && video::available()) {
+        add(menu.rows, Companion::CutsceneMovie, "\xF0\x9F\x8E\x9E Cutscene movie (.wmv)\xE2\x80\xA6");
+    }
     // A cutscene whose camera the user took: back to following its cuts.
     if (demo::is_demo(session) && !demo::director(session)) {
         add(menu.rows, Companion::CutsceneCamera, "\xF0\x9F\x8E\xAC Cutscene camera (follow the cuts)");
@@ -89,9 +94,10 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
 }
 
 ActionOutcome run_companion_action(Session* session, int id) noexcept {
-    if (static_cast<Companion>(id) == Companion::CutsceneSound) {
+    if (static_cast<Companion>(id) == Companion::CutsceneSound || static_cast<Companion>(id) == Companion::CutsceneMovie) {
         ActionOutcome out;
         out.ok = demo::is_demo(session);
+        // The same picker: the picked file's bytes decide (load_cutscene_sound).
         if (out.ok) out.step = ShellStep::PickCutsceneSound;
         return out;
     }
@@ -111,8 +117,9 @@ ActionOutcome load_cutscene_sound(Session* session, std::string_view name, const
                                   std::size_t size) noexcept {
     ActionOutcome out;
     try {
-        out.ok = bytes != nullptr && demo::attach_audio(session, name, std::span<const std::uint8_t>{bytes, size},
-                                                         &out.message);
+        const std::span<const std::uint8_t> file{bytes, bytes != nullptr ? size : 0U};
+        out.ok = bytes != nullptr && (video::looks_like_asf(file) ? demo::attach_movie(session, name, file, &out.message)
+                                                                   : demo::attach_audio(session, name, file, &out.message));
         if (bytes == nullptr) out.message = std::string{name} + " could not be read";
     } catch (...) {
         out.ok = false;

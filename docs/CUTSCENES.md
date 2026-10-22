@@ -56,6 +56,20 @@ the shell the mix from the position of any timeline frame
 output while the timeline plays, restarts it on resume and stops it on
 pause. A lone .ogg opens as its own resource (Info, waveform, ▶).
 
+### The movie part
+
+`m01_s00`'s PadVibe, Message and one effect clip run on past its picture
+(5950) to 12455: the cutscene ends as a movie. The HD release stores the
+game's SFD movies as `.wmv` (the EXE swaps the extension before its media
+loader): ASF with Windows Media video (WMV1/2/3, VC-1) and audio (WMA). The
+user gives the cutscene its movie from `⋮ → 🎞 Cutscene movie`: it plays from
+the picture's end, the timeline grows to the movie's end, the picture is the
+movie's frame (letterboxed) and its sound joins the mix (every sound is
+resampled to the first one's rate). A lone `.wmv` opens as a timeline of
+its own (`Movie <name>` in the motion strip; Info: size, length, codecs, the
+first frame). `video.h` decodes it with a minimal FFmpeg
+(`third_party/ffmpeg/README.md`) from memory.
+
 ### Clip texts
 
 `# Clip` blocks of `Key<TAB>values` closed by `# End`. Every clip has
@@ -203,10 +217,12 @@ shot's target distance.
 
 The per-key flags of `.hid` tracks (a state change inside a clip), lights,
 screen effects (DOF, fog, glow), subtitles (Message `No` indexes a text
-table outside the archive), pad vibration, the stream-number-to-file table
-of the EXE (so the right .ogg would be found by itself), and the movie part
-(WMV). A cutscene that
+table outside the archive: the localization message tables
+`*_msg_<lang>.txt`; m01_s00 uses 100..110 in its picture and 140, 141,
+180, 181 in its movie), pad vibration, and the stream-number-to-file table
+of the EXE (so the right .ogg and .wmv would be found by themselves). A
+cutscene that
 does not carry its stage (`m01_c00` comments out `st000.scm`: the game uses
 the shop it is in) shows it when that stage is picked as the room.
 
-Tests: `demo_test.cpp` (synthetic bytes).
+Tests: `demo_test.cpp`, `video_test.cpp` (synthetic bytes).

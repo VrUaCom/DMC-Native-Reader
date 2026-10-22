@@ -43,6 +43,10 @@ namespace dmcresource::motion {
 struct ModelCloth;
 }
 
+namespace dmcresource::video {
+class Movie;
+}
+
 namespace dmcresource::demo {
 
 struct PlayerTrack final {
@@ -115,8 +119,14 @@ struct Player final {
         std::string name;
         float start_frame{};
         sound::Pcm pcm;
+        bool movie{};  // the movie's own sound
     };
     std::vector<Audio> audio;
+    // The movie part (a .wmv, video.h): from `movie_start` on the timeline
+    // the picture is the movie's, one timeline frame a 60th of a second.
+    std::shared_ptr<video::Movie> movie;
+    std::string movie_name;
+    float movie_start{};
     float frame{};
     bool bound{};
     // The view follows the cutscene camera until the user takes it.
@@ -201,6 +211,23 @@ struct AudioFormat final {
 // `frames` sample frames of the mix from `position`, interleaved, silence
 // where no file plays; empty past the end of every file and the cutscene.
 [[nodiscard]] std::vector<std::int16_t> audio_read(const Session* session, std::int64_t position, std::size_t frames);
+
+// ---- movie ---------------------------------------------------------------
+
+// A movie file (.wmv) opened as a cutscene of its own: no scene, the
+// timeline is the movie and its sound; play, pause and scrub as a cutscene.
+// nullptr when it cannot be decoded.
+[[nodiscard]] std::unique_ptr<Session> open_movie(Session&& file, std::string_view name, const std::uint8_t* bytes,
+                                                  std::size_t size) noexcept;
+// Gives the cutscene its movie part: it plays after the picture (from the
+// last Camera / Light / screen-effect clip's end, where m01_s00's PadVibe
+// and Message clips run on) to its own end, its sound joining the mix. A
+// new movie replaces the last. The line to show comes back in `message`.
+[[nodiscard]] bool attach_movie(Session* session, std::string_view name, std::span<const std::uint8_t> bytes,
+                                std::string* message);
+// The movie's picture at the player's frame, fitted into width x height;
+// none while the scene is the picture.
+[[nodiscard]] std::optional<RgbaImage> movie_picture(const Session& session, int width, int height);
 
 // "Shot cm005.cam · frame 512 / 12455 · fov 41.5" for the HUD and Info.
 [[nodiscard]] std::string status_line(const Session* session);

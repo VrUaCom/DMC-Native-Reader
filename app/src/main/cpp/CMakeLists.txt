@@ -141,6 +141,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/stage_markers.cpp
     modules/module_stage_config.cpp
     modules/sound.cpp
+    modules/video.cpp
     modules/module_families.cpp
     modules/demo.cpp
     modules/demo_session.cpp
@@ -188,9 +189,85 @@ else()
     target_compile_options(dmc_native_reader_stb_vorbis PRIVATE -w)
 endif()
 
+# Movies (the HD release's .wmv: ASF, Windows Media video and audio): a
+# minimal FFmpeg (LGPL 2.1 or later), its signed release tarball fetched at
+# build time and pinned by hash, configured with only the ASF demuxer and
+# the Windows Media decoders and linked statically. third_party/ffmpeg.
+option(DMC_NATIVE_READER_FFMPEG "Decode WMV movies with a minimal FFmpeg" ON)
+set(DMC_NATIVE_READER_FFMPEG_LIBS "")
+if(DMC_NATIVE_READER_FFMPEG AND NOT MSVC)
+    include(ExternalProject)
+    set(DMC_FFMPEG_VERSION 7.1.1)
+    set(DMC_FFMPEG_SHA256 733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1)
+    set(DMC_FFMPEG_INSTALL ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-install)
+    set(DMC_FFMPEG_CONFIGURE
+        --prefix=${DMC_FFMPEG_INSTALL}
+        --disable-everything --disable-programs --disable-doc --disable-network
+        --disable-autodetect --disable-avdevice --disable-swscale --disable-swresample
+        --disable-postproc --disable-avfilter --disable-debug
+        --enable-static --disable-shared --enable-pic
+        --enable-demuxer=asf
+        --enable-decoder=wmv1,wmv2,wmv3,vc1,msmpeg4v3,wmav1,wmav2,wmapro
+        --enable-parser=vc1
+        --cc=${CMAKE_C_COMPILER}
+    )
+    if(ANDROID)
+        if(ANDROID_ABI STREQUAL "arm64-v8a")
+            set(_dmc_ffmpeg_arch aarch64)
+        elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+            set(_dmc_ffmpeg_arch arm)
+        elseif(ANDROID_ABI STREQUAL "x86_64")
+            set(_dmc_ffmpeg_arch x86_64)
+        else()
+            set(_dmc_ffmpeg_arch x86)
+        endif()
+        list(APPEND DMC_FFMPEG_CONFIGURE
+            --enable-cross-compile --target-os=android --arch=${_dmc_ffmpeg_arch}
+            "--extra-cflags=--target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT}"
+            "--extra-ldflags=--target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT}"
+            --ar=${CMAKE_AR} --ranlib=${CMAKE_RANLIB} --nm=${CMAKE_NM} --strip=${CMAKE_STRIP})
+        if(NOT _dmc_ffmpeg_arch MATCHES "^(aarch64|arm)$")
+            list(APPEND DMC_FFMPEG_CONFIGURE --disable-x86asm)
+        endif()
+    else()
+        list(APPEND DMC_FFMPEG_CONFIGURE --disable-x86asm)
+    endif()
+    find_program(DMC_MAKE NAMES gmake make REQUIRED)
+    set(_dmc_ffmpeg_download_options "")
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+        list(APPEND _dmc_ffmpeg_download_options DOWNLOAD_EXTRACT_TIMESTAMP ON)
+    endif()
+    ExternalProject_Add(dmc_ffmpeg
+        URL https://ffmpeg.org/releases/ffmpeg-${DMC_FFMPEG_VERSION}.tar.xz
+        URL_HASH SHA256=${DMC_FFMPEG_SHA256}
+        ${_dmc_ffmpeg_download_options}
+        PREFIX ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure ${DMC_FFMPEG_CONFIGURE}
+        BUILD_COMMAND ${DMC_MAKE} -j8
+        INSTALL_COMMAND ${DMC_MAKE} install
+        BUILD_BYPRODUCTS
+            ${DMC_FFMPEG_INSTALL}/lib/libavformat.a
+            ${DMC_FFMPEG_INSTALL}/lib/libavcodec.a
+            ${DMC_FFMPEG_INSTALL}/lib/libavutil.a
+    )
+    file(MAKE_DIRECTORY ${DMC_FFMPEG_INSTALL}/include)
+    foreach(_dmc_ffmpeg_lib avformat avcodec avutil)
+        add_library(dmc_ffmpeg_${_dmc_ffmpeg_lib} STATIC IMPORTED)
+        set_target_properties(dmc_ffmpeg_${_dmc_ffmpeg_lib} PROPERTIES
+            IMPORTED_LOCATION ${DMC_FFMPEG_INSTALL}/lib/lib${_dmc_ffmpeg_lib}.a
+            INTERFACE_INCLUDE_DIRECTORIES ${DMC_FFMPEG_INSTALL}/include)
+        add_dependencies(dmc_ffmpeg_${_dmc_ffmpeg_lib} dmc_ffmpeg)
+        list(APPEND DMC_NATIVE_READER_FFMPEG_LIBS dmc_ffmpeg_${_dmc_ffmpeg_lib})
+    endforeach()
+endif()
+
 add_library(dmc_native_reader_core STATIC
     ${DMC_NATIVE_READER_CORE_SOURCES}
 )
+if(DMC_NATIVE_READER_FFMPEG_LIBS)
+    target_compile_definitions(dmc_native_reader_core PRIVATE DMC_NATIVE_READER_FFMPEG=1)
+    target_link_libraries(dmc_native_reader_core PRIVATE ${DMC_NATIVE_READER_FFMPEG_LIBS} m)
+endif()
 add_library(DMCNativeReader::Core ALIAS dmc_native_reader_core)
 
 dmc_native_reader_require_cpp23(dmc_native_reader_core PUBLIC)
@@ -333,7 +410,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
-        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level bcn_formats gallery_mosaic texture_reencode_action gpu_view_frame view_benchmark fly_camera font stage_config families camera_control demo
+        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level bcn_formats gallery_mosaic texture_reencode_action gpu_view_frame view_benchmark fly_camera font stage_config families camera_control demo video
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

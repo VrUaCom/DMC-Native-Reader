@@ -19,6 +19,7 @@
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/video.h"
 
 namespace dmcresource::demo {
 
@@ -67,6 +68,18 @@ constexpr float kDegrees = 3.14159265358979323846F / 180.0F;
 
 [[nodiscard]] Player* player(const Session* session) noexcept {
     return session != nullptr ? session->demo.get() : nullptr;
+}
+
+// Where the timeline ends: the picture's end, or the movie part's.
+[[nodiscard]] float timeline_end(const Player& p) noexcept {
+    float end = std::max(p.doc.end_frame, 0.0F);
+    if (p.movie) end = std::max(end, p.movie_start + static_cast<float>(p.movie->info().duration * 60.0));
+    return end;
+}
+
+// Whether the movie is the picture at the player's frame.
+[[nodiscard]] bool movie_shown(const Player& p) noexcept {
+    return p.movie != nullptr && p.frame >= p.movie_start;
 }
 
 void update_shot(Player& p) {
@@ -869,14 +882,14 @@ bool bound(const Session* session) noexcept {
 
 float end_frame(const Session* session) noexcept {
     const auto* p = player(session);
-    return p != nullptr ? p->doc.end_frame : 0.0F;
+    return p != nullptr ? timeline_end(*p) : 0.0F;
 }
 
 bool seek(Session* session, float frame) noexcept {
     auto* p = player(session);
     if (p == nullptr || !std::isfinite(frame)) return false;
     try {
-        p->frame = std::clamp(frame, 0.0F, std::max(0.0F, p->doc.end_frame));
+        p->frame = std::clamp(frame, 0.0F, timeline_end(*p));
         advance(*session, *p, false);
         return true;
     } catch (...) {
@@ -914,13 +927,17 @@ std::string status_line(const Session* session) {
     const auto* p = player(session);
     if (p == nullptr) return {};
     char text[160];
-    if (p->shot) {
+    if (movie_shown(*p)) {
+        std::snprintf(text, sizeof text, "%s \xC2\xB7 %.1f s \xC2\xB7 frame %.0f / %.0f", p->movie_name.c_str(),
+                      static_cast<double>(p->frame - p->movie_start) / 60.0, static_cast<double>(p->frame),
+                      static_cast<double>(timeline_end(*p)));
+    } else if (p->shot) {
         std::snprintf(text, sizeof text, "%s \xC2\xB7 frame %.0f / %.0f \xC2\xB7 fov %.1f%s", p->shot->camera.c_str(),
-                      static_cast<double>(p->frame), static_cast<double>(p->doc.end_frame),
+                      static_cast<double>(p->frame), static_cast<double>(timeline_end(*p)),
                       static_cast<double>(p->shot->pose.fov_degrees), p->director ? "" : " \xC2\xB7 free camera");
     } else {
         std::snprintf(text, sizeof text, "frame %.0f / %.0f", static_cast<double>(p->frame),
-                      static_cast<double>(p->doc.end_frame));
+                      static_cast<double>(timeline_end(*p)));
     }
     return text;
 }
@@ -1081,8 +1098,13 @@ bool attach_audio(Session* session, std::string_view name, std::span<const std::
             }
             std::stable_sort(clips.begin(), clips.end(),
                              [](const Clip* a, const Clip* b) { return a->set_frame < b->set_frame; });
-            if (clips.empty() || p->audio.size() >= clips.size()) p->audio.clear();
-            const Clip* clip = clips.empty() ? nullptr : clips[p->audio.size()];
+            std::size_t files = 0U;
+            for (const auto& a : p->audio) files += a.movie ? 0U : 1U;
+            if (clips.empty() || files >= clips.size()) {
+                std::erase_if(p->audio, [](const Player::Audio& a) { return !a.movie; });
+                files = 0U;
+            }
+            const Clip* clip = clips.empty() ? nullptr : clips[files];
             Player::Audio audio;
             audio.name = std::string{name};
             audio.start_frame = clip != nullptr ? clip->set_frame : 0.0F;
@@ -1094,8 +1116,9 @@ bool attach_audio(Session* session, std::string_view name, std::span<const std::
                           audio.pcm.channels == 1U ? "mono" : "stereo",
                           static_cast<double>(audio.pcm.frames()) / static_cast<double>(audio.pcm.sample_rate));
             line = text;
+            // One mix: at the first sound's rate.
             if (!p->audio.empty() && p->audio.front().pcm.sample_rate != audio.pcm.sample_rate) {
-                line += " - its rate differs from the first sound's, it stays silent";
+                audio.pcm = sound::resample(audio.pcm, p->audio.front().pcm.sample_rate);
             }
             p->audio.push_back(std::move(audio));
             ok = true;
@@ -1131,7 +1154,7 @@ std::vector<std::int16_t> audio_read(const Session* session, std::int64_t positi
     const auto format = audio_format(session);
     if (p == nullptr || !format || frames == 0U) return {};
     const auto rate = static_cast<double>(format->sample_rate);
-    const auto end = std::llround(static_cast<double>(std::max(p->doc.end_frame, 0.0F)) / 60.0 * rate);
+    const auto end = std::llround(static_cast<double>(timeline_end(*p)) / 60.0 * rate);
     if (position >= end) return {};
     frames = static_cast<std::size_t>(std::min<std::int64_t>(static_cast<std::int64_t>(frames), end - position));
     const std::size_t channels = format->channels;
@@ -1158,6 +1181,120 @@ std::vector<std::int16_t> audio_read(const Session* session, std::int64_t positi
     std::vector<std::int16_t> out(mix.size());
     for (std::size_t i = 0; i < mix.size(); ++i) out[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32768, 32767));
     return out;
+}
+
+// ---- movie ---------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::string movie_line(const video::MovieInfo& info, std::string_view name, float start) {
+    char text[320];
+    std::snprintf(text, sizeof text, "Movie: %.*s from frame %.0f, %dx%d %s, %.1f s%s%s", static_cast<int>(name.size()),
+                  name.data(), static_cast<double>(start), info.width, info.height, info.video_codec.c_str(),
+                  info.duration, info.audio_codec.empty() ? ", no sound" : ", sound ",
+                  info.audio_codec.empty() ? "" : info.audio_codec.c_str());
+    return text;
+}
+
+// The movie and its sound into the player, from `start`.
+[[nodiscard]] bool put_movie(Player& p, std::string_view name, std::span<const std::uint8_t> bytes, float start,
+                             std::string* line) {
+    std::string error;
+    auto movie = video::open_movie(std::make_shared<const std::vector<std::uint8_t>>(bytes.begin(), bytes.end()),
+                                   &error);
+    if (!movie) {
+        *line = std::string{name} + ": " + error;
+        return false;
+    }
+    std::erase_if(p.audio, [](const Player::Audio& a) { return a.movie; });
+    if (auto pcm = movie->sound()) {
+        Player::Audio audio;
+        audio.name = std::string{name};
+        audio.start_frame = start;
+        audio.movie = true;
+        audio.pcm = !p.audio.empty() ? sound::resample(*pcm, p.audio.front().pcm.sample_rate) : std::move(*pcm);
+        p.audio.push_back(std::move(audio));
+    }
+    *line = movie_line(movie->info(), name, start);
+    p.movie = std::shared_ptr<video::Movie>(std::move(movie));
+    p.movie_name = std::string{name};
+    p.movie_start = start;
+    return true;
+}
+
+}  // namespace
+
+bool attach_movie(Session* session, std::string_view name, std::span<const std::uint8_t> bytes, std::string* message) {
+    auto* p = player(session);
+    std::string line;
+    bool ok = false;
+    try {
+        if (p == nullptr) {
+            line = "Not a cutscene";
+        } else if (!video::looks_like_asf(bytes)) {
+            line = std::string{name} + " is not a WMV movie";
+        } else {
+            ok = put_movie(*p, name, bytes, std::max(p->doc.end_frame, 0.0F), &line);
+        }
+    } catch (...) {
+        line = "Movie could not be read";
+        ok = false;
+    }
+    if (message != nullptr) *message = line;
+    return ok;
+}
+
+std::unique_ptr<Session> open_movie(Session&& file, std::string_view name, const std::uint8_t* bytes,
+                                    std::size_t size) noexcept {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto state = std::make_shared<Player>();
+        std::string line;
+        if (!put_movie(*state, name, std::span<const std::uint8_t>{bytes, size}, 0.0F, &line)) return nullptr;
+        auto stem = std::string{name};
+        if (const auto slash = stem.find_last_of("/\\"); slash != std::string::npos) stem.erase(0, slash + 1U);
+        if (const auto dot = stem.rfind('.'); dot != std::string::npos) stem.erase(dot);
+        state->doc.name = stem;
+        auto scene = std::make_unique<Session>(std::move(file));
+        // The movie is the picture: drawn by movie_picture, never as a still.
+        scene->capabilities = scene->capabilities & ~capability(ResourceCapability::ImagePreview);
+        if (scene->image_preview.available()) {
+            ChildResource first;
+            first.id = "frame0";
+            first.title = "First frame";
+            first.suggested_filename = stem + "_frame0.png";
+            first.probe = scene->probe;
+            first.capabilities = capability(ResourceCapability::ImagePreview);
+            first.image_preview = std::move(scene->image_preview);
+            scene->image_preview = {};
+            scene->children.insert(scene->children.begin(), std::move(first));
+        }
+        scene->renderable = true;
+        scene->archive_name = std::string{name};
+        scene->source_name = std::string{name};
+        scene->detail = line;
+        scene->motion_library.clear();
+        Session::MotionPayload timeline;
+        timeline.name = "Movie " + stem;
+        scene->motion_library.push_back(std::move(timeline));
+        scene->demo = std::move(state);
+        return scene;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+std::optional<RgbaImage> movie_picture(const Session& session, int width, int height) {
+    const auto* p = player(&session);
+    if (p == nullptr || !movie_shown(*p)) return std::nullopt;
+    try {
+        RgbaImage frame;
+        const double seconds = static_cast<double>(p->frame - p->movie_start) / 60.0;
+        if (!p->movie->frame_at(seconds, &frame)) frame = {};
+        return video::fit(frame, width, height);
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 }  // namespace dmcresource::demo
