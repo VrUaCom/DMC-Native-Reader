@@ -58,6 +58,7 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_EXPORT_INFO = 1013;
     private static final int REQUEST_SAVE_SOURCE = 1015;
     private static final int REQUEST_STAGE_CONFIG = 1016;
+    private static final int REQUEST_CUTSCENE_SOUND = 1017;
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -1492,6 +1493,27 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, REQUEST_STAGE_CONFIG);
     }
 
+    /** Platform step of the cutscene-sound action: the system file picker. */
+    private void pickCutsceneSound() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQUEST_CUTSCENE_SOUND);
+    }
+
+    /** The picked sound goes to the native action as a descriptor. */
+    private void loadCutsceneSound(Uri uri) {
+        ActionOutcome outcome = null;
+        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+            outcome = NativeBridge.loadCutsceneSound(session, pfd == null ? -1 : pfd.getFd(), displayName(uri));
+        } catch (Exception ignored) {
+            outcome = NativeBridge.loadCutsceneSound(session, -1, displayName(uri));
+        }
+        handleOutcome(outcome);
+        // Playing already: the new sound joins from where the timeline is.
+        if (renderView.isMotionPlaying()) renderView.resumeMotionAt(renderView.motionFrame());
+    }
+
     /** The picked file goes to the native load action as a descriptor. */
     private void loadStageConfig(Uri uri) {
         ActionOutcome outcome = null;
@@ -1519,6 +1541,9 @@ public final class MainActivity extends Activity {
                 break;
             case ActionOutcome.STEP_LEAVE_FLY:
                 renderView.setFlyMode(false);
+                break;
+            case ActionOutcome.STEP_PICK_CUTSCENE_SOUND:
+                pickCutsceneSound();
                 break;
             default:
                 break;
@@ -2973,6 +2998,10 @@ public final class MainActivity extends Activity {
         }
         if (requestCode == REQUEST_STAGE_CONFIG) {
             if (data != null && data.getData() != null) loadStageConfig(data.getData());
+            return;
+        }
+        if (requestCode == REQUEST_CUTSCENE_SOUND) {
+            if (data != null && data.getData() != null) loadCutsceneSound(data.getData());
             return;
         }
         if (requestCode == REQUEST_ROOM_EFFECTS) {

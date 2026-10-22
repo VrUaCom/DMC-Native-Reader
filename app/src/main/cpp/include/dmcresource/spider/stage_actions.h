@@ -25,6 +25,7 @@ enum class ShellStep : std::uint8_t {
     StartScrub = 3,       // start scrubbing the motion under the finger
     OpenSession = 4,      // navigate to the session handed back
     LeaveFly = 5,         // leave the shell's fly mode (the core drives the camera again)
+    PickCutsceneSound = 6,  // open the platform file picker for a cutscene's .ogg
 };
 
 struct ActionOutcome final {

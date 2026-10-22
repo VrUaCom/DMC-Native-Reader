@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(dmcviewer LANGUAGES CXX)
+project(dmcviewer LANGUAGES C CXX)
 
 # The debug APK is the one people install and try: the software renderer
 # needs optimised native code in every configuration (-O0 runs it 5-10x
@@ -176,6 +176,17 @@ unset(_dmc_native_reader_core_sources_unique)
 unset(_dmc_native_reader_core_source_count)
 unset(_dmc_native_reader_core_unique_count)
 
+# Ogg Vorbis decoder (third_party/stb_vorbis, public domain), plain C.
+add_library(dmc_native_reader_stb_vorbis STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_vorbis/stb_vorbis.c
+)
+target_compile_definitions(dmc_native_reader_stb_vorbis PRIVATE STB_VORBIS_NO_STDIO STB_VORBIS_NO_PUSHDATA_API)
+if(MSVC)
+    target_compile_options(dmc_native_reader_stb_vorbis PRIVATE /w)
+else()
+    target_compile_options(dmc_native_reader_stb_vorbis PRIVATE -w)
+endif()
+
 add_library(dmc_native_reader_core STATIC
     ${DMC_NATIVE_READER_CORE_SOURCES}
 )
@@ -193,6 +204,8 @@ target_link_libraries(dmc_native_reader_core
         DMCRengine::ReaderCore
         dmc_native_reader_rengine_viewer
         Threads::Threads
+    PRIVATE
+        dmc_native_reader_stb_vorbis
 )
 
 target_compile_definitions(dmc_native_reader_core PUBLIC

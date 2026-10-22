@@ -1727,6 +1727,59 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_demoTakeCamera(JNIEnv* env, jclass
     return floats(env, {view->yaw, view->pitch, view->zoom});
 }
 
+// A cutscene's sound (spider companion_menu.h): the picked .ogg as a
+// descriptor; the outcome carries the core's line.
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadCutsceneSound(JNIEnv* env, jclass, jlong handle, jint fd,
+                                                                jstring filename) {
+    dmcresource::spider::actions::ActionOutcome outcome;
+    try {
+        const auto name = to_utf8(env, filename);
+        ReadOnlyMap mapped(fd);
+        const SessionLock jni_lock{session_mutex()};
+        outcome = dmcresource::spider::actions::load_cutscene_sound(
+            from_handle(handle), name, fd >= 0 && mapped.valid() ? mapped.data() : nullptr,
+            fd >= 0 && mapped.valid() ? mapped.size() : 0U);
+    } catch (...) {
+    }
+    return outcome_object(env, outcome);
+}
+
+// The cutscene sound mix the shell streams: {rate, channels}; null without.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoAudioFormat(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto format = dmcresource::demo::audio_format(from_handle(handle));
+    if (!format) return nullptr;
+    return int_array(env, {static_cast<int>(format->sample_rate), static_cast<int>(format->channels)});
+}
+
+// The mix's sample frame at a timeline frame.
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoAudioPosition(JNIEnv*, jclass, jlong handle, jfloat frame) {
+    const SessionLock jni_lock{session_mutex()};
+    return static_cast<jlong>(dmcresource::demo::audio_position(from_handle(handle), frame));
+}
+
+// `frames` sample frames of the mix from `position` (interleaved); null at
+// the end.
+extern "C" JNIEXPORT jshortArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoAudioRead(JNIEnv* env, jclass, jlong handle, jlong position,
+                                                            jint frames) {
+    try {
+        std::vector<std::int16_t> samples;
+        {
+            const SessionLock jni_lock{session_mutex()};
+            samples = dmcresource::demo::audio_read(from_handle(handle), static_cast<std::int64_t>(position),
+                                                    frames > 0 ? static_cast<std::size_t>(frames) : 0U);
+        }
+        if (samples.empty()) return nullptr;
+        jshortArray out = env->NewShortArray(static_cast<jsize>(samples.size()));
+        if (out != nullptr) env->SetShortArrayRegion(out, 0, static_cast<jsize>(samples.size()), samples.data());
+        return out;
+    } catch (...) { return nullptr; }
+}
+
 // Where the HUD draws a stick's knob for a finger offset (px): {dx, dy}.
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_stickKnob(JNIEnv* env, jclass, jfloat dx, jfloat dy, jfloat density) {

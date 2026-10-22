@@ -236,6 +236,15 @@ public final class DmcRenderView extends View {
         @Override public void run() {
             if (!motionPlaying || session == 0) return;
             final long now = SystemClock.uptimeMillis();
+            // A motion that plays once (a cutscene: its loop starts at its
+            // end) stops on its last frame.
+            final boolean once = motionEndFrame > 0.0f && motionLoopStartFrame >= motionEndFrame;
+            if (once && rawMotionFrame(now) >= motionEndFrame) {
+                lastMotionFrame = motionEndFrame;
+                requestFrame(lastMotionFrame);
+                pauseMotion();
+                return;
+            }
             if (now - lastRequestMs >= motionMinFrameMs) {
                 lastMotionFrame = currentMotionFrame(now);
                 requestFrame(lastMotionFrame);  // posed on the render thread
@@ -243,6 +252,8 @@ public final class DmcRenderView extends View {
             postOnAnimation(this);
         }
     };
+    /** A cutscene's sound, streamed while its timeline plays. */
+    private final CutsceneAudio cutsceneAudio = new CutsceneAudio();
 
     public DmcRenderView(Context context) {
         super(context);
@@ -394,6 +405,7 @@ public final class DmcRenderView extends View {
         motionLoopStartFrame = NativeBridge.motionLoopStartFrame(session);
         motionStartMs = SystemClock.uptimeMillis()
                 - Math.round(Math.max(0.0f, frame) * 1000.0f / (MOTION_FRAMES_PER_SECOND * motionSpeed));
+        cutsceneAudio.play(session, Math.max(0.0f, frame), motionSpeed);
         if (!motionPlaying) {
             motionPlaying = true;
             postOnAnimation(motionTick);
@@ -493,6 +505,7 @@ public final class DmcRenderView extends View {
         if (motionPlaying && speed > 0.0f && speed != motionSpeed) {
             final float frame = rawMotionFrame(now);
             motionStartMs = now - Math.round(frame * 1000.0f / (MOTION_FRAMES_PER_SECOND * speed));
+            cutsceneAudio.play(session, frame, speed);
         }
         maxRenderSide = Math.max(128, Math.min(7680, maxSide));
         motionMinFrameMs = Math.max(8, frameMs);
@@ -519,6 +532,7 @@ public final class DmcRenderView extends View {
         motionLoopStartFrame = NativeBridge.motionLoopStartFrame(session);
         motionStartMs = SystemClock.uptimeMillis();
         lastMotionFrame = 0.0f;
+        cutsceneAudio.play(session, 0.0f, motionSpeed);
         if (!motionPlaying) {
             motionPlaying = true;
             postOnAnimation(motionTick);
@@ -530,6 +544,7 @@ public final class DmcRenderView extends View {
     public void pauseMotion() {
         final boolean was = motionPlaying;
         motionPlaying = false;
+        cutsceneAudio.stop();
         removeCallbacks(motionTick);
         if (was) {
             removeCallbacks(fullFrame);
@@ -539,6 +554,11 @@ public final class DmcRenderView extends View {
 
     public boolean isMotionPlaying() {
         return motionPlaying;
+    }
+
+    /** The frame the motion (or cutscene) stands at. */
+    public float motionFrame() {
+        return lastMotionFrame;
     }
 
     public void setSession(long newSession) {

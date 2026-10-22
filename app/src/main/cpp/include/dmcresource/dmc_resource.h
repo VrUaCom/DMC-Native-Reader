@@ -47,6 +47,7 @@ enum class Format : std::uint8_t {
     Hid,
     SpuMap,
     Vag,
+    Ogg,
     // Cutscene archives (demo\...\mNN_xNN.pac), their cameras and clip texts.
     Demo,
     DemoCamera,

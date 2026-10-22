@@ -1,6 +1,7 @@
 #include "dmcresource/demo_session.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -11,6 +12,7 @@
 #include "dmc_rengine/formats/mod/world_transform.hpp"
 #include "dmc_rengine/formats/scm.hpp"
 #include "dmc_rengine/formats/scm_transform.hpp"
+#include "dmcresource/effect_host.h"
 #include "dmcresource/motion/motion_clip.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/session_actions.h"
@@ -40,6 +42,26 @@ namespace {
 
 constexpr float kHalfFovRadians = 0.5F;  // the viewer's framing at zoom 1 (view_renderer.cpp)
 constexpr float kDegrees = 3.14159265358979323846F / 180.0F;
+
+// A PNST of the given slots, every slot 16-byte aligned.
+[[nodiscard]] std::vector<std::uint8_t> make_pnst(const std::vector<std::span<const std::uint8_t>>& slots) {
+    const auto align = [](std::size_t v) { return (v + 15U) & ~std::size_t{15U}; };
+    std::size_t at = align(8U + slots.size() * 4U);
+    std::vector<std::uint32_t> offsets;
+    for (const auto& slot : slots) {
+        offsets.push_back(static_cast<std::uint32_t>(at));
+        at = align(at + slot.size());
+    }
+    std::vector<std::uint8_t> out(at, 0U);
+    std::memcpy(out.data(), "PNST", 4U);
+    const auto count = static_cast<std::uint32_t>(slots.size());
+    std::memcpy(out.data() + 4U, &count, 4U);
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        std::memcpy(out.data() + 8U + i * 4U, &offsets[i], 4U);
+        if (!slots[i].empty()) std::memcpy(out.data() + offsets[i], slots[i].data(), slots[i].size());
+    }
+    return out;
+}
 
 [[nodiscard]] Player* player(const Session* session) noexcept {
     return session != nullptr ? session->demo.get() : nullptr;
@@ -635,6 +657,22 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
         state->tracks = std::move(tracks);
         state->doc = std::move(*doc);
         state->room = room;
+        // The effect bank, held by a host session like a stage's.
+        // A stage's FXBANK is a PNST of its manifest and its records; the
+        // cutscene keeps the two as a name list / container pair: put them
+        // together the same way.
+        const auto& d = state->doc;
+        if (d.effect_bank_size > 0U && d.effect_bank_offset + d.effect_bank_size <= size &&
+            d.effect_manifest_offset + d.effect_manifest_size <= size) {
+            auto bank = std::make_shared<const std::vector<std::uint8_t>>(make_pnst(
+                {data.subspan(d.effect_manifest_offset, d.effect_manifest_size),
+                 data.subspan(d.effect_bank_offset, d.effect_bank_size)}));
+            if (auto loaded = load_effect_bank(std::move(bank), 0U)) {
+                state->effect_host = std::make_shared<Session>();
+                state->effect_host->archive_name = std::string{name};
+                state->effect_host->effect_banks.push_back(std::move(*loaded));
+            }
+        }
 
         // The archive's identity, Info and files stay. The scene is drawn in
         // 3D, never as a picture: the timeline picture becomes the first of
@@ -738,6 +776,237 @@ std::string status_line(const Session* session) {
                       static_cast<double>(p->doc.end_frame));
     }
     return text;
+}
+
+// ---- effects ---------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::array<float, 3> floats3(const Clip& clip, std::string_view key, float fallback) {
+    std::array<float, 3> out{fallback, fallback, fallback};
+    for (const auto& [name, values] : clip.fields) {
+        if (name != key) continue;
+        for (std::size_t i = 0; i < 3 && i < values.size(); ++i) {
+            char* end = nullptr;
+            const float v = std::strtof(values[i].c_str(), &end);
+            if (end != values[i].c_str() && std::isfinite(v)) out[i] = v;
+        }
+        break;
+    }
+    return out;
+}
+
+[[nodiscard]] float float_value(const Clip& clip, std::string_view key, float fallback) {
+    const auto text = clip.value(key);
+    char* end = nullptr;
+    const float v = std::strtof(text.c_str(), &end);
+    return end != text.c_str() && std::isfinite(v) ? v : fallback;
+}
+
+[[nodiscard]] Matrix4 multiply(const Matrix4& a, const Matrix4& b) noexcept {
+    Matrix4 out;
+    for (std::size_t r = 0; r < 4; ++r) {
+        for (std::size_t c = 0; c < 4; ++c) {
+            float sum = 0.0F;
+            for (std::size_t k = 0; k < 4; ++k) sum += a.values[r * 4U + k] * b.values[k * 4U + c];
+            out.values[r * 4U + c] = sum;
+        }
+    }
+    return out;
+}
+
+// Pos / Rot (radians, x then y then z) / Sca as a row-vector matrix.
+[[nodiscard]] Matrix4 placement_matrix(const std::array<float, 3>& pos, const std::array<float, 3>& rot,
+                                       const std::array<float, 3>& scale) noexcept {
+    const auto turn = [&](Vec3 v) {
+        const auto axis = [](float& a, float& b, float r) {
+            const float c = std::cos(r), s = std::sin(r);
+            const float na = a * c - b * s, nb = a * s + b * c;
+            a = na;
+            b = nb;
+        };
+        axis(v.y, v.z, rot[0]);
+        axis(v.z, v.x, rot[1]);
+        axis(v.x, v.y, rot[2]);
+        return v;
+    };
+    const Vec3 rows[3] = {turn({1.0F, 0.0F, 0.0F}), turn({0.0F, 1.0F, 0.0F}), turn({0.0F, 0.0F, 1.0F})};
+    Matrix4 m;
+    for (std::size_t r = 0; r < 3; ++r) {
+        m.values[r * 4U + 0U] = rows[r].x * scale[r];
+        m.values[r * 4U + 1U] = rows[r].y * scale[r];
+        m.values[r * 4U + 2U] = rows[r].z * scale[r];
+        m.values[r * 4U + 3U] = 0.0F;
+    }
+    m.values[12] = pos[0];
+    m.values[13] = pos[1];
+    m.values[14] = pos[2];
+    m.values[15] = 1.0F;
+    return m;
+}
+
+// The world of joint `joint` of track `track` now (a model's posed joint, a
+// stage piece's scene node); null when there is none.
+[[nodiscard]] const Matrix4* joint_world(const Player& p, int track, int joint) noexcept {
+    if (track < 0 || joint < 0) return nullptr;
+    for (const auto& t : p.tracks) {
+        if (t.track != track || !t.source) continue;
+        const auto& nodes = t.source->scene.nodes;
+        return static_cast<std::size_t>(joint) < nodes.size() ? &nodes[static_cast<std::size_t>(joint)].world
+                                                               : nullptr;
+    }
+    return nullptr;
+}
+
+constexpr std::size_t kMaxEffects = 96;
+
+}  // namespace
+
+std::shared_ptr<const Session> effect_host(const Session& session) noexcept {
+    const auto* p = player(&session);
+    return p != nullptr ? p->effect_host : nullptr;
+}
+
+std::vector<EffectShot> active_effects(const Session& session) {
+    std::vector<EffectShot> out;
+    const auto* p = player(&session);
+    if (p == nullptr || !p->effect_host) return out;
+    for (const auto& list : p->doc.lists) {
+        if (list.kind != "Effect" && list.kind != "EffectI") continue;
+        for (const auto& clip : list.clips) {
+            const float elapsed = p->frame - clip.set_frame;
+            if (elapsed < 0.0F) continue;
+            const float local = clip.clip_scale > 0.0F ? elapsed / clip.clip_scale : elapsed;
+            // CutFrame stops the effect (0: it runs its own length).
+            if (clip.cut_frame > 0.0F && local >= clip.cut_frame) continue;
+            const float age = local - float_value(clip, "WaitTimer", 0.0F);
+            if (age < 0.0F) continue;
+            const auto id_text = clip.value("Id");
+            const auto number = clip.value("No");
+            if (id_text.size() != 1U || number.empty()) continue;
+            EffectShot shot;
+            shot.kind = id_text[0];
+            shot.id = static_cast<std::uint16_t>(std::clamp(std::atoi(number.c_str()), 0, 0xFFFF));
+            shot.age = age;
+            shot.cut = clip.cut_frame > 0.0F;
+            shot.world = placement_matrix(floats3(clip, "Pos", 0.0F), floats3(clip, "Rot", 0.0F),
+                                          floats3(clip, "Sca", 1.0F));
+            // SpFlag: set on joint SpBoneNo of the model of SpTrackNo, which
+            // counts the script's Set lines (WorkRate 0, Camera 1, Model 00
+            // 2, Motion 00 3, Hide 00 4, Model 01 5, ...).
+            if (float_value(clip, "SpFlag", 0.0F) != 0.0F) {
+                const int line = static_cast<int>(float_value(clip, "SpTrackNo", -1.0F));
+                int track = line;
+                if (line >= 0 && static_cast<std::size_t>(line) < p->doc.lists.size() &&
+                    p->doc.lists[static_cast<std::size_t>(line)].kind == "Model") {
+                    track = p->doc.lists[static_cast<std::size_t>(line)].track;
+                }
+                const auto* joint = joint_world(*p, track, static_cast<int>(float_value(clip, "SpBoneNo", -1.0F)));
+                if (joint != nullptr) shot.world = multiply(shot.world, *joint);
+            }
+            out.push_back(shot);
+            if (out.size() >= kMaxEffects) return out;
+        }
+    }
+    return out;
+}
+
+// ---- sound ---------------------------------------------------------------
+
+bool attach_audio(Session* session, std::string_view name, std::span<const std::uint8_t> bytes, std::string* message) {
+    auto* p = player(session);
+    std::string line;
+    bool ok = false;
+    try {
+        auto pcm = p != nullptr ? sound::decode_ogg(bytes) : std::nullopt;
+        if (p == nullptr) {
+            line = "Not a cutscene";
+        } else if (!pcm || pcm->frames() == 0U) {
+            line = std::string{name} + " is not an Ogg Vorbis sound";
+        } else {
+            std::vector<const Clip*> clips;
+            if (const auto* list = p->doc.list("Sound")) {
+                for (const auto& clip : list->clips) clips.push_back(&clip);
+            }
+            std::stable_sort(clips.begin(), clips.end(),
+                             [](const Clip* a, const Clip* b) { return a->set_frame < b->set_frame; });
+            if (clips.empty() || p->audio.size() >= clips.size()) p->audio.clear();
+            const Clip* clip = clips.empty() ? nullptr : clips[p->audio.size()];
+            Player::Audio audio;
+            audio.name = std::string{name};
+            audio.start_frame = clip != nullptr ? clip->set_frame : 0.0F;
+            audio.pcm = std::move(*pcm);
+            char text[256];
+            std::snprintf(text, sizeof text, "Sound: %s from frame %.0f%s%s, %u Hz, %s, %.1f s", audio.name.c_str(),
+                          static_cast<double>(audio.start_frame), clip != nullptr ? " (stream " : "",
+                          clip != nullptr ? (clip->value("No") + ")").c_str() : "", audio.pcm.sample_rate,
+                          audio.pcm.channels == 1U ? "mono" : "stereo",
+                          static_cast<double>(audio.pcm.frames()) / static_cast<double>(audio.pcm.sample_rate));
+            line = text;
+            if (!p->audio.empty() && p->audio.front().pcm.sample_rate != audio.pcm.sample_rate) {
+                line += " - its rate differs from the first sound's, it stays silent";
+            }
+            p->audio.push_back(std::move(audio));
+            ok = true;
+        }
+    } catch (...) {
+        line = "Sound could not be read";
+        ok = false;
+    }
+    if (message != nullptr) *message = line;
+    return ok;
+}
+
+std::optional<AudioFormat> audio_format(const Session* session) noexcept {
+    const auto* p = player(session);
+    if (p == nullptr || p->audio.empty()) return std::nullopt;
+    AudioFormat format;
+    format.sample_rate = p->audio.front().pcm.sample_rate;
+    format.channels = 1U;
+    for (const auto& a : p->audio) {
+        if (a.pcm.sample_rate == format.sample_rate && a.pcm.channels >= 2U) format.channels = 2U;
+    }
+    return format;
+}
+
+std::int64_t audio_position(const Session* session, float frame) noexcept {
+    const auto format = audio_format(session);
+    if (!format || !std::isfinite(frame)) return 0;
+    return std::llround(static_cast<double>(frame) / 60.0 * format->sample_rate);
+}
+
+std::vector<std::int16_t> audio_read(const Session* session, std::int64_t position, std::size_t frames) {
+    const auto* p = player(session);
+    const auto format = audio_format(session);
+    if (p == nullptr || !format || frames == 0U) return {};
+    const auto rate = static_cast<double>(format->sample_rate);
+    const auto end = std::llround(static_cast<double>(std::max(p->doc.end_frame, 0.0F)) / 60.0 * rate);
+    if (position >= end) return {};
+    frames = static_cast<std::size_t>(std::min<std::int64_t>(static_cast<std::int64_t>(frames), end - position));
+    const std::size_t channels = format->channels;
+    std::vector<std::int32_t> mix(frames * channels, 0);
+    for (const auto& a : p->audio) {
+        if (a.pcm.sample_rate != format->sample_rate || a.pcm.channels == 0U) continue;
+        const auto start = std::llround(static_cast<double>(a.start_frame) / 60.0 * rate);
+        const auto length = static_cast<std::int64_t>(a.pcm.frames());
+        const std::size_t source_channels = a.pcm.channels;
+        for (std::size_t i = 0; i < frames; ++i) {
+            const std::int64_t src = position + static_cast<std::int64_t>(i) - start;
+            if (src < 0 || src >= length) continue;
+            const auto* in = a.pcm.samples.data() + static_cast<std::size_t>(src) * source_channels;
+            if (channels == 1U) {
+                std::int32_t sum = 0;
+                for (std::size_t c = 0; c < source_channels; ++c) sum += in[c];
+                mix[i] += sum / static_cast<std::int32_t>(source_channels);
+            } else {
+                mix[i * 2U] += in[0];
+                mix[i * 2U + 1U] += in[source_channels >= 2U ? 1U : 0U];
+            }
+        }
+    }
+    std::vector<std::int16_t> out(mix.size());
+    for (std::size_t i = 0; i < mix.size(); ++i) out[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32768, 32767));
+    return out;
 }
 
 }  // namespace dmcresource::demo

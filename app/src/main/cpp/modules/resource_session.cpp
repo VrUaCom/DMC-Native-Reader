@@ -619,7 +619,7 @@ std::unique_ptr<Session> open_session(std::string_view name,
     }
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     retain_texture_source(session.get(), name, bytes, size);
-    if (session && session->probe.format == Format::Vag && bytes != nullptr) {
+    if (session && (session->probe.format == Format::Vag || session->probe.format == Format::Ogg) && bytes != nullptr) {
         session->sound_bytes = std::make_shared<const std::vector<std::uint8_t>>(bytes, bytes + size);
     }
     return session;
@@ -1618,6 +1618,36 @@ void append_room_effects(const stage_room::Room& room, const std::shared_ptr<con
     out->effect_sprites.insert(out->effect_sprites.end(), staged.begin(), staged.end());
 }
 
+// A cutscene's effects (its Effect / EffectI clips) from its own effect
+// bank, at the ages the timeline gives them.
+void append_demo_effects(const Session& session, PreparedView* out) {
+    if (out == nullptr || !demo::is_demo(&session)) return;
+    const auto host = demo::effect_host(session);
+    if (!host) return;
+    const auto shots = demo::active_effects(session);
+    if (shots.empty()) return;
+    set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
+    motion::RuntimeEffectInstance instance;
+    std::vector<ViewState::EffectSprite> staged;
+    for (const auto& shot : shots) {
+        const auto dispatch = dispatch_kind_for_effect_kind(shot.kind);
+        if (dispatch == 0xFFU) continue;
+        // Without a cut the effect plays its own length once.
+        if (!shot.cut && shot.age > std::max(effect_extent(*host, shot.kind, shot.id, 0U, 0), 1.0F)) continue;
+        motion::EffectChildRef root;
+        root.effect_kind = shot.kind;
+        root.effect_id = shot.id;
+        root.resource_slot = 0U;
+        root.dispatch_kind = dispatch;
+        root.evidence = motion::EvidenceStatus::STRUCTURAL_CONFIRMED;
+        root.scale = {1.0F, 1.0F, 1.0F};
+        (void)collect_effect_children(*host, instance, root, shot.world, shot.age, &staged, 0U);
+    }
+    if (staged.empty()) return;
+    out->effect_host = host;
+    out->effect_sprites.insert(out->effect_sprites.end(), staged.begin(), staged.end());
+}
+
 [[nodiscard]] Vec3 transform_dynamic_vertex(
     const Vec3& p, const Matrix4& m) noexcept {
     return {
@@ -2245,6 +2275,10 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
             out->hierarchy = &out->stage_hierarchy;
         }
     }
+    if (!view.uv_layout) {
+        append_demo_effects(session, out);
+        view.effect_sprites = out->effect_sprites;
+    }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
         out->collision_lines = collision::posed_collision_lines(session);
@@ -2408,11 +2442,16 @@ SessionPick pick_session(const Session* session, int requested_width, int reques
 }
 std::size_t session_sound_count(const Session* session) {
     if (session == nullptr || session->sound_bytes == nullptr) return 0U;
+    if (sound::looks_like_ogg(*session->sound_bytes)) return 1U;
     return sound::read_vag(*session->sound_bytes).size();
 }
 
 std::string session_sound_title(const Session* session, std::size_t index) {
     if (session == nullptr || session->sound_bytes == nullptr) return {};
+    if (sound::looks_like_ogg(*session->sound_bytes)) {
+        return index == 0U ? session->source_name.empty() ? std::string{"Ogg Vorbis"} : session->source_name
+                           : std::string{};
+    }
     const auto chunks = sound::read_vag(*session->sound_bytes);
     if (index >= chunks.size()) return {};
     const auto& c = chunks[index];
@@ -2422,12 +2461,20 @@ std::string session_sound_title(const Session* session, std::size_t index) {
 
 std::uint32_t session_sound_rate(const Session* session, std::size_t index) {
     if (session == nullptr || session->sound_bytes == nullptr) return 0U;
+    if (sound::looks_like_ogg(*session->sound_bytes)) {
+        const auto pcm = index == 0U ? sound::decode_ogg(*session->sound_bytes) : std::nullopt;
+        return pcm ? pcm->sample_rate : 0U;
+    }
     const auto chunks = sound::read_vag(*session->sound_bytes);
     return index < chunks.size() ? chunks[index].sample_rate : 0U;
 }
 
 std::vector<std::int16_t> session_sound_samples(const Session* session, std::size_t index) {
     if (session == nullptr || session->sound_bytes == nullptr) return {};
+    if (sound::looks_like_ogg(*session->sound_bytes)) {
+        const auto pcm = index == 0U ? sound::decode_ogg(*session->sound_bytes) : std::nullopt;
+        return pcm ? sound::mono(*pcm) : std::vector<std::int16_t>{};
+    }
     const auto chunks = sound::read_vag(*session->sound_bytes);
     if (index >= chunks.size()) return {};
     return sound::decode_vag(*session->sound_bytes, chunks[index]);

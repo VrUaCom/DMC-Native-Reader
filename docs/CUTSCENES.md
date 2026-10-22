@@ -20,6 +20,42 @@ A PAC:
 `*_movie.pac` carries only the PadVibe and Message clips of a cutscene that
 plays as a movie.
 
+The cutscene's picture ends with its last Camera, Light or ScrEfc clip
+(m01_s00: frame 5950 of 12455). Pad vibration, subtitles and one effect
+clip run on to 12455: they belong to the movie that follows the real-time
+part. The Reader plays the picture from frame 0 to its end and stops there.
+
+### Effects
+
+The name list of the last pair holds effect ids (`G 48`, `V 287`, `E 257`,
+`P 119`, `T 19`, `A 32`, `M 62`) and its container the records: a stage
+FXBANK is a PNST of exactly these two (manifest, records; an M record takes
+two slots), so the Reader puts them together and reads the cutscene's bank
+like a stage's. Effect and EffectI clips (no Life) carry `Id`, `No`, `Pos`,
+`Rot` (radians), `Sca`, `WaitTimer`, `IsChain`, `SpFlag`, `SpTrackNo`,
+`SpBoneNo`. An effect starts at SetFrame, ages in its own frames (ClipScale
+applied, WaitTimer frames of waiting), stops at CutFrame when it has one
+and at the end of its own length otherwise. With `SpFlag` set it stands on
+joint `SpBoneNo` of the model whose Set line is `SpTrackNo` (the script's
+Set lines counted from 0: WorkRate 0, Camera 1, Model 00 2, Motion 00 3,
+Hide 00 4, Model 01 5, ...; m01_s00 puts dust on Dante, line 5, and a muzzle
+flash on Ebony & Ivory, line 14). The G records in m01_s00's bank are zero
+filled (the game's resident effects presumably serve them), so those draw
+nothing.
+
+### Sound
+
+Sound clips hold an ADX stream number (`No`) and no file: the streams sit
+outside the archive, and the HD release stores them as .ogg (the EXE renames
+the requested .adx, 0x140031D80). m01_s00 has no Sound clip. The user gives
+the cutscene its .ogg from `⋮ → 🔊 Cutscene sound`: the n-th file plays from
+the n-th Sound clip's frame (from frame 0 when there is none). The core
+decodes it (stb_vorbis, `third_party/stb_vorbis`), mixes the files and hands
+the shell the mix from the position of any timeline frame
+(`audio_position`, `audio_read`); the shell only streams it to its audio
+output while the timeline plays, restarts it on resume and stops it on
+pause. A lone .ogg opens as its own resource (Info, waveform, ▶).
+
 ### Clip texts
 
 `# Clip` blocks of `Key<TAB>values` closed by `# End`. Every clip has
@@ -111,7 +147,8 @@ swapped for its broken version). The object index is the model's object
 
 The timeline is the session's one motion (`motion_player.h`): its library
 entry `Cutscene mNN_xNN` binds it, `apply_motion_frame` seeks it, so the
-viewer's play / pause, tap-to-pause and scrub drive the cutscene.
+viewer's play / pause, tap-to-pause and scrub drive the cutscene. Its loop
+starts at its end: it plays once, start to end, and holds the last frame.
 
 ### The camera
 
@@ -132,8 +169,11 @@ eye is cut, never projected across the picture.
 
 ## Not yet
 
-The per-key flags of `.hid` tracks (a state change inside a clip), effects,
-lights, screen effects, messages, sound. A cutscene that
+The per-key flags of `.hid` tracks (a state change inside a clip), lights,
+screen effects (DOF, fog, glow), subtitles (Message `No` indexes a text
+table outside the archive), pad vibration, the stream-number-to-file table
+of the EXE (so the right .ogg would be found by itself), and the movie part
+(WMV). A cutscene that
 does not carry its stage (`m01_c00` comments out `st000.scm`: the game uses
 the shop it is in) shows it when that stage is picked as the room.
 

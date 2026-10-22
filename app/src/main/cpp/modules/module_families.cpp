@@ -284,6 +284,25 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             out.detail = "SPUMAPDT | " + std::to_string(size) + " bytes";
             return out;
         }
+        case Format::Ogg: {
+            const auto pcm = sound::decode_ogg(data);
+            if (!pcm) break;
+            auto out = start(module, probe, size, "OGG - Ogg Vorbis sound");
+            auto& root = out.inspection.root;
+            property(root, "Sample rate", std::to_string(pcm->sample_rate) + " Hz");
+            property(root, "Channels", std::to_string(pcm->channels));
+            char seconds[32];
+            std::snprintf(seconds, sizeof seconds, "%.2f s",
+                          static_cast<double>(pcm->frames()) / static_cast<double>(pcm->sample_rate));
+            property(root, "Length", std::string{seconds} + ", " + std::to_string(pcm->frames()) + " frames");
+            property(root, "Source", "HD release: the game's ADX streams renamed to .ogg (0x140031D80)",
+                     EvidenceLevel::ExeConfirmed);
+            out.image_preview = sound::render_waveform(sound::mono(*pcm), pcm->sample_rate,
+                                                       "OGG " + std::string{filename});
+            out.detail = "OGG | " + std::to_string(pcm->sample_rate) + " Hz, " + std::to_string(pcm->channels) +
+                         " channel(s), " + seconds;
+            return out;
+        }
         case Format::Vag: {
             const auto chunks = sound::read_vag(data);
             if (chunks.empty()) break;
@@ -346,6 +365,7 @@ std::vector<NativeModule> family_modules() noexcept {
         make("formats.hid", "HID", Format::Hid),
         make("formats.spumap", "SPUMAPDT", Format::SpuMap),
         make("formats.sound.vag", "VAG", Format::Vag, true),
+        make("formats.sound.ogg", "OGG", Format::Ogg, true),
     };
 }
 

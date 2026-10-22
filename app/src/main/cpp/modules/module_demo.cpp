@@ -80,7 +80,7 @@ ImagePreview render_timeline(const demo::Document& doc) {
     canvas.fill(0, 0, canvas.width(), canvas.height(), raster::kBackground);
     canvas.text(16, 12, "CUTSCENE " + doc.name + "  " + number(doc.end_frame) + " frames  " + seconds(doc.end_frame),
                 raster::kLabel, 3);
-    const float end = std::max(1.0F, doc.end_frame);
+    const float end = std::max({1.0F, doc.end_frame, doc.timeline_end_frame});
     const auto x_of = [&](float frame) {
         return left + static_cast<int>(std::clamp(frame / end, 0.0F, 1.0F) * static_cast<float>(right - left));
     };
@@ -88,6 +88,12 @@ ImagePreview render_timeline(const demo::Document& doc) {
         const int x = x_of(static_cast<float>(s) * 600.0F);
         canvas.line(x, top - 8, x, canvas.height() - 30, raster::kGrid);
         canvas.text(x + 3, top - 30, std::to_string(s * 10) + "s", raster::kDim, 2);
+    }
+    // Where the cutscene's picture ends; later clips belong to the movie after it.
+    if (doc.end_frame > 0.0F && doc.end_frame < end) {
+        const int x = x_of(doc.end_frame);
+        canvas.fill(x - 1, top - 8, x + 1, canvas.height() - 30, raster::kAccent);
+        canvas.text(x + 6, top - 52, "END", raster::kAccent, 2);
     }
     int y = top;
     for (const auto* list : rows) {
@@ -188,6 +194,22 @@ PipelineResult run_demo(const NativeModule& module, std::string_view filename, c
             root.title = "Cutscene " + doc->name;
             root.kind = InspectionKind::Document;
             property(root, "Length", number(doc->end_frame) + " frames, " + seconds(doc->end_frame) + " at 60 fps");
+            if (doc->timeline_end_frame > doc->end_frame + 1.0F) {
+                property(root, "Clips after the picture",
+                         "to frame " + number(doc->timeline_end_frame) + " (" + seconds(doc->timeline_end_frame) +
+                             "): pad vibration and subtitles of the movie that follows");
+            }
+            if (const auto* sounds = doc->list("Sound"); sounds != nullptr && !sounds->clips.empty()) {
+                std::string streams;
+                for (const auto& clip : sounds->clips) {
+                    if (!streams.empty()) streams += ", ";
+                    streams += "stream " + clip.value("No") + " at frame " + number(clip.set_frame);
+                }
+                property(root, "Sound (ADX streams, .ogg in HD)", streams);
+            } else {
+                property(root, "Sound", "no stream clips; pick the cutscene's .ogg from \xE2\x8B\xAE to play it along");
+            }
+            if (doc->effect_bank_size > 0U) property(root, "Effect bank", std::to_string(doc->effect_bank_size) + " bytes");
             const auto tracks = doc->tracks();
             property(root, "Tracks", std::to_string(tracks.size()));
             property(root, "Cameras", std::to_string(doc->cameras.size()));

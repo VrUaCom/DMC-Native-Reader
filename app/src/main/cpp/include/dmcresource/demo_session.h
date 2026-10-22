@@ -4,12 +4,14 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "dmcresource/demo.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/sound.h"
 
 // A cutscene opened as its scene: the stage pieces (SCM) drawn by the room
 // pass in their own coordinates, moving and hiding with their clips, the track models (MOD / EFM with their PTX)
@@ -79,6 +81,17 @@ struct Player final {
     std::vector<std::uint32_t> room_indices;
     std::vector<std::uint32_t> room_triangle_slots;
     std::vector<std::uint8_t> room_translucent;
+    // The cutscene's effect bank, held by a host session the effect pass
+    // reads its records and textures from (null when there is none).
+    std::shared_ptr<Session> effect_host;
+    // Sound the user gave the cutscene (its streams are .ogg files outside
+    // the archive): each starts at a timeline frame.
+    struct Audio final {
+        std::string name;
+        float start_frame{};
+        sound::Pcm pcm;
+    };
+    std::vector<Audio> audio;
     float frame{};
     bool bound{};
     // The view follows the cutscene camera until the user takes it.
@@ -120,6 +133,43 @@ void unbind(Session* session) noexcept;
 // The user takes the camera: the cutscene camera stops driving the view and
 // the view it stood at is handed back to continue from.
 [[nodiscard]] std::optional<DirectorView> take_camera(Session* session) noexcept;
+
+// ---- effects ---------------------------------------------------------------
+
+// An effect of an Effect / EffectI clip playing at the current frame: its
+// kind and id in the cutscene's effect bank, its world (Pos, Rot, Sca, on a
+// track's joint when SpFlag says so) and its age in its own frames (the
+// clip's time scale and WaitTimer applied). `cut`: the clip stops it at
+// CutFrame, so it plays even past the effect's own length.
+struct EffectShot final {
+    char kind{};
+    std::uint16_t id{};
+    Matrix4 world{};
+    float age{};
+    bool cut{};
+};
+[[nodiscard]] std::vector<EffectShot> active_effects(const Session& session);
+[[nodiscard]] std::shared_ptr<const Session> effect_host(const Session& session) noexcept;
+
+// ---- sound ---------------------------------------------------------------
+
+// Gives the cutscene a sound file (Ogg Vorbis). The n-th file plays from the
+// n-th Sound clip's frame (its ADX stream), or from frame 0 when the
+// cutscene has no Sound clip; once every clip has one the files start over.
+// The line to show comes back in `message`.
+[[nodiscard]] bool attach_audio(Session* session, std::string_view name, std::span<const std::uint8_t> bytes,
+                                std::string* message);
+struct AudioFormat final {
+    std::uint32_t sample_rate{};
+    std::uint32_t channels{};
+};
+// The mix the shell streams (the first file's rate, stereo or mono).
+[[nodiscard]] std::optional<AudioFormat> audio_format(const Session* session) noexcept;
+// The mix's frame (sample frame) at a timeline frame.
+[[nodiscard]] std::int64_t audio_position(const Session* session, float frame) noexcept;
+// `frames` sample frames of the mix from `position`, interleaved, silence
+// where no file plays; empty past the end of every file and the cutscene.
+[[nodiscard]] std::vector<std::int16_t> audio_read(const Session* session, std::int64_t position, std::size_t frames);
 
 // "Shot cm005.cam · frame 512 / 12455 · fov 41.5" for the HUD and Info.
 [[nodiscard]] std::string status_line(const Session* session);

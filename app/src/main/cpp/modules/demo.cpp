@@ -415,6 +415,17 @@ std::optional<Document> parse_demo(std::span<const std::uint8_t> bytes) {
         const auto inner = slots(box);
         if (!inner) continue;
         const auto base = (*top)[i + 1U].first;
+        // The effect bank: its files are named by effect id ("G 48", "V 287").
+        const bool effects = !names.empty() && std::all_of(names.begin(), names.end(), [](const std::string& n) {
+            return n.size() >= 3U && n[0] >= 'A' && n[0] <= 'Z' && n[1] == ' ' &&
+                   std::all_of(n.begin() + 2, n.end(), [](char c) { return c >= '0' && c <= '9'; });
+        });
+        if (effects) {
+            doc.effect_bank_offset = base;
+            doc.effect_bank_size = box.size();
+            doc.effect_manifest_offset = (*top)[i].first;
+            doc.effect_manifest_size = (*top)[i].second;
+        }
         for (std::size_t j = 0; j < names.size() && j < inner->size(); ++j) {
             const auto [offset, size] = (*inner)[j];
             if (size == 0U) continue;
@@ -430,14 +441,23 @@ std::optional<Document> parse_demo(std::span<const std::uint8_t> bytes) {
         }
     }
 
-    // The timeline ends with the last clip that is not a whole-cutscene
-    // placement (models stand for 1000000 frames).
-    for (const auto& list : doc.lists) {
-        for (const auto& clip : list.clips) {
-            if (clip.life >= 100000.0F) continue;
-            doc.end_frame = std::max(doc.end_frame, clip.end_frame());
+    // The cutscene ends with its picture: the last Camera, Light or screen
+    // effect clip. Clips past it (pad vibration, subtitles, an effect) belong
+    // to the movie that follows (m01_s00: 5950 of 12455 frames).
+    const auto last_end = [&](bool picture_only) {
+        float end = 0.0F;
+        for (const auto& list : doc.lists) {
+            if (picture_only && list.kind != "Camera" && list.kind != "Light" && list.kind != "ScrEfc") continue;
+            for (const auto& clip : list.clips) {
+                if (clip.life >= 100000.0F) continue;  // models stand for 1000000 frames
+                end = std::max(end, clip.end_frame());
+            }
         }
-    }
+        return end;
+    };
+    doc.timeline_end_frame = last_end(false);
+    doc.end_frame = last_end(true);
+    if (doc.end_frame <= 0.0F) doc.end_frame = doc.timeline_end_frame;
     return doc;
 }
 

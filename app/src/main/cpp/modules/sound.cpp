@@ -4,10 +4,16 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
 #include "dmcresource/raster_card.h"
+
+extern "C" {
+// third_party/stb_vorbis/stb_vorbis.c (built as its own C library).
+int stb_vorbis_decode_memory(const unsigned char* mem, int len, int* channels, int* sample_rate, short** output);
+}
 
 namespace dmcresource::sound {
 namespace {
@@ -133,6 +139,51 @@ bool read_sound_table(std::span<const std::uint8_t> bytes, SoundTable* out) noex
     }
     *out = table;
     return true;
+}
+
+bool looks_like_ogg(std::span<const std::uint8_t> bytes) noexcept {
+    // Page header (27 bytes + segment table), then the identification
+    // packet: 0x01 "vorbis".
+    if (bytes.size() < 35U || std::memcmp(bytes.data(), "OggS", 4U) != 0 || bytes[4] != 0U) return false;
+    const std::size_t segments = bytes[26];
+    const std::size_t packet = 27U + segments;
+    return bytes.size() >= packet + 7U && bytes[packet] == 0x01U &&
+           std::memcmp(bytes.data() + packet + 1U, "vorbis", 6U) == 0;
+}
+
+std::optional<Pcm> decode_ogg(std::span<const std::uint8_t> bytes) {
+    if (!looks_like_ogg(bytes) || bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return std::nullopt;
+    }
+    int channels = 0, rate = 0;
+    short* output = nullptr;
+    const int frames = stb_vorbis_decode_memory(bytes.data(), static_cast<int>(bytes.size()), &channels, &rate, &output);
+    if (frames <= 0 || channels <= 0 || rate <= 0 || output == nullptr) {
+        std::free(output);
+        return std::nullopt;
+    }
+    Pcm pcm;
+    pcm.sample_rate = static_cast<std::uint32_t>(rate);
+    pcm.channels = static_cast<std::uint32_t>(channels);
+    try {
+        pcm.samples.assign(output, output + static_cast<std::size_t>(frames) * static_cast<std::size_t>(channels));
+    } catch (...) {
+        std::free(output);
+        throw;
+    }
+    std::free(output);
+    return pcm;
+}
+
+std::vector<std::int16_t> mono(const Pcm& pcm) {
+    if (pcm.channels <= 1U) return pcm.samples;
+    std::vector<std::int16_t> out(pcm.frames());
+    for (std::size_t f = 0; f < out.size(); ++f) {
+        int sum = 0;
+        for (std::uint32_t c = 0; c < pcm.channels; ++c) sum += pcm.samples[f * pcm.channels + c];
+        out[f] = static_cast<std::int16_t>(sum / static_cast<int>(pcm.channels));
+    }
+    return out;
 }
 
 }  // namespace dmcresource::sound

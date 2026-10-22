@@ -111,6 +111,14 @@ public final class NativeBridge {
                                                      boolean stageSource, boolean roomLoaded, boolean roomShown);
     /** Runs a ⋮ item the core carries out (stage config); others answer STEP_NONE. */
     public static native ActionOutcome runCompanionAction(long handle, int id);
+    /** The picked .ogg of a cutscene (a descriptor); the core's outcome. */
+    public static native ActionOutcome loadCutsceneSound(long handle, int fd, String filename);
+    /** The cutscene sound mix: {rate, channels}, or null without sound. */
+    public static native int[] demoAudioFormat(long handle);
+    /** The mix's sample frame at a timeline frame. */
+    public static native long demoAudioPosition(long handle, float frame);
+    /** `frames` sample frames of the mix from `position` (interleaved), null at its end. */
+    public static native short[] demoAudioRead(long handle, long position, int frames);
     /** A gesture takes a cutscene's camera: {yaw, pitch, zoom} of its shot, or null. */
     public static native float[] demoTakeCamera(long handle);
     /** The exported picture's {width, height}, chosen by the core. */

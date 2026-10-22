@@ -2275,7 +2275,8 @@ float motion_end_frame(const Session* session) noexcept {
 }
 
 float motion_loop_start_frame(const Session* session) noexcept {
-    if (demo::bound(session)) return 0.0F;
+    // A cutscene plays once, start to end, and holds its last frame.
+    if (demo::bound(session)) return demo::end_frame(session);
     return session != nullptr && session->motion != nullptr ? session->motion->loop_start_frame : 0.0F;
 }
 

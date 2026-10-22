@@ -42,6 +42,7 @@ enum class Companion : int {
     StageConfigRemove = 20,
     Diagnostics = 21,
     CutsceneCamera = 22,
+    CutsceneSound = 23,
 };
 
 // What only the shell knows.
@@ -69,5 +70,10 @@ struct CompanionMenu final {
 // The same with the opened session, for the items that act on it (the
 // cutscene camera).
 [[nodiscard]] ActionOutcome run_companion_action(Session* session, int id) noexcept;
+
+// The picked sound file of a cutscene (Ogg Vorbis): it plays along the
+// timeline (demo_session.h attach_audio); the line says from which frame.
+[[nodiscard]] ActionOutcome load_cutscene_sound(Session* session, std::string_view name, const std::uint8_t* bytes,
+                                                std::size_t size) noexcept;
 
 }  // namespace dmcresource::spider::actions

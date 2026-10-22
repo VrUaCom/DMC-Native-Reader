@@ -220,6 +220,10 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Vag, true, "VAG", "sound", "image-preview",
                       "STRUCTURAL_CONFIRMED", "audio/vnd.sony.vag");
     }
+    if (bytes != nullptr && sound::looks_like_ogg(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Ogg, true, "OGG", "sound", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "audio/ogg");
+    }
     if (bytes != nullptr && size >= 8U && std::memcmp(bytes, "SPUMAPDT", 8U) == 0) {
         return result(Format::SpuMap, true, "SPUMAPDT", "sound", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.spumap");
@@ -385,6 +389,7 @@ const char* format_name(Format format) noexcept {
     case Format::Hid: return "HID";
     case Format::SpuMap: return "SPUMAPDT";
     case Format::Vag: return "VAG";
+    case Format::Ogg: return "OGG";
     case Format::Demo: return "DEMO";
     case Format::DemoCamera: return "DEMO-CAM";
     case Format::DemoClips: return "CLIPS";

@@ -2,7 +2,11 @@
 // channels and their Hermite / linear keys, clip timing with its time scale,
 // the archive layout (script, clip texts, name list / container pairs), the
 // cutscene camera over the timeline and the viewer camera it becomes.
+#include <algorithm>
 #include <cassert>
+#include <cstdlib>
+#include <memory>
+#include <span>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +18,9 @@
 #include "dmcresource/demo_session.h"
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/native_module.h"
+#include "dmcresource/resource_session.h"
+#include "dmcresource/sound.h"
+#include "demo_tone_ogg.h"
 
 using namespace dmcresource;
 
@@ -144,18 +151,29 @@ int main() {
     // ---- the archive ----
     const std::string script =
         "; (# = section)\r\n\r\n# Load\r\nCamera\t\tm99_t00_CameraLoad.txt\r\n\r\n# Set\r\n"
-        "Camera\t\tm99_t00_CameraSet.txt\r\nModel\t00\tm99_t00_Model00Set.txt\r\n# End\r\n";
-    const auto archive = pac({text(script), text("m99_t00_CameraSet.txt\r\nm99_t00_Model00Set.txt\r\n# End\r\n"),
-                              pac({text(camera_set), text("# End\r\n")}),
+        "Camera\t\tm99_t00_CameraSet.txt\r\nModel\t00\tm99_t00_Model00Set.txt\r\nSound\t\tm99_t00_SoundSet.txt\r\n"
+        "PadVibe\t\tm99_t00_PadVibeSet.txt\r\n# End\r\n";
+    const std::string sound_set =
+        "# Clip\r\nSetFrame\t30.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
+        "No\t2\r\n# End\r\n# End\r\n";
+    // Pad vibration past the picture: it belongs to the movie after it.
+    const std::string vibe_set =
+        "# Clip\r\nSetFrame\t900.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
+        "Life\t10\r\n# End\r\n# End\r\n";
+    const auto archive = pac({text(script),
+                              text("m99_t00_CameraSet.txt\r\nm99_t00_Model00Set.txt\r\nm99_t00_SoundSet.txt\r\n"
+                                   "m99_t00_PadVibeSet.txt\r\n# End\r\n"),
+                              pac({text(camera_set), text("# End\r\n"), text(sound_set), text(vibe_set)}),
                               text(";skipped.scm\r\ncm1.cam\r\n# End\r\n"), pac({cam_bytes})});
     assert(demo::looks_like_demo(archive));
     const auto doc = demo::parse_demo(archive);
-    assert(doc && doc->name == "m99_t00" && doc->lists.size() == 2U);
+    assert(doc && doc->name == "m99_t00" && doc->lists.size() == 4U);
     assert(doc->list("Camera") != nullptr && doc->list("Camera")->clips.size() == 2U);
     assert(doc->list("Model", 0) != nullptr && doc->list("Model", 0)->clips.empty());
     assert(doc->members.size() == 1U && doc->members[0].name == "cm1.cam" && doc->camera("cm1.cam") != nullptr);
     assert(doc->skipped.size() == 1U && doc->skipped[0] == "skipped.scm");
-    assert(doc->end_frame == 250.0F);
+    // The picture ends with the camera; the pad vibration runs on.
+    assert(doc->end_frame == 250.0F && doc->timeline_end_frame == 910.0F);
     // The camera: inside the first clip (its own frames from the range start),
     // held after it, then the second clip at half speed.
     auto shot = demo::camera_at(*doc, 50.0F);
@@ -189,5 +207,36 @@ int main() {
     // ---- opened as a scene: no models, no stage -> nothing to draw ----
     auto opened = open_session("m99_t00.pac", archive.data(), archive.size());
     assert(opened && !demo::is_demo(opened.get()) && opened->probe.format == Format::Demo);
+    // ---- Ogg Vorbis ----
+    const std::span<const std::uint8_t> tone{kToneOgg, sizeof kToneOgg};
+    assert(sound::looks_like_ogg(tone) && !sound::looks_like_ogg(archive));
+    const auto pcm = sound::decode_ogg(tone);
+    assert(pcm && pcm->sample_rate == 8000U && pcm->channels == 1U);
+    assert(pcm->frames() > 3500U && pcm->frames() < 4500U);
+    std::int32_t peak = 0;
+    for (const auto v : pcm->samples) peak = std::max<std::int32_t>(peak, std::abs(static_cast<std::int32_t>(v)));
+    assert(peak > 2000);  // the generator's sine is at 1/8 of full scale
+    assert(probe("x.bin", kToneOgg, sizeof kToneOgg).format == Format::Ogg);
+
+    // ---- the cutscene's sound: from its Sound clip's frame, silent before,
+    // nothing past the picture's end ----
+    {
+        Session scene;
+        scene.demo = std::make_shared<demo::Player>();
+        scene.demo->doc = *doc;
+        std::string line;
+        assert(demo::attach_audio(&scene, "tone.ogg", tone, &line));
+        assert(line.find("frame 30") != std::string::npos && line.find("stream 2") != std::string::npos);
+        const auto format = demo::audio_format(&scene);
+        assert(format && format->sample_rate == 8000U && format->channels == 1U);
+        assert(demo::audio_position(&scene, 30.0F) == 4000);
+        const auto before = demo::audio_read(&scene, 0, 1000);
+        assert(before.size() == 1000U && std::all_of(before.begin(), before.end(), [](std::int16_t v) { return v == 0; }));
+        const auto playing = demo::audio_read(&scene, 4000, 1000);
+        assert(playing.size() == 1000U && std::any_of(playing.begin(), playing.end(), [](std::int16_t v) { return v != 0; }));
+        const auto end = demo::audio_position(&scene, 250.0F);
+        assert(demo::audio_read(&scene, end, 100).empty() && demo::audio_read(&scene, end - 10, 100).size() == 10U);
+        assert(!demo::attach_audio(&scene, "camera.cam", cam_bytes, &line));
+    }
     return 0;
 }

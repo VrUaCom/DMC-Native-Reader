@@ -45,6 +45,7 @@ enum class Group : std::uint8_t { Models, Textures, Archives, Motion, Stage, Eve
     case Format::DemoCamera:
     case Format::DemoClips: return Group::Events;
     case Format::Vag:
+    case Format::Ogg:
     case Format::SoundTable:
     case Format::SpuMap: return Group::Sound;
     default: return Group::Other;

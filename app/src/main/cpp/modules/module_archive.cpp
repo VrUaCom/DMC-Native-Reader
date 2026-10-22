@@ -17,6 +17,7 @@
 #include "dmcresource/module_support.h"
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/demo.h"
+#include "dmcresource/sound.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_chart.h"
@@ -78,6 +79,9 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "dbsT")) return {Format::SoundTable, "dbsT", "tsb"};
     if (magic_at(bytes, size, 0U, "ff&A")) return {Format::FloatTable, "ff&A", "ff"};
     if (magic_at(bytes, size, 0U, "VAGp")) return {Format::Vag, "VAG", "vag"};
+    if (bytes != nullptr && sound::looks_like_ogg(std::span<const std::uint8_t>{bytes, size})) {
+        return {Format::Ogg, "OGG", "ogg"};
+    }
     if (magic_at(bytes, size, 0U, "SPUM") && magic_at(bytes, size, 4U, "APDT")) {
         return {Format::SpuMap, "SPUMAPDT", "bin"};
     }

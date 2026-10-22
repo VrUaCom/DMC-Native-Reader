@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -49,5 +50,24 @@ struct SoundTable final {
     std::uint64_t trailing{};       // bytes after the last whole record
 };
 [[nodiscard]] bool read_sound_table(std::span<const std::uint8_t> bytes, SoundTable* out) noexcept;
+
+// Ogg Vorbis: the HD release stores the game's ADX streams (music, voices,
+// cutscene sound) as .ogg; the EXE renames each requested .adx to .ogg
+// (0x140031D80). Decoded with stb_vorbis (third_party).
+struct Pcm final {
+    std::uint32_t sample_rate{};
+    std::uint32_t channels{};
+    std::vector<std::int16_t> samples;  // interleaved, channels per frame
+
+    [[nodiscard]] std::size_t frames() const noexcept {
+        return channels == 0U ? 0U : samples.size() / channels;
+    }
+};
+// An Ogg page ("OggS", version 0) whose first packet is a Vorbis
+// identification header.
+[[nodiscard]] bool looks_like_ogg(std::span<const std::uint8_t> bytes) noexcept;
+[[nodiscard]] std::optional<Pcm> decode_ogg(std::span<const std::uint8_t> bytes);
+// The channels averaged into one.
+[[nodiscard]] std::vector<std::int16_t> mono(const Pcm& pcm);
 
 }  // namespace dmcresource::sound

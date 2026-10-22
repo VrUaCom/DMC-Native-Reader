@@ -78,6 +78,8 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
             add(menu.rows, Companion::StageConfigRemove, "Remove stage config");
         }
     }
+    // A cutscene's sound lives in .ogg files beside the archive.
+    if (demo::is_demo(session)) add(menu.rows, Companion::CutsceneSound, "\xF0\x9F\x94\x8A Cutscene sound (.ogg)\xE2\x80\xA6");
     // A cutscene whose camera the user took: back to following its cuts.
     if (demo::is_demo(session) && !demo::director(session)) {
         add(menu.rows, Companion::CutsceneCamera, "\xF0\x9F\x8E\xAC Cutscene camera (follow the cuts)");
@@ -87,6 +89,12 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
 }
 
 ActionOutcome run_companion_action(Session* session, int id) noexcept {
+    if (static_cast<Companion>(id) == Companion::CutsceneSound) {
+        ActionOutcome out;
+        out.ok = demo::is_demo(session);
+        if (out.ok) out.step = ShellStep::PickCutsceneSound;
+        return out;
+    }
     if (static_cast<Companion>(id) != Companion::CutsceneCamera) return run_companion_action(id);
     ActionOutcome out;
     out.ok = demo::set_director(session, true);
@@ -95,6 +103,20 @@ ActionOutcome run_companion_action(Session* session, int id) noexcept {
         camera::reset();
         out.step = ShellStep::LeaveFly;
         out.message = "Cutscene camera: " + demo::status_line(session);
+    }
+    return out;
+}
+
+ActionOutcome load_cutscene_sound(Session* session, std::string_view name, const std::uint8_t* bytes,
+                                  std::size_t size) noexcept {
+    ActionOutcome out;
+    try {
+        out.ok = bytes != nullptr && demo::attach_audio(session, name, std::span<const std::uint8_t>{bytes, size},
+                                                         &out.message);
+        if (bytes == nullptr) out.message = std::string{name} + " could not be read";
+    } catch (...) {
+        out.ok = false;
+        out.message = "Sound could not be read";
     }
     return out;
 }

@@ -163,7 +163,18 @@ struct Document final {
     std::vector<std::pair<std::string, CameraAnim>> cameras;
     // Every .hid, decoded once.
     std::vector<std::pair<std::string, HideAnim>> hides;
+    // Where the cutscene's picture ends (its last Camera, Light or screen
+    // effect clip), and where its last clip of any kind does.
     float end_frame{};
+    float timeline_end_frame{};
+    // The effect bank (the container whose files are named by effect id),
+    // inside the archive; size 0 when there is none.
+    std::size_t effect_bank_offset{};
+    std::size_t effect_bank_size{};
+    // Its name list: the bank's manifest ("G 48", ..., "M 62": an M record
+    // takes two slots, the model and its companion).
+    std::size_t effect_manifest_offset{};
+    std::size_t effect_manifest_size{};
 
     [[nodiscard]] const Member* member(std::string_view file) const noexcept;
     [[nodiscard]] const CameraAnim* camera(std::string_view file) const noexcept;
