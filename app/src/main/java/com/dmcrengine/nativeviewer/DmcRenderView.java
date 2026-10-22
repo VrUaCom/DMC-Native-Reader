@@ -769,8 +769,9 @@ public final class DmcRenderView extends View {
     public void resetView() {
         if (flyMode) leaveFly();
         NativeBridge.resetCamera();
-        yaw = DEFAULT_YAW;
-        pitch = -0.45f;
+        float[] start = session != 0L && !staticImagePreview ? NativeBridge.stageStartView(session) : null;
+        yaw = start != null ? start[0] : DEFAULT_YAW;
+        pitch = start != null ? start[1] : -0.45f;
         zoom = 1.0f;
         panX = 0.0f;
         panY = 0.0f;

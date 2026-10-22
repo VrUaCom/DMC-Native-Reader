@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -259,7 +260,30 @@ int main() {
         const auto bad = act::load_stage_config("noise.bin", std::vector<std::uint8_t>(64, 7U).data(), 64U);
         assert(!bad.ok && bad.message.find("No stage configuration in noise.bin") == 0U);
         const auto loaded = act::load_stage_config("st100cfg.pac", cfg.data(), cfg.size());
-        assert(loaded.ok && loaded.step == act::ShellStep::None && loaded.message.find("2 spawn points") != std::string::npos);
+        // The view starts again at the configuration's spawn point.
+        assert(loaded.ok && loaded.step == act::ShellStep::ResetView && loaded.message.find("2 spawn points") != std::string::npos);
+        {
+            // st100's view starts behind spawn point 0 (0 0 0, facing +z),
+            // looking at its chest; another stage's ignores the config and
+            // starts on its own floor (here its first floor spot).
+            const auto centre = [](const Session& session) {
+                const auto& box = session.render_mesh.vertices;
+                return Vec3{(box.front().x + box.back().x) * 0.5F, (box.front().y + box.back().y) * 0.5F,
+                            (box.front().z + box.back().z) * 0.5F};
+            };
+            Session ours;
+            ours.stage = stage.stage;
+            ours.archive_name = "st100.pac";
+            const auto view = act::stage_start_view(&ours);
+            assert(view && std::fabs((*view)[0]) < 1.0e-3F && (*view)[1] < 0.0F);
+            const auto c = centre(ours);
+            assert(std::fabs(c.x) < 1.0e-3F && c.y > 50.0F && std::fabs(c.z) < 1.0e-3F);
+            Session other;
+            other.stage = stage.stage;
+            other.archive_name = "st200.pac";
+            assert(act::stage_start_view(&other) && std::fabs(centre(other).x - 50.0F) < 1.0e-3F);
+            assert(!act::stage_start_view(nullptr));
+        }
         state = black_widow_state(&stage);
         assert(widow::has_state(state, widow::StateFlag::StageConfigLoaded) &&
                widow::has_state(state, widow::StateFlag::StageMarkersShown));

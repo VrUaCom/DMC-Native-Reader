@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -26,6 +28,7 @@ enum class ShellStep : std::uint8_t {
     OpenSession = 4,      // navigate to the session handed back
     LeaveFly = 5,         // leave the shell's fly mode (the core drives the camera again)
     PickCutsceneSound = 6,  // open the platform file picker for a cutscene's .ogg
+    ResetView = 7,          // put the view back at its start (stage_start_view)
 };
 
 struct ActionOutcome final {
@@ -60,6 +63,15 @@ struct Menu final {
 // The tool's long press: what the configuration holds and what can be done.
 [[nodiscard]] Menu stage_config_menu();
 [[nodiscard]] ActionOutcome run_stage_config_menu(int id) noexcept;
+
+// ---- where a stage starts ------------------------------------------------
+
+// A stage session's start view (stage_room::start_view): the first spawn
+// point of the current configuration when it is this stage's (st006cfg.pac
+// over st006.pac), else the middle of the stage's floor. Reframes the
+// session on it and hands back the view's yaw and pitch; nothing for any
+// other session, a cutscene's scene included (the shell keeps its own start).
+[[nodiscard]] std::optional<std::array<float, 2>> stage_start_view(Session* session) noexcept;
 
 // ---- the view's long press -----------------------------------------------
 

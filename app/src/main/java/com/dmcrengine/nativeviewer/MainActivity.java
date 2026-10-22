@@ -1545,6 +1545,9 @@ public final class MainActivity extends Activity {
             case ActionOutcome.STEP_PICK_CUTSCENE_SOUND:
                 pickCutsceneSound();
                 break;
+            case ActionOutcome.STEP_RESET_VIEW:
+                renderView.resetView();
+                break;
             default:
                 break;
         }

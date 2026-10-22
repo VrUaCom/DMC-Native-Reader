@@ -1,11 +1,14 @@
 #include "dmcresource/spider/stage_actions.h"
 
 #include <array>
+#include <cmath>
 #include <utility>
 
+#include "dmcresource/demo_session.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/cpp23_language.h"
 #include "dmcresource/stage_markers.h"
+#include "dmcresource/stage_room.h"
 
 namespace dmcresource::spider::actions {
 namespace {
@@ -102,7 +105,9 @@ ActionOutcome load_stage_config(std::string_view name, const std::uint8_t* bytes
                            "No stage configuration in " + std::string{name} +
                                " (a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
         }
-        return outcome(true, ShellStep::None, "Stage config: " + stage_config_summary() + ". Hold a marker to see it.");
+        // The view starts again at the configuration's spawn point.
+        return outcome(true, ShellStep::ResetView,
+                       "Stage config: " + stage_config_summary() + ". Hold a marker to see it.");
     } catch (...) {
         return {};
     }
@@ -251,6 +256,57 @@ RgbaImage render_export_image(const Session* session) noexcept {
         return image;
     } catch (...) {
         return {};
+    }
+}
+
+namespace {
+
+// The stage number of a file name ("st006cfg.pac", "st006.pac": 6), -1 none.
+[[nodiscard]] int stage_number(std::string_view name) noexcept {
+    for (std::size_t i = 0; i + 4U < name.size() + 1U && i + 5U <= name.size(); ++i) {
+        const auto lower = [&](std::size_t k) { return static_cast<char>(name[k] | 0x20); };
+        if (lower(i) != 's' || lower(i + 1U) != 't') continue;
+        int number = 0;
+        std::size_t k = i + 2U;
+        for (; k < name.size() && k < i + 5U && name[k] >= '0' && name[k] <= '9'; ++k) number = number * 10 + (name[k] - '0');
+        if (k == i + 5U) return number;
+    }
+    return -1;
+}
+
+// The first spawn point of the current configuration if it belongs to the
+// stage `stage_name` (or either name says no stage).
+[[nodiscard]] std::optional<stage_room::Spawn> config_spawn(std::string_view stage_name) {
+    const auto config = stage_markers::current();
+    if (config == nullptr) return std::nullopt;
+    const int ours = stage_number(stage_name), theirs = stage_number(config->name);
+    if (ours >= 0 && theirs >= 0 && ours != theirs) return std::nullopt;
+    const stage_markers::Marker* first = nullptr;
+    for (const auto& marker : config->markers) {
+        if (marker.source != stage_config::Kind::Pos || marker.points.empty()) continue;
+        if (first == nullptr || marker.record < first->record) first = &marker;
+    }
+    if (first == nullptr) return std::nullopt;
+    const auto& p = first->points.front();
+    stage_room::Spawn spawn{.position = {p.x, p.y, p.z}};
+    if (std::isfinite(first->heading_degrees)) {
+        spawn.heading_degrees = first->heading_degrees;
+        spawn.has_heading = true;
+    }
+    return spawn;
+}
+
+}  // namespace
+
+std::optional<std::array<float, 2>> stage_start_view(Session* session) noexcept {
+    try {
+        // A cutscene's scene holds its stage too; its camera is the cutscene's.
+        if (session == nullptr || session->stage == nullptr || demo::is_demo(session)) return std::nullopt;
+        const auto view = stage_room::start_view(*session->stage, config_spawn(session->archive_name));
+        if (!view) return std::nullopt;
+        return stage_room::frame_start(session, *view);
+    } catch (...) {
+        return std::nullopt;
     }
 }
 

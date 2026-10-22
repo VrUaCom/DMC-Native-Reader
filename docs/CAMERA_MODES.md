@@ -15,6 +15,31 @@ switched off in the Gestures window):
 | **Two fingers held together (< 24 mm apart), moved as one** | **move the camera up / down, left / right; no zoom.** Spreading them is still a pinch: the pair is a move only while its span changes less than 0.6 x the distance it travels. |
 | **Hold one finger, twist two others round it** | **turn the camera round the model / the stage centre (yaw); the room stays put.** The ring under the holding finger shows the angle ("CAMERA TURN"). A three-finger swipe or tap is not triggered after a turn. |
 
+### Where a stage starts
+
+A stage (`stNNN.pac`) opens with the camera inside it, looking at where a
+character would stand (`stage_room::start_view`, `frame_start`; Spider
+`stage_start_view`, JNI `stageStartView`; the view reset and double tap ask
+the core again):
+
+- With the stage's configuration loaded (`stNNNcfg.pac` from the ⋮ menu,
+  same stage number), the target is spawn point POS 0 (st006: 2500 22 906,
+  heading 0 = looking along +z), at chest height. Loading the configuration
+  resets the view there (`ShellStep::ResetView`).
+- Without one, the target is the middle of the stage's walkable floor: the
+  HITS floor records (normal.y >= 0.7) round their area-weighted centre,
+  not the layout or the mesh, which reach far outside the arena (st006's
+  terrain goes down to y -5980).
+- The camera stands behind the target along its heading, 520 units back and
+  a third of that above, and turns round in 30° steps (then comes nearer:
+  400, 280, 180) until neither the HITS collision nor the room mesh lies
+  between it and the target.
+
+The orbit then turns round that target; a cutscene's stage keeps the
+cutscene's camera. Tests: `core_model_pipeline_test.cpp` (floor middle, a
+wall in the way), `stage_config_test.cpp` (spawn point, another stage's
+configuration ignored).
+
 ## Fly camera (stages and collision views)
 
 Toolbar button **✈** (shown for stage scenes, `.hits` files and whenever stage

@@ -15,6 +15,7 @@ public final class ActionOutcome {
     public static final int STEP_OPEN_SESSION = 4;
     public static final int STEP_LEAVE_FLY = 5;
     public static final int STEP_PICK_CUTSCENE_SOUND = 6;
+    public static final int STEP_RESET_VIEW = 7;
 
     public final boolean ok;
     public final int step;

@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -390,6 +391,28 @@ int main() {
         const auto back = room::model_to_room(placement, room::room_to_model(placement, p));
         assert(std::fabs(back.x - p.x) < 1.0e-3F && std::fabs(back.y - p.y) < 1.0e-3F &&
                std::fabs(back.z - p.z) < 1.0e-3F);
+
+        // A stage's start view: without a spawn it looks at the floor's
+        // middle from behind (+z ahead) and above; a spawn facing -x would
+        // put the camera behind the wall at x = 100, so it turns round to
+        // the open side.
+        room::Room stage_room;
+        stage_room.collision_sources.push_back(source);
+        const auto middle = room::start_view(stage_room, std::nullopt);
+        assert(middle && !middle->from_spawn && std::fabs(middle->target.x) < 1.0F &&
+               std::fabs(middle->target.z) < 1.0F && middle->target.y > 50.0F && middle->target.y < 200.0F);
+        assert(middle->eye.z < -100.0F && std::fabs(middle->eye.x) < 1.0F && middle->eye.y > middle->target.y);
+        const auto spawned = room::start_view(stage_room, room::Spawn{{50.0F, 0.0F, 0.0F}, 270.0F, true});
+        assert(spawned && spawned->from_spawn && std::fabs(spawned->target.x - 50.0F) < 1.0e-3F);
+        assert(spawned->eye.x < 100.0F && !ec::segment_hit(source, spawned->target, spawned->eye));
+        // Framing: the session's box is centred on the target and the view
+        // looks from the eye at it.
+        dmcresource::Session framed;
+        const auto angles = room::frame_start(&framed, *middle);
+        assert(angles && framed.render_mesh.vertices.size() == 8U);
+        const auto& box = framed.render_mesh.vertices;
+        assert(std::fabs((box.front().y + box.back().y) * 0.5F - middle->target.y) < 1.0e-3F);
+        assert(std::fabs((*angles)[0]) < 1.0e-3F && (*angles)[1] < -0.1F);
     }
 
     // Both canonical adapters must preserve slots through render materialization

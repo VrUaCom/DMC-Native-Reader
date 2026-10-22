@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -191,5 +193,30 @@ void set_effect_host(std::shared_ptr<const Session> host) noexcept;
 
 // A stage itself (SCM, or a session holding SCM children) never gets a room.
 [[nodiscard]] bool is_stage_session(const Session& session) noexcept;
+
+// ---- Where the viewer starts in a stage -------------------------------------
+//
+// A character's start (a stage configuration's spawn point: POS position and
+// heading, 0 degrees looking along +z; st006's POS 0 stands at 2500 22 906
+// facing into its arena) or, without one, the middle of the stage's walkable
+// floor (the HITS floor records nearest their centroid; the layout and the
+// room mesh reach far outside it, st006's terrain to y -5980).
+struct Spawn final {
+    Vec3 position{};
+    float heading_degrees{};
+    bool has_heading{};
+};
+// The camera of the start: it looks at the character's chest from behind
+// and above (or from the most open side when that is blocked), never
+// through the stage's walls (HITS segment test, then the room mesh).
+struct StartView final {
+    Vec3 target{};
+    Vec3 eye{};
+    bool from_spawn{};
+};
+[[nodiscard]] std::optional<StartView> start_view(const Room& room, const std::optional<Spawn>& spawn);
+// Frames a stage session on a start: its framing box centred on the target,
+// sized so the orbit distance is the eye's; the view's yaw and pitch.
+[[nodiscard]] std::optional<std::array<float, 2>> frame_start(Session* session, const StartView& view);
 
 }  // namespace dmcresource::stage_room

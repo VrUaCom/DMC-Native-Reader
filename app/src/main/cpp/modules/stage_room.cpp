@@ -918,7 +918,8 @@ std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* b
         // The stage is drawn by the room pass (near-plane clipped, so the
         // camera can stand inside it). The session mesh is only a
         // character-sized framing box on the first floor spot, with one
-        // degenerate triangle: the camera starts where a model would stand.
+        // degenerate triangle: the camera starts where a model would stand
+        // (this box until start_view frames the floor's middle).
         Vec3 spot{};
         if (!room->spots.empty()) {
             spot = room->spots.front();
@@ -943,6 +944,9 @@ std::unique_ptr<Session> open_stage(std::string_view name, const std::uint8_t* b
         stage->detail = room->detail;
         stage->children = std::move(archive->children);
         stage->stage = std::move(room);
+        // Framed on the middle of its walkable floor (the configuration's
+        // spawn point, once one is loaded, comes from stage_start_view).
+        if (const auto view = start_view(*stage->stage, std::nullopt)) (void)frame_start(stage.get(), *view);
         return stage;
     } catch (...) {
         return nullptr;
@@ -973,6 +977,146 @@ void set_effect_host(std::shared_ptr<const Session> host) noexcept {
 std::shared_ptr<const Session> effect_host() noexcept {
     const std::lock_guard lock{g_mutex};
     return g_effect_host;
+}
+
+namespace {
+
+// Möller-Trumbore: the distance along `dir` (unit) from `from` to the
+// triangle, if it is hit within `limit`.
+[[nodiscard]] bool ray_hits(const Vec3& from, const Vec3& dir, float limit, const Vec3& a, const Vec3& b,
+                            const Vec3& c) noexcept {
+    const Vec3 e1{b.x - a.x, b.y - a.y, b.z - a.z}, e2{c.x - a.x, c.y - a.y, c.z - a.z};
+    const Vec3 p{dir.y * e2.z - dir.z * e2.y, dir.z * e2.x - dir.x * e2.z, dir.x * e2.y - dir.y * e2.x};
+    const float det = e1.x * p.x + e1.y * p.y + e1.z * p.z;
+    if (std::fabs(det) < 1.0e-8F) return false;
+    const float inv = 1.0F / det;
+    const Vec3 s{from.x - a.x, from.y - a.y, from.z - a.z};
+    const float u = (s.x * p.x + s.y * p.y + s.z * p.z) * inv;
+    if (u < 0.0F || u > 1.0F) return false;
+    const Vec3 q{s.y * e1.z - s.z * e1.y, s.z * e1.x - s.x * e1.z, s.x * e1.y - s.y * e1.x};
+    const float v = (dir.x * q.x + dir.y * q.y + dir.z * q.z) * inv;
+    if (v < 0.0F || u + v > 1.0F) return false;
+    const float t = (e2.x * q.x + e2.y * q.y + e2.z * q.z) * inv;
+    return t > 0.0F && t < limit;
+}
+
+// Whether the segment from `from` to `to` passes clear of the stage: its
+// collision first, then the room mesh it draws.
+[[nodiscard]] bool clear_between(const Room& room, const Vec3& from, const Vec3& to) noexcept {
+    for (const auto& source : room.collision_sources) {
+        if (environment_collision::segment_hit(source, from, to)) return false;
+    }
+    Vec3 dir{to.x - from.x, to.y - from.y, to.z - from.z};
+    const float length = std::hypot(dir.x, dir.y, dir.z);
+    if (length < 1.0e-3F) return true;
+    dir = {dir.x / length, dir.y / length, dir.z / length};
+    const auto& m = room.mesh;
+    for (std::size_t t = 0; t + 2U < m.indices.size(); t += 3U) {
+        const auto ia = m.indices[t], ib = m.indices[t + 1U], ic = m.indices[t + 2U];
+        if (ia >= m.vertices.size() || ib >= m.vertices.size() || ic >= m.vertices.size()) continue;
+        if (ray_hits(from, dir, length, m.vertices[ia], m.vertices[ib], m.vertices[ic])) return false;
+    }
+    return true;
+}
+
+// The middle of the walkable floor: the HITS floor record whose centre is
+// nearest the floors' area-weighted centre.
+[[nodiscard]] std::optional<Vec3> floor_middle(const Room& room) {
+    if (room.collision_sources.empty()) return std::nullopt;
+    const auto& source = room.collision_sources.front();
+    Vec3 sum{};
+    double total = 0.0;
+    std::vector<std::pair<Vec3, double>> floors;
+    for (const auto& t : source.triangles) {
+        if (t.normal.y < environment_collision::kWallNormalY) continue;
+        const Vec3 e1{t.point_b.x - t.point_a.x, t.point_b.y - t.point_a.y, t.point_b.z - t.point_a.z};
+        const Vec3 e2{t.point_c.x - t.point_a.x, t.point_c.y - t.point_a.y, t.point_c.z - t.point_a.z};
+        const double area = 0.5 * std::hypot(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z,
+                                              e1.x * e2.y - e1.y * e2.x);
+        const Vec3 c{(t.point_a.x + t.point_b.x + t.point_c.x) / 3.0F, (t.point_a.y + t.point_b.y + t.point_c.y) / 3.0F,
+                     (t.point_a.z + t.point_b.z + t.point_c.z) / 3.0F};
+        floors.emplace_back(c, area);
+        sum = {sum.x + static_cast<float>(c.x * area), sum.y + static_cast<float>(c.y * area),
+               sum.z + static_cast<float>(c.z * area)};
+        total += area;
+    }
+    if (floors.empty() || !(total > 0.0)) return std::nullopt;
+    const float k = static_cast<float>(1.0 / total);
+    const Vec3 middle{sum.x * k, sum.y * k, sum.z * k};
+    const auto best = std::min_element(floors.begin(), floors.end(), [&middle](const auto& a, const auto& b) {
+        return std::hypot(a.first.x - middle.x, a.first.z - middle.z) <
+               std::hypot(b.first.x - middle.x, b.first.z - middle.z);
+    });
+    // On the floor under the middle when there is one there.
+    Vec3 out = best->first;
+    if (const auto y = environment_collision::floor_below(source, {middle.x, out.y + 200.0F, middle.z}, 400.0F)) {
+        out = {middle.x, *y, middle.z};
+    }
+    return out;
+}
+
+}  // namespace
+
+std::optional<StartView> start_view(const Room& room, const std::optional<Spawn>& spawn) {
+    try {
+        std::optional<Vec3> foot;
+        if (spawn) foot = spawn->position;
+        if (!foot) foot = floor_middle(room);
+        if (!foot && !room.spots.empty()) foot = room.spots.front();
+        if (!foot) return std::nullopt;
+        constexpr float kChest = 110.0F;  // a character's chest above its feet
+        const Vec3 target{foot->x, foot->y + kChest, foot->z};
+        // Behind the character (its heading; 0 degrees looks along +z), then
+        // round it, nearer when nothing is clear far away.
+        constexpr float kRad = 3.14159265358979F / 180.0F;
+        const float heading = spawn && spawn->has_heading ? spawn->heading_degrees * kRad : 0.0F;
+        StartView out;
+        out.target = target;
+        out.from_spawn = spawn.has_value();
+        for (const float distance : {520.0F, 400.0F, 280.0F, 180.0F}) {
+            for (const float turn : {0.0F, 30.0F, -30.0F, 60.0F, -60.0F, 90.0F, -90.0F, 120.0F, -120.0F, 150.0F,
+                                     -150.0F, 180.0F}) {
+                const float a = heading + turn * kRad;
+                const Vec3 eye{target.x - std::sin(a) * distance, target.y + distance * 0.35F,
+                               target.z - std::cos(a) * distance};
+                // A little past the eye, so it does not stand against a wall.
+                const Vec3 beyond{target.x + (eye.x - target.x) * 1.15F, target.y + (eye.y - target.y) * 1.15F,
+                                  target.z + (eye.z - target.z) * 1.15F};
+                if (clear_between(room, target, beyond)) {
+                    out.eye = eye;
+                    return out;
+                }
+            }
+        }
+        // Nowhere clear: close behind.
+        out.eye = {target.x - std::sin(heading) * 120.0F, target.y + 40.0F, target.z - std::cos(heading) * 120.0F};
+        return out;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::array<float, 2>> frame_start(Session* session, const StartView& view) {
+    if (session == nullptr) return std::nullopt;
+    const Vec3 d{view.target.x - view.eye.x, view.target.y - view.eye.y, view.target.z - view.eye.z};
+    const float distance = std::hypot(d.x, d.y, d.z);
+    if (!(distance > 1.0F)) return std::nullopt;
+    // view_renderer's orbit stands 1.3 r / sin(0.5) from the framing centre,
+    // r the box's centre-to-corner span (half side a: a sqrt 3).
+    const float half = distance * std::sin(0.5F) / (1.3F * std::sqrt(3.0F));
+    Mesh anchor;
+    for (const float y : {-half, half}) {
+        for (const float x : {-half, half}) {
+            for (const float z : {-half, half}) {
+                anchor.vertices.push_back({view.target.x + x, view.target.y + y, view.target.z + z});
+            }
+        }
+    }
+    anchor.indices = {0U, 0U, 0U};
+    session->render_mesh = std::move(anchor);
+    // camera_basis: forward (eye to target) = (cos p sin y, sin p, cos p cos y).
+    const float flat = std::hypot(d.x, d.z);
+    return std::array<float, 2>{flat > 1.0e-4F ? std::atan2(d.x, d.z) : 0.0F, std::atan2(d.y, std::max(flat, 1.0e-4F))};
 }
 
 bool is_stage_session(const Session& session) noexcept {
