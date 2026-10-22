@@ -429,19 +429,21 @@ bool pose_stage_piece(Player& p, PlayerTrack& t) {
 // tracks first, then the ones hanging from a joint of an already posed
 // track), stage pieces into the room. Returns whether the room moved.
 // The cloth of a track at the player's frame: the .clt of the last Motion
-// clip set up to it that names one ("Cloth pl100_01.clt"), whether it runs
-// (the last "ClothMode": 1 simulates, as the hair, amulet and em105 parts
-// ask; 0 leaves the bones to the MOT, as m01_c00's coat, carried over the
-// shoulder, is baked; 0 until a clip says), and the last reset ("ResetClt" /
-// "ResetClt2", settled "ResetCltLevel" frames, 20 without).
+// clip set up to it that names one ("Cloth pl100_01.clt"; with none named, a
+// clip's "ClothMode 1" runs the model's own, pl101_01.clt for pl101_01.mod,
+// as m01_v00 does), whether it runs (the last "ClothMode": 1 simulates, as
+// the hair, amulet and em105 parts ask; 0 leaves the bones to the MOT, as
+// m01_c00's coat, carried over the shoulder, is baked; on until a clip says,
+// as m02_c01's em108 parts name theirs without a mode), and the last reset
+// ("ResetClt" / "ResetClt2", settled "ResetCltLevel" frames, 20 without).
 struct ClothCue final {
     std::string file;
-    bool on{false};
+    bool on{true};
     float reset{-1.0F};
     std::uint32_t level{20U};
 };
 
-[[nodiscard]] ClothCue cloth_cue(const Player& p, int track) {
+[[nodiscard]] ClothCue cloth_cue(const Player& p, int track, std::string_view model) {
     ClothCue out;
     const auto* list = p.doc.list("Motion", track);
     if (list == nullptr) return out;
@@ -467,6 +469,10 @@ struct ClothCue final {
             out.level = level > 0 ? static_cast<std::uint32_t>(std::min(level, 600)) : 20U;
         }
     }
+    if (out.file.empty() && mode_set >= 0.0F && out.on) {
+        const auto dot = model.rfind('.');
+        out.file = std::string{model.substr(0, dot)} + ".clt";
+    }
     return out;
 }
 
@@ -476,7 +482,7 @@ struct ClothCue final {
 // at the pose and settles it. False when the track has no cloth.
 [[nodiscard]] bool pose_cloth(const Player& p, PlayerTrack& t, const Session& model, const Matrix4& placement,
                               std::vector<Vec3>* out) {
-    const auto cue = cloth_cue(p, t.track);
+    const auto cue = cloth_cue(p, t.track, t.model);
     if (cue.file.empty() || !cue.on) {
         t.cloth.reset();
         t.cloth_file.clear();
@@ -732,13 +738,21 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
         } else {
             stage_tracks.clear();
         }
-        if (!scene && !room) return nullptr;
+        // A movie's track (mNN_xNN_movie.pac: only its pad vibration and
+        // subtitles) has no scene: it opens as the timeline its movie plays on.
+        const auto has_clips = [&doc](std::string_view kind) {
+            const auto* list = doc->list(kind);
+            return list != nullptr && !list->clips.empty();
+        };
+        if (!scene && !room && !has_clips("Message") && !has_clips("PadVibe")) return nullptr;
         if (!scene) {
-            // Only the stage: like a stage scene, a character-sized anchor
-            // the camera starts at, drawn as one degenerate triangle.
+            // Only the stage (or nothing): like a stage scene, a
+            // character-sized anchor the camera starts at, drawn as one
+            // degenerate triangle.
             scene = std::make_unique<Session>();
-            Vec3 spot = room->spots.empty() ? (room->mesh.vertices.empty() ? Vec3{} : room->mesh.vertices.front())
-                                            : room->spots.front();
+            Vec3 spot = !room ? Vec3{}
+                        : room->spots.empty() ? (room->mesh.vertices.empty() ? Vec3{} : room->mesh.vertices.front())
+                                              : room->spots.front();
             for (const float y : {0.0F, 200.0F}) {
                 for (const float x : {-120.0F, 120.0F}) {
                     for (const float z : {-120.0F, 120.0F}) scene->render_mesh.vertices.push_back({spot.x + x, spot.y + y, spot.z + z});
@@ -765,12 +779,24 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             models.clear();
         }
         for (std::size_t i = 0; i < tracks.size(); ++i) tracks[i].source = std::move(models[i]);
-        // A CnsPos model's root sits on its joint: the inverse of the root's
-        // rest world (m01_c00: pl100_01's root rests at the head joint, at
-        // 0 166 -1; pl100_03's at 0, in the forearm's frame).
+        // A CnsPos model authored in its joint's frame (its root rests at 0:
+        // pl100_03, wp140_00) rides the joint as it is; one authored at the
+        // host's rest pose (pl100_01's root rests at the head joint, 0 166
+        // -1; m02_c01's em108_08 at 0 200.5 39.4, off its joint 3) follows
+        // the joint's move from its rest world.
         for (auto& t : tracks) {
             if (t.host_track < 0 || t.host_joint < 0 || !t.source || t.source->scene.nodes.empty()) continue;
-            t.host_rest_inverse = affine_inverse(t.source->scene.nodes.front().world);
+            if (near_identity(t.source->scene.nodes.front().world)) {
+                t.host_rest_inverse = Matrix4{};
+                continue;
+            }
+            for (const auto& host : tracks) {
+                if (host.track != t.host_track || !host.source) continue;
+                const auto& nodes = host.source->scene.nodes;
+                if (static_cast<std::size_t>(t.host_joint) < nodes.size()) {
+                    t.host_rest_inverse = affine_inverse(nodes[static_cast<std::size_t>(t.host_joint)].world);
+                }
+            }
         }
         // Limb parts ride the body joint their node 1 is: the joint of a model
         // of the same character (pl100_03 and pl100_10 are both "pl100")
@@ -1183,6 +1209,52 @@ std::vector<std::int16_t> audio_read(const Session* session, std::int64_t positi
     return out;
 }
 
+// ---- fade ----------------------------------------------------------------
+
+Fade fade_at(const Session& session) noexcept {
+    Fade out;
+    try {
+        const auto* p = player(&session);
+        if (p == nullptr || movie_shown(*p)) return out;
+        const auto* list = p->doc.list("Fade");
+        if (list == nullptr) return out;
+        const Clip* last = nullptr;
+        for (const auto& clip : list->clips) {
+            if (clip.set_frame <= p->frame && (last == nullptr || clip.set_frame >= last->set_frame)) last = &clip;
+        }
+        if (last == nullptr) return out;
+        const bool in = last->value("FadeType") == "I";
+        float alpha = 1.0F;
+        for (const auto& [key, values] : last->fields) {
+            if (key != "DistRGBA" || values.size() < 4U) continue;
+            out.r = static_cast<std::uint8_t>(std::clamp(std::atoi(values[0].c_str()), 0, 255));
+            out.g = static_cast<std::uint8_t>(std::clamp(std::atoi(values[1].c_str()), 0, 255));
+            out.b = static_cast<std::uint8_t>(std::clamp(std::atoi(values[2].c_str()), 0, 255));
+            alpha = std::clamp(static_cast<float>(std::atoi(values[3].c_str())) / 128.0F, 0.0F, 1.0F);
+        }
+        const float length = last->life * last->clip_scale;
+        const float t = length > 0.0F ? std::clamp((p->frame - last->set_frame) / length, 0.0F, 1.0F) : 1.0F;
+        out.amount = alpha * (in ? 1.0F - t : t);
+    } catch (...) {
+        out.amount = 0.0F;
+    }
+    return out;
+}
+
+void apply_fade(const Session& session, RgbaImage* image) noexcept {
+    if (image == nullptr) return;
+    const auto fade = fade_at(session);
+    if (!(fade.amount > 0.0F)) return;
+    const float keep = 1.0F - fade.amount;
+    const std::uint8_t colour[3] = {fade.r, fade.g, fade.b};
+    for (std::size_t i = 0; i + 3U < image->pixels.size(); i += 4U) {
+        for (std::size_t c = 0; c < 3U; ++c) {
+            image->pixels[i + c] =
+                static_cast<std::uint8_t>(image->pixels[i + c] * keep + colour[c] * fade.amount + 0.5F);
+        }
+    }
+}
+
 // ---- movie ---------------------------------------------------------------
 
 namespace {
@@ -1234,7 +1306,10 @@ bool attach_movie(Session* session, std::string_view name, std::span<const std::
         } else if (!video::looks_like_asf(bytes)) {
             line = std::string{name} + " is not a WMV movie";
         } else {
-            ok = put_movie(*p, name, bytes, std::max(p->doc.end_frame, 0.0F), &line);
+            // After the picture; from 0 on a movie's own track (no camera).
+            const auto* cameras = p->doc.list("Camera");
+            const bool picture = cameras != nullptr && !cameras->clips.empty();
+            ok = put_movie(*p, name, bytes, picture ? std::max(p->doc.end_frame, 0.0F) : 0.0F, &line);
         }
     } catch (...) {
         line = "Movie could not be read";

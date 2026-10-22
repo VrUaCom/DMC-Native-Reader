@@ -441,13 +441,17 @@ std::optional<Document> parse_demo(std::span<const std::uint8_t> bytes) {
         }
     }
 
-    // The cutscene ends with its picture: the last Camera, Light or screen
-    // effect clip. Clips past it (pad vibration, subtitles, an effect) belong
-    // to the movie that follows (m01_s00: 5950 of 12455 frames).
+    // The cutscene ends with its picture: the last Camera or Fade clip.
+    // Clips past it (pad vibration, subtitles, an effect) belong to the
+    // movie that follows (m01_s00: 5949 of 12455 frames). Lights and screen
+    // effects are the set's surroundings and run on regardless (m01_v00
+    // lights one for 48900 frames past its last shot at 5729), so neither
+    // end counts them.
     const auto last_end = [&](bool picture_only) {
         float end = 0.0F;
         for (const auto& list : doc.lists) {
-            if (picture_only && list.kind != "Camera" && list.kind != "Light" && list.kind != "ScrEfc") continue;
+            if (list.kind == "Light" || list.kind == "ScrEfc") continue;
+            if (picture_only && list.kind != "Camera" && list.kind != "Fade") continue;
             for (const auto& clip : list.clips) {
                 if (clip.life >= 100000.0F) continue;  // models stand for 1000000 frames
                 end = std::max(end, clip.end_frame());

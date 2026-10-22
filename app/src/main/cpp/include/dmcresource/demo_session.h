@@ -69,10 +69,10 @@ struct PlayerTrack final {
     // (its own motion is relative to that joint); -1 when free.
     int host_track{-1};
     int host_joint{-1};
-    // The model's root sits on the joint: vertex x inverse root rest world x
-    // joint world. Hair and heads are authored at the host's rest pose (their
-    // root rests where the joint does); hands, the amulet (wp140_00) and
-    // em105's parts are authored in the joint's own frame (root at 0).
+    // Hands, the amulet (wp140_00) and em105's parts are authored in the
+    // joint's own frame (root at rest at 0): vertex x joint world (identity
+    // here). Hair, heads and em108_08 are authored at the host's rest pose:
+    // vertex x inverse joint rest world x joint world.
     Matrix4 host_rest_inverse{};
     // A limb part (a hand, pl100_03 / pl100_04): its node 1 is the host
     // joint itself (a body's forearm; the part's wrist, node 2, sits at that
@@ -211,6 +211,20 @@ struct AudioFormat final {
 // `frames` sample frames of the mix from `position`, interleaved, silence
 // where no file plays; empty past the end of every file and the cutscene.
 [[nodiscard]] std::vector<std::int16_t> audio_read(const Session* session, std::int64_t position, std::size_t frames);
+
+// ---- fade ----------------------------------------------------------------
+
+// The screen fade at the player's frame (Fade clips: "FadeType I" fades in
+// from DistRGBA over its life, "O" out to it and holds; DistRGBA alpha 128
+// is opaque, as PS2 alphas are): the colour and how much of it covers the
+// picture (0 none).
+struct Fade final {
+    std::uint8_t r{}, g{}, b{};
+    float amount{};
+};
+[[nodiscard]] Fade fade_at(const Session& session) noexcept;
+// The fade laid over a picture of the scene.
+void apply_fade(const Session& session, RgbaImage* image) noexcept;
 
 // ---- movie ---------------------------------------------------------------
 

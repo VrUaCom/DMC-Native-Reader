@@ -37,6 +37,7 @@ struct ClipStats final {
     std::size_t tracks{};
     std::size_t compression2_tracks{};
     std::size_t compression3_tracks{};
+    std::size_t raw_tracks{};  // compression 0 / 1 (float keys)
     std::size_t unsupported_tracks{};
 };
 
@@ -96,6 +97,20 @@ private:
 // compression 3 (0x1402E8FB0 differs from 0x1402E8C80 only in key stride),
 // value = u16 * q1 / 65535 + q0, strictly linear between keys.
 [[nodiscard]] bool evaluate_compression2_track(
+    const dmc::rengine::formats::mot::TrackRecord& track,
+    float frame,
+    std::int32_t* cached_index,
+    float* out_value) noexcept;
+
+// Compression 0 / 1, float keys (0x1402E9650 cases 0 and 1; the vendored
+// parser keeps their bytes undecoded): an 8-byte track prefix (u16 span, u16
+// key count, u16 compression, i16 time offset), then keys of 8 bytes (u16
+// time | bit 15 mode, u16, f32 value) or 16 (and f32 incoming, outgoing
+// slope). Time = (key & 0x7FFF) + offset. Between keys: linear, or with bit
+// 15 set on the left key the compression-3 Hermite with the keys' slopes
+// (zero for compression 0); held before the first and after the last key.
+// m01_v00's pl101 MOTs are all compression 0.
+[[nodiscard]] bool evaluate_raw_track(
     const dmc::rengine::formats::mot::TrackRecord& track,
     float frame,
     std::int32_t* cached_index,

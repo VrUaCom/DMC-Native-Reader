@@ -2383,8 +2383,10 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
         prepared.dynamic_presentation
             ? prepared.presentation_mesh
             : session->render_mesh;
-    return render_view(presented, prepared.width, prepared.height, prepared.view,
-                       prepared.hierarchy, prepared.texture_slots, prepared.textures);
+    auto image = render_view(presented, prepared.width, prepared.height, prepared.view,
+                             prepared.hierarchy, prepared.texture_slots, prepared.textures);
+    demo::apply_fade(*session, &image);  // a cutscene's Fade clips
+    return image;
 }
 
 std::optional<Vec3> session_camera_eye(const Session* session, int requested_width, int requested_height,

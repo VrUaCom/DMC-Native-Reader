@@ -1707,6 +1707,7 @@ MotionLoadReport load_motion_impl(Session* session, std::string_view name, const
             " tracks=" + std::to_string(stats.tracks) +
             " comp3=" + std::to_string(stats.compression3_tracks) +
             " comp2=" + std::to_string(stats.compression2_tracks) +
+            " float=" + std::to_string(stats.raw_tracks) +
             " heldAtRest=" + std::to_string(stats.unsupported_tracks) +
             " local=EXE 0x140310310 world=local*parent skin=inverseRest*world";
         if (!reasons.empty()) report.detail += "\nStatic parts: " + reasons;

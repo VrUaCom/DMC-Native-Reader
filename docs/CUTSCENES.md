@@ -20,10 +20,16 @@ A PAC:
 `*_movie.pac` carries only the PadVibe and Message clips of a cutscene that
 plays as a movie.
 
-The cutscene's picture ends with its last Camera, Light or ScrEfc clip
-(m01_s00: frame 5950 of 12455). Pad vibration, subtitles and one effect
-clip run on to 12455: they belong to the movie that follows the real-time
-part. The Reader plays the picture from frame 0 to its end and stops there.
+The cutscene's picture ends with its last Camera or Fade clip (m01_s00:
+frame 5949 of 12455). Pad vibration, subtitles and one effect clip run on
+to 12455: they belong to the movie that follows the real-time part. Lights
+and screen effects are the set's surroundings and run on regardless
+(m01_v00 lights one for 48900 frames past its last shot at 5729), so they
+count for neither end. The Reader plays the picture from frame 0 to its end
+and stops there.
+
+A movie's own track (`m01_v01_movie.pac`: only PadVibe and Message clips,
+7100..7105, no scene) opens as the timeline its movie plays on, from 0.
 
 ### Effects
 
@@ -69,6 +75,14 @@ resampled to the first one's rate). A lone `.wmv` opens as a timeline of
 its own (`Movie <name>` in the motion strip; Info: size, length, codecs, the
 first frame). `video.h` decodes it with a minimal FFmpeg
 (`third_party/ffmpeg/README.md`) from memory.
+
+### Fades
+
+`Fade` clips (`FadeType I` / `O`, `DistRGBA r g b a`, alpha 128 opaque as
+PS2 alphas are): I fades the picture in from the colour over the clip's
+life, O out to it and holds it. m01_v00 fades in over its first 60 frames
+and out over its last 60; the Reader lays the fade over the rendered
+picture (`fade_at`, `apply_fade`).
 
 ### Clip texts
 
@@ -141,6 +155,13 @@ swapped for its broken version). The object index is the model's object
   so the GPU rebuilds its cached buffers.
 * MOD / EFM tracks are composed (`compose_mod_sessions`, source
   coordinates) and get their own `Texture`.
+* MOT keys: compression 2 and 3 as the vendored reader decodes them, and
+  compression 0 / 1 (float keys, 0x1402E9650 cases 0 and 1: an 8-byte
+  track prefix, keys of 8 bytes `u16 time | mode bit, u16, f32 value` or 16
+  with f32 incoming / outgoing slopes) read by the Reader itself: every
+  pl101 MOT of m01_v00 is compression 0. A MOT whose domain is shorter than
+  its model drives the leading joints (m01_v00's wp105 MOTs: 2 masks in a
+  header with room for 9, for the 10-node Yamato).
 * Each model track plays its Motion clips: the clip that started last among
   the covering ones, held at its end between clips. A cutscene MOT keeps
   the frame range it was cut from (f32 start at +0x08, end at +0x0C,
@@ -153,13 +174,14 @@ swapped for its broken version). The object index is the model's object
   while the body plays. Body MOTs of the lighter cutscene body variants
   have longer channel domains than the model; they drive its leading joints
   (`load_cutscene_motion`, as 0x140310A80 walks the model's joints).
-* `CnsPos track joint`: the model's root sits on the joint (vertex x
-  inverse root rest world x joint world). Hair and heads (`pl100_01`,
-  `pl100_02`) are authored at the host's rest pose, their root resting where
-  the joint does; hands (`pl100_03` / `pl100_04` in m01_c00), the amulet
-  (`wp140_00`) and em105's parts are authored in the joint's own frame, root
-  at 0. Their MOTs leave the root alone (m01_c00's hand MOTs mask channels
-  0 and 1 out).
+* `CnsPos track joint`: a model authored in the joint's own frame (its root
+  rests at 0: hands `pl100_03` / `pl100_04` in m01_c00, the amulet
+  `wp140_00`, em105's parts) rides the joint as it is (vertex x joint
+  world); one authored at the host's rest pose (hair and heads, whose root
+  rests where the joint does; m02_c01's `em108_08`, whose root rests at 0
+  200.5 39.4, off its joint 3) follows the joint's move from its rest world
+  (vertex x inverse joint rest world x joint world). Their MOTs leave the
+  root alone (m01_c00's hand MOTs mask channels 0 and 1 out).
 * Limb parts without CnsPos (m01_s00's hands): a model whose node 1 is a
   joint of a model of the same character (`pl100_03` and `pl100_10`, both
   `pl100`), its node 2 at that joint's child offset (the wrist, 26.86 along
@@ -167,11 +189,14 @@ swapped for its broken version). The object index is the model's object
   inverse node 1 world x joint world. Their MOTs put node 1 exactly on the
   forearm while a clip plays; between clips the hand follows the arm instead
   of staying behind.
-* Cloth: a Motion clip names a `.clt` (`Cloth pl100_01.clt`); with
-  `ClothMode 1` (the last clip that says, 0 before) its chain runs the solver
-  of `cloth_chain.h` in the world, one step a game frame (`model_cloth.h`):
-  Dante's hair and amulet, em105's sleeves. `ClothMode 0` leaves the bones to
-  the MOT (m01_c00's coat, carried over the shoulder, is baked). `ResetClt` /
+* Cloth: a Motion clip names a `.clt` (`Cloth pl100_01.clt`; with none
+  named, a clip's `ClothMode 1` runs the model's own, `pl101_01.clt` for
+  `pl101_01.mod`, as m01_v00 does) and its chain runs the solver of
+  `cloth_chain.h` in the world, one step a game frame (`model_cloth.h`):
+  Dante's and Vergil's hair and coats, the amulet, Yamato's cord, em105's
+  sleeves, em108's and em134's parts. `ClothMode 0` (it holds until a clip
+  says otherwise; on before) leaves the bones to the MOT (m01_c00's coat,
+  carried over the shoulder, is baked). `ResetClt` /
   `ResetClt2` restart it at the pose and settle it `ResetCltLevel` frames
   (20); a scrub or a jump does the same.
 * Visibility, per object of every track (models and stage pieces): every

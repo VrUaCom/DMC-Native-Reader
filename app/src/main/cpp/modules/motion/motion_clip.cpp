@@ -1,7 +1,9 @@
 #include "dmcresource/motion/motion_clip.h"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <new>
 #include <utility>
@@ -128,6 +130,57 @@ bool evaluate_compression2_track(const mot::TrackRecord& track,
     return true;
 }
 
+bool evaluate_raw_track(const mot::TrackRecord& track,
+                        float frame,
+                        std::int32_t* cached_index,
+                        float* out_value) noexcept {
+    if (cached_index == nullptr || out_value == nullptr || track.compression > 1U || !std::isfinite(frame)) {
+        return false;
+    }
+    const std::size_t stride = track.compression == 0U ? 8U : 16U;
+    const std::size_t count = track.key_count;
+    const auto& bytes = track.source_bytes;
+    if (count == 0U || bytes.size() < 8U + count * stride) return false;
+    const auto* base = reinterpret_cast<const unsigned char*>(bytes.data()) + 8U;
+    const auto time_of = [&](std::size_t k) {
+        std::uint16_t raw = 0;
+        std::memcpy(&raw, base + k * stride, 2U);
+        return raw;
+    };
+    const auto float_at = [&](std::size_t k, std::size_t offset) {
+        float value = 0.0F;
+        std::memcpy(&value, base + k * stride + offset, 4U);
+        return value;
+    };
+    const float t = frame - static_cast<float>(mot_analysis::signed_track_time_offset(track.start_time_raw));
+    // The key at or before t, from the cached one.
+    auto i = static_cast<std::size_t>(std::clamp<std::int32_t>(*cached_index, 0, static_cast<std::int32_t>(count - 1U)));
+    while (i > 0U && static_cast<float>(time_of(i) & 0x7FFFU) > t) --i;
+    while (i + 1U < count && static_cast<float>(time_of(i + 1U) & 0x7FFFU) <= t) ++i;
+    float value = float_at(i, 4U);
+    const float t0 = static_cast<float>(time_of(i) & 0x7FFFU);
+    if (i + 1U < count && t > t0) {
+        const float t1 = static_cast<float>(time_of(i + 1U) & 0x7FFFU);
+        const float v1 = float_at(i + 1U, 4U);
+        if (t1 > t0) {
+            const float d = t1 - t0, u = (t - t0) / d;
+            if ((time_of(i) & 0x8000U) != 0U) {
+                const float out0 = stride == 16U ? float_at(i, 12U) : 0.0F;
+                const float in1 = stride == 16U ? float_at(i + 1U, 8U) : 0.0F;
+                const float u2 = u * u, u3 = u2 * u;
+                value = (2.0F * u3 - 3.0F * u2 + 1.0F) * value + (3.0F * u2 - 2.0F * u3) * v1 +
+                        (u3 - 2.0F * u2 + u) * d * out0 + (u3 - u2) * d * in1;
+            } else {
+                value = (1.0F - u) * value + u * v1;
+            }
+        }
+    }
+    if (!std::isfinite(value)) return false;
+    *cached_index = static_cast<std::int32_t>(i);
+    *out_value = value;
+    return true;
+}
+
 std::expected<MotionClip, ClipError> MotionClip::bind(
     std::span<const std::byte> mot_bytes,
     const SkeletonRig& rig,
@@ -184,8 +237,11 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
             const auto required_mask_end =
                 mot::HeaderAbi::channel_mask_table +
                 node_count * sizeof(std::uint16_t);
-            if (required_mask_end > binding_document.header_size ||
-                required_mask_end > mot_bytes.size()) {
+            // A cutscene MOT drives its leading joints: m01_v00's wp105
+            // MOTs declare 2 masks in a 0x30-byte header (room for 9) for the
+            // 10-node Yamato; the joints past the header take no track.
+            if (!leading_joints && (required_mask_end > binding_document.header_size ||
+                                    required_mask_end > mot_bytes.size())) {
                 return std::unexpected(ClipError::NodeCountMismatch);
             }
             binding_document.channel_domain_count =
@@ -196,7 +252,9 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
                  ++index) {
                 const auto mask_offset = mot::HeaderAbi::channel_mask_table +
                     index * sizeof(std::uint16_t);
-                if (read_u16(mot_bytes, mask_offset) != 0U) {
+                const bool inside = mask_offset + sizeof(std::uint16_t) <= binding_document.header_size &&
+                                    mask_offset + sizeof(std::uint16_t) <= mot_bytes.size();
+                if (inside && read_u16(mot_bytes, mask_offset) != 0U) {
                     return std::unexpected(ClipError::NodeCountMismatch);
                 }
                 binding_document.channel_masks.push_back(0U);
@@ -232,6 +290,7 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
             ++clip.stats_.tracks;
             if (track.compression == 3U) ++clip.stats_.compression3_tracks;
             else if (track.compression == 2U) ++clip.stats_.compression2_tracks;
+            else if (track.compression <= 1U) ++clip.stats_.raw_tracks;
             else ++clip.stats_.unsupported_tracks;
             clip.bound_.push_back({bound.node_index,
                                    static_cast<std::uint8_t>(std::to_underlying(bound.channel)),
@@ -281,6 +340,9 @@ bool MotionClip::evaluate_channels(float frame, std::span<JointChannels> out) no
         } else if (track.compression == 2U) {
             float evaluated = 0.0F;
             if (evaluate_compression2_track(track, frame, &cache, &evaluated)) value = evaluated;
+        } else if (track.compression <= 1U) {
+            float evaluated = 0.0F;
+            if (evaluate_raw_track(track, frame, &cache, &evaluated)) value = evaluated;
         }
         set_channel(&out[bound.node], bound.channel, value);
     }
