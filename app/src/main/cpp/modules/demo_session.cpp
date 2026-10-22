@@ -328,13 +328,29 @@ bool apply_visibility(Session& scene, Player& p, bool force) {
     return room_changed;
 }
 
-// The Motion clip of a track at the player's frame: the MOT and its time.
+// A cutscene MOT keeps the frame range it was cut from, like a camera:
+// f32 start at +0x08 and end at +0x0C (repeated at +0x10 / +0x14), and its
+// keys sit on those frames: pl100_00_0005 covers 88..468 for its 380-frame
+// clip. A range that starts below zero (pl100_00_c010, -70..565) has its
+// keys count from its start, so its clip plays from 0. 0 without a range.
+[[nodiscard]] float mot_start(const Player& p, std::string_view name) noexcept {
+    const auto* member = p.doc.member(name);
+    if (member == nullptr || member->size < 0x18U) return 0.0F;
+    float start = 0.0F, end = 0.0F;
+    std::memcpy(&start, p.bytes->data() + member->offset + 0x08U, 4U);
+    std::memcpy(&end, p.bytes->data() + member->offset + 0x0CU, 4U);
+    return std::isfinite(start) && std::isfinite(end) && start > 0.0F && end >= start ? start : 0.0F;
+}
+
+// The Motion clip of a track at the player's frame and the time of its MOT:
+// the MOT's start frame plus the clip's own time (CutFrame trims the clip's
+// end, it does not move its start: Life already spans the MOT's range).
 [[nodiscard]] const Clip* motion_clip(const Player& p, int track, float* time) {
     const auto* list = p.doc.list("Motion", track);
     if (list == nullptr || list->clips.empty()) return nullptr;
     float local = 0.0F;
     const auto* clip = clip_at(*list, p.frame, &local);
-    if (clip != nullptr) *time = clip->cut_frame + std::clamp(local, 0.0F, clip->life);
+    if (clip != nullptr) *time = mot_start(p, clip->value("Motion")) + std::clamp(local, 0.0F, clip->life);
     return clip;
 }
 

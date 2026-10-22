@@ -128,8 +128,15 @@ swapped for its broken version). The object index is the model's object
 * MOD / EFM tracks are composed (`compose_mod_sessions`, source
   coordinates) and get their own `Texture`.
 * Each model track plays its Motion clips: the clip that started last among
-  the covering ones, held at its end between clips, at
-  `CutFrame + local time`. Body MOTs of the lighter cutscene body variants
+  the covering ones, held at its end between clips. A cutscene MOT keeps
+  the frame range it was cut from (f32 start at +0x08, end at +0x0C,
+  repeated at +0x10 / +0x14) and its keys sit on those frames
+  (`pl100_00_0004`: 650..1060), so a clip plays its MOT at
+  `start + local time`; a range that starts below zero (`pl100_00_c010`,
+  -70..565) has its keys count from its start, so it plays at `local
+  time`. `CutFrame` trims a clip's end, it does not move its start. Weapon
+  MOTs often hold two equal keys: the weapon lies still (on the desk)
+  while the body plays. Body MOTs of the lighter cutscene body variants
   have longer channel domains than the model; they drive its leading joints
   (`load_cutscene_motion`, as 0x140310A80 walks the model's joints).
 * `CnsPos track joint`: the model is authored at its host's rest pose and
