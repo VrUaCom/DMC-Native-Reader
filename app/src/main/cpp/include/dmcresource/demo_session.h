@@ -97,6 +97,9 @@ struct Player final {
     // The view follows the cutscene camera until the user takes it.
     bool director{true};
     std::optional<CameraShot> shot;
+    // How far ahead the shot looked when the user took the camera: the free
+    // camera's pan and dolly move about content at that distance.
+    float free_focus{};
 };
 
 // Builds the scene of a cutscene archive from its opened PAC session (whose
@@ -133,6 +136,9 @@ void unbind(Session* session) noexcept;
 // The user takes the camera: the cutscene camera stops driving the view and
 // the view it stood at is handed back to continue from.
 [[nodiscard]] std::optional<DirectorView> take_camera(Session* session) noexcept;
+// The taken camera's focus distance (eye to the shot's target); 0 while the
+// cutscene camera drives the view.
+[[nodiscard]] float free_camera_focus(const Session& session) noexcept;
 
 // ---- effects ---------------------------------------------------------------
 

@@ -44,16 +44,36 @@ int main() {
             orbit.dolly = 0.3F;
             const Vec3 eye = view_camera_eye(mesh, W, H, orbit);
 
-            // Same picture after the switch.
+            // Same picture after the switch (the eye holds the pan and dolly).
             ViewState fly = orbit;
             fly.fly = true;
             fly.fly_eye = eye;
+            fly.pan_x = fly.pan_y = 0.0F;
+            fly.dolly = 0.0F;
             const auto a = project(mesh, orbit, probes);
             const auto b = project(mesh, fly, probes);
             for (std::size_t i = 0U; i < probes.size(); ++i) {
                 assert(std::fabs(a[i].x - b[i].x) < 0.02F && std::fabs(a[i].y - b[i].y) < 0.02F);
             }
             assert(view_camera_eye(mesh, W, H, fly).x == eye.x);
+
+            // Pan and dolly move the fly eye: across along right / up, the
+            // dolly along the view.
+            {
+                const auto basis = camera_basis(yaw, pitch);
+                ViewState moved = fly;
+                moved.pan_x = 0.2F;
+                const Vec3 side = view_camera_eye(mesh, W, H, moved);
+                const Vec3 d{side.x - eye.x, side.y - eye.y, side.z - eye.z};
+                const float along = d.x * basis.right.x + d.y * basis.right.y + d.z * basis.right.z;
+                assert(along > 1.0F && std::fabs(std::hypot(d.x, d.y, d.z) - along) < 1.0e-2F);
+                moved.pan_x = 0.0F;
+                moved.dolly = 0.25F;
+                const Vec3 in = view_camera_eye(mesh, W, H, moved);
+                const Vec3 e{in.x - eye.x, in.y - eye.y, in.z - eye.z};
+                const float ahead = e.x * basis.forward.x + e.y * basis.forward.y + e.z * basis.forward.z;
+                assert(ahead > 1.0F && std::fabs(std::hypot(e.x, e.y, e.z) - ahead) < 1.0e-2F);
+            }
 
             // Forward is the screen centre; right and up are screen right and up.
             const auto basis = camera_basis(yaw, pitch);

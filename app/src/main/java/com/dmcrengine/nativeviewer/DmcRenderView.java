@@ -644,6 +644,10 @@ public final class DmcRenderView extends View {
                     renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly)) {
                 return false;
             }
+            // The eye already stands where the pan and dolly put the camera.
+            panX = 0.0f;
+            panY = 0.0f;
+            dolly = 0.0f;
             removeCallbacks(spinTick);
             spinYaw = 0.0f;
             spinPitch = 0.0f;

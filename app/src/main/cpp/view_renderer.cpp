@@ -108,8 +108,18 @@ CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int h
         std::isfinite(view.fly_eye.z)) {
         const auto basis = camera_basis(view.yaw_radians, view.pitch_radians);
         const float cd = frame.camera_distance;
-        frame.center = {view.fly_eye.x + basis.forward.x * cd, view.fly_eye.y + basis.forward.y * cd,
-                        view.fly_eye.z + basis.forward.z * cd};
+        // Pan and dolly move the eye as the orbit's would move it about
+        // content at the focus distance: across the picture in framing radii
+        // scaled to that distance (what is under the fingers follows them),
+        // along the view axis by the dolly's share of it.
+        const float focus = std::isfinite(view.fly_focus) && view.fly_focus > 0.0F ? view.fly_focus : cd;
+        const float ahead = std::isfinite(view.dolly) ? view.dolly * focus : 0.0F;
+        const float across = std::isfinite(view.pan_x) ? view.pan_x * frame.radius * focus / cd : 0.0F;
+        const float rise = std::isfinite(view.pan_y) ? view.pan_y * frame.radius * focus / cd : 0.0F;
+        const Vec3 eye{view.fly_eye.x + basis.forward.x * ahead + basis.right.x * across + basis.up.x * rise,
+                       view.fly_eye.y + basis.forward.y * ahead + basis.right.y * across + basis.up.y * rise,
+                       view.fly_eye.z + basis.forward.z * ahead + basis.right.z * across + basis.up.z * rise};
+        frame.center = {eye.x + basis.forward.x * cd, eye.y + basis.forward.y * cd, eye.z + basis.forward.z * cd};
         return frame;
     }
     if (view.has_orbit_pivot && std::isfinite(view.orbit_pivot.x) && std::isfinite(view.orbit_pivot.y) &&
@@ -125,6 +135,17 @@ CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int h
     // Dolly: a camera move along the view axis.
     if (std::isfinite(view.dolly)) frame.camera_distance *= 1.0F - view.dolly;
     return frame;
+}
+
+// The near plane in camera space, shared by the room, model, GPU and pick
+// passes. An orbit view keeps it at 5% of the framing radius. A camera
+// inside the scene (fly, a cutscene shot) stands among the models of a
+// framing that spans the whole set: 5% of m01_s00's radius is 56 units, a
+// third of Dante, so its plane sits at 0.2% (2 units). Kept in front of the
+// framing centre when the camera dollies in.
+float near_plane(const ViewState& view, const CameraFrame& frame) noexcept {
+    const float base = view.fly ? std::max(0.5F, frame.radius * 0.002F) : std::max(1.0F, frame.radius * 0.05F);
+    return std::max(1.0e-4F, std::min(base, 0.5F * frame.camera_distance));
 }
 
 // Room vertex / normal placement: turned by room_yaw about room_pivot, then
@@ -670,7 +691,7 @@ struct RoomFrame {
             view.room_translucent_triangles->size() == rm.indices.size() / 3U
         ? view.room_translucent_triangles
         : nullptr;
-    const float near_z = std::max(1.0F, frame.radius * 0.05F);
+    const float near_z = near_plane(view, frame);
     const float focal = zoom * frame.focal_px;
     const float hw = static_cast<float>(width) * 0.5F;
     const float hh = static_cast<float>(height) * 0.5F;
@@ -1176,7 +1197,7 @@ struct OverlayPen final {
 
     OverlayPen(RgbaImage& target, const CameraFrame& camera, const ViewState& state)
         : image(target), frame(camera), view(state), zoom(std::clamp(state.zoom, 0.15F, 8.0F)),
-          line_near(std::max(0.5F, camera.radius * 0.02F)), mesh_px(std::clamp(state.mesh_line_px, 1, 63)),
+          line_near(std::min(std::max(0.5F, camera.radius * 0.02F), near_plane(state, camera))), mesh_px(std::clamp(state.mesh_line_px, 1, 63)),
           collision_px(std::clamp(state.collision_line_px, 1, 63)) {}
 
     [[nodiscard]] Vec3 to_cam(const Vec3& world) const {
@@ -1440,7 +1461,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
     // shoulder) has model geometry at and behind it: triangles are clipped at
     // the near plane in camera space (the GPU pass clips at the same plane),
     // never projected through a clamped divide across the picture.
-    const float model_near = std::max(1.0e-4F, std::min(std::max(1.0F, radius * 0.05F), 0.5F * cd));
+    const float model_near = near_plane(view, frame);
     const auto behind_near = [&](const P2& q) { return q.z + cd < model_near; };
     const float focal = zoom * frame.focal_px;
     const float half_w = static_cast<float>(image.width) * 0.5F, half_h = static_cast<float>(image.height) * 0.5F;
@@ -2047,7 +2068,7 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
     // Near plane: the room pass's own (prepare_room), kept in front of the
     // model when the camera dollies in.
     const float cd = frame.camera_distance;
-    const float near_z = std::max(1.0e-4F, std::min(std::max(1.0F, frame.radius * 0.05F), 0.5F * cd));
+    const float near_z = near_plane(view, frame);
 
     const auto project = [&](const Vec3& world) {
         return project_in_frame(frame, world, view.yaw_radians, view.pitch_radians, zoom, width, height);
@@ -2137,7 +2158,6 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
 }
 
 Vec3 view_camera_eye(const Mesh& mesh, int width, int height, const ViewState& view) {
-    if (view.fly) return view.fly_eye;
     const auto frame = view_frame(mesh, view, std::clamp(width, 1, 8192), std::clamp(height, 1, 8192));
     // c = R (w - centre) + (-pan, cd) is 0 at the eye.
     const auto b = camera_basis(view.yaw_radians, view.pitch_radians);
@@ -2213,7 +2233,7 @@ ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& vie
     if (view.room_mesh != nullptr) {
         const Mesh& rm = *view.room_mesh;
         const bool normals = rm.has_normal0();
-        const float near_z = std::max(1.0F, frame.radius * 0.05F);
+        const float near_z = near_plane(view, frame);
         for (std::size_t t = 0U; t + 2U < rm.indices.size(); t += 3U) {
             const auto ia = rm.indices[t], ib = rm.indices[t + 1U], ic = rm.indices[t + 2U];
             if (ia >= rm.vertices.size() || ib >= rm.vertices.size() || ic >= rm.vertices.size()) continue;

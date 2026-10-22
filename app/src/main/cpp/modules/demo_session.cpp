@@ -776,7 +776,14 @@ std::optional<DirectorView> take_camera(Session* session) noexcept {
     auto* p = player(session);
     if (p == nullptr || !p->director || !p->shot) return std::nullopt;
     p->director = false;
-    return view_of(p->shot->pose);
+    const auto& pose = p->shot->pose;
+    p->free_focus = std::hypot(pose.target.x - pose.eye.x, pose.target.y - pose.eye.y, pose.target.z - pose.eye.z);
+    return view_of(pose);
+}
+
+float free_camera_focus(const Session& session) noexcept {
+    const auto* p = player(&session);
+    return p == nullptr || p->director || !std::isfinite(p->free_focus) ? 0.0F : p->free_focus;
 }
 
 std::string status_line(const Session* session) {

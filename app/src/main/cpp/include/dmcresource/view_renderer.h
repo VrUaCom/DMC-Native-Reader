@@ -167,11 +167,14 @@ struct ViewState {
     Vec3 frame_shift{};
     float room_yaw{0.0F};
     Vec3 room_pivot{};
-    // Fly camera (stages, collision views): the camera stands at fly_eye and
-    // looks along yaw / pitch, turning about itself instead of orbiting the
-    // framed centre. Pan, dolly and the follow shift do not apply.
+    // Fly camera (stages, collision views, a cutscene's camera): the camera
+    // stands at fly_eye and looks along yaw / pitch, turning about itself
+    // instead of orbiting the framed centre. Pan and dolly move the eye, as
+    // they would move it about content at fly_focus ahead (0: the framing
+    // distance); the follow shift does not apply.
     bool fly{false};
     Vec3 fly_eye{};
+    float fly_focus{0.0F};
     // Orbit about this point instead of the framed centre (left by a flight,
     // camera_control.h); pan and dolly still apply.
     bool has_orbit_pivot{false};

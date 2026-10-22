@@ -2141,10 +2141,11 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.dolly = 0.0F;
     } else if (controls.fly && std::isfinite(controls.eye.x) && std::isfinite(controls.eye.y) &&
         std::isfinite(controls.eye.z)) {
+        // Pan and dolly move the eye itself (a cutscene's camera taken by a
+        // gesture keeps them; the fly mode starts them at zero).
         view.fly = true;
         view.fly_eye = controls.eye;
-        view.pan_x = view.pan_y = 0.0F;
-        view.dolly = 0.0F;
+        view.fly_focus = demo::free_camera_focus(session);
     } else if (controls.has_pivot) {
         view.has_orbit_pivot = true;
         view.orbit_pivot = controls.pivot;
@@ -2329,7 +2330,8 @@ float session_camera_distance(const Session* session) noexcept {
 }
 
 float session_dolly_limit(const Session* session) noexcept {
-    return session != nullptr && session->stage != nullptr ? 4.0F : 0.9F;
+    // A stage or a cutscene set is walked through; a model is not passed.
+    return session != nullptr && (session->stage != nullptr || demo::is_demo(session)) ? 4.0F : 0.9F;
 }
 
 RgbaImage render_session(const Session* session, int requested_width,
