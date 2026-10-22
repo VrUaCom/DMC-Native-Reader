@@ -2199,6 +2199,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         const auto placement = demo::is_demo(&session) ? stage_room::Placement{}
                                                        : stage_room::placement_for(rest, controls.room_yaw);
         view.room_mesh = &out->room->mesh;
+        view.room_revision = out->room->revision;
         view.room_texture_slots = &out->room->triangle_texture_slots;
         view.room_textures = &out->room->textures;
         view.room_translucent_triangles = &out->room->translucent_triangles;
@@ -2225,6 +2226,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         // stage never turns away from them.
         const float stage_yaw = demo::is_demo(&session) || !std::isfinite(controls.room_yaw) ? 0.0F : controls.room_yaw;
         view.room_mesh = &stage.mesh;
+        view.room_revision = stage.revision;
         view.room_texture_slots = &stage.triangle_texture_slots;
         view.room_textures = &stage.textures;
         view.room_translucent_triangles = &stage.translucent_triangles;

@@ -232,6 +232,33 @@ CameraPose evaluate(const CameraAnim& anim, float frame) noexcept {
     return pose;
 }
 
+// ---- .hid ----------------------------------------------------------------
+
+std::optional<HideAnim> parse_hid(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() < 0x20U || std::memcmp(bytes.data() + 4U, "HID\0", 4U) != 0) return std::nullopt;
+    const std::size_t header = u32(bytes, 0U);
+    const std::size_t count = bytes[0x1CU];
+    if (header < 0x1DU + count || header + 4U > bytes.size()) return std::nullopt;
+    HideAnim anim;
+    anim.start = f32(bytes, 0x0CU);
+    anim.end = f32(bytes, 0x10U);
+    std::vector<std::uint32_t> flagged;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (bytes[0x1DU + i] != 0U) flagged.push_back(static_cast<std::uint32_t>(i));
+    }
+    const std::uint32_t tracks = u32(bytes, header);
+    std::size_t at = header + 4U;
+    for (std::uint32_t t = 0; t < tracks && t < flagged.size(); ++t) {
+        if (at + 16U > bytes.size()) return std::nullopt;
+        const std::size_t size = u16(bytes, at);
+        if (size < 16U || at + size > bytes.size()) return std::nullopt;
+        const float state = f32(bytes, at + 8U);
+        anim.objects.push_back({flagged[t], std::isfinite(state) && state != 0.0F});
+        at += size;
+    }
+    return anim;
+}
+
 // ---- clips ---------------------------------------------------------------
 
 std::string Clip::value(std::string_view key) const {
@@ -289,6 +316,13 @@ const Member* Document::member(std::string_view file) const noexcept {
 
 const CameraAnim* Document::camera(std::string_view file) const noexcept {
     for (const auto& [name, anim] : cameras) {
+        if (name == file) return &anim;
+    }
+    return nullptr;
+}
+
+const HideAnim* Document::hide(std::string_view file) const noexcept {
+    for (const auto& [name, anim] : hides) {
         if (name == file) return &anim;
     }
     return nullptr;
@@ -388,8 +422,11 @@ std::optional<Document> parse_demo(std::span<const std::uint8_t> bytes) {
         }
     }
     for (const auto& member : doc.members) {
-        if (auto anim = parse_cam(bytes.subspan(member.offset, member.size))) {
+        const auto body = bytes.subspan(member.offset, member.size);
+        if (auto anim = parse_cam(body)) {
             doc.cameras.emplace_back(member.name, std::move(*anim));
+        } else if (auto hide = parse_hid(body)) {
+            doc.hides.emplace_back(member.name, std::move(*hide));
         }
     }
 

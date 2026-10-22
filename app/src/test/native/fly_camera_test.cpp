@@ -81,14 +81,29 @@ int main() {
     // A fly view renders (software path) and its picture is not empty.
     {
         ViewState view;
+        view.fly_eye = view_camera_eye(mesh, W, H, view);  // the orbit camera's eye
         view.fly = true;
-        view.fly_eye = view_camera_eye(mesh, W, H, view);
         view.fly_eye = fly_move(view.fly_eye, view.yaw_radians, view.pitch_radians, 50.0F, 0.0F, 0.0F);
         const auto image = render_view(mesh, W, H, view);
         assert(image.width == W && image.height == H);
         std::size_t lit = 0U;
         for (std::size_t i = 0U; i < image.pixels.size(); i += 4U) lit += image.pixels[i] > 60U;
         assert(lit > 100U);
+        // Flown past the model: it is behind the camera and nothing of it is
+        // drawn (no triangle projected through the eye across the picture).
+        view.fly_eye = fly_move(view.fly_eye, view.yaw_radians, view.pitch_radians, 2000.0F, 0.0F, 0.0F);
+        const auto past = render_view(mesh, W, H, view);
+        std::size_t drawn = 0U;
+        for (std::size_t i = 0U; i < past.pixels.size(); i += 4U) drawn += past.pixels[i] > 60U;
+        assert(drawn == 0U);
+        // Standing inside the model's plane span: the near-clipped part draws.
+        view.fly_eye = {0.0F, 90.0F, -60.0F};
+        view.yaw_radians = 0.0F;
+        view.pitch_radians = 0.0F;
+        const auto inside = render_view(mesh, W, H, view);
+        std::size_t near_lit = 0U;
+        for (std::size_t i = 0U; i < inside.pixels.size(); i += 4U) near_lit += inside.pixels[i] > 60U;
+        assert(near_lit > 100U);
     }
     return 0;
 }

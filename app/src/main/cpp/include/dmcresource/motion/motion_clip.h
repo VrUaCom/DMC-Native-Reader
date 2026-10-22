@@ -67,6 +67,9 @@ public:
     // local matrices (node-indexed). Track caches are updated in place so
     // sequential playback stays O(1) per track, like the runtime cache.
     [[nodiscard]] bool evaluate_locals(float frame, std::span<Matrix4f> out_locals) noexcept;
+    // The channels themselves (translation, rotation xyz, scale per node), for
+    // nodes whose local matrix another format builds (SCM scene nodes).
+    [[nodiscard]] bool evaluate_channels(float frame, std::span<JointChannels> out) noexcept;
 
     [[nodiscard]] bool any_non_unit_scale() const noexcept { return saw_non_unit_scale_; }
 

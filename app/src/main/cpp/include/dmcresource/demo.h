@@ -79,6 +79,28 @@ struct CameraPose final {
 // the last key of each channel).
 [[nodiscard]] CameraPose evaluate(const CameraAnim& anim, float frame) noexcept;
 
+// ---- .hid ----------------------------------------------------------------
+//
+// Hide animation of a model's objects: u32 header size, "HID\0", u32, the
+// frame range (start, end, start, end), u8 object count N and N bytes (1:
+// the object has a track), padded to the header size; then u32 track count
+// and the tracks of the flagged objects in object order: u16 byte size, u16
+// key count, u32 kind (7), f32 state (-1 shown, 0 hidden), f32 1.0, then 4
+// bytes a key (big-endian u16 frame from the range, u16 flag). DispOn.hid
+// shows and DispOff.hid hides objects 0..99.
+
+struct HideAnim final {
+    float start{};
+    float end{};
+    struct Object final {
+        std::uint32_t object{};
+        bool shown{true};
+    };
+    std::vector<Object> objects;
+};
+
+[[nodiscard]] std::optional<HideAnim> parse_hid(std::span<const std::uint8_t> bytes);
+
 // ---- clips ---------------------------------------------------------------
 
 struct Clip final {
@@ -139,10 +161,13 @@ struct Document final {
     std::vector<std::string> skipped;
     // Every .cam of the archive, decoded once.
     std::vector<std::pair<std::string, CameraAnim>> cameras;
+    // Every .hid, decoded once.
+    std::vector<std::pair<std::string, HideAnim>> hides;
     float end_frame{};
 
     [[nodiscard]] const Member* member(std::string_view file) const noexcept;
     [[nodiscard]] const CameraAnim* camera(std::string_view file) const noexcept;
+    [[nodiscard]] const HideAnim* hide(std::string_view file) const noexcept;
     [[nodiscard]] const ClipList* list(std::string_view kind, int track = -1) const noexcept;
     // Tracks with any Model, Motion or Hide clip, by index.
     [[nodiscard]] std::vector<Track> tracks() const;

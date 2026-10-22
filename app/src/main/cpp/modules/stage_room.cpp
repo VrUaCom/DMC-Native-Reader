@@ -626,21 +626,7 @@ std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t
                 room->collision_sources.front(), room->collision_kinds);
         }
         if (room->mesh.indices.size() < 3U) return nullptr;
-        // Soft-alpha textures: more than 2 % of texels between 8 and 239.
-        std::vector<std::uint8_t> soft(room->textures.size(), 0U);
-        for (std::size_t i = 0U; i < room->textures.size(); ++i) {
-            const auto& t = room->textures[i];
-            if (!t.available()) continue;
-            std::size_t partial = 0U;
-            for (std::size_t o = 3U; o < t.rgba8.size(); o += 4U) {
-                if (t.rgba8[o] >= 8U && t.rgba8[o] < 240U) ++partial;
-            }
-            soft[i] = partial * 50U > t.rgba8.size() / 4U ? 1U : 0U;
-        }
-        room->translucent_triangles.reserve(room->triangle_texture_slots.size());
-        for (const auto slot : room->triangle_texture_slots) {
-            room->translucent_triangles.push_back(slot < soft.size() ? soft[slot] : 0U);
-        }
+        mark_translucent(*room);
         room->spots = floor_spots(room->mesh);
         // Stand first where the game frames the stage: the floor spot nearest
         // to the midpoint of cam_init and the placed objects.
@@ -695,6 +681,51 @@ std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t
 }
 
 }  // namespace
+
+void mark_translucent(Room& room) {
+    // Soft-alpha textures: more than 2 % of texels between 8 and 239.
+    std::vector<std::uint8_t> soft(room.textures.size(), 0U);
+    for (std::size_t i = 0U; i < room.textures.size(); ++i) {
+        const auto& t = room.textures[i];
+        if (!t.available()) continue;
+        std::size_t partial = 0U;
+        for (std::size_t o = 3U; o < t.rgba8.size(); o += 4U) {
+            if (t.rgba8[o] >= 8U && t.rgba8[o] < 240U) ++partial;
+        }
+        soft[i] = partial * 50U > t.rgba8.size() / 4U ? 1U : 0U;
+    }
+    room.translucent_triangles.clear();
+    room.translucent_triangles.reserve(room.triangle_texture_slots.size());
+    for (const auto slot : room.triangle_texture_slots) {
+        room.translucent_triangles.push_back(slot < soft.size() ? soft[slot] : 0U);
+    }
+}
+
+std::shared_ptr<Room> assemble_room(std::string_view name, std::span<const Session* const> pieces,
+                                    std::span<const std::string> names) noexcept {
+    try {
+        auto room = std::make_shared<Room>();
+        room->name = std::string{name};
+        for (std::size_t i = 0U; i < pieces.size(); ++i) {
+            const Session* piece = pieces[i];
+            if (piece == nullptr) continue;
+            ++room->pieces;
+            if (!piece->attached_textures.empty()) ++room->textured_pieces;
+            merge_hierarchy(*piece, nullptr, room.get());
+            append(*piece, room.get(), false, i < names.size() ? names[i] : std::string{});
+        }
+        if (room->mesh.indices.size() < 3U) return nullptr;
+        mark_translucent(*room);
+        room->spots = floor_spots(room->mesh);
+        std::ostringstream detail;
+        detail << room->name << ": " << room->pieces << " pieces, " << room->textured_pieces << " textured, "
+               << room->mesh.vertices.size() << " vertices, " << room->mesh.indices.size() / 3U << " triangles";
+        room->detail = detail.str();
+        return room;
+    } catch (...) {
+        return nullptr;
+    }
+}
 
 std::shared_ptr<const Room> build_room(std::string_view name, const std::uint8_t* bytes, std::size_t size) noexcept {
     try {

@@ -8,46 +8,38 @@
 #include <cstring>
 #include <utility>
 
+#include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmc_rengine/formats/scm.hpp"
+#include "dmc_rengine/formats/scm_transform.hpp"
+#include "dmcresource/motion/motion_clip.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/stage_room.h"
 
 namespace dmcresource::demo {
+
+namespace world = dmc::rengine::formats::mod::world_transform;
+
+// A stage piece's own motion: its scene nodes driven by a MOT (the SCM node
+// records have the MOD joint record layout: translation, rotation xyz), every
+// object moving rigidly with its node. The MOT gives each node's channels;
+// the node's matrix is built the SCM way (its rotation order is not the MOD
+// joints'), so the rest pose is the piece's own.
+struct StageMotion final {
+    std::shared_ptr<motion::SkeletonRig> rig;
+    std::vector<std::int32_t> parents;
+    std::vector<float> magnitudes;  // SCM translation magnitude per node
+    // The objects' own vertices (SCM meshes are local to their node), in the
+    // piece's vertex order.
+    std::vector<Vec3> local_vertices;
+    std::optional<motion::MotionClip> clip;
+    float last_local{-1.0F};
+};
+
 namespace {
 
 constexpr float kHalfFovRadians = 0.5F;  // the viewer's framing at zoom 1 (view_renderer.cpp)
 constexpr float kDegrees = 3.14159265358979323846F / 180.0F;
-
-[[nodiscard]] bool ends_with(std::string_view s, std::string_view tail) noexcept {
-    if (s.size() < tail.size()) return false;
-    for (std::size_t i = 0; i < tail.size(); ++i) {
-        char c = s[s.size() - tail.size() + i];
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        if (c != tail[i]) return false;
-    }
-    return true;
-}
-
-// A PAC of the given files in order, every slot 16-byte aligned: the stage
-// pieces with their PTX before each, the way build_room pairs them.
-[[nodiscard]] std::vector<std::uint8_t> make_pac(const std::vector<std::span<const std::uint8_t>>& files) {
-    const auto align = [](std::size_t v) { return (v + 15U) & ~std::size_t{15U}; };
-    std::size_t at = align(8U + files.size() * 4U);
-    std::vector<std::uint32_t> offsets;
-    for (const auto& f : files) {
-        offsets.push_back(static_cast<std::uint32_t>(at));
-        at = align(at + f.size());
-    }
-    std::vector<std::uint8_t> out(at, 0U);
-    std::memcpy(out.data(), "PAC\0", 4U);
-    const auto count = static_cast<std::uint32_t>(files.size());
-    std::memcpy(out.data() + 4U, &count, 4U);
-    for (std::size_t i = 0; i < files.size(); ++i) {
-        std::memcpy(out.data() + 8U + i * 4U, &offsets[i], 4U);
-        if (!files[i].empty()) std::memcpy(out.data() + offsets[i], files[i].data(), files[i].size());
-    }
-    return out;
-}
 
 [[nodiscard]] Player* player(const Session* session) noexcept {
     return session != nullptr ? session->demo.get() : nullptr;
@@ -109,66 +101,279 @@ void update_shot(Player& p) {
             p.x * v[2] + p.y * v[6] + p.z * v[10] + v[14]};
 }
 
-// Whether a track is drawn at `frame`: the Hide clip set last before it
-// decides (H hides the model, D shows it, A plays a hide animation:
-// DispOff.hid hides every object, DispOn.hid and the per-object animations
-// leave it shown). Without Hide clips a model is shown.
-[[nodiscard]] bool visible_at(const ClipList* list, float frame) {
-    if (list == nullptr) return true;
-    const Clip* last = nullptr;
-    for (const auto& clip : list->clips) {
-        if (clip.set_frame <= frame && (last == nullptr || clip.set_frame >= last->set_frame)) last = &clip;
+// A scene node's local matrix from channels, the SCM way (scale applied
+// first: rows of the basis scaled).
+[[nodiscard]] world::Matrix4f scm_local(const motion::JointChannels& c, float magnitude) noexcept {
+    namespace scm = dmc::rengine::formats::scm;
+    scm::SceneTransform t;
+    t.translation = {c.translation[0], c.translation[1], c.translation[2]};
+    t.translation_magnitude = magnitude;
+    t.rotation_xyz_radians = {c.rotation[0], c.rotation[1], c.rotation[2]};
+    const auto built = scm::build_local_transform(t);
+    world::Matrix4f out;
+    out.values = built.values;
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t col = 0; col < 3; ++col) out.values[row * 4U + col] *= c.scale[row];
     }
-    if (last == nullptr) return true;
-    const auto kind = last->value("HideKind");
-    if (kind == "H") return false;
-    if (kind == "D") return true;
-    auto file = last->value("Hide");
-    for (auto& c : file) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return file != "dispoff.hid";
+    return out;
 }
 
-// Draws the visible tracks' triangles only.
-void apply_visibility(Session& scene, Player& p) {
-    bool changed = false;
-    for (auto& t : p.tracks) {
-        const bool now = visible_at(p.doc.list("Hide", t.track), p.frame);
-        changed = changed || now != t.visible;
-        t.visible = now;
+[[nodiscard]] Vec3 transform(const Vec3& p, const world::Matrix4f& m) noexcept {
+    const auto& v = m.values;
+    return {p.x * v[0] + p.y * v[4] + p.z * v[8] + v[12], p.x * v[1] + p.y * v[5] + p.z * v[9] + v[13],
+            p.x * v[2] + p.y * v[6] + p.z * v[10] + v[14]};
+}
+
+// World matrices from locals: world = local x parent world.
+[[nodiscard]] std::vector<world::Matrix4f> compose_worlds(std::span<const world::Matrix4f> locals,
+                                                          std::span<const std::int32_t> parents) {
+    const std::size_t n = locals.size();
+    std::vector<world::Matrix4f> out(n, world::identity_matrix());
+    std::vector<std::uint8_t> state(n, 0U);  // 0 open, 1 in progress, 2 done
+    const auto solve = [&](auto& self, std::size_t i) -> void {
+        if (state[i] == 2U) return;
+        if (state[i] == 1U) {  // a cycle: treat as a root
+            out[i] = locals[i];
+            state[i] = 2U;
+            return;
+        }
+        state[i] = 1U;
+        const auto parent = i < parents.size() ? parents[i] : -1;
+        if (parent >= 0 && static_cast<std::size_t>(parent) < n && static_cast<std::size_t>(parent) != i) {
+            self(self, static_cast<std::size_t>(parent));
+            out[i] = world::multiply_dmc3_matrices(locals[i], out[static_cast<std::size_t>(parent)]);
+        } else {
+            out[i] = locals[i];
+        }
+        state[i] = 2U;
+    };
+    for (std::size_t i = 0; i < n; ++i) solve(solve, i);
+    return out;
+}
+
+// The objects of a track's model: its meshes in order, each with its object
+// and node; one range for the whole model when the projection is not the
+// plain concatenation of its meshes.
+[[nodiscard]] std::vector<ObjectRange> object_ranges(const Session& model) {
+    std::vector<ObjectRange> out;
+    std::size_t vertices = 0, triangles = 0;
+    for (const auto& primitive : model.scene.meshes) {
+        ObjectRange r;
+        r.object = primitive.object_index;
+        r.node = primitive.node_index;
+        r.first_vertex = vertices;
+        r.vertex_count = primitive.mesh.vertices.size();
+        r.first_triangle = triangles;
+        r.triangle_count = primitive.mesh.indices.size() / 3U;
+        vertices += r.vertex_count;
+        triangles += r.triangle_count;
+        out.push_back(r);
     }
-    if (!changed || p.all_indices.empty()) return;
-    auto& indices = scene.render_mesh.indices;
-    auto& slots = scene.render_triangle_texture_slots;
-    indices.clear();
-    slots.clear();
-    const bool with_slots = p.all_triangle_slots.size() * 3U == p.all_indices.size();
-    for (const auto& t : p.tracks) {
-        if (!t.visible) continue;
-        const auto first = t.triangle_begin * 3U, last = (t.triangle_begin + t.triangle_count) * 3U;
-        if (last > p.all_indices.size()) continue;
-        indices.insert(indices.end(), p.all_indices.begin() + static_cast<std::ptrdiff_t>(first),
-                       p.all_indices.begin() + static_cast<std::ptrdiff_t>(last));
-        if (with_slots) {
-            slots.insert(slots.end(), p.all_triangle_slots.begin() + static_cast<std::ptrdiff_t>(t.triangle_begin),
-                         p.all_triangle_slots.begin() + static_cast<std::ptrdiff_t>(t.triangle_begin + t.triangle_count));
+    if (vertices != model.render_mesh.vertices.size() || triangles * 3U != model.render_mesh.indices.size()) {
+        out.assign(1U, ObjectRange{0U, -1, 0U, model.render_mesh.vertices.size(), 0U,
+                                   model.render_mesh.indices.size() / 3U});
+    }
+    return out;
+}
+
+// The scene-node rig of an SCM piece, checked against the piece's own rest
+// worlds; nullptr when they differ (the piece then stays still).
+[[nodiscard]] std::shared_ptr<StageMotion> make_stage_motion(const Session& piece, std::span<const std::uint8_t> bytes) {
+    namespace scm = dmc::rengine::formats::scm;
+    const auto parsed = scm::Parser::parse(std::as_bytes(bytes));
+    if (!parsed.ok()) return nullptr;
+    const auto& transforms = parsed.document.scene_nodes.transform_by_node_index;
+    const std::size_t count = transforms.size();
+    if (count == 0U || count != piece.scene.nodes.size()) return nullptr;
+    auto out = std::make_shared<StageMotion>();
+    out->rig = std::make_shared<motion::SkeletonRig>();
+    auto& records = out->rig->domain.local_transform_records_by_node_index;
+    records.resize(count);
+    std::vector<world::Matrix4f> rest_locals(count);
+    for (std::size_t n = 0; n < count; ++n) {
+        const auto& t = transforms[n];
+        auto& r = records[n];
+        r.translation = {t.translation.x, t.translation.y, t.translation.z};
+        r.translation_magnitude = t.translation_magnitude;
+        r.rotation_xyz_radians = {t.rotation_xyz_radians.x, t.rotation_xyz_radians.y, t.rotation_xyz_radians.z};
+        motion::JointChannels channels;
+        channels.translation = {r.translation.x, r.translation.y, r.translation.z};
+        channels.rotation = {r.rotation_xyz_radians.x, r.rotation_xyz_radians.y, r.rotation_xyz_radians.z};
+        rest_locals[n] = scm_local(channels, t.translation_magnitude);
+        out->parents.push_back(piece.scene.nodes[n].parent);
+        out->magnitudes.push_back(t.translation_magnitude);
+    }
+    const auto rest = compose_worlds(rest_locals, out->parents);
+    for (std::size_t n = 0; n < count; ++n) {
+        const auto& a = rest[n].values;
+        const auto& b = piece.scene.nodes[n].world.values;
+        for (std::size_t k = 0; k < 16; ++k) {
+            if (std::fabs(a[k] - b[k]) > 1.0e-2F * std::max(1.0F, std::fabs(b[k]))) return nullptr;
         }
     }
-    // An empty frame still draws (one degenerate triangle).
-    if (indices.empty()) {
-        indices = {0U, 0U, 0U};
-        if (with_slots) slots = {kNoTextureSlot};
+    for (const auto& primitive : piece.scene.meshes) {
+        out->local_vertices.insert(out->local_vertices.end(), primitive.mesh.vertices.begin(),
+                                   primitive.mesh.vertices.end());
+    }
+    if (out->local_vertices.size() != piece.render_mesh.vertices.size()) return nullptr;
+    return out;
+}
+
+// Which objects of a track are shown at the player's frame: every Hide clip
+// set up to the frame applies in turn (H hides the model, D shows it, A plays
+// a .hid: its objects take its states; DispOn / DispOff are .hid files that
+// show / hide objects 0..99). Before any, everything is shown.
+void hide_state(const Player& p, const PlayerTrack& t, std::vector<std::uint8_t>* shown) {
+    std::fill(shown->begin(), shown->end(), std::uint8_t{1U});
+    const auto* list = p.doc.list("Hide", t.track);
+    if (list == nullptr) return;
+    std::vector<const Clip*> applied;
+    for (const auto& clip : list->clips) {
+        if (clip.set_frame <= p.frame) applied.push_back(&clip);
+    }
+    std::stable_sort(applied.begin(), applied.end(),
+                     [](const Clip* a, const Clip* b) { return a->set_frame < b->set_frame; });
+    for (const auto* clip : applied) {
+        const auto kind = clip->value("HideKind");
+        if (kind == "H" || kind == "D") {
+            std::fill(shown->begin(), shown->end(), static_cast<std::uint8_t>(kind == "D" ? 1U : 0U));
+            continue;
+        }
+        const auto* hid = p.doc.hide(clip->value("Hide"));
+        if (hid == nullptr) continue;
+        for (const auto& o : hid->objects) {
+            if (o.object < shown->size()) (*shown)[o.object] = o.shown ? 1U : 0U;
+        }
     }
 }
 
-// Poses every model track at the player's frame and writes its vertices
-// into the scene: free tracks first, then the ones hanging from a joint of
-// an already posed track.
-void pose_tracks(Session& scene, Player& p) {
+// Keeps the shown objects' triangles in the composite and in the room.
+// Returns whether the room's triangles changed.
+bool apply_visibility(Session& scene, Player& p, bool force) {
+    bool models_changed = force, room_changed = force;
+    std::vector<std::uint8_t> next;
+    for (auto& t : p.tracks) {
+        next.assign(t.shown.size(), 1U);
+        hide_state(p, t, &next);
+        if (next != t.shown) {
+            t.shown = next;
+            (t.stage ? room_changed : models_changed) = true;
+        }
+    }
+    const auto rebuild = [&](bool stage, const std::vector<std::uint32_t>& all, const std::vector<std::uint32_t>& all_slots,
+                             const std::vector<std::uint8_t>* all_translucent, std::vector<std::uint32_t>& indices,
+                             std::vector<std::uint32_t>& slots, std::vector<std::uint8_t>* translucent) {
+        if (all.empty()) return;
+        indices.clear();
+        slots.clear();
+        if (translucent != nullptr) translucent->clear();
+        const std::size_t triangles = all.size() / 3U;
+        const bool with_slots = all_slots.size() == triangles;
+        const bool with_translucent = all_translucent != nullptr && all_translucent->size() == triangles;
+        for (const auto& t : p.tracks) {
+            if (t.stage != stage) continue;
+            for (const auto& r : t.objects) {
+                if (r.object < t.shown.size() && t.shown[r.object] == 0U) continue;
+                const std::size_t first = t.triangle_begin + r.first_triangle;
+                if (first + r.triangle_count > triangles) continue;
+                indices.insert(indices.end(), all.begin() + static_cast<std::ptrdiff_t>(first * 3U),
+                               all.begin() + static_cast<std::ptrdiff_t>((first + r.triangle_count) * 3U));
+                if (with_slots) {
+                    slots.insert(slots.end(), all_slots.begin() + static_cast<std::ptrdiff_t>(first),
+                                 all_slots.begin() + static_cast<std::ptrdiff_t>(first + r.triangle_count));
+                }
+                if (with_translucent) {
+                    translucent->insert(translucent->end(), all_translucent->begin() + static_cast<std::ptrdiff_t>(first),
+                                        all_translucent->begin() + static_cast<std::ptrdiff_t>(first + r.triangle_count));
+                }
+            }
+        }
+        // An empty mesh still draws (one degenerate triangle).
+        if (indices.empty()) {
+            indices = {0U, 0U, 0U};
+            if (with_slots) slots = {kNoTextureSlot};
+            if (with_translucent) translucent->assign(1U, 0U);
+        }
+    };
+    if (models_changed) {
+        rebuild(false, p.all_indices, p.all_triangle_slots, nullptr, scene.render_mesh.indices,
+                scene.render_triangle_texture_slots, nullptr);
+    }
+    if (room_changed && p.room) {
+        rebuild(true, p.room_indices, p.room_triangle_slots, &p.room_translucent, p.room->mesh.indices,
+                p.room->triangle_texture_slots, &p.room->translucent_triangles);
+    }
+    return room_changed;
+}
+
+// The Motion clip of a track at the player's frame: the MOT and its time.
+[[nodiscard]] const Clip* motion_clip(const Player& p, int track, float* time) {
+    const auto* list = p.doc.list("Motion", track);
+    if (list == nullptr || list->clips.empty()) return nullptr;
+    float local = 0.0F;
+    const auto* clip = clip_at(*list, p.frame, &local);
+    if (clip != nullptr) *time = clip->cut_frame + std::clamp(local, 0.0F, clip->life);
+    return clip;
+}
+
+// A stage piece at the player's frame; returns whether its vertices moved.
+bool pose_stage_piece(Player& p, PlayerTrack& t) {
+    if (!t.stage_motion || !p.room) return false;
+    auto& sm = *t.stage_motion;
+    float time = 0.0F;
+    const auto* clip = motion_clip(p, t.track, &time);
+    if (clip == nullptr) return false;
+    const auto name = clip->value("Motion");
+    if (name != t.motion) {
+        if (name == t.failed_motion) return false;
+        const auto* member = p.doc.member(name);
+        std::optional<motion::MotionClip> bound;
+        if (member != nullptr) {
+            auto made = motion::MotionClip::bind(
+                std::as_bytes(std::span<const std::uint8_t>{p.bytes->data() + member->offset, member->size}), *sm.rig,
+                nullptr, true);
+            if (made) bound = std::move(*made);
+        }
+        if (!bound) {
+            t.failed_motion = name;
+            t.failure = "the MOT does not drive the piece's scene nodes";
+            return false;
+        }
+        sm.clip = std::move(bound);
+        t.motion = name;
+        sm.last_local = -1.0F;
+    }
+    if (!sm.clip || time == sm.last_local) return false;
+    std::vector<motion::JointChannels> channels(sm.rig->node_count());
+    if (!sm.clip->evaluate_channels(time, channels)) return false;
+    sm.last_local = time;
+    std::vector<world::Matrix4f> locals(channels.size());
+    for (std::size_t n = 0; n < channels.size(); ++n) {
+        locals[n] = scm_local(channels[n], n < sm.magnitudes.size() ? sm.magnitudes[n] : 0.0F);
+    }
+    const auto worlds = compose_worlds(locals, sm.parents);
+    auto& out = p.room->mesh.vertices;
+    if (t.vertex_begin + t.vertex_count > out.size() || sm.local_vertices.size() != t.vertex_count) return false;
+    for (const auto& r : t.objects) {
+        const bool moved = r.node >= 0 && static_cast<std::size_t>(r.node) < worlds.size();
+        for (std::size_t v = r.first_vertex; v < r.first_vertex + r.vertex_count && v < t.vertex_count; ++v) {
+            out[t.vertex_begin + v] =
+                moved ? transform(sm.local_vertices[v], worlds[static_cast<std::size_t>(r.node)]) : sm.local_vertices[v];
+        }
+    }
+    return true;
+}
+
+// Poses every track at the player's frame: models into the scene (free
+// tracks first, then the ones hanging from a joint of an already posed
+// track), stage pieces into the room. Returns whether the room moved.
+bool pose_tracks(Session& scene, Player& p) {
+    bool room_moved = false;
     auto& out = scene.render_mesh.vertices;
     std::vector<char> done(p.tracks.size(), 0);
     const auto find = [&](int track) -> int {
         for (std::size_t i = 0; i < p.tracks.size(); ++i) {
-            if (p.tracks[i].track == track) return static_cast<int>(i);
+            if (!p.tracks[i].stage && p.tracks[i].track == track) return static_cast<int>(i);
         }
         return -1;
     };
@@ -176,15 +381,19 @@ void pose_tracks(Session& scene, Player& p) {
         for (std::size_t i = 0; i < p.tracks.size(); ++i) {
             if (done[i] != 0) continue;
             auto& t = p.tracks[i];
+            if (t.stage) {
+                done[i] = 1;
+                room_moved = pose_stage_piece(p, t) || room_moved;
+                continue;
+            }
             const int host = t.host_track >= 0 ? find(t.host_track) : -1;
             if (host >= 0 && done[static_cast<std::size_t>(host)] == 0 && pass < 3) continue;
             done[i] = 1;
             if (!t.source) continue;
             Session& model = *t.source;
-            if (const auto* list = p.doc.list("Motion", t.track); list != nullptr && !list->clips.empty()) {
-                float local = 0.0F;
-                const auto* clip = clip_at(*list, p.frame, &local);
-                const auto name = clip != nullptr ? clip->value("Motion") : std::string{};
+            float time = 0.0F;
+            if (const auto* clip = motion_clip(p, t.track, &time)) {
+                const auto name = clip->value("Motion");
                 if (!name.empty() && name != t.motion && name != t.failed_motion) {
                     const auto* member = p.doc.member(name);
                     const auto report = member != nullptr
@@ -198,9 +407,7 @@ void pose_tracks(Session& scene, Player& p) {
                         t.motion.clear();
                     }
                 }
-                if (clip != nullptr && name == t.motion) {
-                    (void)motion::apply_motion_frame(&model, clip->cut_frame + std::clamp(local, 0.0F, clip->life));
-                }
+                if (name == t.motion) (void)motion::apply_motion_frame(&model, time);
             }
             if (t.vertex_begin + t.vertex_count > out.size() || model.render_mesh.vertices.size() != t.vertex_count) {
                 continue;
@@ -218,6 +425,15 @@ void pose_tracks(Session& scene, Player& p) {
             }
         }
     }
+    return room_moved;
+}
+
+// One frame of the cutscene: camera, poses, visibility.
+void advance(Session& scene, Player& p, bool force) {
+    update_shot(p);
+    const bool moved = pose_tracks(scene, p);
+    const bool hidden = apply_visibility(scene, p, force);
+    if ((moved || hidden) && p.room) ++p.room->revision;
 }
 
 }  // namespace
@@ -262,10 +478,10 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             return std::span<const std::uint8_t>{source}.subspan(m->offset, m->size);
         };
 
-        // Stage pieces to the room; models to the composite.
-        std::vector<std::span<const std::uint8_t>> stage_files;
-        std::vector<std::unique_ptr<Session>> models;
-        std::vector<PlayerTrack> tracks;
+        // Stage pieces to the room; models to the composite. Every track
+        // keeps its model on its own and the ranges of its objects.
+        std::vector<std::unique_ptr<Session>> models, pieces;
+        std::vector<PlayerTrack> tracks, stage_tracks;
         for (const auto& track : doc->tracks()) {
             if (track.model == nullptr || track.model->clips.empty()) continue;
             const auto& clip = track.model->clips.front();
@@ -273,26 +489,35 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             const auto texture = clip.value("Texture");
             const auto model_bytes = member_bytes(model);
             if (model_bytes.empty()) continue;
-            if (ends_with(model, ".scm")) {
-                if (const auto tex = member_bytes(texture); !tex.empty()) stage_files.push_back(tex);
-                stage_files.push_back(model_bytes);
-                state->stage_pieces.push_back(model);
-                continue;
-            }
             auto opened = open_session(model, model_bytes.data(), model_bytes.size());
-            if (!opened || opened->probe.format != Format::Mod || !opened->renderable) continue;
+            if (!opened || !opened->renderable || opened->render_mesh.indices.size() < 3U) continue;
             PlayerTrack t;
             t.track = track.index;
             t.model = model;
             t.texture = texture;
+            t.vertex_count = opened->render_mesh.vertices.size();
+            t.triangle_count = opened->render_mesh.indices.size() / 3U;
+            t.objects = object_ranges(*opened);
+            std::uint32_t objects = 0U;
+            for (const auto& r : t.objects) objects = std::max(objects, r.object + 1U);
+            t.shown.assign(std::max<std::uint32_t>(objects, 1U), 1U);
+            if (opened->probe.format == Format::Scm) {
+                t.stage = true;
+                if (const auto tex = member_bytes(texture); !tex.empty()) {
+                    (void)spider::actions::attach_ptx(opened.get(), texture, tex.data(), tex.size());
+                }
+                t.stage_motion = make_stage_motion(*opened, model_bytes);
+                stage_tracks.push_back(std::move(t));
+                pieces.push_back(std::move(opened));
+                continue;
+            }
+            if (opened->probe.format != Format::Mod) continue;
             for (const auto& [key, values] : clip.fields) {
                 if (key == "CnsPos" && values.size() >= 2U) {
                     t.host_track = std::atoi(values[0].c_str());
                     t.host_joint = std::atoi(values[1].c_str());
                 }
             }
-            t.vertex_count = opened->render_mesh.vertices.size();
-            t.triangle_count = opened->render_mesh.indices.size() / 3U;
             tracks.push_back(std::move(t));
             models.push_back(std::move(opened));
         }
@@ -326,10 +551,36 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             }
         }
 
-        std::shared_ptr<const stage_room::Room> room;
-        if (!stage_files.empty()) {
-            const auto pac = make_pac(stage_files);
-            room = stage_room::build_room(name, pac.data(), pac.size());
+        // The stage: the pieces in their order, so piece k's vertices and
+        // triangles follow the previous ones'.
+        std::shared_ptr<stage_room::Room> room;
+        if (!pieces.empty()) {
+            std::vector<const Session*> parts;
+            std::vector<std::string> names;
+            for (std::size_t i = 0; i < pieces.size(); ++i) {
+                parts.push_back(pieces[i].get());
+                names.push_back(stage_tracks[i].model);
+            }
+            room = stage_room::assemble_room(name, parts, names);
+        }
+        if (room) {
+            std::size_t vertices = 0, triangles = 0;
+            for (auto& t : stage_tracks) {
+                t.vertex_begin = vertices;
+                vertices += t.vertex_count;
+                t.triangle_begin = triangles;
+                triangles += t.triangle_count;
+            }
+            if (vertices == room->mesh.vertices.size() && triangles * 3U == room->mesh.indices.size()) {
+                for (std::size_t i = 0; i < stage_tracks.size(); ++i) stage_tracks[i].source = std::move(pieces[i]);
+                state->room_indices = room->mesh.indices;
+                state->room_triangle_slots = room->triangle_texture_slots;
+                state->room_translucent = room->translucent_triangles;
+            } else {
+                stage_tracks.clear();  // not the plain concatenation: keep the stage still
+            }
+        } else {
+            stage_tracks.clear();
         }
         if (!scene && !room) return nullptr;
         if (!scene) {
@@ -349,7 +600,7 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             models.clear();
         }
 
-        // Vertex ranges of the tracks in the composite (sources in order).
+        // Vertex ranges of the model tracks in the composite (sources in order).
         std::size_t cursor = 0, triangles = 0;
         for (auto& t : tracks) {
             t.vertex_begin = cursor;
@@ -375,12 +626,15 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
                 }
             }
         }
-        state->tracks = std::move(tracks);
-        state->doc = std::move(*doc);
-        if (!state->tracks.empty()) {
+        if (!tracks.empty()) {
             state->all_indices = scene->render_mesh.indices;
             state->all_triangle_slots = scene->render_triangle_texture_slots;
         }
+        const std::size_t stage_count = stage_tracks.size();
+        for (auto& t : stage_tracks) tracks.push_back(std::move(t));
+        state->tracks = std::move(tracks);
+        state->doc = std::move(*doc);
+        state->room = room;
 
         // The archive's identity, Info and files stay. The scene is drawn in
         // 3D, never as a picture: the timeline picture becomes the first of
@@ -402,18 +656,16 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
         for (auto& child : archive.children) scene->children.push_back(std::move(child));
         scene->archive_name = std::string{name};
         scene->source_name = std::string{name};
-        scene->stage = std::move(room);
-        scene->detail = archive.detail + " | scene: " + std::to_string(state->tracks.size()) + " model track(s), " +
-                        std::to_string(state->stage_pieces.size()) + " stage piece(s)";
+        scene->stage = room;
+        scene->detail = archive.detail + " | scene: " + std::to_string(state->tracks.size() - stage_count) +
+                        " model track(s), " + std::to_string(stage_count) + " stage piece(s)";
         // The timeline is the scene's one motion (motion_player.h plays it).
         scene->motion_library.clear();
         Session::MotionPayload timeline;
         timeline.name = "Cutscene " + state->doc.name;
         scene->motion_library.push_back(std::move(timeline));
         scene->demo = std::move(state);
-        update_shot(*scene->demo);
-        pose_tracks(*scene, *scene->demo);
-        apply_visibility(*scene, *scene->demo);
+        advance(*scene, *scene->demo, true);
         return scene;
     } catch (...) {
         return nullptr;
@@ -447,9 +699,7 @@ bool seek(Session* session, float frame) noexcept {
     if (p == nullptr || !std::isfinite(frame)) return false;
     try {
         p->frame = std::clamp(frame, 0.0F, std::max(0.0F, p->doc.end_frame));
-        update_shot(*p);
-        pose_tracks(*session, *p);
-        apply_visibility(*session, *p);
+        advance(*session, *p, false);
         return true;
     } catch (...) {
         return false;

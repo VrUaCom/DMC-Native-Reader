@@ -103,6 +103,32 @@ int main() {
     std::memcpy(stage_cam.data(), "CAM\0", 4U);
     assert(!demo::looks_like_cam(stage_cam));
 
+    // ---- .hid: flagged objects and their states ----
+    {
+        Bytes hid(0x20U, 0U);
+        put32(hid, 0x00U, 0x20U);
+        std::memcpy(hid.data() + 4U, "HID\0", 4U);
+        putf(hid, 0x0CU, 250.0F);
+        putf(hid, 0x10U, 432.0F);
+        hid[0x1CU] = 3U;          // three objects
+        hid[0x1DU] = 1U;          // object 0 has a track
+        hid[0x1FU] = 1U;          // object 2 has a track
+        push32(hid, 2U);
+        for (const float state : {-1.0F, 0.0F}) {
+            hid.push_back(20U); hid.push_back(0U); hid.push_back(1U); hid.push_back(0U);
+            push32(hid, 7U);
+            pushf(hid, state);
+            pushf(hid, 1.0F);
+            hid.push_back(0x00U); hid.push_back(0xFAU); hid.push_back(0U); hid.push_back(0U);  // frame 250 (big-endian)
+        }
+        const auto parsed = demo::parse_hid(hid);
+        assert(parsed && parsed->start == 250.0F && parsed->objects.size() == 2U);
+        assert(parsed->objects[0].object == 0U && parsed->objects[0].shown);
+        assert(parsed->objects[1].object == 2U && !parsed->objects[1].shown);
+        Bytes not_hid(0x20U, 0U);
+        assert(!demo::parse_hid(not_hid));
+    }
+
     // ---- clips ----
     const std::string camera_set =
         "; camera clips\r\n# Clip\r\nSetFrame\t0.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\n"

@@ -142,6 +142,8 @@ struct ViewState {
     // correct, faces turned away from the camera skipped (so the wall between
     // the camera and the model does not hide it).
     const Mesh* room_mesh{nullptr};
+    // Changes when room_mesh changes in place (stage_room::Room::revision).
+    std::uint64_t room_revision{};
     const std::vector<std::uint32_t>* room_texture_slots{nullptr};
     const std::vector<ImagePreview>* room_textures{nullptr};
     const std::vector<std::uint8_t>* room_translucent_triangles{nullptr};

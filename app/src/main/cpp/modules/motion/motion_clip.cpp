@@ -254,10 +254,19 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
 }
 
 bool MotionClip::evaluate_locals(float frame, std::span<Matrix4f> out_locals) noexcept {
-    if (document_ == nullptr || out_locals.size() != defaults_.size() || !std::isfinite(frame)) {
+    if (out_locals.size() != defaults_.size() || !evaluate_channels(frame, scratch_)) return false;
+    for (std::size_t node = 0U; node < defaults_.size(); ++node) {
+        if (has_non_unit_scale(scratch_[node])) saw_non_unit_scale_ = true;
+        out_locals[node] = build_animated_local_matrix(scratch_[node]);
+    }
+    return true;
+}
+
+bool MotionClip::evaluate_channels(float frame, std::span<JointChannels> out) noexcept {
+    if (document_ == nullptr || out.size() != defaults_.size() || !std::isfinite(frame)) {
         return false;
     }
-    for (std::size_t node = 0U; node < defaults_.size(); ++node) scratch_[node] = defaults_[node];
+    for (std::size_t node = 0U; node < defaults_.size(); ++node) out[node] = defaults_[node];
 
     for (const auto& bound : bound_) {
         const auto& track = document_->tracks[bound.track];
@@ -273,12 +282,7 @@ bool MotionClip::evaluate_locals(float frame, std::span<Matrix4f> out_locals) no
             float evaluated = 0.0F;
             if (evaluate_compression2_track(track, frame, &cache, &evaluated)) value = evaluated;
         }
-        set_channel(&scratch_[bound.node], bound.channel, value);
-    }
-
-    for (std::size_t node = 0U; node < defaults_.size(); ++node) {
-        if (has_non_unit_scale(scratch_[node])) saw_non_unit_scale_ = true;
-        out_locals[node] = build_animated_local_matrix(scratch_[node]);
+        set_channel(&out[bound.node], bound.channel, value);
     }
     return true;
 }

@@ -79,6 +79,7 @@ struct GpuRoomKey final {
     std::size_t index_count{};
     std::size_t texture_count{};
     std::uint64_t content{};
+    std::uint64_t revision{};
     [[nodiscard]] bool operator==(const GpuRoomKey&) const = default;
 };
 

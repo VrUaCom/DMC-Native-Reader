@@ -1436,6 +1436,54 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
     std::vector<EffectQuad> effect_quads;
     if (!view.wireframe) effect_quads = build_effect_quads(view, project, image.height);
 
+    // A camera inside the scene (a fly camera, a cutscene shot over a
+    // shoulder) has model geometry at and behind it: triangles are clipped at
+    // the near plane in camera space (the GPU pass clips at the same plane),
+    // never projected through a clamped divide across the picture.
+    const float model_near = std::max(1.0e-4F, std::min(std::max(1.0F, radius * 0.05F), 0.5F * cd));
+    const auto behind_near = [&](const P2& q) { return q.z + cd < model_near; };
+    const float focal = zoom * frame.focal_px;
+    const float half_w = static_cast<float>(image.width) * 0.5F, half_h = static_cast<float>(image.height) * 0.5F;
+
+    // One vertex of a drawn triangle: camera space, screen, and what is
+    // interpolated across it.
+    struct ModelVertex {
+        Vec3 cam{};
+        P2 s{};
+        float u{}, v{};
+        std::array<float, 4> color{};
+        float light{};
+    };
+    const auto model_vertex = [&](std::uint32_t i) {
+        ModelVertex out;
+        const auto& w = mesh.vertices[i];
+        const Vec3 local{w.x - frame.center.x, w.y - frame.center.y, w.z - frame.center.z};
+        const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
+        out.cam = {r.x - frame.pan_x, r.y - frame.pan_y, r.z + cd};
+        out.s = p[i];
+        if (mesh.has_uv0()) {
+            out.u = mesh.uv0[i].u;
+            out.v = mesh.uv0[i].v;
+        }
+        if (colored) {
+            for (std::size_t k = 0; k < 4; ++k) out.color[k] = mesh.color0[i][k];
+        }
+        if (!lights.empty()) out.light = lights[i];
+        return out;
+    };
+    const auto lerp_vertex = [&](const ModelVertex& a, const ModelVertex& b, float t) {
+        ModelVertex out;
+        out.cam = {a.cam.x + (b.cam.x - a.cam.x) * t, a.cam.y + (b.cam.y - a.cam.y) * t,
+                   a.cam.z + (b.cam.z - a.cam.z) * t};
+        const float iz = 1.0F / out.cam.z;
+        out.s = {half_w + focal * out.cam.x * iz, half_h - focal * out.cam.y * iz, out.cam.z - cd};
+        out.u = a.u + (b.u - a.u) * t;
+        out.v = a.v + (b.v - a.v) * t;
+        for (std::size_t k = 0; k < 4; ++k) out.color[k] = a.color[k] + (b.color[k] - a.color[k]) * t;
+        out.light = a.light + (b.light - a.light) * t;
+        return out;
+    };
+
     // The model's triangles inside rows [row_begin, row_end).
     const auto model_band = [&](int row_begin, int row_end) {
         for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
@@ -1443,10 +1491,16 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
             const auto ib = mesh.indices[t + 1U];
             const auto ic = mesh.indices[t + 2U];
             if (ia >= p.size() || ib >= p.size() || ic >= p.size()) continue;
-            const P2 a = p[ia], b = p[ib], c = p[ic];
-            const int y0 = std::max(row_begin, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
-            const int y1 = std::min(row_end - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
-            if (y0 > y1) continue;
+            const bool ba = behind_near(p[ia]), bb = behind_near(p[ib]), bc = behind_near(p[ic]);
+            if (ba && bb && bc) continue;
+            {
+                const P2 a = p[ia], b = p[ib], c = p[ic];
+                if (!ba && !bb && !bc) {
+                    const int y0 = std::max(row_begin, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+                    const int y1 = std::min(row_end - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+                    if (y0 > y1) continue;
+                }
+            }
 
             const std::uint8_t blend_mode = mesh.has_blend0() ? mesh.blend0[ia] : 0U;
             const ImagePreview* texture = nullptr;
@@ -1470,89 +1524,104 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
             const float lbase = neutral ? 0.45F : 0.72F;
             const float lgain = neutral ? 0.85F : 0.42F;
 
-            const float area = edge(a, b, c.x, c.y);
-            if (std::fabs(area) < 1.0e-6F) continue;
-            const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
-            const int x1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+            // The triangle, clipped at the near plane when it reaches it.
+            ModelVertex poly[4];
+            int count = 0;
+            {
+                const ModelVertex in[3] = {model_vertex(ia), model_vertex(ib), model_vertex(ic)};
+                for (int k = 0; k < 3; ++k) {
+                    const auto& a = in[k];
+                    const auto& b = in[(k + 1) % 3];
+                    const bool ina = a.cam.z >= model_near, inb = b.cam.z >= model_near;
+                    if (ina) poly[count++] = a;
+                    if (ina != inb && count < 4) {
+                        poly[count++] = lerp_vertex(a, b, (model_near - a.cam.z) / (b.cam.z - a.cam.z));
+                    }
+                }
+            }
 
-            for (int y = y0; y <= y1; ++y) {
-                for (int x = x0; x <= x1; ++x) {
-                    const float px = static_cast<float>(x) + 0.5F;
-                    const float py = static_cast<float>(y) + 0.5F;
-                    const float w0 = edge(b, c, px, py) / area;
-                    const float w1 = edge(c, a, px, py) / area;
-                    const float w2 = edge(a, b, px, py) / area;
-                    if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
-                    const float z = w0 * a.z + w1 * b.z + w2 * c.z;
-                    const auto pi = static_cast<std::size_t>(y * image.width + x);
-                    if (z >= depth[pi]) continue;
+            for (int fan = 1; fan + 1 < count; ++fan) {
+                const ModelVertex& A = poly[0];
+                const ModelVertex& B = poly[fan];
+                const ModelVertex& C = poly[fan + 1];
+                const P2 a = A.s, b = B.s, c = C.s;
+                const int y0 = std::max(row_begin, static_cast<int>(std::floor(std::min({a.y, b.y, c.y}))));
+                const int y1 = std::min(row_end - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+                if (y0 > y1) continue;
+                const float area = edge(a, b, c.x, c.y);
+                if (std::fabs(area) < 1.0e-6F) continue;
+                const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x}))));
+                const int x1 = std::min(image.width - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
 
-                    if (texture != nullptr) {
-                        float u = 0.0F, v = 0.0F;
-                        if (mesh.has_uv0()) {
-                            const auto& uva = mesh.uv0[ia];
-                            const auto& uvb = mesh.uv0[ib];
-                            const auto& uvc = mesh.uv0[ic];
-                            u = w0 * uva.u + w1 * uvb.u + w2 * uvc.u;
-                            v = w0 * uva.v + w1 * uvb.v + w2 * uvc.v;
-                        }
-                        std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
-                        bool sampled = false;
-                        if (smooth_model) {
-                            int texel[4];
-                            if (sample_bilinear_fast(*texture, u, v, texel)) {
-                                tr = static_cast<std::uint8_t>(texel[0]);
-                                tg = static_cast<std::uint8_t>(texel[1]);
-                                tb = static_cast<std::uint8_t>(texel[2]);
-                                ta = static_cast<std::uint8_t>(texel[3]);
-                                sampled = true;
+                for (int y = y0; y <= y1; ++y) {
+                    for (int x = x0; x <= x1; ++x) {
+                        const float px = static_cast<float>(x) + 0.5F;
+                        const float py = static_cast<float>(y) + 0.5F;
+                        const float w0 = edge(b, c, px, py) / area;
+                        const float w1 = edge(c, a, px, py) / area;
+                        const float w2 = edge(a, b, px, py) / area;
+                        if (w0 < 0.0F || w1 < 0.0F || w2 < 0.0F) continue;
+                        const float z = w0 * a.z + w1 * b.z + w2 * c.z;
+                        const auto pi = static_cast<std::size_t>(y * image.width + x);
+                        if (z >= depth[pi]) continue;
+
+                        if (texture != nullptr) {
+                            const float u = w0 * A.u + w1 * B.u + w2 * C.u;
+                            const float v = w0 * A.v + w1 * B.v + w2 * C.v;
+                            std::uint8_t tr = 0U, tg = 0U, tb = 0U, ta = 0U;
+                            bool sampled = false;
+                            if (smooth_model) {
+                                int texel[4];
+                                if (sample_bilinear_fast(*texture, u, v, texel)) {
+                                    tr = static_cast<std::uint8_t>(texel[0]);
+                                    tg = static_cast<std::uint8_t>(texel[1]);
+                                    tb = static_cast<std::uint8_t>(texel[2]);
+                                    ta = static_cast<std::uint8_t>(texel[3]);
+                                    sampled = true;
+                                }
+                            } else {
+                                sampled = sample_texture(*texture, u, v, &tr, &tg, &tb, &ta);
                             }
-                        } else {
-                            sampled = sample_texture(*texture, u, v, &tr, &tg, &tb, &ta);
-                        }
-                        if (sampled) {
-                            if (colored) {
-                                // PS2 modulate: texel x vertex colour / 0x80.
-                                const auto& ca = mesh.color0[ia];
-                                const auto& cb = mesh.color0[ib];
-                                const auto& cc = mesh.color0[ic];
-                                const auto mod = [&](std::uint8_t t8, std::size_t k) {
-                                    const float vc = w0 * ca[k] + w1 * cb[k] + w2 * cc[k];
-                                    return static_cast<std::uint8_t>(
-                                        std::clamp(static_cast<int>(t8 * vc / 128.0F), 0, 255));
-                                };
-                                tr = mod(tr, 0U);
-                                tg = mod(tg, 1U);
-                                tb = mod(tb, 2U);
-                                ta = mod(ta, 3U);
-                            }
-                            if (lit) {
-                                const float light =
-                                    lbase + lgain * (w0 * lights[ia] + w1 * lights[ib] + w2 * lights[ic]);
-                                const auto shade = [light](std::uint8_t c8) {
-                                    return static_cast<std::uint8_t>(
-                                        std::clamp(static_cast<int>(static_cast<float>(c8) * light), 0, 255));
-                                };
-                                tr = shade(tr);
-                                tg = shade(tg);
-                                tb = shade(tb);
-                            }
-                            if (ta == 0U) continue;
-                            if (blend_mode == 2U || blend_mode == 3U) {
-                                // Additive / subtractive effects do not occlude.
-                                blend_rgba(image, x, y, tr, tg, tb, ta, blend_mode);
+                            if (sampled) {
+                                if (colored) {
+                                    // PS2 modulate: texel x vertex colour / 0x80.
+                                    const auto mod = [&](std::uint8_t t8, std::size_t k) {
+                                        const float vc = w0 * A.color[k] + w1 * B.color[k] + w2 * C.color[k];
+                                        return static_cast<std::uint8_t>(
+                                            std::clamp(static_cast<int>(t8 * vc / 128.0F), 0, 255));
+                                    };
+                                    tr = mod(tr, 0U);
+                                    tg = mod(tg, 1U);
+                                    tb = mod(tb, 2U);
+                                    ta = mod(ta, 3U);
+                                }
+                                if (lit) {
+                                    const float light = lbase + lgain * (w0 * A.light + w1 * B.light + w2 * C.light);
+                                    const auto shade = [light](std::uint8_t c8) {
+                                        return static_cast<std::uint8_t>(
+                                            std::clamp(static_cast<int>(static_cast<float>(c8) * light), 0, 255));
+                                    };
+                                    tr = shade(tr);
+                                    tg = shade(tg);
+                                    tb = shade(tb);
+                                }
+                                if (ta == 0U) continue;
+                                if (blend_mode == 2U || blend_mode == 3U) {
+                                    // Additive / subtractive effects do not occlude.
+                                    blend_rgba(image, x, y, tr, tg, tb, ta, blend_mode);
+                                    continue;
+                                }
+                                depth[pi] = z;
+                                put_rgba(image, x, y, tr, tg, tb, ta);
                                 continue;
                             }
-                            depth[pi] = z;
-                            put_rgba(image, x, y, tr, tg, tb, ta);
-                            continue;
                         }
-                    }
 
-                    depth[pi] = z;
-                    const float zn = 0.5F + 0.5F * std::tanh(-z / radius);
-                    const auto shade = static_cast<std::uint8_t>(145.0F + 80.0F * zn);
-                    put_pixel(image, x, y, shade);
+                        depth[pi] = z;
+                        const float zn = 0.5F + 0.5F * std::tanh(-z / radius);
+                        const auto shade = static_cast<std::uint8_t>(145.0F + 80.0F * zn);
+                        put_pixel(image, x, y, shade);
+                    }
                 }
             }
         }
@@ -1585,6 +1654,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
             const auto ib = mesh.indices[t + 1U];
             const auto ic = mesh.indices[t + 2U];
             if (ia >= p.size() || ib >= p.size() || ic >= p.size()) continue;
+            if (behind_near(p[ia]) || behind_near(p[ib]) || behind_near(p[ic])) continue;
             line_clip(image, p[ia], p[ib], 235U, 235U, 245U, 255U, mesh_px);
             line_clip(image, p[ib], p[ic], 235U, 235U, 245U, 255U, mesh_px);
             line_clip(image, p[ic], p[ia], 235U, 235U, 245U, 255U, mesh_px);
@@ -1913,6 +1983,7 @@ GpuRoomKey room_key(const ViewState& view) {
         h = mix_hash(h, &rm.indices[k * (rm.indices.size() - 1U) / 7U], sizeof(std::uint32_t));
     }
     key.content = h;
+    key.revision = view.room_revision;
     return key;
 }
 

@@ -58,16 +58,37 @@ is unrelated (its tag is at +0).
 
 ### `.hid`
 
-`HID\0` at +4 like the MOT header; then the frame range, the object count
-and one initial visibility byte per object. `DispOn.hid` / `DispOff.hid`
-show / hide every object. The per-object keys are not decoded yet.
+| at | holds |
+| --- | --- |
+| +0x00 | u32 header size |
+| +0x04 | `HID\0` |
+| +0x0C | f32 frame range start, end, start, end |
+| +0x1C | u8 object count N, then N bytes: 1 when the object has a track |
+| header | u32 track count, then one track per flagged object, in object order |
+
+A track: u16 byte size, u16 key count, u32 kind (7), f32 state (-1 shown,
+0 hidden), f32 1.0, then 4 bytes a key: a big-endian u16 frame of the range
+(it equals the range start in every single-key file) and a u16 flag.
+`DispOn.hid` / `DispOff.hid` hold 100 tracks: objects 0..99 shown /
+hidden. Several stage files show one object and hide another (a piece
+swapped for its broken version). The object index is the model's object
+(SCM: object k hangs from scene node k + 1).
 
 ## Playback
 
 `demo_session.h` builds the scene (`open_session` of a `DEMO` archive):
 
 * SCM tracks are stage pieces: they go to the room pass in their own
-  coordinates (`build_room` over a PAC of each piece's PTX and SCM).
+  coordinates (`stage_room::assemble_room` over the opened pieces, each with
+  its own PTX, so every piece's vertices and triangles are known).
+* Stage pieces play their Motion clips too. An SCM scene node has the MOD
+  joint record (translation, rotation xyz), so the MOT binds to the nodes;
+  its channels are turned into node matrices the SCM way (its rotation order
+  is not the MOD joints': `MotionClip::evaluate_channels`), composed down the
+  node tree, and every object moves rigidly with its node (SCM meshes are
+  local to their node). A piece whose rebuilt rest pose does not match its
+  own stays still. The room's `revision` changes whenever it moves or hides,
+  so the GPU rebuilds its cached buffers.
 * MOD / EFM tracks are composed (`compose_mod_sessions`, source
   coordinates) and get their own `Texture`.
 * Each model track plays its Motion clips: the clip that started last among
@@ -78,8 +99,10 @@ show / hide every object. The per-object keys are not decoded yet.
 * `CnsPos track joint`: the model is authored at its host's rest pose and
   follows the joint's move from rest (vertex x inverse rest world x current
   world).
-* Visibility: the Hide clip set last before the frame decides (H hides, D
-  shows, `DispOff.hid` hides, other `.hid` leave the model shown).
+* Visibility, per object of every track (models and stage pieces): every
+  Hide clip set up to the frame applies in order (H hides the model, D shows
+  it, A applies its `.hid`: its objects take its states). The meshes draw the
+  shown objects' triangles only.
 * The camera: the covering Camera clip that started last; between clips the
   last one that ended holds its final pose. The view stands at the eye,
   looks at the target, and the field of view becomes the viewer's zoom
@@ -100,10 +123,17 @@ view, so the user can look around and zoom in a pause or while it plays,
 and fly through the scene. `⋮ → 🎬 Cutscene camera` gives the view back to
 the cuts.
 
+### The camera inside the scene
+
+Shots stand over a shoulder or inside a model (`cm036`: the eye in Dante's
+head). The model pass clips its triangles at the near plane in camera space
+(the room pass and the GPU pass already did), so geometry at and behind the
+eye is cut, never projected across the picture.
+
 ## Not yet
 
-Stage pieces' own motions and hides (the room is static), per-object HID
-keys, effects, lights, screen effects, messages, sound. A cutscene that
+The per-key flags of `.hid` tracks (a state change inside a clip), effects,
+lights, screen effects, messages, sound. A cutscene that
 does not carry its stage (`m01_c00` comments out `st000.scm`: the game uses
 the shop it is in) shows it when that stage is picked as the room.
 

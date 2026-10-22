@@ -87,12 +87,25 @@ struct Room final {
     std::vector<std::uint8_t> collision_line_kinds;
     std::string name;
     std::string detail;
+    // Bumped whenever the mesh changes in place (a cutscene moving or hiding
+    // its stage pieces), so cached GPU buffers are rebuilt.
+    std::uint64_t revision{};
 };
 
 // Builds a room from the archive bytes; nullptr when nothing in it draws.
 [[nodiscard]] std::shared_ptr<const Room> build_room(std::string_view name,
                                                      const std::uint8_t* bytes,
                                                      std::size_t size) noexcept;
+
+// A room from pieces already opened (each with its texture attached), in
+// their order: piece k is Room::piece_info[k] and its vertices follow the
+// previous pieces' one to one. A cutscene builds its stage this way, so it
+// can move and hide the pieces. nullptr when nothing draws.
+[[nodiscard]] std::shared_ptr<Room> assemble_room(std::string_view name, std::span<const Session* const> pieces,
+                                                  std::span<const std::string> names) noexcept;
+// Which triangles of a room blend after the opaque ones: those whose
+// texture has soft alpha (recomputed after the room's triangles change).
+void mark_translucent(Room& room);
 
 // Floor spots of a merged mesh (exposed for tests).
 [[nodiscard]] std::vector<Vec3> floor_spots(const Mesh& mesh, std::size_t limit = 8U);

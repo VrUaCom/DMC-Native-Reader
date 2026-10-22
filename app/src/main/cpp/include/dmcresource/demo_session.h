@@ -12,26 +12,45 @@
 #include "dmcresource/resource_session.h"
 
 // A cutscene opened as its scene: the stage pieces (SCM) drawn by the room
-// pass in their own coordinates, the track models (MOD / EFM with their PTX)
+// pass in their own coordinates, moving and hiding with their clips, the track models (MOD / EFM with their PTX)
 // as one composite, and the cutscene camera over the timeline. Playback goes
 // through the motion API (motion_player.h): a bound cutscene is the session's
 // motion, its frames the timeline's, so the viewer's play / pause / scrub
 // drive it like any motion.
 namespace dmcresource::demo {
 
+// One object of a track's model (a MOD / SCM object, its meshes in order):
+// its vertices and triangles in the track's own mesh, and the scene node it
+// hangs from (SCM; -1 none).
+struct ObjectRange final {
+    std::uint32_t object{};
+    std::int32_t node{-1};
+    std::size_t first_vertex{};
+    std::size_t vertex_count{};
+    std::size_t first_triangle{};
+    std::size_t triangle_count{};
+};
+
+// A stage piece's own motion (its scene nodes driven by a MOT); defined in
+// demo_session.cpp.
+struct StageMotion;
+
 struct PlayerTrack final {
     int track{};
     std::string model;
     std::string texture;
+    // A stage piece lives in the room mesh, a model in the composite.
+    bool stage{};
     // The model on its own; the cutscene poses it and copies its vertices
-    // into the composite at [vertex_begin, vertex_begin + vertex_count).
+    // into its mesh at [vertex_begin, vertex_begin + vertex_count).
     std::unique_ptr<Session> source;
     std::size_t vertex_begin{};
     std::size_t vertex_count{};
-    // Its triangles in the composite, and whether they are drawn now.
     std::size_t triangle_begin{};
     std::size_t triangle_count{};
-    bool visible{true};
+    std::vector<ObjectRange> objects;
+    // Which objects are drawn now (by object index; the Hide clips decide).
+    std::vector<std::uint8_t> shown;
     // CnsPos: the model hangs from joint `host_joint` of track `host_track`
     // (its own motion is relative to that joint); -1 when free.
     int host_track{-1};
@@ -39,6 +58,7 @@ struct PlayerTrack final {
     // The model is authored at the host's rest pose: it follows the joint's
     // move from its rest world (vertex x inverse rest world x current world).
     Matrix4 host_rest_inverse{};
+    std::shared_ptr<StageMotion> stage_motion;
     // The MOT bound now, and one that failed to bind (not retried).
     std::string motion;
     std::string failed_motion;
@@ -49,11 +69,16 @@ struct Player final {
     Document doc;
     std::shared_ptr<const std::vector<std::uint8_t>> bytes;
     std::vector<PlayerTrack> tracks;
-    std::vector<std::string> stage_pieces;
-    // Every track's triangles and their texture slots; the scene draws the
-    // visible tracks' share of them.
+    // The stage the room pass draws (the scene's Session::stage), owned here
+    // so its pieces can move and hide.
+    std::shared_ptr<stage_room::Room> room;
+    // Every triangle of the composite and of the room with its texture slot
+    // (and room translucency); the meshes draw the shown objects' share.
     std::vector<std::uint32_t> all_indices;
     std::vector<std::uint32_t> all_triangle_slots;
+    std::vector<std::uint32_t> room_indices;
+    std::vector<std::uint32_t> room_triangle_slots;
+    std::vector<std::uint8_t> room_translucent;
     float frame{};
     bool bound{};
     // The view follows the cutscene camera until the user takes it.
