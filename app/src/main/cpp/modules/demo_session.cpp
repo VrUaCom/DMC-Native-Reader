@@ -382,12 +382,24 @@ std::unique_ptr<Session> open_demo(Session&& archive, std::string_view name, con
             state->all_triangle_slots = scene->render_triangle_texture_slots;
         }
 
-        // The archive's identity, Info, timeline picture and files stay.
+        // The archive's identity, Info and files stay. The scene is drawn in
+        // 3D, never as a picture: the timeline picture becomes the first of
+        // its files.
         scene->probe = archive.probe;
-        scene->capabilities |= archive.capabilities;
+        scene->capabilities |= archive.capabilities & ~capability(ResourceCapability::ImagePreview);
         scene->inspection = std::move(archive.inspection);
-        scene->image_preview = std::move(archive.image_preview);
-        scene->children = std::move(archive.children);
+        scene->children.clear();
+        if (archive.image_preview.available()) {
+            ChildResource timeline;
+            timeline.id = "timeline";
+            timeline.title = "Timeline " + state->doc.name;
+            timeline.suggested_filename = state->doc.name + "_timeline.png";
+            timeline.probe = archive.probe;
+            timeline.capabilities = capability(ResourceCapability::ImagePreview);
+            timeline.image_preview = std::move(archive.image_preview);
+            scene->children.push_back(std::move(timeline));
+        }
+        for (auto& child : archive.children) scene->children.push_back(std::move(child));
         scene->archive_name = std::string{name};
         scene->source_name = std::string{name};
         scene->stage = std::move(room);
