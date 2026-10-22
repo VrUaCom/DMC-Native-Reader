@@ -13,6 +13,7 @@ public final class ActionOutcome {
     public static final int STEP_SHOW_MARKER_CARD = 2;
     public static final int STEP_START_SCRUB = 3;
     public static final int STEP_OPEN_SESSION = 4;
+    public static final int STEP_LEAVE_FLY = 5;
 
     public final boolean ok;
     public final int step;

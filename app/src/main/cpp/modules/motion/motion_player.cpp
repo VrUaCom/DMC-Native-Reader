@@ -12,6 +12,7 @@
 
 #include "dmc_rengine/analysis/mod/animation_binding.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmcresource/demo_session.h"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/motion/motion_clip.h"
 #include "dmcresource/motion/motion_script.h"
@@ -1268,7 +1269,8 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
                                                   std::size_t node_begin,
                                                   const CompositePlacement* placement,
                                                   std::span<const std::byte> mot,
-                                                  std::string* reason) {
+                                                  std::string* reason,
+                                                  bool leading_joints = false) {
     if (scene.rig == nullptr) {
         *reason = to_string(ClipError::NoSkeleton);
         return std::nullopt;
@@ -1278,7 +1280,7 @@ void advance_lady_dynamic_visuals(Session* session, float frame) noexcept {
         return std::nullopt;
     }
     std::string parse_message;
-    auto clip = MotionClip::bind(mot, *scene.rig, &parse_message);
+    auto clip = MotionClip::bind(mot, *scene.rig, &parse_message, leading_joints);
     if (!clip) {
         *reason = to_string(clip.error());
         if (!parse_message.empty()) *reason += " (" + parse_message + ")";
@@ -1597,10 +1599,26 @@ Matrix4 shl02_effect_parent_matrix(const Matrix4& slot20_node0) noexcept {
     return out;
 }
 
+namespace {
+[[nodiscard]] MotionLoadReport load_motion_impl(Session* session, std::string_view name, const std::uint8_t* bytes,
+                                                std::size_t size, bool leading_joints) noexcept;
+}  // namespace
+
 MotionLoadReport load_motion(Session* session,
                              std::string_view name,
                              const std::uint8_t* bytes,
                              std::size_t size) noexcept {
+    return load_motion_impl(session, name, bytes, size, false);
+}
+
+MotionLoadReport load_cutscene_motion(Session* session, std::string_view name, const std::uint8_t* bytes,
+                                      std::size_t size) noexcept {
+    return load_motion_impl(session, name, bytes, size, true);
+}
+
+namespace {
+MotionLoadReport load_motion_impl(Session* session, std::string_view name, const std::uint8_t* bytes,
+                                  std::size_t size, bool leading_joints) noexcept {
     MotionLoadReport report;
     if (session == nullptr || bytes == nullptr || size == 0U) {
         report.detail = "Motion: no session or empty MOT";
@@ -1623,7 +1641,7 @@ MotionLoadReport load_motion(Session* session,
                                   const CompositePlacement* placement,
                                   const std::string& label) {
             std::string reason;
-            auto part = bind_part(scene, vertex_cursor, node_cursor, placement, mot, &reason);
+            auto part = bind_part(scene, vertex_cursor, node_cursor, placement, mot, &reason, leading_joints);
             if (part.has_value()) {
                 state->parts.push_back(std::move(*part));
             } else {
@@ -1710,6 +1728,8 @@ MotionLoadReport load_motion(Session* session,
         return report;
     }
 }
+
+}  // namespace
 
 [[nodiscard]] MotionLoadReport load_synchronized_script_tracks(
     Session* session,
@@ -2025,6 +2045,15 @@ MotionLoadReport load_library_motion(Session* session,
         report.detail = "Motion: invalid library index";
         return report;
     }
+    // A cutscene's one library entry is its timeline.
+    if (demo::is_demo(session)) {
+        report.ok = demo::bind(session);
+        report.end_frame = demo::end_frame(session);
+        report.detail = report.ok ? session->motion_library[motion_index].name + ": " +
+                                        std::to_string(static_cast<int>(report.end_frame)) + " frames"
+                                  : "Cutscene could not be played";
+        return report;
+    }
     try {
         clear_motion(session);
         const auto payload = session->motion_library[motion_index];
@@ -2061,6 +2090,7 @@ MotionLoadReport load_library_motion(Session* session,
 }
 
 bool apply_motion_frame(Session* session, float frame) noexcept {
+    if (demo::bound(session)) return demo::seek(session, frame);
     if (session == nullptr || session->motion == nullptr || !std::isfinite(frame)) return false;
     try {
         auto& state = *session->motion;
@@ -2204,6 +2234,7 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
 
 void clear_motion(Session* session) noexcept {
     if (session == nullptr) return;
+    demo::unbind(session);
     if (session->motion != nullptr && session->motion->script_driven &&
         session->script_effect_bridge.reset != nullptr) {
         session->script_effect_bridge.reset(session);
@@ -2235,15 +2266,17 @@ void clear_motion(Session* session) noexcept {
 }
 
 bool has_motion(const Session* session) noexcept {
-    return session != nullptr && session->motion != nullptr;
+    return session != nullptr && (session->motion != nullptr || demo::bound(session));
 }
 
 float motion_end_frame(const Session* session) noexcept {
-    return has_motion(session) ? session->motion->end_frame : 0.0F;
+    if (demo::bound(session)) return demo::end_frame(session);
+    return session != nullptr && session->motion != nullptr ? session->motion->end_frame : 0.0F;
 }
 
 float motion_loop_start_frame(const Session* session) noexcept {
-    return has_motion(session) ? session->motion->loop_start_frame : 0.0F;
+    if (demo::bound(session)) return 0.0F;
+    return session != nullptr && session->motion != nullptr ? session->motion->loop_start_frame : 0.0F;
 }
 
 bool motion_can_drive(const Session& session, std::span<const std::uint8_t> mot) noexcept {
@@ -2705,7 +2738,7 @@ bool effects_visible(const Session* session) noexcept {
 }
 
 std::span<const Vec3> motion_rest_vertices(const Session* session) noexcept {
-    if (!has_motion(session)) return {};
+    if (session == nullptr || session->motion == nullptr) return {};
     return session->motion->source_vertices;
 }
 

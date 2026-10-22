@@ -16,6 +16,7 @@
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/demo.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_chart.h"
@@ -46,7 +47,10 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "EFM ")) return {Format::Mod, "EFM", "efm"};
     if (magic_at(bytes, size, 0U, "SCM ")) return {Format::Scm, "SCM", "scm"};
     if (magic_at(bytes, size, 0U, "DDS ")) return {Format::Dds, "DDS", "dds"};
-    if (magic_at(bytes, size, 0U, "PAC\0")) return {Format::Pac, "PAC", "pac"};
+    if (magic_at(bytes, size, 0U, "PAC\0")) {
+        if (demo::looks_like_demo(std::span<const std::uint8_t>{bytes, size})) return {Format::Demo, "DEMO", "pac"};
+        return {Format::Pac, "PAC", "pac"};
+    }
     if (magic_at(bytes, size, 0U, "PNST")) {
         if (effect_bank::looks_like_bank(std::span<const std::uint8_t>{bytes, size})) {
             return {Format::EffectBank, "FXBANK", "fxbank"};
@@ -78,10 +82,14 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         return {Format::SpuMap, "SPUMAPDT", "bin"};
     }
     if (magic_at(bytes, size, 4U, "HID\0")) return {Format::Hid, "HID", "hid"};
+    if (bytes != nullptr && demo::looks_like_cam(std::span<const std::uint8_t>{bytes, size})) {
+        return {Format::DemoCamera, "DEMO-CAM", "cam"};
+    }
     if (bytes != nullptr && size > 0U) {
         const std::string_view text{reinterpret_cast<const char*>(bytes), size};
         if (motion::looks_like_tsc(text)) return {Format::Tsc, "TSC", "tsc"};
         if (motion::looks_like_clt(text)) return {Format::Clt, "CLT", "clt"};
+        if (demo::looks_like_clips(text)) return {Format::DemoClips, "CLIPS", "txt"};
     }
     if (bytes != nullptr && size > 0U) {
         try {

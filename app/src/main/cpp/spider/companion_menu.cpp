@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "dmcresource/camera_control.h"
+#include "dmcresource/demo_session.h"
 #include "dmcresource/spider/black_widow.h"
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/stage_room.h"
@@ -76,8 +78,25 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
             add(menu.rows, Companion::StageConfigRemove, "Remove stage config");
         }
     }
+    // A cutscene whose camera the user took: back to following its cuts.
+    if (demo::is_demo(session) && !demo::director(session)) {
+        add(menu.rows, Companion::CutsceneCamera, "\xF0\x9F\x8E\xAC Cutscene camera (follow the cuts)");
+    }
     add(menu.rows, Companion::Diagnostics, "Diagnostics / build info\xE2\x80\xA6");
     return menu;
+}
+
+ActionOutcome run_companion_action(Session* session, int id) noexcept {
+    if (static_cast<Companion>(id) != Companion::CutsceneCamera) return run_companion_action(id);
+    ActionOutcome out;
+    out.ok = demo::set_director(session, true);
+    if (out.ok) {
+        // The free camera's eye goes; the cuts drive the view again.
+        camera::reset();
+        out.step = ShellStep::LeaveFly;
+        out.message = "Cutscene camera: " + demo::status_line(session);
+    }
+    return out;
 }
 
 ActionOutcome run_companion_action(int id) noexcept {

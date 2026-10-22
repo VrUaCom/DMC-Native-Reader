@@ -41,6 +41,7 @@ enum class Companion : int {
     StageConfigToggle = 19,
     StageConfigRemove = 20,
     Diagnostics = 21,
+    CutsceneCamera = 22,
 };
 
 // What only the shell knows.
@@ -65,5 +66,8 @@ struct CompanionMenu final {
 // every other id answers with ShellStep::None and an empty message, and the
 // shell runs its platform step for it.
 [[nodiscard]] ActionOutcome run_companion_action(int id) noexcept;
+// The same with the opened session, for the items that act on it (the
+// cutscene camera).
+[[nodiscard]] ActionOutcome run_companion_action(Session* session, int id) noexcept;
 
 }  // namespace dmcresource::spider::actions

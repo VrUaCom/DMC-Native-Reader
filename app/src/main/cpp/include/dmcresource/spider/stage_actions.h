@@ -24,6 +24,7 @@ enum class ShellStep : std::uint8_t {
     ShowMarkerCard = 2,   // show the card of `marker` (marker_card)
     StartScrub = 3,       // start scrubbing the motion under the finger
     OpenSession = 4,      // navigate to the session handed back
+    LeaveFly = 5,         // leave the shell's fly mode (the core drives the camera again)
 };
 
 struct ActionOutcome final {

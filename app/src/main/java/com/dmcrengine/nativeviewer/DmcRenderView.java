@@ -256,6 +256,7 @@ public final class DmcRenderView extends View {
                                 || multiMode == MULTI_CLOSE_PAN || tripleMode == TRIPLE_TURN) {
                             return false;
                         }
+                        claimCamera();
                         final float next = Math.max(GestureHud.ZOOM_MIN,
                                 Math.min(GestureHud.ZOOM_MAX, zoom * detector.getScaleFactor()));
                         // The core keeps zoom, dolly and turn apart: once one
@@ -617,6 +618,7 @@ public final class DmcRenderView extends View {
         if (on == flyMode) return true;
         if (on) {
             if (session == 0 || staticImagePreview || isUvLayoutVisible()) return false;
+            claimCamera();
             // The core puts the fly eye where the orbit camera stands.
             if (!NativeBridge.enterFly(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
                     renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly)) {
@@ -649,6 +651,24 @@ public final class DmcRenderView extends View {
         for (int side = 0; side < 2; ++side) releaseStick(side);
         removeCallbacks(flyTick);
         touching = false;
+    }
+
+    /**
+     * A camera gesture on a cutscene whose cuts drive the view: the core
+     * hands the shot's camera over and the gesture continues from it (the
+     * free camera stands at the shot's eye). Nothing happens otherwise.
+     */
+    private void claimCamera() {
+        if (session == 0) return;
+        final float[] view = NativeBridge.demoTakeCamera(session);
+        if (view == null || view.length < 3) return;
+        yaw = view[0];
+        pitch = view[1];
+        zoom = Math.max(GestureHud.ZOOM_MIN, Math.min(GestureHud.ZOOM_MAX, view[2]));
+        touchZoom = zoom;
+        panX = 0.0f;
+        panY = 0.0f;
+        dolly = 0.0f;
     }
 
     /** Only the stick is shown: the core puts the knob on the finger, or on the ring past it. */
@@ -1333,6 +1353,7 @@ public final class DmcRenderView extends View {
                     lastMotionFrame = scrubFrame;
                     requestFrame(scrubFrame);
                 } else if (edgeStart == EDGE_NONE && !scaleDetector.isInProgress()) {
+                    if (Math.hypot(x - downX, y - downY) > 8.0f * density) claimCamera();
                     float dx = x - lastX;
                     float dy = y - lastY;
                     // Grab-and-turn: the surface under the finger follows it.
@@ -1402,6 +1423,7 @@ public final class DmcRenderView extends View {
     }
 
     private void moveMulti(MotionEvent event) {
+        claimCamera();
         final int n = event.getPointerCount();
         if (n != multiCount) beginMulti(event, -1);
         float sx = 0.0f, sy = 0.0f;

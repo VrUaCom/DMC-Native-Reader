@@ -45,10 +45,15 @@ struct ClipStats final {
 // never modified.
 class MotionClip final {
 public:
+    // `leading_joints`: a MOT whose channel domain is longer than the
+    // model's joints drives the leading joints (0x140310A80 walks the model's
+    // joint count and consumes one mask per joint; the rest is never read).
+    // Cutscenes play body MOTs on their lighter body variants this way.
     [[nodiscard]] static std::expected<MotionClip, ClipError> bind(
         std::span<const std::byte> mot_bytes,
         const SkeletonRig& rig,
-        std::string* parse_message = nullptr);
+        std::string* parse_message = nullptr,
+        bool leading_joints = false);
 
     // Header +0x0C: end frame of the timeline (corpus-confirmed mirror of +0x14).
     [[nodiscard]] float end_frame() const noexcept { return end_frame_; }

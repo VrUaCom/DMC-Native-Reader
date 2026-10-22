@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/demo.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/font.h"
 #include "dmcresource/stage_config.h"
@@ -130,6 +131,12 @@ ProbeResult probe(std::string_view filename,
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.hits");
     }
 
+    // A cutscene is a PAC whose slot 0 is the Load / Set script.
+    if (magic4(bytes, size, 'P', 'A', 'C', '\0') &&
+        demo::looks_like_demo(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Demo, true, "DEMO", "cutscene", "render-scene",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.demo");
+    }
     if (magic4(bytes, size, 'P', 'A', 'C', '\0')) {
         return result(Format::Pac, true, "PAC", "archive", "child-resources",
                       "EXE_AND_CORPUS_CONFIRMED", "application/vnd.dmc.pac");
@@ -169,6 +176,11 @@ ProbeResult probe(std::string_view filename,
         if (motion::looks_like_clt(text)) {
             return result(Format::Clt, true, "CLT", "cloth", "inspection",
                           "EXE_CONFIRMED", "text/vnd.dmc.clt");
+        }
+        // Cutscene clip texts ("# Clip" blocks with SetFrame / ClipScale).
+        if (demo::looks_like_clips(text)) {
+            return result(Format::DemoClips, true, "CLIPS", "cutscene", "inspection",
+                          "STRUCTURAL_CONFIRMED", "text/vnd.dmc.clips");
         }
         // Stage room setup text: lexes cleanly and carries #SET / DOOR /
         // BOXIN / NEXTROOM; a slot name list (.index): file names, one a line.
@@ -211,6 +223,12 @@ ProbeResult probe(std::string_view filename,
     if (bytes != nullptr && size >= 8U && std::memcmp(bytes, "SPUMAPDT", 8U) == 0) {
         return result(Format::SpuMap, true, "SPUMAPDT", "sound", "inspection",
                       "STRUCTURAL_CONFIRMED", "application/vnd.dmc.spumap");
+    }
+    // Cutscene camera: header size 0x60, then "CAM\0" (the stage CAM member
+    // has its tag at +0).
+    if (bytes != nullptr && demo::looks_like_cam(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::DemoCamera, true, "DEMO-CAM", "cutscene", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.cam");
     }
     if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'H', 'I', 'D', '\0')) {
         return result(Format::Hid, true, "HID", "dispatch", "inspection",
@@ -367,6 +385,9 @@ const char* format_name(Format format) noexcept {
     case Format::Hid: return "HID";
     case Format::SpuMap: return "SPUMAPDT";
     case Format::Vag: return "VAG";
+    case Format::Demo: return "DEMO";
+    case Format::DemoCamera: return "DEMO-CAM";
+    case Format::DemoClips: return "CLIPS";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

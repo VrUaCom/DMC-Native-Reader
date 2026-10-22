@@ -37,6 +37,9 @@ struct Room;
 namespace environment_collision {
 struct Source;
 }
+namespace demo {
+struct Player;
+}
 
 // Portable product session; platform shells own only handles and byte transport.
 struct Session {
@@ -271,6 +274,10 @@ struct Session {
 
     std::shared_ptr<const UvGallery> uv_gallery;
     std::optional<std::size_t> uv_map_index;
+
+    // A cutscene opened as its scene (demo_session.h): the timeline, the
+    // tracks and the cutscene camera.
+    std::shared_ptr<demo::Player> demo;
 };
 
 [[nodiscard]] std::unique_ptr<Session> open_session(std::string_view name,

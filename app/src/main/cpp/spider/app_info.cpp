@@ -40,7 +40,10 @@ enum class Group : std::uint8_t { Models, Textures, Archives, Motion, Stage, Eve
     case Format::StageText:
     case Format::NameIndex:
     case Format::SoGraph: return Group::Stage;
-    case Format::Evt: return Group::Events;
+    case Format::Evt:
+    case Format::Demo:
+    case Format::DemoCamera:
+    case Format::DemoClips: return Group::Events;
     case Format::Vag:
     case Format::SoundTable:
     case Format::SpuMap: return Group::Sound;
@@ -54,7 +57,7 @@ constexpr std::array<std::pair<Group, const char*>, 8> kGroups{{
     {Group::Archives, "Archives"},
     {Group::Motion, "Motion and scripts"},
     {Group::Stage, "Stage"},
-    {Group::Events, "Events"},
+    {Group::Events, "Events and cutscenes"},
     {Group::Sound, "Sound"},
     {Group::Other, "Other"},
 }};

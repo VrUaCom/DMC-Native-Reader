@@ -1,5 +1,6 @@
 #include "dmcresource/motion/motion_clip.h"
 
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <new>
@@ -130,7 +131,8 @@ bool evaluate_compression2_track(const mot::TrackRecord& track,
 std::expected<MotionClip, ClipError> MotionClip::bind(
     std::span<const std::byte> mot_bytes,
     const SkeletonRig& rig,
-    std::string* parse_message) {
+    std::string* parse_message,
+    bool leading_joints) {
     try {
         auto parsed = mot::Parser::parse(mot_bytes);
         if (parse_message != nullptr) *parse_message = parsed.message;
@@ -147,7 +149,7 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
         // character-specific motion-group guess.
         const auto declared_domain = static_cast<std::size_t>(
             parsed.document->channel_domain_count);
-        if (declared_domain == 0U || declared_domain > node_count) {
+        if (declared_domain == 0U || (declared_domain > node_count && !leading_joints)) {
             return std::unexpected(ClipError::NodeCountMismatch);
         }
 
@@ -160,7 +162,25 @@ std::expected<MotionClip, ClipError> MotionClip::bind(
         // present. Never synthesize a missing mask outside the serialized
         // header or reinterpret non-zero padding.
         auto binding_document = *parsed.document;
-        if (declared_domain < node_count) {
+        if (declared_domain > node_count) {
+            // Leading joints only: their masks and the tracks those masks
+            // consume (tracks are taken in mask order).
+            if (binding_document.channel_masks.size() < node_count) {
+                return std::unexpected(ClipError::NodeCountMismatch);
+            }
+            std::size_t leading_tracks = 0U;
+            for (std::size_t node = 0U; node < node_count; ++node) {
+                leading_tracks += static_cast<std::size_t>(std::popcount(
+                    static_cast<unsigned>(binding_document.channel_masks[node] & 0x1FFU)));
+            }
+            if (leading_tracks > binding_document.tracks.size()) {
+                return std::unexpected(ClipError::NodeCountMismatch);
+            }
+            binding_document.channel_masks.resize(node_count);
+            binding_document.channel_domain_count = static_cast<std::uint16_t>(node_count);
+            binding_document.tracks.resize(leading_tracks);
+            binding_document.record_count = static_cast<decltype(binding_document.record_count)>(leading_tracks);
+        } else if (declared_domain < node_count) {
             const auto required_mask_end =
                 mot::HeaderAbi::channel_mask_table +
                 node_count * sizeof(std::uint16_t);

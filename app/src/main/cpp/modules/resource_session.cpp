@@ -1,5 +1,6 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/texture_reencode.h"
+#include "dmcresource/demo_session.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/skeleton_rig.h"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
@@ -611,6 +612,11 @@ std::unique_ptr<Session> open_session(std::string_view name,
         }
     }
     retain_lazy_child_sources(session.get(), bytes, size);
+    // A cutscene opens as its scene (stage, models, camera); its files stay
+    // browsable as the scene's children.
+    if (session && session->probe.format == Format::Demo && bytes != nullptr) {
+        if (auto scene = demo::open_demo(std::move(*session), name, bytes, size)) return scene;
+    }
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});
     retain_texture_source(session.get(), name, bytes, size);
     if (session && session->probe.format == Format::Vag && bytes != nullptr) {
@@ -2094,7 +2100,16 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.pan_y = std::isfinite(controls.pan_y) ? std::clamp(controls.pan_y, -20.0F, 20.0F) : 0.0F;
     view.dolly = std::isfinite(controls.dolly)
         ? std::clamp(controls.dolly, kDollyMin, session_dolly_limit(&session)) : 0.0F;
-    if (controls.fly && std::isfinite(controls.eye.x) && std::isfinite(controls.eye.y) &&
+    // A cutscene's camera drives the view until the user takes it.
+    if (const auto director = demo::director_view(session)) {
+        view.yaw_radians = director->yaw;
+        view.pitch_radians = std::clamp(director->pitch, -1.55f, 1.55f);
+        view.zoom = std::clamp(director->zoom, 0.15f, 8.0f);
+        view.fly = true;
+        view.fly_eye = director->eye;
+        view.pan_x = view.pan_y = 0.0F;
+        view.dolly = 0.0F;
+    } else if (controls.fly && std::isfinite(controls.eye.x) && std::isfinite(controls.eye.y) &&
         std::isfinite(controls.eye.z)) {
         view.fly = true;
         view.fly_eye = controls.eye;
@@ -2178,7 +2193,11 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         out->room = stage_room::shown(stage_room::current());
     }
     if (out->room && !rest.empty()) {
-        const auto placement = stage_room::placement_for(rest, controls.room_yaw);
+        // A cutscene stands in stage coordinates: the room is not moved
+        // under it (the game's own stage of a cutscene that does not carry
+        // it, e.g. the shop for m01_c00, is the room the user picked).
+        const auto placement = demo::is_demo(&session) ? stage_room::Placement{}
+                                                       : stage_room::placement_for(rest, controls.room_yaw);
         view.room_mesh = &out->room->mesh;
         view.room_texture_slots = &out->room->triangle_texture_slots;
         view.room_textures = &out->room->textures;
@@ -2202,15 +2221,18 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     // (near-plane clipped), turned about the floor spot by the twist gesture.
     if (!view.uv_layout && session.stage != nullptr) {
         const auto& stage = stage_room::shown(*session.stage);
+        // A cutscene's models stand in the stage's own coordinates: its
+        // stage never turns away from them.
+        const float stage_yaw = demo::is_demo(&session) || !std::isfinite(controls.room_yaw) ? 0.0F : controls.room_yaw;
         view.room_mesh = &stage.mesh;
         view.room_texture_slots = &stage.triangle_texture_slots;
         view.room_textures = &stage.textures;
         view.room_translucent_triangles = &stage.translucent_triangles;
         set_room_animation(&view, stage.uv_scrolls, !stage.effects.empty() && stage_room::effect_host() != nullptr, flags);
-        append_room_effects(stage, stage_room::effect_host(), stage_room::Placement{view.room_pivot, std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F, {}}, view.room_time, out);
+        append_room_effects(stage, stage_room::effect_host(), stage_room::Placement{view.room_pivot, stage_yaw, {}}, view.room_time, out);
         view.effect_sprites = out->effect_sprites;
         view.room_pivot = stage.spots.empty() ? Vec3{} : stage.spots.front();
-        view.room_yaw = std::isfinite(controls.room_yaw) ? controls.room_yaw : 0.0F;
+        view.room_yaw = stage_yaw;
         view.room_offset = {};
         view.room_wire_main = true;
         // The joint hierarchy follows the twist like the meshes.

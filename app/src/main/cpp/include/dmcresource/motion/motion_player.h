@@ -35,6 +35,14 @@ struct MotionLoadReport final {
                                            const std::uint8_t* bytes,
                                            std::size_t size) noexcept;
 
+// Cutscene tracks (demo_session.h): like load_motion, but a MOT whose
+// channel domain is longer than a model's joints drives its leading joints,
+// as the game plays body MOTs on the lighter cutscene body variants.
+[[nodiscard]] MotionLoadReport load_cutscene_motion(Session* session,
+                                                    std::string_view name,
+                                                    const std::uint8_t* bytes,
+                                                    std::size_t size) noexcept;
+
 // Raw library MOT playback. This remains script-free, but may temporarily
 // release a component from its host constraint when the MOT targets that
 // component's own skeleton (CEm034 slot20 / PAC11).

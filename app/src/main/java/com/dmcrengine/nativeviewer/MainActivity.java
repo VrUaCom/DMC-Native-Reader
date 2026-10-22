@@ -1517,6 +1517,9 @@ public final class MainActivity extends Activity {
             case ActionOutcome.STEP_OPEN_SESSION:
                 if (outcome.session != 0) navigateToSession(outcome.session, outcome.title);
                 break;
+            case ActionOutcome.STEP_LEAVE_FLY:
+                renderView.setFlyMode(false);
+                break;
             default:
                 break;
         }
@@ -1735,7 +1738,7 @@ public final class MainActivity extends Activity {
             case CompanionMenu.STAGE_CLOTH: chooseStagedAssets(REQUEST_STAGE_CLOTH, true); break;
             case CompanionMenu.STAGE_OTHER: chooseStagedAssets(REQUEST_STAGE_OTHER, true); break;
             case CompanionMenu.DIAGNOSTICS: showDiagnosticsDialog(); break;
-            default: handleOutcome(NativeBridge.runCompanionAction(id)); break;
+            default: handleOutcome(NativeBridge.runCompanionAction(session, id)); break;
         }
     }
 

@@ -77,5 +77,7 @@ public:
 [[nodiscard]] std::vector<NativeModule> stage_config_modules() noexcept;
 // LIG2, DCA, stage text, .index, SO graph, dbsT, ff&A, HID, SPUMAPDT, VAG.
 [[nodiscard]] std::vector<NativeModule> family_modules() noexcept;
+// Cutscenes: the archive, its cameras (.cam) and its clip texts.
+[[nodiscard]] std::vector<NativeModule> demo_modules() noexcept;
 
 }  // namespace dmcresource

@@ -28,6 +28,7 @@
 #include "dmcresource/stage_room.h"
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/camera_control.h"
+#include "dmcresource/demo_session.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/spider/app_info.h"
 #include "dmcresource/spider/companion_menu.h"
@@ -1196,9 +1197,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
 }
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_runCompanionAction(JNIEnv* env, jclass, jint id) {
+Java_com_dmcrengine_nativeviewer_NativeBridge_runCompanionAction(JNIEnv* env, jclass, jlong handle, jint id) {
     const SessionLock jni_lock{session_mutex()};
-    return outcome_object(env, dmcresource::spider::actions::run_companion_action(id));
+    return outcome_object(env, dmcresource::spider::actions::run_companion_action(from_handle(handle), id));
 }
 
 // The picture a session exports: {width, height}, chosen by the core.
@@ -1712,6 +1713,18 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_flyTick(
     }
     const auto step = camera::fly_tick(yaw, pitch, move, look, dt, speed);
     return floats(env, {step.yaw, step.pitch, move.boost, static_cast<float>(move.zone)});
+}
+
+// A cutscene's camera taken by a gesture (demo_session.h): {yaw, pitch,
+// zoom} of the shot it stood at, its eye becoming the free camera's; null
+// when the cuts were not driving the view.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoTakeCamera(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto view = dmcresource::demo::take_camera(from_handle(handle));
+    if (!view) return nullptr;
+    dmcresource::camera::enter_fly(view->eye);
+    return floats(env, {view->yaw, view->pitch, view->zoom});
 }
 
 // Where the HUD draws a stick's knob for a finger offset (px): {dx, dy}.

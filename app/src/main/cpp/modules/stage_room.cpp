@@ -945,6 +945,8 @@ std::shared_ptr<const Session> effect_host() noexcept {
 }
 
 bool is_stage_session(const Session& session) noexcept {
+    // A cutscene is its own scene: its stage pieces are already placed.
+    if (session.demo != nullptr) return false;
     if (session.probe.format == Format::Scm) return true;
     return std::any_of(session.children.begin(), session.children.end(),
                        [](const ChildResource& c) { return stage_child(c, 1U); });

@@ -110,7 +110,9 @@ public final class NativeBridge {
     public static native CompanionMenu companionMenu(long handle, boolean rootScene, boolean assembledPacSource,
                                                      boolean stageSource, boolean roomLoaded, boolean roomShown);
     /** Runs a ⋮ item the core carries out (stage config); others answer STEP_NONE. */
-    public static native ActionOutcome runCompanionAction(int id);
+    public static native ActionOutcome runCompanionAction(long handle, int id);
+    /** A gesture takes a cutscene's camera: {yaw, pitch, zoom} of its shot, or null. */
+    public static native float[] demoTakeCamera(long handle);
     /** The exported picture's {width, height}, chosen by the core. */
     public static native int[] exportImageSize(long handle);
     public static native boolean renderExportImage(long handle, Bitmap target);

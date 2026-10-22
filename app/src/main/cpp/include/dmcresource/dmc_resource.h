@@ -47,6 +47,10 @@ enum class Format : std::uint8_t {
     Hid,
     SpuMap,
     Vag,
+    // Cutscene archives (demo\...\mNN_xNN.pac), their cameras and clip texts.
+    Demo,
+    DemoCamera,
+    DemoClips,
 };
 
 struct ProbeResult {
