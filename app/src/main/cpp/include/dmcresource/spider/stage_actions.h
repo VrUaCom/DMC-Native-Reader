@@ -66,12 +66,14 @@ struct Menu final {
 
 // ---- where a stage starts ------------------------------------------------
 
-// A stage session's start view (stage_room::start_view): the first spawn
-// point of the current configuration when it is this stage's (st006cfg.pac
-// over st006.pac), else the middle of the stage's floor. Reframes the
-// session on it and hands back the view's yaw and pitch; nothing for any
-// other session, a cutscene's scene included (the shell keeps its own start).
-[[nodiscard]] std::optional<std::array<float, 2>> stage_start_view(Session* session) noexcept;
+// A stage session's start view. With the current configuration this
+// stage's (st006cfg.pac over st006.pac): the game's camera (CAM) for its
+// first spawn point, its field of view as the zoom; a spawn point no CAM
+// zone holds is seen from behind (stage_room::start_view). Without one, the
+// middle of the stage's floor. Reframes the session on it and hands back
+// the view's yaw, pitch and zoom; nothing for any other session, a
+// cutscene's scene included (the shell keeps its own start).
+[[nodiscard]] std::optional<std::array<float, 3>> stage_start_view(Session* session) noexcept;
 
 // ---- the view's long press -----------------------------------------------
 

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -199,6 +200,48 @@ using Bytes = std::span<const std::uint8_t>;
 [[nodiscard]] Result<EveDocument> read_eve(Bytes bytes);
 [[nodiscard]] Result<CamDocument> read_cam(Bytes bytes);
 [[nodiscard]] Result<ItmDocument> read_itm(Bytes bytes);
+
+// ---- CAM: the game's cameras ------------------------------------------------
+//
+// Every CAM record is one camera and the zones where it is used, in a row to
+// the end of the file (st006cfg: five records, 0x10 -> 0x1240 exactly). The
+// first word is the camera's type, which fixes the record's head; the zone
+// count is at +0x14, the flags at +0x40, and the zones (four (x, y, z, 1)
+// floor corners, then the height they reach and 12 zero bytes, 0x50 each)
+// close the record:
+// - type 0, a fixed camera, head 0xB0: the eye at +0x90, the field of view
+//   in radians at +0xA0 (1.05), the target at +0x50. With flag 0x200 the
+//   target follows the player and +0x50 is its offset from the feet
+//   (st006: 0 105 0); without it the target is that point.
+// - type 0x100, a rail camera, head 0x490: up to 32 eye points at +0x80,
+//   32 target points at +0x200, 32 fields of view at +0x380 (radians), the
+//   point count at +0x480. The player's place along the target rail picks
+//   the eye at the same place on the eye rail (st006: an eye rail at
+//   z 1160..1470 looking north at a target rail at z 1850..2000).
+// - type 0x400, zones only, head 0x40 (other stages; no camera read).
+struct CamShot final {
+    std::uint64_t offset{};
+    std::uint32_t type{};
+    std::uint32_t flags{};
+    std::vector<Vec3> eye;     // fixed: one point; rail: the eye rail
+    std::vector<Vec3> target;  // fixed: one point (absolute or the offset); rail: the target rail
+    std::vector<float> fov;    // radians, one per eye point
+    bool follows_player{};     // fixed: target = player + target[0]
+    std::vector<CamArea> zones;
+};
+// Empty unless the records walk the whole file as described.
+[[nodiscard]] std::vector<CamShot> read_cam_shots(Bytes bytes);
+
+// The camera the game uses for a player standing at `player`: the shot one
+// of whose zones holds the player (the smallest such zone when several do).
+struct CamView final {
+    Vec3 eye;
+    Vec3 target;
+    float fov_radians{};
+    int shot{-1};
+};
+[[nodiscard]] bool zone_holds(const CamArea& zone, const Vec3& point) noexcept;
+[[nodiscard]] std::optional<CamView> cam_view_at(const std::vector<CamShot>& shots, const Vec3& player);
 [[nodiscard]] Result<SteDocument> read_ste(Bytes bytes);
 [[nodiscard]] Result<EstDocument> read_est(Bytes bytes);
 [[nodiscard]] Result<SefDocument> read_sef(Bytes bytes);

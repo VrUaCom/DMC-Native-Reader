@@ -1,6 +1,7 @@
 #include "dmcresource/spider/stage_actions.h"
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <utility>
 
@@ -84,6 +85,10 @@ constexpr int kMenuToggle = 2;
 constexpr int kMenuRemove = 3;
 constexpr int kCardOpenFile = 1;
 constexpr int kCardClose = 2;
+constexpr int kCardGameCamera = 3;
+
+// The spawn point (POS record) the stage's view starts at; -1 the first.
+std::atomic<int> g_start_spawn{-1};
 
 [[nodiscard]] ActionOutcome toggle_markers() {
     const bool show = !stage_markers::visible();
@@ -105,7 +110,8 @@ ActionOutcome load_stage_config(std::string_view name, const std::uint8_t* bytes
                            "No stage configuration in " + std::string{name} +
                                " (a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
         }
-        // The view starts again at the configuration's spawn point.
+        // The view starts again at the configuration's first spawn point.
+        g_start_spawn.store(-1);
         return outcome(true, ShellStep::ResetView,
                        "Stage config: " + stage_config_summary() + ". Hold a marker to see it.");
     } catch (...) {
@@ -186,11 +192,25 @@ MarkerCard marker_card(int marker) {
     card.rows = m.fields;
     if (m.member < config->members.size()) card.rows.emplace_back("File", config->members[m.member].name);
     card.actions = {{kCardOpenFile, "Open file"}, {kCardClose, "Close"}};
+    // A spawn point: the view the game's camera has of it.
+    if (m.source == stage_config::Kind::Pos && !m.points.empty()) {
+        card.actions.insert(card.actions.begin(), {kCardGameCamera, "Game camera"});
+    }
     return card;
 }
 
 ActionOutcome run_marker_card_action(int marker, int id, std::unique_ptr<Session>* opened) noexcept {
     try {
+        if (id == kCardGameCamera) {
+            const auto config = stage_markers::current();
+            stage_markers::set_selected(-1);
+            if (config == nullptr || marker < 0 || static_cast<std::size_t>(marker) >= config->markers.size()) {
+                return outcome(false);
+            }
+            const auto& m = config->markers[static_cast<std::size_t>(marker)];
+            g_start_spawn.store(static_cast<int>(m.record));
+            return outcome(true, ShellStep::ResetView, m.title + ": the game's camera");
+        }
         if (id == kCardOpenFile) {
             const auto card = marker_card(marker);
             auto file = open_stage_marker_file(marker);
@@ -274,16 +294,27 @@ namespace {
     return -1;
 }
 
-// The first spawn point of the current configuration if it belongs to the
-// stage `stage_name` (or either name says no stage).
-[[nodiscard]] std::optional<stage_room::Spawn> config_spawn(std::string_view stage_name) {
-    const auto config = stage_markers::current();
-    if (config == nullptr) return std::nullopt;
+// The current configuration if it belongs to the stage `stage_name` (or
+// either name says no stage).
+[[nodiscard]] std::shared_ptr<const stage_markers::StageConfig> config_of(std::string_view stage_name) {
+    auto config = stage_markers::current();
+    if (config == nullptr) return nullptr;
     const int ours = stage_number(stage_name), theirs = stage_number(config->name);
-    if (ours >= 0 && theirs >= 0 && ours != theirs) return std::nullopt;
+    if (ours >= 0 && theirs >= 0 && ours != theirs) return nullptr;
+    return config;
+}
+
+// The spawn point the view starts at: the one picked on its card, else the
+// first.
+[[nodiscard]] std::optional<stage_room::Spawn> config_spawn(const stage_markers::StageConfig& config) {
+    const int picked = g_start_spawn.load();
     const stage_markers::Marker* first = nullptr;
-    for (const auto& marker : config->markers) {
+    for (const auto& marker : config.markers) {
         if (marker.source != stage_config::Kind::Pos || marker.points.empty()) continue;
+        if (picked >= 0 && marker.record == static_cast<std::size_t>(picked)) {
+            first = &marker;
+            break;
+        }
         if (first == nullptr || marker.record < first->record) first = &marker;
     }
     if (first == nullptr) return std::nullopt;
@@ -296,15 +327,43 @@ namespace {
     return spawn;
 }
 
+// The game's camera (CAM) for a player standing at `player`.
+[[nodiscard]] std::optional<stage_config::CamView> config_camera(const stage_markers::StageConfig& config,
+                                                                 const stage_config::Vec3& player) {
+    for (const auto& member : config.members) {
+        if (member.kind != stage_config::Kind::Cam || member.bytes == nullptr) continue;
+        if (auto view = stage_config::cam_view_at(stage_config::read_cam_shots(*member.bytes), player)) return view;
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
-std::optional<std::array<float, 2>> stage_start_view(Session* session) noexcept {
+std::optional<std::array<float, 3>> stage_start_view(Session* session) noexcept {
     try {
         // A cutscene's scene holds its stage too; its camera is the cutscene's.
         if (session == nullptr || session->stage == nullptr || demo::is_demo(session)) return std::nullopt;
-        const auto view = stage_room::start_view(*session->stage, config_spawn(session->archive_name));
+        const auto config = config_of(session->archive_name);
+        const auto spawn = config != nullptr ? config_spawn(*config) : std::nullopt;
+        // The game's own camera for the spawn point when the CAM has one.
+        if (spawn) {
+            const auto& p = spawn->position;
+            if (const auto cam = config_camera(*config, {p.x, p.y, p.z})) {
+                const stage_room::StartView view{.target = {cam->target.x, cam->target.y, cam->target.z},
+                                                 .eye = {cam->eye.x, cam->eye.y, cam->eye.z},
+                                                 .from_spawn = true};
+                if (const auto angles = stage_room::frame_start(session, view)) {
+                    // The viewer's zoom 1 is a 0.5 rad half field of view.
+                    const float zoom = std::tan(0.5F) / std::tan(cam->fov_radians * 0.5F);
+                    return std::array<float, 3>{(*angles)[0], (*angles)[1], zoom};
+                }
+            }
+        }
+        const auto view = stage_room::start_view(*session->stage, spawn);
         if (!view) return std::nullopt;
-        return stage_room::frame_start(session, *view);
+        const auto angles = stage_room::frame_start(session, *view);
+        if (!angles) return std::nullopt;
+        return std::array<float, 3>{(*angles)[0], (*angles)[1], 1.0F};
     } catch (...) {
         return std::nullopt;
     }

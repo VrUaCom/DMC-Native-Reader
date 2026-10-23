@@ -111,6 +111,56 @@ int main() {
         assert(read.document.paths.size() == 1U && read.document.paths[0].points.size() == 3U);
     }
     expect("st100_cam.cam", cam.bytes, Format::StageCam, "CAM", "camera record 0");
+    // Not a walk of camera records (the second record is the path): no shots.
+    assert(stage_config::read_cam_shots(cam.bytes).empty());
+
+    // The game's cameras: a fixed camera following the player over one zone,
+    // a rail camera over a far zone and a wide one round both.
+    {
+        Writer shots;
+        shots.header("CAM", 1, 2);
+        const auto zone = [&](float x0, float z0, float x1, float z1) {
+            shots.corner(x0, -10, z0); shots.corner(x0, -10, z1); shots.corner(x1, -10, z1); shots.corner(x1, -10, z0);
+            shots.f32(500.0F); shots.zeros(12);
+        };
+        auto at = shots.bytes.size();
+        shots.u32(0x000U); shots.zeros(0x10); shots.u32(1);
+        shots.pad_to(at + 0x40U); shots.u32(0x200U);
+        shots.pad_to(at + 0x50U); shots.f32(0.0F); shots.f32(105.0F); shots.f32(0.0F);
+        shots.pad_to(at + 0x90U); shots.f32(500.0F); shots.f32(300.0F); shots.f32(500.0F);
+        shots.pad_to(at + 0xA0U); shots.f32(1.05F);
+        shots.pad_to(at + 0xB0U);
+        zone(0, 0, 1000, 1000);
+        at = shots.bytes.size();
+        shots.u32(0x100U); shots.zeros(0x10); shots.u32(2);
+        shots.pad_to(at + 0x80U);
+        for (const float x : {2000.0F, 3000.0F}) { shots.f32(x); shots.f32(100.0F); shots.f32(0.0F); }
+        shots.pad_to(at + 0x200U);
+        for (const float x : {2000.0F, 3000.0F}) { shots.f32(x); shots.f32(150.0F); shots.f32(500.0F); }
+        shots.pad_to(at + 0x380U); shots.f32(1.0F); shots.f32(1.2F);
+        shots.pad_to(at + 0x480U); shots.u32(2);
+        shots.pad_to(at + 0x490U);
+        zone(1500, -500, 3500, 1500);
+        zone(-1000, -1000, 5000, 2000);
+        const auto read = stage_config::read_cam_shots(shots.bytes);
+        assert(read.size() == 2U && read[0].type == 0U && read[0].follows_player && read[1].eye.size() == 2U);
+        // The fixed camera: its eye, the player's chest.
+        const auto fixed = stage_config::cam_view_at(read, {200.0F, 0.0F, 300.0F});
+        assert(fixed && fixed->shot == 0 && fixed->eye.x == 500.0F && fixed->target.y == 105.0F &&
+               fixed->target.x == 200.0F && std::fabs(fixed->fov_radians - 1.05F) < 1.0e-6F);
+        // On the rail: halfway along the target rail, halfway along the eye rail.
+        const auto rail = stage_config::cam_view_at(read, {2500.0F, 0.0F, 800.0F});
+        assert(rail && rail->shot == 1 && std::fabs(rail->eye.x - 2500.0F) < 1.0e-2F && rail->eye.z == 0.0F &&
+               std::fabs(rail->target.z - 500.0F) < 1.0e-3F && std::fabs(rail->fov_radians - 1.1F) < 1.0e-5F);
+        // Only the wide zone: the rail; outside every zone: none; above a zone's height: none.
+        assert(stage_config::cam_view_at(read, {4500.0F, 0.0F, 0.0F})->shot == 1);
+        assert(!stage_config::cam_view_at(read, {9000.0F, 0.0F, 0.0F}));
+        assert(!stage_config::cam_view_at(read, {200.0F, 600.0F, 300.0F}));
+        // A torn file reads nothing.
+        auto torn = shots.bytes;
+        torn.resize(torn.size() - 0x50U);
+        assert(stage_config::read_cam_shots(torn).empty());
+    }
 
     // ITM: two items, padded to 16.
     Writer itm;
@@ -305,10 +355,26 @@ int main() {
         }
         assert(held == 1 && stage_markers::selected() == 1);
         const auto spider_card = act::marker_card(1);
-        assert(spider_card.title == "Spawn point 1" && spider_card.actions.size() == 2U &&
-               spider_card.rows.back().first == "File");
+        // A spawn point's card: the game's camera, its file, close.
+        assert(spider_card.title == "Spawn point 1" && spider_card.actions.size() == 3U &&
+               spider_card.actions[0].label == "Game camera" && spider_card.rows.back().first == "File");
+        {
+            // The game camera of spawn point 1: the view starts there (this
+            // configuration's CAM is no camera walk: from behind, 100 0 -50).
+            const auto camera = act::run_marker_card_action(1, spider_card.actions[0].id, nullptr);
+            assert(camera.ok && camera.step == act::ShellStep::ResetView && stage_markers::selected() == -1);
+            Session ours;
+            ours.stage = stage.stage;
+            ours.archive_name = "st100.pac";
+            const auto view = act::stage_start_view(&ours);
+            assert(view && (*view)[2] == 1.0F);
+            const auto& box = ours.render_mesh.vertices;
+            assert(std::fabs((box.front().x + box.back().x) * 0.5F - 100.0F) < 1.0e-3F &&
+                   std::fabs((box.front().z + box.back().z) * 0.5F + 50.0F) < 1.0e-3F);
+            stage_markers::set_selected(1);
+        }
         std::unique_ptr<Session> opened;
-        const auto open = act::run_marker_card_action(1, spider_card.actions[0].id, &opened);
+        const auto open = act::run_marker_card_action(1, spider_card.actions[1].id, &opened);
         assert(open.step == act::ShellStep::OpenSession && opened && open.title == "Spawn point 1 \xC2\xB7 file");
         assert(stage_markers::selected() == -1);
         // The opened POS exports its map at the map's size.

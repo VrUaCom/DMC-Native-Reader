@@ -1577,7 +1577,8 @@ public final class MainActivity extends Activity {
                     handleOutcome(NativeBridge.runMarkerCardAction(marker, id));
                 };
                 if (i == 0) builder.setPositiveButton(buttons.labels[i], click);
-                else builder.setNegativeButton(buttons.labels[i], click);
+                else if (i == buttons.ids.length - 1) builder.setNegativeButton(buttons.labels[i], click);
+                else builder.setNeutralButton(buttons.labels[i], click);
             }
         }
         builder.setOnDismissListener(d -> {

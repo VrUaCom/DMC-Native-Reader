@@ -121,7 +121,7 @@ public final class NativeBridge {
     public static native short[] demoAudioRead(long handle, long position, int frames);
     /** A gesture takes a cutscene's camera: {yaw, pitch, zoom} of its shot, or null. */
     public static native float[] demoTakeCamera(long handle);
-    /** A stage's start view, chosen by the core (its spawn point or floor): {yaw, pitch}, or null. */
+    /** A stage's start view, chosen by the core (its spawn point's game camera or floor): {yaw, pitch, zoom}, or null. */
     public static native float[] stageStartView(long handle);
     /** The exported picture's {width, height}, chosen by the core. */
     public static native int[] exportImageSize(long handle);

@@ -772,7 +772,7 @@ public final class DmcRenderView extends View {
         float[] start = session != 0L && !staticImagePreview ? NativeBridge.stageStartView(session) : null;
         yaw = start != null ? start[0] : DEFAULT_YAW;
         pitch = start != null ? start[1] : -0.45f;
-        zoom = 1.0f;
+        zoom = start != null ? start[2] : 1.0f;
         panX = 0.0f;
         panY = 0.0f;
         dolly = 0.0f;

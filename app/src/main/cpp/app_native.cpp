@@ -1728,13 +1728,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_demoTakeCamera(JNIEnv* env, jclass
 }
 
 // A stage's start view (spider stage_actions.h): the core reframes the
-// session on its spawn point or floor; {yaw, pitch}.
+// session on its spawn point's game camera or its floor; {yaw, pitch, zoom}.
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_stageStartView(JNIEnv* env, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const auto view = dmcresource::spider::actions::stage_start_view(from_handle(handle));
     if (!view) return nullptr;
-    return floats(env, {(*view)[0], (*view)[1]});
+    return floats(env, {(*view)[0], (*view)[1], (*view)[2]});
 }
 
 // A cutscene's sound (spider companion_menu.h): the picked .ogg as a

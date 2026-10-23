@@ -17,28 +17,54 @@ switched off in the Gestures window):
 
 ### Where a stage starts
 
-A stage (`stNNN.pac`) opens with the camera inside it, looking at where a
-character would stand (`stage_room::start_view`, `frame_start`; Spider
-`stage_start_view`, JNI `stageStartView`; the view reset and double tap ask
-the core again):
+A stage (`stNNN.pac`) opens with the camera inside it (Spider
+`stage_start_view`, JNI `stageStartView` -> {yaw, pitch, zoom}; the view
+reset and double tap ask the core again):
 
-- With the stage's configuration loaded (`stNNNcfg.pac` from the ⋮ menu,
-  same stage number), the target is spawn point POS 0 (st006: 2500 22 906,
-  heading 0 = looking along +z), at chest height. Loading the configuration
-  resets the view there (`ShellStep::ResetView`).
-- Without one, the target is the middle of the stage's walkable floor: the
-  HITS floor records (normal.y >= 0.7) round their area-weighted centre,
-  not the layout or the mesh, which reach far outside the arena (st006's
-  terrain goes down to y -5980).
-- The camera stands behind the target along its heading, 520 units back and
-  a third of that above, and turns round in 30° steps (then comes nearer:
-  400, 280, 180) until neither the HITS collision nor the room mesh lies
-  between it and the target.
+- **With the stage's configuration loaded** (`stNNNcfg.pac` from the ⋮
+  menu, same stage number): the game's own camera (CAM) for spawn point
+  POS 0, its field of view as the zoom (zoom 1 is a 0.5 rad half field of
+  view). Loading the configuration resets the view there
+  (`ShellStep::ResetView`); a spawn point's card (hold its marker) has
+  **Game camera**, which starts the view at that spawn point instead.
+- A spawn point no CAM zone holds is seen from behind along its heading
+  (`stage_room::start_view`, below).
+- **Without a configuration**: the middle of the stage's walkable floor,
+  the HITS floor records (normal.y >= 0.7) round their area-weighted
+  centre, not the layout or the mesh, which reach far outside the arena
+  (st006's terrain goes down to y -5980). The camera stands behind, 520
+  units back and a third of that above, and turns round in 30° steps (then
+  comes nearer: 400, 280, 180) until neither the HITS collision nor the
+  room mesh lies between it and the target.
 
-The orbit then turns round that target; a cutscene's stage keeps the
-cutscene's camera. Tests: `core_model_pipeline_test.cpp` (floor middle, a
-wall in the way), `stage_config_test.cpp` (spawn point, another stage's
-configuration ignored).
+The orbit then turns round the target; a cutscene's stage keeps the
+cutscene's camera.
+
+#### CAM: the game's cameras (`stage_config::read_cam_shots`, `cam_view_at`)
+
+Every CAM record is one camera and the zones where it is used, in a row to
+the end of the file (st006cfg: five records, 0x10 -> 0x1240 exactly). The
+first word is the type, which fixes the record's head; the zone count is at
++0x14, the flags at +0x40, and the zones close the record (four
+(x, y, z, 1) floor corners, the height they reach, 12 zero bytes; 0x50
+each).
+
+| Type | Head | Camera |
+| --- | --- | --- |
+| 0 (fixed) | 0xB0 | eye +0x90, field of view (radians) +0xA0, target +0x50: with flag 0x200 an offset from the player's feet (st006: 0 105 0), else a point |
+| 0x100 (rail) | 0x490 | 32 eye points +0x80, 32 target points +0x200, 32 fields of view +0x380, point count +0x480 |
+| 0x400 | 0x40 | zones only (other stages) |
+
+The camera for a player is the record one of whose zones holds them (the
+smallest zone when several do). On a rail, the player's nearest place on
+the target rail picks the eye at the same place on the eye rail. st006:
+POS 0 (2500 22 906) -> fixed camera at 3666 774 2524 looking at the
+player; POS 1 -> fixed camera at 2699 734 3295 looking at 2479 300 4192;
+POS 2 -> the rail, eye 2505 113 1179 looking north along the arena.
+
+Tests: `stage_config_test.cpp` (fixed, rail, overlapping zones, a torn
+file; spawn points, Game camera, another stage's configuration ignored),
+`core_model_pipeline_test.cpp` (floor middle, a wall in the way).
 
 ## Fly camera (stages and collision views)
 
