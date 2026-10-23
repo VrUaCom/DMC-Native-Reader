@@ -3,9 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <mutex>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -530,6 +531,39 @@ std::vector<PlacedEffect> placed_effects(std::string_view stage_name) {
         out.clear();
     }
     return out;
+}
+
+std::optional<ViewState::Fog> stage_fog(std::string_view stage_name) {
+    try {
+        const auto config = current();
+        if (config == nullptr) return std::nullopt;
+        const int ours = stage_number(stage_name), theirs = stage_number(config->name);
+        if (ours >= 0 && theirs >= 0 && ours != theirs) return std::nullopt;
+        constexpr std::uint32_t kFogSection = 2U;
+        for (const auto& member : config->members) {
+            if (member.kind != stage_config::Kind::Sef || member.bytes == nullptr) continue;
+            const auto& b = *member.bytes;
+            const auto read = stage_config::read_sef(b);
+            for (const auto& section : read.document.sections) {
+                if (section.value != kFogSection || section.offset + 12U > b.size()) continue;
+                const auto at = static_cast<std::size_t>(section.offset);
+                float start = 0.0F, end = 0.0F;
+                std::memcpy(&start, b.data() + at, 4U);
+                std::memcpy(&end, b.data() + at + 4U, 4U);
+                if (!std::isfinite(start) || !std::isfinite(end) || !(end > start)) continue;
+                ViewState::Fog fog;
+                fog.enabled = true;
+                fog.start = start;
+                fog.end = end;
+                fog.near_colour = fog.far_colour = {b[at + 8U], b[at + 9U], b[at + 10U]};
+                fog.near_alpha = 0.0F;
+                fog.far_alpha = std::clamp(static_cast<float>(b[at + 11U]) / 128.0F, 0.0F, 1.0F);
+                return fog;
+            }
+        }
+    } catch (...) {
+    }
+    return std::nullopt;
 }
 
 }  // namespace dmcresource::stage_markers

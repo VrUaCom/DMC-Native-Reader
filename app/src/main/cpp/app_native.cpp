@@ -1729,6 +1729,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_stageStartView(JNIEnv* env, jclass
     return floats(env, {(*view)[0], (*view)[1], (*view)[2]});
 }
 
+// A cutscene's pad vibration at a frame, 0..255 (core demo::vibration).
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoVibration(JNIEnv*, jclass, jlong handle, jfloat frame) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    return session != nullptr ? dmcresource::demo::vibration(*session, frame) : 0;
+}
+
 // A cutscene's sound (spider companion_menu.h): the picked .ogg as a
 // descriptor; the outcome carries the core's line.
 extern "C" JNIEXPORT jobject JNICALL

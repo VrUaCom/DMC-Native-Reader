@@ -8,6 +8,8 @@ import android.graphics.RectF;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -248,10 +250,20 @@ public final class DmcRenderView extends View {
             if (now - lastRequestMs >= motionMinFrameMs) {
                 lastMotionFrame = currentMotionFrame(now);
                 requestFrame(lastMotionFrame);  // posed on the render thread
+                vibrate(NativeBridge.demoVibration(session, lastMotionFrame), now);
             }
             postOnAnimation(this);
         }
     };
+    private long lastVibrateMs;
+    /** A short pulse at the core's strength (a cutscene's PadVibe), renewed while it lasts. */
+    private void vibrate(int amplitude, long now) {
+        if (amplitude <= 0 || now - lastVibrateMs < 60) return;
+        final Vibrator vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        lastVibrateMs = now;
+        vibrator.vibrate(VibrationEffect.createOneShot(80, Math.max(1, Math.min(255, amplitude))));
+    }
     /** A cutscene's sound, streamed while its timeline plays. */
     private final CutsceneAudio cutsceneAudio = new CutsceneAudio();
 

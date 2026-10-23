@@ -209,6 +209,17 @@ struct EffectShot final {
     bool cut{};
 };
 [[nodiscard]] std::vector<EffectShot> active_effects(const Session& session);
+
+// The depth fog of the ScrEfc clip `Id GFG` covering the current frame (the
+// last one set when several do): StartZ / EndZ camera distances, MinColor /
+// MaxColor (u32, bytes R G B A) and MinAlpha / MaxAlpha (0x80 = 1.0) at
+// them. `Type` (0 or 1) is not told apart.
+[[nodiscard]] std::optional<ViewState::Fog> fog(const Session& session);
+
+// The pad vibration at a timeline frame, 0..255 (0 none): the PadVibe clip
+// covering it (the last one set when several do), its large motor eased from
+// LMotorSt to LMotorEd over the clip, its small motor (0 / 1) at least 96.
+[[nodiscard]] int vibration(const Session& session, float frame);
 [[nodiscard]] std::shared_ptr<const Session> effect_host(const Session& session) noexcept;
 
 // ---- sound ---------------------------------------------------------------

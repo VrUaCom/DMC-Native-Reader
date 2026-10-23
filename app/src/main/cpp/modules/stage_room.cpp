@@ -166,7 +166,18 @@ struct GameSet final {
     int broken_effect_id{-1};
     Vec3 broken_effect_pos{};
     std::uint8_t remain{};
+    // A STAY object the designers marked broken in the comment of its "# SET"
+    // line (Shift-JIS 壊れ, st006: "入口氷壊れ（デモ用）", the entrance ice
+    // broken, for the demo): the broken state of the STAY object before it
+    // at the same pos, which a cutscene swaps in. Shown in the room's broken
+    // state instead of that object (an inference from the layout text; the
+    // game swaps them from its scripts).
+    bool broken_variant{};
+    bool has_broken_variant{};
 };
+
+// 壊れ ("broken") in Shift-JIS, as the layout comments write it.
+constexpr std::string_view kBrokenNote{"\x89\xF3\x82\xEA"};
 
 struct GameLayout final {
     std::vector<GameSet> sets;
@@ -221,7 +232,10 @@ struct GameLayout final {
             while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t') ++i;  // number
             while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
             while (i < rest.size() && rest[i] > ' ' && rest[i] != ';') kind.push_back(rest[i++]);
+            const auto note = rest.find(';');
             out.sets.push_back(GameSet{});
+            out.sets.back().broken_variant =
+                kind == "STAY" && note != std::string_view::npos && rest.substr(note).find(kBrokenNote) != std::string_view::npos;
             out.sets.back().kind = std::move(kind);
             current = &out.sets.back();
             after_beff = false;
@@ -267,7 +281,30 @@ struct GameLayout final {
             out.camera = {values[0], values[1], values[2]};
         }
     }
+    // A broken variant pairs with the STAY object right before it at the same
+    // place (st006: 100 / 101, 102 / 103, 104 / 105).
+    for (std::size_t i = 0U; i < out.sets.size(); ++i) {
+        auto& variant = out.sets[i];
+        if (!variant.broken_variant) continue;
+        auto* intact = i > 0U ? &out.sets[i - 1U] : nullptr;
+        const bool same_place = intact != nullptr && intact->pos.x == variant.pos.x &&
+                                intact->pos.y == variant.pos.y && intact->pos.z == variant.pos.z;
+        if (same_place && intact->kind == "STAY" && !intact->broken_variant) {
+            intact->has_broken_variant = true;
+        } else {
+            variant.broken_variant = false;  // nothing it replaces: a plain object
+        }
+    }
     return out;
+}
+
+// Whether a layout object stands in the room in one of its states: DUMMY
+// objects are a cutscene's (st006: the ice shards, parked 5000 to the side)
+// and never do; a designer-marked broken variant replaces its intact object
+// in the broken state only.
+[[nodiscard]] bool set_shown(const GameSet& set, bool broken) noexcept {
+    if (set.kind == "DUMMY") return false;
+    return !((set.broken_variant && !broken) || (set.has_broken_variant && broken));
 }
 
 // Scale, rotate (degrees; X then Y then Z, all zero in the samples) and
@@ -562,6 +599,7 @@ std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t
                 models[index] = &child;
             }
             for (const auto& set : layout.sets) {
+                if (!set_shown(set, broken)) continue;
                 // Broken (0x14024AE40): the object switches to its bmodel, or
                 // is removed (0x1403261E0) when it has none.
                 const int model = broken && set.kind == "BREAK" ? set.broken_model : set.model;
@@ -669,7 +707,7 @@ std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t
             }
         }
         std::size_t breakable = 0U;
-        for (const auto& set : layout.sets) breakable += set.kind == "BREAK" ? 1U : 0U;
+        for (const auto& set : layout.sets) breakable += set.kind == "BREAK" || set.broken_variant ? 1U : 0U;
         if (breakable > 0U) {
             detail << ", " << breakable << " breakable objects";
             if (broken) detail << " (broken)";
@@ -1132,6 +1170,15 @@ std::optional<std::array<float, 2>> frame_start(Session* session, const StartVie
     // camera_basis: forward (eye to target) = (cos p sin y, sin p, cos p cos y).
     const float flat = std::hypot(d.x, d.z);
     return std::array<float, 2>{flat > 1.0e-4F ? std::atan2(d.x, d.z) : 0.0F, std::atan2(d.y, std::max(flat, 1.0e-4F))};
+}
+
+std::vector<std::size_t> layout_sets_shown(std::string_view layout, bool broken) {
+    std::vector<std::size_t> out;
+    const auto parsed = parse_game(layout);
+    for (std::size_t i = 0U; i < parsed.sets.size(); ++i) {
+        if (parsed.sets[i].model >= 0 && set_shown(parsed.sets[i], broken)) out.push_back(i);
+    }
+    return out;
 }
 
 bool is_stage_session(const Session& session) noexcept {

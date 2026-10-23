@@ -95,6 +95,21 @@ struct ViewState {
     };
     std::span<const RoomScroll> room_scrolls{};
     float room_time{0.0F};
+    // Depth fog (a cutscene's GFG screen effect, a stage configuration's SEF
+    // fog): the drawn surfaces blend toward `near_colour` with `near_alpha`
+    // at camera distance `start` and toward `far_colour` with `far_alpha`
+    // at `end` (alphas 0..1, linear between, held beyond). Effects draw
+    // over it unfogged.
+    struct Fog final {
+        bool enabled{false};
+        float start{};
+        float end{};
+        std::array<std::uint8_t, 3> near_colour{};
+        std::array<std::uint8_t, 3> far_colour{};
+        float near_alpha{};
+        float far_alpha{};
+    };
+    Fog fog{};
     int mesh_line_px{1};
     int collision_line_px{1};
     // Resource-backed EXE effect presentation. The runtime supplies explicit

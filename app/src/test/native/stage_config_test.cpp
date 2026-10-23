@@ -430,6 +430,19 @@ int main() {
         assert(stage_markers::placed_effects("st100.pac").empty());
         assert(stage_markers::stage_number("ST006CFG.PAC") == 6 && stage_markers::stage_number("m02_s00.pac") == -1);
     }
+    // The SEF section of value 2 is the stage's fog (st006cfg: 1000 .. 2360,
+    // grey 80 80 80 at 0x34 of 0x80).
+    {
+        Writer sef;
+        sef.tag("SEF"); sef.u16(1); sef.u16(1);
+        sef.u32(2U); sef.u32(0x10U);
+        sef.f32(1000.0F); sef.f32(2360.0F); sef.u32(0x34808080U); sef.u32(3U);
+        assert(dmcresource::spider::actions::load_stage_config("st006cfg.pac", sef.bytes.data(), sef.bytes.size()).ok);
+        const auto fog = stage_markers::stage_fog("st006.pac");
+        assert(fog && fog->enabled && fog->start == 1000.0F && fog->end == 2360.0F && fog->near_alpha == 0.0F &&
+               std::fabs(fog->far_alpha - 52.0F / 128.0F) < 1.0e-6F && fog->far_colour[0] == 0x80U);
+        assert(!stage_markers::stage_fog("st100.pac"));
+    }
 
     // Truncated or foreign bytes are not taken.
     std::vector<std::uint8_t> short_pos(pos.bytes.begin(), pos.bytes.begin() + 40);

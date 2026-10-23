@@ -132,9 +132,15 @@ is unrelated (its tag is at +0).
 | +0x1C | u8 object count N, then N bytes: 1 when the object has a track |
 | header | u32 track count, then one track per flagged object, in object order |
 
-A track: u16 byte size, u16 key count, u32 kind (7), f32 state (-1 shown,
-0 hidden), f32 1.0, then 4 bytes a key: a big-endian u16 frame of the range
-(it equals the range start in every single-key file) and a u16 flag.
+A track: u16 byte size, u16 key count, u32 kind (7), f32 low, f32 high,
+then 4 bytes a key: a big-endian u16 frame of the range and a big-endian
+u16 value quantized between low and high (value = low + (high - low) *
+u16 / 65535: -1, 0 or +1 in every file). The object shows while the value
+is below zero (DispOn: low -1, keys 0 -> -1; DispOff: low 0 -> 0), and a key
+holds until the next one: m03_b01's Cerberus body (`em125_02_0054.hid`,
+-1 then +1 at 1249) disappears as it shatters; m02_c01's `st501_3_c002.hid`
+swaps stage pieces at 56, 76, 89 and 275 (range -2 .. 2: 0x3fff is -1,
+0xbfff is +1). The keys run on the range from the clip's start.
 `DispOn.hid` / `DispOff.hid` hold 100 tracks: objects 0..99 shown /
 hidden. Several stage files show one object and hide another (a piece
 swapped for its broken version). The object index is the model's object
@@ -264,10 +270,25 @@ A taken camera flies from the shot's eye: pinch zooms, the two-finger dolly
 moves it along the view and the two-finger pan across it, scaled to the
 shot's target distance.
 
+### Screen effects, pad vibration (v91)
+
+* `ScrEfc` clips `Id GFG` are a depth fog: `StartZ` / `EndZ` camera
+  distances, `MinColor` / `MaxColor` (u32, bytes R G B A) and `MinAlpha` /
+  `MaxAlpha` (0x80 = 1.0) at them, linear between and held beyond
+  (`demo::fog`; the renderer blends the drawn surfaces, effects stay over
+  it). `Type` 0 / 1 is not told apart.
+* `PadVibe` clips pulse the phone (`demo::vibration`, JNI `demoVibration`):
+  the large motor eased from `LMotorSt` to `LMotorEd` over the clip, the
+  small motor (`SMotorSt` / `SMotorEd`, 0 or 1) at least 96 of 255.
+
+The other screen effects (`DOF`, `FCS` focus, `CCT` colour, `BGA` / `BGO`,
+`ATF`) and the `Light` clips (point lights: `ValidType`, `IsMinus`, `Type`,
+`SrcPos` / `SrcForce` / `SrcRange` / `SrcRgb` to `Dst...`) are read but not
+drawn: their meaning is not settled from the data alone.
+
 ## Not yet
 
-The per-key flags of `.hid` tracks (a state change inside a clip), lights,
-screen effects (DOF, fog, glow), subtitles (Message `No` indexes a text
+Lights and the screen effects above other than the fog, subtitles (Message `No` indexes a text
 table outside the archive: the localization message tables
 `*_msg_<lang>.txt`; m01_s00 uses 100..110 in its picture and 140, 141,
 180, 181 in its movie), pad vibration, and the stream-number-to-file table

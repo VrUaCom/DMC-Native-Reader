@@ -133,6 +133,29 @@ int main() {
         assert(parsed && parsed->start == 250.0F && parsed->objects.size() == 2U);
         assert(parsed->objects[0].object == 0U && parsed->objects[0].shown);
         assert(parsed->objects[1].object == 2U && !parsed->objects[1].shown);
+        // Keys quantize a value between the track's floats (-2 .. 2: 0xbfff
+        // is +1, hidden; 0x3fff is -1, shown) and hold until the next one.
+        Bytes keyed(0x20U, 0U);
+        put32(keyed, 0x00U, 0x20U);
+        std::memcpy(keyed.data() + 4U, "HID\0", 4U);
+        putf(keyed, 0x0CU, 0.0F);
+        putf(keyed, 0x10U, 300.0F);
+        keyed[0x1CU] = 1U;
+        keyed[0x1DU] = 1U;
+        push32(keyed, 1U);
+        keyed.push_back(28U); keyed.push_back(0U); keyed.push_back(3U); keyed.push_back(0U);
+        push32(keyed, 7U);
+        pushf(keyed, -2.0F);
+        pushf(keyed, 2.0F);
+        for (const auto [frame, value] : {std::pair{0U, 0xBFFFU}, std::pair{56U, 0x3FFFU}, std::pair{275U, 0xBFFFU}}) {
+            keyed.push_back(static_cast<std::uint8_t>(frame >> 8U)); keyed.push_back(static_cast<std::uint8_t>(frame));
+            keyed.push_back(static_cast<std::uint8_t>(value >> 8U)); keyed.push_back(static_cast<std::uint8_t>(value));
+        }
+        const auto steps = demo::parse_hid(keyed);
+        assert(steps && steps->objects.size() == 1U && steps->objects[0].keys.size() == 3U);
+        const auto& object = steps->objects[0];
+        assert(!object.shown && !object.shown_at(55.0F) && object.shown_at(56.0F) && object.shown_at(200.0F) &&
+               !object.shown_at(275.0F) && !object.shown_at(1000.0F));
         Bytes not_hid(0x20U, 0U);
         assert(!demo::parse_hid(not_hid));
     }
@@ -153,7 +176,7 @@ int main() {
     const std::string script =
         "; (# = section)\r\n\r\n# Load\r\nCamera\t\tm99_t00_CameraLoad.txt\r\n\r\n# Set\r\n"
         "Camera\t\tm99_t00_CameraSet.txt\r\nModel\t00\tm99_t00_Model00Set.txt\r\nSound\t\tm99_t00_SoundSet.txt\r\n"
-        "PadVibe\t\tm99_t00_PadVibeSet.txt\r\nFade\t\tm99_t00_FadeSet.txt\r\n# End\r\n";
+        "PadVibe\t\tm99_t00_PadVibeSet.txt\r\nFade\t\tm99_t00_FadeSet.txt\r\nScrEfc\t\tm99_t00_ScrEfcSet.txt\r\n# End\r\n";
     // A fade out to black (alpha 128: opaque) from 200 over 60 frames.
     const std::string fade_set =
         "# Clip\r\nSetFrame\t200.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
@@ -164,15 +187,22 @@ int main() {
     // Pad vibration past the picture: it belongs to the movie after it.
     const std::string vibe_set =
         "# Clip\r\nSetFrame\t900.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
-        "Life\t10\r\n# End\r\n# End\r\n";
+        "Life\t10\r\nLMotorSt\t200\r\nLMotorEd\t0\r\nSMotorSt\t0\r\nSMotorEd\t0\r\n# End\r\n# End\r\n";
+    // Depth fog (GFG) over the first 100 frames: clear at 100, orange
+    // 0x8050b4ff (bytes R G B A) at half strength (64 of 0x80) at 1100.
+    const std::string screen_set =
+        "# Clip\r\nSetFrame\t0.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
+        "Life\t100\r\nId\tGFG\r\nParam\r\nType\t0\r\nStartZ\t100.0\r\nEndZ\t1100.0\r\n"
+        "MinColor\t-2147483648\r\nMinAlpha\t0\r\nMaxColor\t-2142194433\r\nMaxAlpha\t64\r\n# End\r\n# End\r\n";
     const auto archive = pac({text(script),
                               text("m99_t00_CameraSet.txt\r\nm99_t00_Model00Set.txt\r\nm99_t00_SoundSet.txt\r\n"
-                                   "m99_t00_PadVibeSet.txt\r\nm99_t00_FadeSet.txt\r\n# End\r\n"),
-                              pac({text(camera_set), text("# End\r\n"), text(sound_set), text(vibe_set), text(fade_set)}),
+                                   "m99_t00_PadVibeSet.txt\r\nm99_t00_FadeSet.txt\r\nm99_t00_ScrEfcSet.txt\r\n# End\r\n"),
+                              pac({text(camera_set), text("# End\r\n"), text(sound_set), text(vibe_set), text(fade_set),
+                                   text(screen_set)}),
                               text(";skipped.scm\r\ncm1.cam\r\n# End\r\n"), pac({cam_bytes})});
     assert(demo::looks_like_demo(archive));
     const auto doc = demo::parse_demo(archive);
-    assert(doc && doc->name == "m99_t00" && doc->lists.size() == 5U);
+    assert(doc && doc->name == "m99_t00" && doc->lists.size() == 6U);
     assert(doc->list("Camera") != nullptr && doc->list("Camera")->clips.size() == 2U);
     assert(doc->list("Model", 0) != nullptr && doc->list("Model", 0)->clips.empty());
     assert(doc->members.size() == 1U && doc->members[0].name == "cm1.cam" && doc->camera("cm1.cam") != nullptr);
@@ -213,6 +243,19 @@ int main() {
     // the timeline its movie plays on ----
     auto opened = open_session("m99_t00.pac", archive.data(), archive.size());
     assert(opened && demo::is_demo(opened.get()) && opened->probe.format == Format::Demo && opened->renderable);
+    // The fog of the GFG clip while it runs; the pad vibration eased over
+    // its clip (200 to 0 over 10 frames).
+    assert(motion::load_library_motion(opened.get(), 0).ok);
+    assert(motion::apply_motion_frame(opened.get(), 50.0F));
+    {
+        const auto fog = demo::fog(*opened);
+        assert(fog && fog->enabled && fog->start == 100.0F && fog->end == 1100.0F && fog->near_alpha == 0.0F &&
+               near(fog->far_alpha, 0.5F) && fog->far_colour[0] == 0xFFU && fog->far_colour[1] == 0xB4U &&
+               fog->far_colour[2] == 0x50U);
+    }
+    assert(motion::apply_motion_frame(opened.get(), 150.0F) && !demo::fog(*opened));
+    assert(demo::vibration(*opened, 899.0F) == 0 && demo::vibration(*opened, 905.0F) == 100 &&
+           demo::vibration(*opened, 910.0F) == 0);
     // The fade: none before it, half way through it, black after it.
     assert(motion::load_library_motion(opened.get(), 0).ok);
     assert(motion::apply_motion_frame(opened.get(), 100.0F) && demo::fade_at(*opened).amount == 0.0F);

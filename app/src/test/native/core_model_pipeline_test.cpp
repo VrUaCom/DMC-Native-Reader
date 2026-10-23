@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -392,6 +393,24 @@ int main() {
         assert(std::fabs(back.x - p.x) < 1.0e-3F && std::fabs(back.y - p.y) < 1.0e-3F &&
                std::fabs(back.z - p.z) < 1.0e-3F);
 
+        // Layout states (st006's sets, comments in Shift-JIS): the entrance
+        // ice and its broken demo variant, a DUMMY shard parked to the side,
+        // a plain object. Intact: 0 and 3; broken: 1 and 3.
+        {
+            const std::string layout =
+                "# GAME\n"
+                "# SET 100 STAY\t\t;\x93\xfc\x8c\xfb\x95\x58\n\tmodel 0\n\tpos 0 0 0\n"
+                "# SET 101 STAY\t\t;\x93\xfc\x8c\xfb\x95\x58\x89\xf3\x82\xea\n\tmodel 1\n\tpos 0 0 0\n"
+                "# SET 106 DUMMY\t;\n\tmodel 6\n\tpos 5000 0 0\n"
+                "# SET 109 STAY\n\tmodel 9\n\tpos 0 0 0\n"
+                "# SET 300 SE\n\tpos 1 2 3\n"
+                "# GAME_END\n";
+            assert((room::layout_sets_shown(layout, false) == std::vector<std::size_t>{0U, 3U}));
+            assert((room::layout_sets_shown(layout, true) == std::vector<std::size_t>{1U, 3U}));
+            // A broken note with nothing before it at its place is a plain object.
+            const std::string lone = "# GAME\n# SET 1 STAY ;\x89\xf3\x82\xea\n\tmodel 2\n\tpos 5 0 0\n# GAME_END\n";
+            assert((room::layout_sets_shown(lone, false) == std::vector<std::size_t>{0U}));
+        }
         // A stage's start view: without a spawn it looks at the floor's
         // middle from behind (+z ahead) and above; a spawn facing -x would
         // put the camera behind the wall at x = 100, so it turns round to

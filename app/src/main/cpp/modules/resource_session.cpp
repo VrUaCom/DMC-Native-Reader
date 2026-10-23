@@ -2328,6 +2328,17 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         append_demo_effects(session, out);
         view.effect_sprites = out->effect_sprites;
     }
+    // Depth fog: a cutscene's GFG clip, else the configuration's fog of the
+    // stage or room drawn.
+    if (!view.uv_layout && !view.wireframe) {
+        if (demo::is_demo(&session)) {
+            if (const auto fog = demo::fog(session)) view.fog = *fog;
+        } else if (session.stage != nullptr) {
+            if (const auto fog = stage_markers::stage_fog(session.stage->name)) view.fog = *fog;
+        } else if (out->room != nullptr) {
+            if (const auto fog = stage_markers::stage_fog(out->room->name)) view.fog = *fog;
+        }
+    }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {
         out->collision_lines = collision::posed_collision_lines(session);

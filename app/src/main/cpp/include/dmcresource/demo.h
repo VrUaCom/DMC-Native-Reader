@@ -89,12 +89,24 @@ struct CameraPose final {
 // bytes a key (big-endian u16 frame from the range, u16 flag). DispOn.hid
 // shows and DispOff.hid hides objects 0..99.
 
+// A track's keys hold a value quantized between the track's two floats
+// (+8 low, +12 high: value = low + (high - low) * u16 / 65535; -1 / 0 / +1
+// in every file seen); the object shows while it is below zero (DispOn:
+// -1, DispOff: 0; m03_b01's Cerberus body turns +1 at 1249, as it
+// shatters). A key holds until the next (st501_3_bg's repeated keys).
 struct HideAnim final {
     float start{};
     float end{};
+    struct Key final {
+        float frame{};  // in the range (start .. end)
+        bool shown{true};
+    };
     struct Object final {
         std::uint32_t object{};
-        bool shown{true};
+        bool shown{true};        // at the first key
+        std::vector<Key> keys;   // in frame order
+        // The state at a frame of the range (the first key's before it).
+        [[nodiscard]] bool shown_at(float frame) const noexcept;
     };
     std::vector<Object> objects;
 };

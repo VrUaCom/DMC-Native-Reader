@@ -1044,6 +1044,31 @@ void raster_effect_triangle(const EffectSv& a, const EffectSv& b, const EffectSv
     }
 }
 
+// Depth fog over rows [row_begin, row_end): every drawn pixel (finite depth;
+// depths are camera distances less `cd`) blends toward the fog colour.
+void apply_fog(const ViewState::Fog& fog, float cd, const std::vector<float>& depth, int row_begin, int row_end,
+               RgbaImage& image) {
+    const float span = fog.end - fog.start;
+    for (int y = row_begin; y < row_end; ++y) {
+        for (int x = 0; x < image.width; ++x) {
+            const auto pi = static_cast<std::size_t>(y * image.width + x);
+            const float z = depth[pi];
+            if (!std::isfinite(z)) continue;
+            const float t = span > 1.0e-3F ? std::clamp((z + cd - fog.start) / span, 0.0F, 1.0F)
+                                           : (z + cd >= fog.end ? 1.0F : 0.0F);
+            const float alpha = std::clamp(fog.near_alpha + (fog.far_alpha - fog.near_alpha) * t, 0.0F, 1.0F);
+            if (!(alpha > 0.002F)) continue;
+            const auto o = pi * 4U;
+            for (std::size_t k = 0U; k < 3U; ++k) {
+                const float colour = static_cast<float>(fog.near_colour[k]) +
+                                     (static_cast<float>(fog.far_colour[k]) - static_cast<float>(fog.near_colour[k])) * t;
+                const float mixed = static_cast<float>(image.pixels[o + k]) * (1.0F - alpha) + colour * alpha;
+                image.pixels[o + k] = static_cast<std::uint8_t>(std::clamp(mixed + 0.5F, 0.0F, 255.0F));
+            }
+        }
+    }
+}
+
 // Camera-facing / oriented / line quads of the effect sprites, projected
 // into image space (the effect pass of render_view and the GPU frame).
 struct EffectQuad final {
@@ -1698,6 +1723,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
             for (std::size_t t = 0U; t + 2U < shadow.size(); t += 3U) {
                 fill(shadow[t], shadow[t + 1U], shadow[t + 2U], row_begin, row_end, shadow_pixel);
             }
+            if (view.fog.enabled) apply_fog(view.fog, cd, depth, row_begin, row_end, image);
             for (const auto& quad : effect_quads) {
                 raster_effect_triangle(quad.vertices[0], quad.vertices[1], quad.vertices[2],
                                        quad.texture, !view.fast_preview, quad.additive,

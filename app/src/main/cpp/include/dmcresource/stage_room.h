@@ -196,6 +196,12 @@ void clear_active_collision(const void* owner) noexcept;
 void set_effect_host(std::shared_ptr<const Session> host) noexcept;
 [[nodiscard]] std::shared_ptr<const Session> effect_host() noexcept;
 
+// The "# GAME" sets with a model that stand in the room, intact or broken
+// (their order in the layout): DUMMY sets never; a STAY set whose "# SET"
+// comment says broken (Shift-JIS 壊れ) in the broken state only, instead of
+// the STAY set before it at the same pos.
+[[nodiscard]] std::vector<std::size_t> layout_sets_shown(std::string_view layout, bool broken);
+
 // A stage itself (SCM, or a session holding SCM children) never gets a room.
 [[nodiscard]] bool is_stage_session(const Session& session) noexcept;
 

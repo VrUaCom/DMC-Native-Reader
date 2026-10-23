@@ -297,8 +297,10 @@ void hide_state(const Player& p, const PlayerTrack& t, std::vector<std::uint8_t>
         model = kind != "H";
         const auto* hid = p.doc.hide(clip->value("Hide"));
         if (hid == nullptr) continue;
+        // The .hid's keys run on its own range from the clip's start.
+        const float at = hid->start + clip->local_frame(p.frame);
         for (const auto& o : hid->objects) {
-            if (o.object < shown->size()) (*shown)[o.object] = o.shown ? 1U : 0U;
+            if (o.object < shown->size()) (*shown)[o.object] = o.shown_at(at) ? 1U : 0U;
         }
     }
     if (!model) std::fill(shown->begin(), shown->end(), std::uint8_t{0U});
@@ -1284,6 +1286,56 @@ constexpr std::size_t kMaxEffects = 96;
 std::shared_ptr<const Session> effect_host(const Session& session) noexcept {
     const auto* p = player(&session);
     return p != nullptr ? p->effect_host : nullptr;
+}
+
+std::optional<ViewState::Fog> fog(const Session& session) {
+    const auto* p = player(&session);
+    if (p == nullptr) return std::nullopt;
+    const Clip* found = nullptr;
+    for (const auto& list : p->doc.lists) {
+        if (list.kind != "ScrEfc") continue;
+        for (const auto& clip : list.clips) {
+            if (clip.value("Id") != "GFG" || !clip.covers(p->frame)) continue;
+            if (found == nullptr || clip.set_frame >= found->set_frame) found = &clip;
+        }
+    }
+    if (found == nullptr) return std::nullopt;
+    const auto colour = [found](std::string_view key) {
+        const auto text = found->value(key);
+        const auto bits = static_cast<std::uint32_t>(text.empty() ? 0LL : std::strtoll(text.c_str(), nullptr, 10));
+        return std::array<std::uint8_t, 3>{static_cast<std::uint8_t>(bits), static_cast<std::uint8_t>(bits >> 8U),
+                                           static_cast<std::uint8_t>(bits >> 16U)};
+    };
+    ViewState::Fog out;
+    out.enabled = true;
+    out.start = float_value(*found, "StartZ", 0.0F);
+    out.end = float_value(*found, "EndZ", 0.0F);
+    out.near_colour = colour("MinColor");
+    out.far_colour = colour("MaxColor");
+    out.near_alpha = std::clamp(float_value(*found, "MinAlpha", 0.0F) / 128.0F, 0.0F, 1.0F);
+    out.far_alpha = std::clamp(float_value(*found, "MaxAlpha", 0.0F) / 128.0F, 0.0F, 1.0F);
+    return out;
+}
+
+int vibration(const Session& session, float frame) {
+    const auto* p = player(&session);
+    if (p == nullptr) return 0;
+    const Clip* found = nullptr;
+    for (const auto& list : p->doc.lists) {
+        if (list.kind != "PadVibe") continue;
+        for (const auto& clip : list.clips) {
+            if (!clip.covers(frame)) continue;
+            if (found == nullptr || clip.set_frame >= found->set_frame) found = &clip;
+        }
+    }
+    if (found == nullptr) return 0;
+    const float length = found->end_frame() - found->set_frame;
+    const float t = length > 0.0F ? std::clamp((frame - found->set_frame) / length, 0.0F, 1.0F) : 0.0F;
+    const float large = float_value(*found, "LMotorSt", 0.0F) +
+                        (float_value(*found, "LMotorEd", 0.0F) - float_value(*found, "LMotorSt", 0.0F)) * t;
+    const bool small = float_value(*found, "SMotorSt", 0.0F) != 0.0F || float_value(*found, "SMotorEd", 0.0F) != 0.0F;
+    constexpr float kSmallMotor = 96.0F;
+    return static_cast<int>(std::clamp(std::max(large, small ? kSmallMotor : 0.0F), 0.0F, 255.0F));
 }
 
 std::vector<EffectShot> active_effects(const Session& session) {

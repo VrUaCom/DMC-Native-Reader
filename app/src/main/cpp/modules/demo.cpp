@@ -234,6 +234,15 @@ CameraPose evaluate(const CameraAnim& anim, float frame) noexcept {
 
 // ---- .hid ----------------------------------------------------------------
 
+bool HideAnim::Object::shown_at(float frame) const noexcept {
+    bool state = shown;
+    for (const auto& key : keys) {
+        if (key.frame > frame) break;
+        state = key.shown;
+    }
+    return state;
+}
+
 std::optional<HideAnim> parse_hid(std::span<const std::uint8_t> bytes) {
     if (bytes.size() < 0x20U || std::memcmp(bytes.data() + 4U, "HID\0", 4U) != 0) return std::nullopt;
     const std::size_t header = u32(bytes, 0U);
@@ -252,8 +261,22 @@ std::optional<HideAnim> parse_hid(std::span<const std::uint8_t> bytes) {
         if (at + 16U > bytes.size()) return std::nullopt;
         const std::size_t size = u16(bytes, at);
         if (size < 16U || at + size > bytes.size()) return std::nullopt;
-        const float state = f32(bytes, at + 8U);
-        anim.objects.push_back({flagged[t], std::isfinite(state) && state != 0.0F});
+        const std::size_t keys = u16(bytes, at + 2U);
+        const float low = f32(bytes, at + 8U);
+        const float high = f32(bytes, at + 12U);
+        HideAnim::Object object{.object = flagged[t], .shown = true, .keys = {}};
+        for (std::size_t k = 0; k < keys && 16U + k * 4U + 4U <= size; ++k) {
+            const std::size_t o = at + 16U + k * 4U;
+            const auto frame = static_cast<float>(static_cast<unsigned>(bytes[o]) << 8U | bytes[o + 1U]);
+            const auto quantized = static_cast<unsigned>(bytes[o + 2U]) << 8U | bytes[o + 3U];
+            const float value = low + (high - low) * static_cast<float>(quantized) / 65535.0F;
+            object.keys.push_back({frame, std::isfinite(value) && value < 0.0F});
+        }
+        std::stable_sort(object.keys.begin(), object.keys.end(),
+                         [](const HideAnim::Key& a, const HideAnim::Key& b) { return a.frame < b.frame; });
+        // A track without keys keeps its low float as its state.
+        object.shown = object.keys.empty() ? std::isfinite(low) && low < 0.0F : object.keys.front().shown;
+        anim.objects.push_back(std::move(object));
         at += size;
     }
     return anim;

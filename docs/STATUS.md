@@ -208,6 +208,15 @@ APK verifier.
     effect bank and configuration loaded (same stage number) they play with
     the layout effects (`stage_markers::placed_effects`); `room_animated`
     (core) keeps the view redrawing.
+  - **Layout states and fog (v91):** `# SET n DUMMY` objects (a cutscene's,
+    st006's ice shards parked 5000 to the side) are not drawn; a STAY set
+    whose `# SET` comment says broken (Shift-JIS 壊れ, st006: 101 / 103 / 105,
+    the entrance ice, Cerberus' ice and the upper fence broken "for the
+    demo") is the broken state of the STAY set before it at the same pos:
+    the room shows the intact one, the break toggle swaps them
+    (`stage_room::layout_sets_shown`). The configuration's SEF section 2 is
+    the stage's depth fog, read like a cutscene's GFG (st006: 1000 .. 2360,
+    grey at 0x34 of 0x80; an inference from that one file).
   - **E sprites are coloured and animated (v90):** the E record's colour
     track at +0x174 has the layout of a P track (four 20-byte keys, PS2
     colour 0x80 = 1.0; enable / loop / ease at +0x1C4..+0x1C6), played at
