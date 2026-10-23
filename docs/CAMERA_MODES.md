@@ -29,9 +29,13 @@ reset and double tap ask the core again):
   **Game camera**, which starts the view at that spawn point instead.
 - A spawn point no CAM zone holds is seen from behind along its heading
   (`stage_room::start_view`, below).
-- **Without a configuration**: the middle of the stage's walkable floor,
-  the HITS floor records (normal.y >= 0.7) round their area-weighted
-  centre, not the layout or the mesh, which reach far outside the arena
+- **Without a configuration**: the middle of all the stage's HITS
+  collision (every record of every source; st006: 475 -800 0 .. 4542 1700
+  5500, middle 2508 450 2750), stood on its floor: of the floor records
+  (normal.y >= 0.7) under that middle, the one whose height is nearest the
+  floors' area-weighted mean height, so a ledge or pit under the middle is
+  not taken (st006: y 0). No floor under it: the nearest floor record. The
+  layout and the room mesh are not used; they reach far outside the arena
   (st006's terrain goes down to y -5980). The camera stands behind, 520
   units back and a third of that above, and turns round in 30° steps (then
   comes nearer: 400, 280, 180) until neither the HITS collision nor the
@@ -64,7 +68,8 @@ POS 2 -> the rail, eye 2505 113 1179 looking north along the arena.
 
 Tests: `stage_config_test.cpp` (fixed, rail, overlapping zones, a torn
 file; spawn points, Game camera, another stage's configuration ignored),
-`core_model_pipeline_test.cpp` (floor middle, a wall in the way).
+`core_model_pipeline_test.cpp` (collision middle, a ledge above the floor,
+a wall in the way).
 
 ## Fly camera (stages and collision views)
 

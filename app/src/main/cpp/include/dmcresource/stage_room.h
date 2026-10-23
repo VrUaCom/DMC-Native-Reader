@@ -198,9 +198,9 @@ void set_effect_host(std::shared_ptr<const Session> host) noexcept;
 //
 // A character's start (a stage configuration's spawn point: POS position and
 // heading, 0 degrees looking along +z; st006's POS 0 stands at 2500 22 906
-// facing into its arena) or, without one, the middle of the stage's walkable
-// floor (the HITS floor records nearest their centroid; the layout and the
-// room mesh reach far outside it, st006's terrain to y -5980).
+// facing into its arena) or, without one, the middle of all the stage's
+// HITS collision stood on its floor (the layout and the room mesh reach far
+// outside it, st006's terrain to y -5980).
 struct Spawn final {
     Vec3 position{};
     float heading_degrees{};

@@ -1019,40 +1019,55 @@ namespace {
     return true;
 }
 
-// The middle of the walkable floor: the HITS floor record whose centre is
-// nearest the floors' area-weighted centre.
-[[nodiscard]] std::optional<Vec3> floor_middle(const Room& room) {
-    if (room.collision_sources.empty()) return std::nullopt;
-    const auto& source = room.collision_sources.front();
-    Vec3 sum{};
-    double total = 0.0;
-    std::vector<std::pair<Vec3, double>> floors;
-    for (const auto& t : source.triangles) {
-        if (t.normal.y < environment_collision::kWallNormalY) continue;
-        const Vec3 e1{t.point_b.x - t.point_a.x, t.point_b.y - t.point_a.y, t.point_b.z - t.point_a.z};
-        const Vec3 e2{t.point_c.x - t.point_a.x, t.point_c.y - t.point_a.y, t.point_c.z - t.point_a.z};
-        const double area = 0.5 * std::hypot(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z,
-                                              e1.x * e2.y - e1.y * e2.x);
-        const Vec3 c{(t.point_a.x + t.point_b.x + t.point_c.x) / 3.0F, (t.point_a.y + t.point_b.y + t.point_c.y) / 3.0F,
-                     (t.point_a.z + t.point_b.z + t.point_c.z) / 3.0F};
-        floors.emplace_back(c, area);
-        sum = {sum.x + static_cast<float>(c.x * area), sum.y + static_cast<float>(c.y * area),
-               sum.z + static_cast<float>(c.z * area)};
-        total += area;
+// The middle of all the stage's collision (every HITS record of every
+// source, st006: 475 -800 0 .. 4542 1700 5500, middle 2508 450 2750), stood
+// on its floor: of the floor records under that middle, the one whose
+// height is nearest the floors' area-weighted mean height (st006: 0), so a
+// ledge or a pit under the middle is not taken for the floor. With no floor
+// under it, the floor record nearest it; with no floor at all, the middle.
+[[nodiscard]] std::optional<Vec3> collision_middle(const Room& room) {
+    Vec3 lo{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+    Vec3 hi{-lo.x, -lo.y, -lo.z};
+    double height_sum = 0.0, area_sum = 0.0;
+    std::vector<Vec3> floor_centres;
+    for (const auto& source : room.collision_sources) {
+        for (const auto& t : source.triangles) {
+            for (const auto* p : {&t.point_a, &t.point_b, &t.point_c}) {
+                lo = {std::min(lo.x, p->x), std::min(lo.y, p->y), std::min(lo.z, p->z)};
+                hi = {std::max(hi.x, p->x), std::max(hi.y, p->y), std::max(hi.z, p->z)};
+            }
+            if (t.normal.y < environment_collision::kWallNormalY) continue;
+            const Vec3 e1{t.point_b.x - t.point_a.x, t.point_b.y - t.point_a.y, t.point_b.z - t.point_a.z};
+            const Vec3 e2{t.point_c.x - t.point_a.x, t.point_c.y - t.point_a.y, t.point_c.z - t.point_a.z};
+            const double area = 0.5 * std::hypot(e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z,
+                                                  e1.x * e2.y - e1.y * e2.x);
+            const Vec3 c{(t.point_a.x + t.point_b.x + t.point_c.x) / 3.0F,
+                         (t.point_a.y + t.point_b.y + t.point_c.y) / 3.0F,
+                         (t.point_a.z + t.point_b.z + t.point_c.z) / 3.0F};
+            floor_centres.push_back(c);
+            height_sum += c.y * area;
+            area_sum += area;
+        }
     }
-    if (floors.empty() || !(total > 0.0)) return std::nullopt;
-    const float k = static_cast<float>(1.0 / total);
-    const Vec3 middle{sum.x * k, sum.y * k, sum.z * k};
-    const auto best = std::min_element(floors.begin(), floors.end(), [&middle](const auto& a, const auto& b) {
-        return std::hypot(a.first.x - middle.x, a.first.z - middle.z) <
-               std::hypot(b.first.x - middle.x, b.first.z - middle.z);
+    if (!(lo.x <= hi.x)) return std::nullopt;
+    const Vec3 middle{(lo.x + hi.x) * 0.5F, (lo.y + hi.y) * 0.5F, (lo.z + hi.z) * 0.5F};
+    if (floor_centres.empty()) return middle;
+    const float mean = area_sum > 0.0 ? static_cast<float>(height_sum / area_sum) : floor_centres.front().y;
+    // Every floor height in the column through the middle, top down.
+    std::optional<float> best;
+    for (const auto& source : room.collision_sources) {
+        float top = hi.y + 1.0F;
+        for (int guard = 0; guard < 64; ++guard) {
+            const auto y = environment_collision::floor_below(source, {middle.x, top, middle.z}, top - lo.y + 1.0F);
+            if (!y) break;
+            if (!best || std::fabs(*y - mean) < std::fabs(*best - mean)) best = *y;
+            top = *y - 2.0F;  // floor_below takes floors up to 1 above the point
+        }
+    }
+    if (best) return Vec3{middle.x, *best, middle.z};
+    return *std::min_element(floor_centres.begin(), floor_centres.end(), [&middle](const Vec3& a, const Vec3& b) {
+        return std::hypot(a.x - middle.x, a.z - middle.z) < std::hypot(b.x - middle.x, b.z - middle.z);
     });
-    // On the floor under the middle when there is one there.
-    Vec3 out = best->first;
-    if (const auto y = environment_collision::floor_below(source, {middle.x, out.y + 200.0F, middle.z}, 400.0F)) {
-        out = {middle.x, *y, middle.z};
-    }
-    return out;
 }
 
 }  // namespace
@@ -1061,7 +1076,7 @@ std::optional<StartView> start_view(const Room& room, const std::optional<Spawn>
     try {
         std::optional<Vec3> foot;
         if (spawn) foot = spawn->position;
-        if (!foot) foot = floor_middle(room);
+        if (!foot) foot = collision_middle(room);
         if (!foot && !room.spots.empty()) foot = room.spots.front();
         if (!foot) return std::nullopt;
         constexpr float kChest = 110.0F;  // a character's chest above its feet

@@ -402,6 +402,17 @@ int main() {
         assert(middle && !middle->from_spawn && std::fabs(middle->target.x) < 1.0F &&
                std::fabs(middle->target.z) < 1.0F && middle->target.y > 50.0F && middle->target.y < 200.0F);
         assert(middle->eye.z < -100.0F && std::fabs(middle->eye.x) < 1.0F && middle->eye.y > middle->target.y);
+        // The middle of all the collision stands on the main floor, not on a
+        // small ledge above it (the floors' mean height is near 0).
+        {
+            room::Room ledged;
+            auto with_ledge = source;
+            with_ledge.triangles.push_back({0U, {-50.0F, 300.0F, -50.0F}, {-50.0F, 300.0F, 50.0F},
+                                            {50.0F, 300.0F, 50.0F}, {0.0F, 1.0F, 0.0F}, -300.0F});
+            ledged.collision_sources.push_back(with_ledge);
+            const auto on_floor = room::start_view(ledged, std::nullopt);
+            assert(on_floor && on_floor->target.y > 50.0F && on_floor->target.y < 200.0F);
+        }
         const auto spawned = room::start_view(stage_room, room::Spawn{{50.0F, 0.0F, 0.0F}, 270.0F, true});
         assert(spawned && spawned->from_spawn && std::fabs(spawned->target.x - 50.0F) < 1.0e-3F);
         assert(spawned->eye.x < 100.0F && !ec::segment_hit(source, spawned->target, spawned->eye));
