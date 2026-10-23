@@ -280,6 +280,8 @@ std::optional<EffectDescriptor> effect_descriptor(const Record& record) {
             out.rotation_degrees[i] = b[o] == 1U ? mean(o + 4U) : 0.0F;
         }
         out.orientation = b[0x1F5U];
+        out.colour_known = true;
+        out.blend = b[0x1C8U];
         bool finite = true;
         for (std::size_t i = 0U; i < 3U; ++i) {
             finite = finite && std::isfinite(out.size[i]) && std::isfinite(out.pivot[i]) &&

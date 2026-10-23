@@ -378,6 +378,10 @@ struct ViewControls final {
 // Dolly range of a session: a stage scene can be entered, a model cannot be
 // passed through.
 [[nodiscard]] float session_dolly_limit(const Session* session) noexcept;
+// Whether the stage or room the session draws moves on its own: texture
+// scrolls, or effects (its layout's or its configuration's STE) with the
+// stage's effect bank loaded. The shell keeps redrawing it while true.
+[[nodiscard]] bool room_animated(const Session* session) noexcept;
 
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,

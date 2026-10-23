@@ -498,4 +498,38 @@ int nearest_marker(std::span<const std::optional<HierarchyScreenPoint>> anchors,
     return best;
 }
 
+int stage_number(std::string_view name) noexcept {
+    for (std::size_t i = 0; i + 5U <= name.size(); ++i) {
+        if ((name[i] | 0x20) != 's' || (name[i + 1U] | 0x20) != 't') continue;
+        int number = 0;
+        std::size_t k = i + 2U;
+        for (; k < i + 5U && name[k] >= '0' && name[k] <= '9'; ++k) number = number * 10 + (name[k] - '0');
+        if (k == i + 5U) return number;
+    }
+    return -1;
+}
+
+std::vector<PlacedEffect> placed_effects(std::string_view stage_name) {
+    std::vector<PlacedEffect> out;
+    try {
+        const auto config = current();
+        if (config == nullptr) return out;
+        const int ours = stage_number(stage_name), theirs = stage_number(config->name);
+        if (ours >= 0 && theirs >= 0 && ours != theirs) return out;
+        for (const auto& member : config->members) {
+            if (member.kind != stage_config::Kind::Ste || member.bytes == nullptr) continue;
+            const auto read = stage_config::read_ste(*member.bytes);
+            for (const auto& record : read.document.records) {
+                static constexpr std::array<char, 4> kKinds{'P', 'E', 'G', 'V'};
+                if (record.kind >= kKinds.size()) continue;
+                out.push_back({.kind = kKinds[record.kind], .id = record.number, .position = record.position,
+                               .rotation_degrees = record.rotation_degrees, .scale = record.scale});
+            }
+        }
+    } catch (...) {
+        out.clear();
+    }
+    return out;
+}
+
 }  // namespace dmcresource::stage_markers

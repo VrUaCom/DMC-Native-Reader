@@ -97,6 +97,25 @@ void set_visible(bool visible) noexcept;
 void set_selected(int marker) noexcept;  // -1 none
 [[nodiscard]] int selected() noexcept;
 
+// The stage number of a file name ("st006cfg.pac", "st006.pac": 6), -1 none.
+[[nodiscard]] int stage_number(std::string_view name) noexcept;
+
+// The effects the current configuration places in its stage: its STE
+// records, each (u16 dispatch kind 0 P, 1 E, 2 G, 3 V; u16 effect id) of the
+// stage's effect bank (stNNN_effect.pac) at a position, turned (degrees)
+// and scaled. st006cfg's ten records are all V 98 at scale 0.5, the
+// bank's one V (fire E 7, glow E 154 above it): the wall torches at y
+// 510..580 and the braziers at y 150. Empty when no configuration is loaded
+// or it is another stage's (both names carry a stage number that differs).
+struct PlacedEffect final {
+    char kind{};  // 'P', 'E', 'G', 'V'
+    std::uint16_t id{};
+    stage_config::Vec3 position;
+    stage_config::Vec3 rotation_degrees;
+    stage_config::Vec3 scale{1.0F, 1.0F, 1.0F};
+};
+[[nodiscard]] std::vector<PlacedEffect> placed_effects(std::string_view stage_name);
+
 // The 3D drawing of the markers in room coordinates: spawn and placement
 // points as posts with a foot cross and a heading arrow, zones as boxes
 // from their floor to their height, paths as lines; the selected marker

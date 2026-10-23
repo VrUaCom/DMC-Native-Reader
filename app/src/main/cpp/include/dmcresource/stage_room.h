@@ -71,6 +71,11 @@ struct Room final {
         // A broken object's `beff`: played once from the moment the room was
         // switched to its broken state, not looped.
         bool once{};
+        // The root's own turn (degrees) and size: a stage configuration's
+        // STE record carries them (st006: scale 0.5); layout effects keep
+        // the identity.
+        Vec3 rotation_degrees{};
+        Vec3 scale{1.0F, 1.0F, 1.0F};
     };
     std::vector<LayoutEffect> effects;
     // "# SET n BREAK" objects of the layout, and the same room with all of

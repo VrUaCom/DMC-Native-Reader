@@ -199,6 +199,23 @@ APK verifier.
   - **Stage effects:** choose `st*_effect.pac` (an FXBANK) in Settings → Room
     or the ⋮ menu of a stage. Opening such a file also loads it. The layout
     effects play from it in a loop (period from the E lifetimes).
+  - **Effects placed by the stage configuration (v90):** a `stNNNcfg.pac`'s
+    STE records are effects of the stage's bank: u16 dispatch kind (0 P, 1 E,
+    2 G, 3 V), u16 effect id, position, rotation in degrees, scale (an
+    inference from the data: st006cfg's ten records are all `V 98` at scale
+    0.5, the only V of `st006_effect.pac`: the fire E 7 and its glow E 154 in
+    the gargoyle mouths of the walls and over the floor). With the stage's
+    effect bank and configuration loaded (same stage number) they play with
+    the layout effects (`stage_markers::placed_effects`); `room_animated`
+    (core) keeps the view redrawing.
+  - **E sprites are coloured and animated (v90):** the E record's colour
+    track at +0x174 has the layout of a P track (four 20-byte keys, PS2
+    colour 0x80 = 1.0; enable / loop / ease at +0x1C4..+0x1C6), played at
+    the effect's age; +0x1C8 = 2 draws additively (both st006 fire records).
+    The A animation advances a frame every `frame_time` ticks of the
+    effect's age (looping from its loop frame) instead of holding frame 0.
+    Both are read from the data (94 E records of the cutscenes and st006),
+    not from a traced E draw.
   - **Model numbers:** layout model k is the PNST entry in slot 10·k (st002
     has slots 10, 30, 40, 50 only), no longer the k-th entry.
   - **Additive / subtractive room geometry** (light shafts) follows the vertex

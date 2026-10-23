@@ -1225,7 +1225,9 @@ int main() {
             e_bytes[0x1F5U] = 3U;
             const fx::Record shaped{'E', 765U, 0U,
                                     std::span<const std::uint8_t>{e_bytes}, {}};
+            e_bytes[0x1C8U] = fx::kEffectBlendAdditive;
             const auto shape = fx::effect_descriptor(shaped);
+            assert(shape->colour_known && shape->blend == fx::kEffectBlendAdditive);
             assert(shape && shape->geometry_known &&
                    shape->size[0] == 20.0F && shape->size[1] == 20.0F &&
                    shape->pivot[0] == 10.0F && shape->scale[1] == -1.0F &&

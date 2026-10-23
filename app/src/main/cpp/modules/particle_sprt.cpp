@@ -33,7 +33,7 @@ constexpr float kTick = 1.0F;            // dt: one 60 Hz update
     return v;
 }
 
-[[nodiscard]] Track parse_track(std::span<const std::uint8_t> b, std::size_t at) {
+[[nodiscard]] Track parse_track_at(std::span<const std::uint8_t> b, std::size_t at) {
     Track t;
     for (std::size_t k = 0U; k < 4U; ++k) {
         const std::size_t o = at + k * 20U;
@@ -163,7 +163,7 @@ struct Rng final {
     def.motion = parse_motion(record, d + 0x52U);
     def.life = i32(record, d + 0x68U);
     def.blend = record[d + 0x65U];
-    def.track = parse_track(record, d + 0x6CU);
+    def.track = parse_track_at(record, d + 0x6CU);
     const std::size_t layers = u16(record, d + 0xC0U);
     for (std::size_t i = 0U; i < layers && i < 8U; ++i) {
         const std::int32_t off = i32(record, 0x18U + 4U * i);
@@ -175,7 +175,7 @@ struct Rng final {
         layer.rotation = vec3_at(record, l + 0x10U);
         layer.scale = vec3_at(record, l + 0x20U);
         layer.motion = parse_motion(record, l + 0x30U);
-        layer.track = parse_track(record, l + 0x48U);
+        layer.track = parse_track_at(record, l + 0x48U);
         layer.blend = record[l + 0x45U];
         def.layers.push_back(layer);
     }
@@ -274,7 +274,7 @@ Simulation::Simulation(const Def& def, const Animation& animation, std::uint32_t
     emitter_.scale = def_.scale;
     emitter_.life = static_cast<float>(def_.life);
     emitter_.color = def_.track.keys[0].color;  // init lerp (p = 0, 4 groups) copies key 0
-    emitter_track_.remaining = static_cast<float>(def_.track.keys[0].duration);
+    emitter_track_ = start_track(def_.track);
     friction_ = def_.friction;
     for (const auto& layer : def_.layers) {
         State s;
@@ -283,9 +283,7 @@ Simulation::Simulation(const Def& def, const Animation& animation, std::uint32_t
         s.scale = layer.scale;
         s.color = layer.track.keys[0].color;
         layers_.push_back(s);
-        TrackState t;
-        t.remaining = static_cast<float>(layer.track.keys[0].duration);
-        layer_tracks_.push_back(t);
+        layer_tracks_.push_back(start_track(layer.track));
     }
 
     // Init (0x140236D10 / 0x140234CE0 / 0x1402334A0): position = uniform box,
@@ -365,8 +363,16 @@ void Simulation::set_vertices(std::vector<std::array<std::array<float, 3>, 4>> v
     emitter_.velocity = std::move(velocity);
 }
 
-void Simulation::step_track(const Track& track, TrackState* state,
-                            std::array<std::uint8_t, 16>* color) const {
+Track read_track(std::span<const std::uint8_t> bytes, std::size_t at) { return parse_track_at(bytes, at); }
+
+TrackState start_track(const Track& track) noexcept {
+    TrackState state;
+    state.remaining = static_cast<float>(track.keys[0].duration);
+    return state;
+}
+
+void step_track(const Track& track, std::size_t groups, TrackState* state, std::array<std::uint8_t, 16>* color) {
+
     if (!track.enabled) return;
     if (!track.loop && state->done) return;
     const auto& a = track.keys[state->index];
@@ -377,7 +383,7 @@ void Simulation::step_track(const Track& track, TrackState* state,
     // (table 1: group 0 to all, table 2: group 3 = 0, group 2 = 1).
     constexpr std::array<std::size_t, 3> kEaseGroups{1U, 2U, 4U};  // 0x1405CED70
     const std::size_t table = track.ease < kEaseGroups.size() ? kEaseGroups[track.ease] : 0U;
-    const std::size_t lerped = std::min({groups_, table, std::size_t{4}});
+    const std::size_t lerped = std::min({groups, table, std::size_t{4}});
     for (std::size_t c = 0U; c < lerped * 4U && c < color->size(); ++c) {
         const float v = static_cast<float>(a.color[c]) +
                         (static_cast<float>(b.color[c]) - static_cast<float>(a.color[c])) * p;
@@ -406,6 +412,19 @@ void Simulation::step_track(const Track& track, TrackState* state,
     }
 }
 
+std::array<std::uint8_t, 16> track_color_at(const Track& track, std::size_t groups, float ticks) {
+    auto color = track.keys[0].color;
+    if (!track.enabled) return color;
+    auto state = start_track(track);
+    // Effects loop for minutes: a track that loops repeats its own length.
+    const int steps = static_cast<int>(std::clamp(ticks, 0.0F, 36000.0F));
+    for (int i = 0; i < steps; ++i) {
+        if (!track.loop && state.done) break;
+        step_track(track, groups, &state, &color);
+    }
+    return color;
+}
+
 bool Simulation::update(const Matrix4& world) {
     if (expired_) return false;
     // 0x1402374F0: life counts down unless it is below -10000 (endless).
@@ -416,7 +435,7 @@ bool Simulation::update(const Matrix4& world) {
             return false;
         }
     }
-    step_track(def_.track, &emitter_track_, &emitter_.color);
+    step_track(def_.track, groups_, &emitter_track_, &emitter_.color);
     const auto integrate = [](const TransformMotion& m, State* s) {
         for (std::size_t a = 0U; a < 3U; ++a) {
             s->translation[a] += static_cast<float>(m.translation[a]) * 0.0625F * kTick;
@@ -429,7 +448,7 @@ bool Simulation::update(const Matrix4& world) {
     };
     integrate(def_.motion, &emitter_);
     for (std::size_t l = 0U; l < layers_.size(); ++l) {
-        step_track(def_.layers[l].track, &layer_tracks_[l], &layers_[l].color);
+        step_track(def_.layers[l].track, groups_, &layer_tracks_[l], &layers_[l].color);
         integrate(def_.layers[l].motion, &layers_[l]);
     }
 

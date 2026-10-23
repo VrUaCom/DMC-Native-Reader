@@ -939,20 +939,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoomEffects(JNIEnv*, jclass) 
     dmcresource::stage_room::set_effect_host(nullptr);
 }
 
-// True when the room drawn with the session has scrolling textures (a stage's
-// clouds): the viewer then redraws on a timer.
+// True when the room drawn with the session moves on its own (core
+// room_animated: texture scrolls, effects): the viewer then redraws on a timer.
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_roomAnimated(JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    const bool has_host = dmcresource::stage_room::effect_host() != nullptr;
-    if (session->stage != nullptr) {
-        const auto& stage = dmcresource::stage_room::shown(*session->stage);
-        return !stage.uv_scrolls.empty() || (has_host && !stage.effects.empty()) ? JNI_TRUE : JNI_FALSE;
-    }
-    const auto room = dmcresource::stage_room::shown(dmcresource::stage_room::current());
-    return room && (!room->uv_scrolls.empty() || (has_host && !room->effects.empty())) ? JNI_TRUE : JNI_FALSE;
+    return dmcresource::room_animated(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -174,6 +174,32 @@ void check(const char* label, std::uint8_t cls) {
 }  // namespace
 
 int main() {
+    // A colour track (P +0x6C / layers +0x48 / E +0x174): key 0 for 4
+    // ticks, lerped to key 1 over them (the first update still draws key 0),
+    // then on to key 2.
+    {
+        std::vector<std::uint8_t> bytes(0x60U, 0U);
+        bytes[0x00U] = 4U;                                   // key 0: 4 ticks
+        for (std::size_t c = 0U; c < 4U; ++c) bytes[0x04U + c] = 0x80U;
+        bytes[0x14U] = 2U;                                   // key 1: 2 ticks
+        bytes[0x18U] = 0x00U; bytes[0x19U] = 0x40U; bytes[0x1AU] = 0x80U; bytes[0x1BU] = 0x20U;
+        bytes[0x28U] = 0U;                                   // key 2: none
+        bytes[0x50U] = 1U;                                   // enabled, no loop, ease 0
+        const auto track = dmcresource::particle::read_track(bytes, 0U);
+        assert(track.enabled && !track.loop && track.keys[0].duration == 4);
+        const auto start = dmcresource::particle::track_color_at(track, 4U, 0.0F);
+        assert(start[0] == 0x80U && start[3] == 0x80U);
+        const auto half = dmcresource::particle::track_color_at(track, 4U, 3.0F);
+        assert(half[0] == 0x40U && half[1] == 0x60U && half[3] == 0x50U);
+        // Ease 0 lerps one group and copies it to the other three.
+        assert(half[4] == half[0] && half[15] == half[3]);
+        const auto later = dmcresource::particle::track_color_at(track, 4U, 5.0F);
+        assert(later[0] == 0x00U && later[1] == 0x40U);
+        auto off = track;
+        off.enabled = false;
+        assert(dmcresource::particle::track_color_at(off, 4U, 50.0F)[0] == 0x80U);
+    }
+
     check<truth_sw1>("sprt world gravity", 3U);
     check<truth_sw0>("sprt local gravity", 3U);
     check<truth_pw1>("poly world gravity", 1U);

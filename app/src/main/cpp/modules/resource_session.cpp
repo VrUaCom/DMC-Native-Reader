@@ -1123,7 +1123,7 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
 
 [[nodiscard]] bool append_effect_sprite(
     const Session& session, const motion::EffectChildRef& child,
-    const Matrix4& world,
+    const Matrix4& world, float age,
     std::vector<ViewState::EffectSprite>* out) {
     if (out == nullptr || child.effect_kind != 'E') return true;
     const auto* record = find_effect_record(
@@ -1144,12 +1144,17 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
             const auto animation = effect_bank::sprite_animation(*animation_record);
             if (animation.has_value() && !animation->frames.empty()) {
                 texture_id = animation->texture;
-                // A's local animation clock is advanced by the E runtime,
-                // not by MotionScript/actor age. Until that EXE clock is
-                // bridged, retain the exact A/T dependency and show its
-                // canonical first atlas frame instead of guessing a frame
-                // rate or treating script frames as effect ticks.
-                frame = animation->frames.front();
+                // A frame every `frame_time` ticks of the effect's age; a
+                // looping animation restarts at its loop frame, another
+                // holds its last (st006's fire: 32 frames, 2 ticks each).
+                const auto count = animation->frames.size();
+                const float step = static_cast<float>(std::max<std::uint8_t>(animation->frame_time, 1U));
+                auto index = static_cast<std::size_t>(std::max(age, 0.0F) / step);
+                if (index >= count) {
+                    const std::size_t restart = animation->loop_frame < count ? animation->loop_frame : 0U;
+                    index = animation->loop ? restart + (index - count) % (count - restart) : count - 1U;
+                }
+                frame = animation->frames[index];
             }
         }
     }
@@ -1168,6 +1173,24 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
         static_cast<float>(frame.y) * inv_h,
         static_cast<float>(frame.x + frame.w) * inv_w,
         static_cast<float>(frame.y + frame.h) * inv_h};
+    if (descriptor->colour_known) {
+        // The colour track at the effect's age; the PS2 colour scale (0x80
+        // = 1.0) onto the renderer's (255 = 1.0). A sprite takes group 0
+        // unless the track lerps four groups (one per corner).
+        const auto track = particle::read_track(record->bytes, effect_bank::kEffectColourTrack);
+        const auto colour = particle::track_color_at(track, 4U, age);
+        const auto scale = [](std::uint8_t c) {
+            return static_cast<std::uint8_t>(std::min(255, (static_cast<int>(c) * 255 + 64) / 128));
+        };
+        for (std::size_t k = 0U; k < 4U; ++k) sprite.tint[k] = scale(colour[k]);
+        if (track.enabled && track.ease >= 2U) {
+            sprite.per_vertex = true;
+            for (std::size_t g = 0U; g < 4U; ++g) {
+                for (std::size_t k = 0U; k < 4U; ++k) sprite.corner_tint[g][k] = scale(colour[g * 4U + k]);
+            }
+        }
+        sprite.additive = descriptor->blend == effect_bank::kEffectBlendAdditive;
+    }
     if (!descriptor->geometry_known) {
         out->push_back(sprite);
         return true;
@@ -1437,7 +1460,7 @@ bool collect_effect_children(
             age > static_cast<float>(descriptor->lifetime_ticks)) {
             return true;
         }
-        return append_effect_sprite(session, child, world, out);
+        return append_effect_sprite(session, child, world, age, out);
     }
     if (child.effect_kind == 'P') {
         return append_effect_particles(session, child, world, age, out);
@@ -1580,25 +1603,43 @@ bool collect_effect_children(
     return longest;
 }
 
-// The effects the stage layout keeps on its objects, played in a loop from
-// the stage's effect bank, placed with the room.
-void append_room_effects(const stage_room::Room& room, const std::shared_ptr<const Session>& host,
-                         const stage_room::Placement& placement, float room_time, PreparedView* out) {
-    if (out == nullptr || !host || room.effects.empty() || !(room_time > 0.0F)) return;
+// The effects of a stage: those its layout keeps on its objects, then
+// those its configuration places (STE, stage_markers::placed_effects).
+[[nodiscard]] std::vector<stage_room::Room::LayoutEffect> stage_effects(const stage_room::Room& room) {
+    auto effects = room.effects;
+    for (const auto& placed : stage_markers::placed_effects(room.name)) {
+        effects.push_back({.kind = placed.kind,
+                           .id = placed.id,
+                           .position = {placed.position.x, placed.position.y, placed.position.z},
+                           .once = false,
+                           .rotation_degrees = {placed.rotation_degrees.x, placed.rotation_degrees.y,
+                                                placed.rotation_degrees.z},
+                           .scale = {placed.scale.x, placed.scale.y, placed.scale.z}});
+    }
+    return effects;
+}
+
+// The stage's effects played in a loop from its effect bank, placed with
+// the room.
+void append_room_effects(std::span<const stage_room::Room::LayoutEffect> effects,
+                         const std::shared_ptr<const Session>& host, const stage_room::Placement& placement,
+                         float room_time, PreparedView* out) {
+    if (out == nullptr || !host || effects.empty() || !(room_time > 0.0F)) return;
     set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
     motion::RuntimeEffectInstance instance;
     std::vector<ViewState::EffectSprite> staged;
     std::size_t index = 0U;
-    for (const auto& effect : room.effects) {
+    for (const auto& effect : effects) {
         ++index;
-        if (effect.kind != 'V' && effect.kind != 'E') continue;
+        if (dispatch_kind_for_effect_kind(effect.kind) == 0xFFU) continue;
         motion::EffectChildRef root;
         root.effect_kind = effect.kind;
         root.effect_id = effect.id;
         root.resource_slot = 0U;
         root.dispatch_kind = dispatch_kind_for_effect_kind(effect.kind);
         root.evidence = motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED;
-        root.scale = {1.0F, 1.0F, 1.0F};
+        root.rotation_degrees = {effect.rotation_degrees.x, effect.rotation_degrees.y, effect.rotation_degrees.z};
+        root.scale = {effect.scale.x, effect.scale.y, effect.scale.z};
         const float extent = effect_extent(*host, effect.kind, effect.id, 0U, 0);
         float age = 0.0F;
         if (effect.once) {
@@ -2238,8 +2279,9 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.room_texture_slots = &out->room->triangle_texture_slots;
         view.room_textures = &out->room->textures;
         view.room_translucent_triangles = &out->room->translucent_triangles;
-        set_room_animation(&view, out->room->uv_scrolls, !out->room->effects.empty() && stage_room::effect_host() != nullptr, flags);
-        append_room_effects(*out->room, stage_room::effect_host(), placement, view.room_time, out);
+        const auto effects = stage_effects(*out->room);
+        set_room_animation(&view, out->room->uv_scrolls, !effects.empty() && stage_room::effect_host() != nullptr, flags);
+        append_room_effects(effects, stage_room::effect_host(), placement, view.room_time, out);
         view.effect_sprites = out->effect_sprites;
         view.room_pivot = placement.pivot;
         view.room_yaw = placement.yaw;
@@ -2265,8 +2307,10 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         view.room_texture_slots = &stage.triangle_texture_slots;
         view.room_textures = &stage.textures;
         view.room_translucent_triangles = &stage.translucent_triangles;
-        set_room_animation(&view, stage.uv_scrolls, !stage.effects.empty() && stage_room::effect_host() != nullptr, flags);
-        append_room_effects(stage, stage_room::effect_host(), stage_room::Placement{view.room_pivot, stage_yaw, {}}, view.room_time, out);
+        const auto effects = stage_effects(stage);
+        set_room_animation(&view, stage.uv_scrolls, !effects.empty() && stage_room::effect_host() != nullptr, flags);
+        append_room_effects(effects, stage_room::effect_host(), stage_room::Placement{view.room_pivot, stage_yaw, {}},
+                            view.room_time, out);
         view.effect_sprites = out->effect_sprites;
         view.room_pivot = stage.spots.empty() ? Vec3{} : stage.spots.front();
         view.room_yaw = stage_yaw;
@@ -2331,6 +2375,21 @@ float session_camera_distance(const Session* session) noexcept {
     if (session == nullptr) return 0.0F;
     const auto rest = motion::motion_rest_vertices(session);
     return framing_camera_distance(rest.empty() ? std::span<const Vec3>{session->render_mesh.vertices} : rest);
+}
+
+bool room_animated(const Session* session) noexcept {
+    try {
+        if (session == nullptr) return false;
+        const bool has_host = stage_room::effect_host() != nullptr;
+        const auto moves = [has_host](const stage_room::Room& room) {
+            return !room.uv_scrolls.empty() || (has_host && !stage_effects(room).empty());
+        };
+        if (session->stage != nullptr) return moves(stage_room::shown(*session->stage));
+        const auto room = stage_room::shown(stage_room::current());
+        return room != nullptr && moves(*room);
+    } catch (...) {
+        return false;
+    }
 }
 
 float session_dolly_limit(const Session* session) noexcept {

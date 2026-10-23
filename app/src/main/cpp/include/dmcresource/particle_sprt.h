@@ -40,6 +40,26 @@ struct Track final {
     std::uint8_t ease{};  // table +0x52: 0 one colour, 1 two, 2 four (0x1405CED70)
 };
 
+// A colour track at `at`: four 20-byte keys, then enable / loop / ease at
+// +0x50 / +0x51 / +0x52 (P definitions +0x6C, P layers +0x48, E records
+// +0x174).
+[[nodiscard]] Track read_track(std::span<const std::uint8_t> bytes, std::size_t at);
+
+// Where a colour track stands: the key it leaves, whether a track that does
+// not loop has run out, and the ticks left to the next key.
+struct TrackState final {
+    std::uint8_t index{};
+    bool done{};
+    float remaining{};
+};
+[[nodiscard]] TrackState start_track(const Track& track) noexcept;
+// One 60 Hz update of 0x1402D30E0: `color` lerps from the key it leaves to
+// the next over the key's length, `groups` RGBA groups at most (the ease
+// table picks 1, 2 or 4 and replicates the rest).
+void step_track(const Track& track, std::size_t groups, TrackState* state, std::array<std::uint8_t, 16>* color);
+// The colour after `ticks` updates from key 0 (a disabled track keeps key 0).
+[[nodiscard]] std::array<std::uint8_t, 16> track_color_at(const Track& track, std::size_t groups, float ticks);
+
 // Local transform integrator inputs (0x140312260): s16 per tick.
 struct TransformMotion final {
     std::array<std::int16_t, 3> translation{};  // x 1/16 per tick
@@ -150,12 +170,6 @@ public:
     [[nodiscard]] const std::vector<State>& layer_states() const noexcept { return layers_; }
 
 private:
-    struct TrackState final {
-        std::uint8_t index{};
-        bool done{};
-        float remaining{};
-    };
-    void step_track(const Track& track, TrackState* state, std::array<std::uint8_t, 16>* color) const;
 
     Def def_;
     Animation animation_;

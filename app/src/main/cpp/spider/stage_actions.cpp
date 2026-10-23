@@ -281,25 +281,12 @@ RgbaImage render_export_image(const Session* session) noexcept {
 
 namespace {
 
-// The stage number of a file name ("st006cfg.pac", "st006.pac": 6), -1 none.
-[[nodiscard]] int stage_number(std::string_view name) noexcept {
-    for (std::size_t i = 0; i + 4U < name.size() + 1U && i + 5U <= name.size(); ++i) {
-        const auto lower = [&](std::size_t k) { return static_cast<char>(name[k] | 0x20); };
-        if (lower(i) != 's' || lower(i + 1U) != 't') continue;
-        int number = 0;
-        std::size_t k = i + 2U;
-        for (; k < name.size() && k < i + 5U && name[k] >= '0' && name[k] <= '9'; ++k) number = number * 10 + (name[k] - '0');
-        if (k == i + 5U) return number;
-    }
-    return -1;
-}
-
 // The current configuration if it belongs to the stage `stage_name` (or
 // either name says no stage).
 [[nodiscard]] std::shared_ptr<const stage_markers::StageConfig> config_of(std::string_view stage_name) {
     auto config = stage_markers::current();
     if (config == nullptr) return nullptr;
-    const int ours = stage_number(stage_name), theirs = stage_number(config->name);
+    const int ours = stage_markers::stage_number(stage_name), theirs = stage_markers::stage_number(config->name);
     if (ours >= 0 && theirs >= 0 && ours != theirs) return nullptr;
     return config;
 }

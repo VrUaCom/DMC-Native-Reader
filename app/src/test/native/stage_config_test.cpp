@@ -413,6 +413,24 @@ int main() {
         assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
     }
 
+    // A configuration's STE records are effects of the stage's bank, played
+    // in that stage only.
+    {
+        Writer fx;
+        fx.header("STE", 1, 2);
+        fx.u16(3); fx.u16(98);
+        for (float v : {1050.0F, 570.0F, 2130.0F, 0.0F, 90.0F, 0.0F, 0.5F, 0.5F, 0.5F}) fx.f32(v);
+        fx.u16(9); fx.u16(5);  // no such dispatch kind: skipped
+        for (float v : {0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F}) fx.f32(v);
+        const auto loaded = dmcresource::spider::actions::load_stage_config("st006cfg.pac", fx.bytes.data(), fx.bytes.size());
+        assert(loaded.ok);
+        const auto placed = stage_markers::placed_effects("st006.pac");
+        assert(placed.size() == 1U && placed[0].kind == 'V' && placed[0].id == 98U &&
+               placed[0].position.y == 570.0F && placed[0].rotation_degrees.y == 90.0F && placed[0].scale.x == 0.5F);
+        assert(stage_markers::placed_effects("st100.pac").empty());
+        assert(stage_markers::stage_number("ST006CFG.PAC") == 6 && stage_markers::stage_number("m02_s00.pac") == -1);
+    }
+
     // Truncated or foreign bytes are not taken.
     std::vector<std::uint8_t> short_pos(pos.bytes.begin(), pos.bytes.begin() + 40);
     assert(!stage_config::read_pos(short_pos).ok());

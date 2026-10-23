@@ -162,7 +162,18 @@ struct EffectDescriptor final {
     // Initial rotation D in degrees (+0x150 + 12*i: flag, min, max).
     std::array<float, 3> rotation_degrees{};
     std::uint8_t orientation{};                      // +0x1F5 (mode 2)
+    // Colour (from the data; the E draw is not traced for it): a colour
+    // track at +0x174 laid out as a P track (particle_sprt.h read_track:
+    // four 20-byte keys of a length in ticks and four RGBA groups, 0x80 =
+    // 1.0; enable / loop / ease at +0x1C4..+0x1C6, the last 16 bytes of the
+    // keys ending at +0x1C4 in every record seen), then the blend at +0x1C8:
+    // 2 additive (st006's fire E 7 and its glow E 154, orange keys
+    // ff aa 5a 80 / 80 70 30 20), otherwise alpha.
+    bool colour_known{};
+    std::uint8_t blend{};
 };
+inline constexpr std::size_t kEffectColourTrack = 0x174U;
+inline constexpr std::uint8_t kEffectBlendAdditive = 2U;
 [[nodiscard]] std::optional<EffectDescriptor> effect_descriptor(const Record& record);
 
 // V is a composite runtime record. Its entries are kept as a dependency graph
