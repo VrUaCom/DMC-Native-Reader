@@ -1739,15 +1739,38 @@ public final class MainActivity extends Activity {
         }
         for (int i = 0; menu.rows != null && i < menu.rows.ids.length; ++i) {
             final int id = menu.rows.ids[i];
-            TextView row = new TextView(this);
-            row.setText(menu.rows.labels[i]);
-            row.setTextSize(16f);
-            row.setTextColor(0xffe8eaf0);
-            row.setPadding(dp(4), dp(12), dp(16), dp(12));
-            row.setOnClickListener(v -> pick.accept(id));
-            panel.addView(row);
+            panel.addView(menuRow(menu.rows.labels[i], 0xffe8eaf0, v -> pick.accept(id)));
+        }
+        // The rest, folded: "Other actions" opens it.
+        if (menu.more != null && menu.more.ids.length > 0) {
+            final LinearLayout folded = new LinearLayout(this);
+            folded.setOrientation(LinearLayout.VERTICAL);
+            folded.setVisibility(View.GONE);
+            for (int i = 0; i < menu.more.ids.length; ++i) {
+                final int id = menu.more.ids[i];
+                folded.addView(menuRow(menu.more.labels[i], 0xffb8bcc8, v -> pick.accept(id)));
+            }
+            final TextView header = menuRow("\u25b8 Other actions (" + menu.more.ids.length + ")", 0xff9aa0ae, null);
+            header.setOnClickListener(v -> {
+                final boolean opening = folded.getVisibility() != View.VISIBLE;
+                folded.setVisibility(opening ? View.VISIBLE : View.GONE);
+                header.setText((opening ? "\u25be" : "\u25b8") + " Other actions (" + menu.more.ids.length + ")");
+            });
+            panel.addView(header);
+            panel.addView(folded);
         }
         shown[0] = showPanel(titleView.getText(), panel, null, null, null);
+    }
+
+    /** One text row of the ⋮ menu. */
+    private TextView menuRow(String label, int color, View.OnClickListener click) {
+        TextView row = new TextView(this);
+        row.setText(label);
+        row.setTextSize(16f);
+        row.setTextColor(color);
+        row.setPadding(dp(4), dp(12), dp(16), dp(12));
+        if (click != null) row.setOnClickListener(click);
+        return row;
     }
 
     /** A ⋮ item: the core's own actions go back to it; the rest are platform steps. */

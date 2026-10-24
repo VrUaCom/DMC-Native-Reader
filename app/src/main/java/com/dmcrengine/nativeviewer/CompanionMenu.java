@@ -36,11 +36,14 @@ public final class CompanionMenu {
 
     public final NativeMenu shortcuts;
     public final NativeMenu rows;
+    /** What can be done but does not fit what is on the screen: under a folded row. */
+    public final NativeMenu more;
     public final int[] dimmed;
 
-    public CompanionMenu(NativeMenu shortcuts, NativeMenu rows, int[] dimmed) {
+    public CompanionMenu(NativeMenu shortcuts, NativeMenu rows, NativeMenu more, int[] dimmed) {
         this.shortcuts = shortcuts;
         this.rows = rows;
+        this.more = more;
         this.dimmed = dimmed == null ? new int[0] : dimmed;
     }
 

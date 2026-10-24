@@ -437,20 +437,24 @@ it showed every model and stage mirrored. It now negates X before the camera
 rotation, for positions and normals (rengine
 `dmc3-coordinate-handedness-2026-09-24.md`).
 
-The ⋮ menu opens with square shortcuts: ⚙ Settings, ✋ Gestures, 📂 Open,
-then the room toggle and *next floor spot* when a room is loaded (the spot
-only while it shows), a cutscene's 🔊 sound, 🎞 movie, 💬 subtitles and 🎬
-camera, 💾 Save and 🛠 Diagnostics. They wrap into rows as wide as the
-screen allows; a long press names one. The actions follow below them. The
-menu opens in the app's one panel window (`showPanel`, v94), the same as
-Info and Diagnostics: a title bar with an optional square action (Info's ⇩
-report, Diagnostics' ⇩ export), the content scrolling under it, Close at
-the bottom.
+The ⋮ menu (v95) opens in the app's one panel window (`showPanel`, the same
+as Info and Diagnostics: a title bar with an optional square action, the
+content scrolling under it, Close at the bottom). The core puts each item in
+one of three places (`companion_menu`):
 
-The core offers what fits what is on the screen (`companion_menu`): a
-cutscene gets no model parts, placements, PTX or companions to add; a model
-gets the stage tools (stage effects, stage config) only while a room is
-drawn around it, a stage scene always; one *Browse .PAC files* row.
+- **Squares** (a long press names one; they wrap into rows): the quick
+  switches and a cutscene's media: ⚙ Settings, ✋ Gestures, ⌂ room toggle,
+  ⇄ next floor spot (while the room shows), 🔊 sound, 🎞 movie, 💬 subtitles,
+  🎬 cutscene camera, 💾 Save.
+- **Rows**: first the ones every file has, always (*Open / replace
+  resource*, *Diagnostics / build info*), then the ones that fit what is on
+  the screen: a model's tools for a model, the stage tools (stage effects,
+  stage config) for a stage scene or a room drawn around a model, one
+  *Browse .PAC files*.
+- **Other actions ▸** (folded): what can be done but does not fit the
+  screen: a model's tools in a cutscene, the stage tools while the room is
+  hidden. Nothing that can be done leaves the menu; only what cannot (no
+  stage around at all) is not listed.
 
 Settings is a full-screen window, and every choice is stored and applied at
 once:

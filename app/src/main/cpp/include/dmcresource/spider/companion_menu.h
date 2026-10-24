@@ -56,9 +56,17 @@ struct ShellFacts final {
     bool room_shown{};
 };
 
+// Where an item goes:
+// - shortcuts: quick switches and a cutscene's media, a square with a glyph;
+// - rows: first the ones every file has (Open, Diagnostics), then the ones
+//   that fit what is on the screen;
+// - more: what can be done but does not fit it (a model's tools in a
+//   cutscene, the stage tools while the room is hidden), under a folded
+//   "Other actions" row: nothing that can be done leaves the menu.
 struct CompanionMenu final {
     std::vector<MenuItem> shortcuts;
     std::vector<MenuItem> rows;
+    std::vector<MenuItem> more;
     // A shortcut drawn dimmed (the room while hidden): ids listed here.
     std::vector<int> dimmed;
 };

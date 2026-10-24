@@ -1179,12 +1179,15 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
         jclass type = env->FindClass("com/dmcrengine/nativeviewer/CompanionMenu");
         if (type == nullptr) return nullptr;
         jmethodID make = env->GetMethodID(
-            type, "<init>", "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
+            type, "<init>",
+            "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;"
+            "Lcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
         if (make == nullptr) return nullptr;
         stage_actions::Menu shortcuts{.title = {}, .message = {}, .items = menu.shortcuts};
         stage_actions::Menu rows{.title = {}, .message = {}, .items = menu.rows};
+        stage_actions::Menu more{.title = {}, .message = {}, .items = menu.more};
         return env->NewObject(type, make, menu_object(env, shortcuts), menu_object(env, rows),
-                              int_array(env, menu.dimmed));
+                              menu_object(env, more), int_array(env, menu.dimmed));
     } catch (...) { return nullptr; }
 }
 

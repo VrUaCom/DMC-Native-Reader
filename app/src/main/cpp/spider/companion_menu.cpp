@@ -26,18 +26,20 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     const auto has = [state](widow::StateFlag flag) { return widow::has_state(state, flag); };
     const bool open = session != nullptr;
     const bool root = open && facts.root_scene;
-    // What is on the screen decides what the menu offers: a cutscene plays
-    // its own scene (no model parts or companions to add), a model shows the
-    // stage tools only while a room is drawn around it.
+    // What is on the screen decides where an item goes: a cutscene plays
+    // its own scene (a model's tools fold away), a model has the stage tools
+    // at hand only while a room is drawn around it.
     const bool cutscene = demo::is_demo(session);
     const bool stage_scene = open && session->stage != nullptr && !cutscene;
     const bool room_drawn = facts.room_loaded && facts.room_shown && !cutscene;
-    const bool model_tools = root && !cutscene;
+    auto& model_rows = cutscene ? menu.more : menu.rows;
+    auto& stage_rows = stage_scene || room_drawn ? menu.rows : menu.more;
+    // A stage around at all: a stage scene, a cutscene's stage, a room.
+    const bool stage_around = stage_scene || facts.room_loaded || (cutscene && session->stage != nullptr);
 
-    // Squares: the frequent actions, a glyph each (the label is its tooltip).
+    // Squares: the quick switches and a cutscene's media (the label is the tooltip).
     add(menu.shortcuts, Companion::Settings, "Settings", "\xE2\x9A\x99");
     add(menu.shortcuts, Companion::Gestures, "Gestures", "\xE2\x9C\x8B");
-    add(menu.shortcuts, Companion::OpenFile, "Open / replace resource", "\xF0\x9F\x93\x82");
     if (facts.room_loaded && !cutscene) {
         add(menu.shortcuts, Companion::RoomToggle, facts.room_shown ? "Hide the room" : "Show the room",
             "\xE2\x8C\x82");
@@ -58,49 +60,51 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         }
     }
     if (has(widow::StateFlag::CanSaveSource)) add(menu.shortcuts, Companion::SaveFile, "Save file", "\xF0\x9F\x92\xBE");
-    add(menu.shortcuts, Companion::Diagnostics, "Diagnostics / build info", "\xF0\x9F\x9B\xA0");
 
-    if (has(widow::StateFlag::CanReencodeTextures) && !cutscene) {
-        add(menu.rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
-    }
+    // Every file: open another, and the build / log window.
+    add(menu.rows, Companion::OpenFile, "Open / replace resource");
+    add(menu.rows, Companion::Diagnostics, "Diagnostics / build info\xE2\x80\xA6");
     // One browser for the archive the scene came from.
     if (root && (facts.assembled_pac_source || facts.stage_source)) {
         add(menu.rows, facts.assembled_pac_source ? Companion::BrowseAssembledPac : Companion::BrowseStagePac,
             "Browse .PAC files\xE2\x80\xA6");
     }
-    if (model_tools && facts.assembled_pac_source) add(menu.rows, Companion::AddPac, "Add weapon / .PAC\xE2\x80\xA6");
+    if (has(widow::StateFlag::CanReencodeTextures)) {
+        add(model_rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
+    }
+    if (root && facts.assembled_pac_source) add(model_rows, Companion::AddPac, "Add weapon / .PAC\xE2\x80\xA6");
     // An assembled PAC already owns its part list; re-composing it from
     // picked files would drop the archive's own MODs.
-    if (model_tools && has(widow::StateFlag::CanAddModelPart) && !facts.assembled_pac_source) {
-        add(menu.rows, Companion::AddModParts, "Add .MOD part(s)");
+    if (root && has(widow::StateFlag::CanAddModelPart) && !facts.assembled_pac_source) {
+        add(model_rows, Companion::AddModParts, "Add .MOD part(s)");
     }
-    if (model_tools && session_composite_part_count(session) > 1U) {
-        add(menu.rows, Companion::CompositeParts, "Composite parts / state\xE2\x80\xA6");
-        add(menu.rows, Companion::PlaceModPart, "Place MOD part on host joint\xE2\x80\xA6");
-        add(menu.rows, Companion::ResetModPlacement, "Reset MOD part placement\xE2\x80\xA6");
+    if (root && session_composite_part_count(session) > 1U) {
+        add(model_rows, Companion::CompositeParts, "Composite parts / state\xE2\x80\xA6");
+        add(model_rows, Companion::PlaceModPart, "Place MOD part on host joint\xE2\x80\xA6");
+        add(model_rows, Companion::ResetModPlacement, "Reset MOD part placement\xE2\x80\xA6");
     }
-    if (model_tools && has(widow::StateFlag::TextureCompanionAttachable)) {
-        add(menu.rows, Companion::AttachPtx, "Attach .PTX texture");
+    if (root && has(widow::StateFlag::TextureCompanionAttachable)) {
+        add(model_rows, Companion::AttachPtx, "Attach .PTX texture");
     }
-    if (model_tools && has(widow::StateFlag::CanStageCompanion)) {
-        add(menu.rows, Companion::StageMotion, "Add animation / motion\xE2\x80\xA6");
-        add(menu.rows, Companion::StageTexture, "Add texture asset (.TM2 / .DDS / \xE2\x80\xA6)");
-        add(menu.rows, Companion::StagePhysics, "Add physics resource\xE2\x80\xA6");
-        add(menu.rows, Companion::StageCloth, "Add cloth resource\xE2\x80\xA6");
-        add(menu.rows, Companion::StageOther, "Add other companion\xE2\x80\xA6");
+    if (root && has(widow::StateFlag::CanStageCompanion)) {
+        add(model_rows, Companion::StageMotion, "Add animation / motion\xE2\x80\xA6");
+        add(model_rows, Companion::StageTexture, "Add texture asset (.TM2 / .DDS / \xE2\x80\xA6)");
+        add(model_rows, Companion::StagePhysics, "Add physics resource\xE2\x80\xA6");
+        add(model_rows, Companion::StageCloth, "Add cloth resource\xE2\x80\xA6");
+        add(model_rows, Companion::StageOther, "Add other companion\xE2\x80\xA6");
     }
-    // The stage tools: a stage scene, or a room drawn around a model.
-    if (root && (stage_scene || room_drawn)) {
-        add(menu.rows, Companion::StageEffects, "Stage effects (st*_effect.pac)\xE2\x80\xA6");
+    // The stage tools, wherever a stage is around.
+    if (root && stage_around && !cutscene) {
+        add(stage_rows, Companion::StageEffects, "Stage effects (st*_effect.pac)\xE2\x80\xA6");
     }
-    if ((stage_scene || room_drawn) && has(widow::StateFlag::CanLoadStageConfig)) {
+    if (stage_around && has(widow::StateFlag::CanLoadStageConfig)) {
         const bool loaded = has(widow::StateFlag::StageConfigLoaded);
-        add(menu.rows, Companion::StageConfigLoad,
+        add(stage_rows, Companion::StageConfigLoad,
             loaded ? "Load another stage config (stNNNcfg.pac)\xE2\x80\xA6" : "Stage config (stNNNcfg.pac)\xE2\x80\xA6");
         if (loaded) {
-            add(menu.rows, Companion::StageConfigToggle,
+            add(stage_rows, Companion::StageConfigToggle,
                 has(widow::StateFlag::StageMarkersShown) ? "Hide stage config" : "Show stage config");
-            add(menu.rows, Companion::StageConfigRemove, "Remove stage config");
+            add(stage_rows, Companion::StageConfigRemove, "Remove stage config");
         }
     }
     return menu;

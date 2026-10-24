@@ -395,11 +395,12 @@ int main() {
             assert(has_row(act::Companion::StageConfigLoad) && has_row(act::Companion::StageConfigToggle) &&
                    has_row(act::Companion::StageConfigRemove) && has_row(act::Companion::BrowseStagePac));
             assert(!has_row(act::Companion::AddPac));
-            // Squares: settings, gestures, open, diagnostics; one browser row.
-            assert(companions.shortcuts.size() == 4U && !companions.shortcuts[0].icon.empty() &&
-                   companions.shortcuts[2].id == static_cast<int>(act::Companion::OpenFile) &&
-                   companions.shortcuts[3].id == static_cast<int>(act::Companion::Diagnostics));
-            assert(has_row(act::Companion::StageEffects) && !has_row(act::Companion::OpenFile));
+            // Squares: settings, gestures. Rows: Open and Diagnostics first
+            // (every file has them), then the stage's; one browser row.
+            assert(companions.shortcuts.size() == 2U && !companions.shortcuts[0].icon.empty());
+            assert(companions.rows[0].id == static_cast<int>(act::Companion::OpenFile) &&
+                   companions.rows[1].id == static_cast<int>(act::Companion::Diagnostics));
+            assert(has_row(act::Companion::StageEffects) && companions.more.empty());
             std::size_t browsers = 0U;
             for (const auto& row : companions.rows) {
                 browsers += row.label.find("Browse") != std::string::npos ? 1U : 0U;
@@ -411,15 +412,22 @@ int main() {
                    act::ShellStep::PickStageConfig);
             assert(act::run_companion_action(static_cast<int>(act::Companion::OpenFile)).step == act::ShellStep::None);
             act::run_companion_action(static_cast<int>(act::Companion::StageConfigToggle));
-            // A model with no stage around offers no stage tools; a room loaded
-            // but hidden does not bring them either.
+            // A model with a room loaded but hidden: the stage tools fold
+            // away under "Other actions"; with no stage around at all there are
+            // none. Open and Diagnostics stay.
             Session lone;
             const act::ShellFacts hidden_room{.root_scene = true, .assembled_pac_source = false,
                                               .stage_source = false, .room_loaded = true, .room_shown = false};
-            for (const auto& row : act::companion_menu(&lone, hidden_room).rows) {
-                assert(row.id != static_cast<int>(act::Companion::StageConfigLoad) &&
-                       row.id != static_cast<int>(act::Companion::StageEffects));
+            const auto folded = act::companion_menu(&lone, hidden_room);
+            for (const auto& row : folded.rows) {
+                assert(row.id != static_cast<int>(act::Companion::StageEffects));
             }
+            assert(folded.rows.size() == 2U && !folded.more.empty() &&
+                   folded.more[0].id == static_cast<int>(act::Companion::StageEffects));
+            const act::ShellFacts no_room{.root_scene = true, .assembled_pac_source = false,
+                                          .stage_source = false, .room_loaded = false, .room_shown = false};
+            const auto bare = act::companion_menu(&lone, no_room);
+            assert(bare.rows.size() == 2U && bare.more.empty());
         }
         assert(act::run_stage_config_menu(menu.items[2].id).message == "Stage config removed");
         assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
