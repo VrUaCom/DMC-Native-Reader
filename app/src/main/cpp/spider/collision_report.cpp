@@ -1,6 +1,7 @@
 #include "dmcresource/spider/collision_report.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <limits>
 #include <map>
@@ -72,8 +73,9 @@ CollisionReport stage_collision_report(const Session* session) {
                      plural(drawn.triangles.size(), "record", "records") + " (" + plural(floors, "floor", "floors") +
                      ", " + plural(walls, "wall", "walls") + ", " + plural(ceilings, "ceiling", "ceilings") + ") in " +
                      plural(kinds.size(), "kind", "kinds") +
-                     ". Each kind (one value of the record flags) has its own colour. Characters stand on floors "
-                     "(normal pointing up, y >= 0.7), stop at walls, and shots hit both.";
+                     ". Colours follow the flags, the same in every file: a category (invisible walls and the "
+                     "like, flags >> 16) has its own, the other records the colour of their type byte. Characters "
+                     "stand on floors (normal pointing up, y >= 0.7), stop at walls, and shots hit both.";
 
     // The sources.
     ReportGroup sources;
@@ -91,27 +93,39 @@ CollisionReport stage_collision_report(const Session* session) {
     }
     report.groups.push_back(std::move(sources));
 
-    // One group per kind, in its drawing colour.
-    for (std::size_t i = 0; i < kinds.size(); ++i) {
-        const auto& k = kinds[i];
+    // One group per colour class (collision_color_class: a category, else a
+    // type byte), the same colour in every file; its kinds under it.
+    std::map<std::uint8_t, std::vector<const environment_collision::Kind*>> classes;
+    for (const auto& k : kinds) classes[collision_color_class(k.flags)].push_back(&k);
+    for (const auto& [color_class, members] : classes) {
         ReportGroup group;
         group.coloured = true;
-        group.colour = collision_kind_color(i);
-        group.heading = format("Kind %zu \xC2\xB7 flags 0x%08X \xC2\xB7 ", i + 1U, k.flags) +
-                        plural(k.count, "record", "records");
-        group.lines.push_back(plural(k.floors, "floor", "floors") + ", " + plural(k.walls, "wall", "walls") + ", " +
-                              plural(k.ceilings, "ceiling", "ceilings"));
-        const unsigned type_bits = k.flags & 0xFFU;
-        const unsigned categories = k.flags >> 16U;
-        group.lines.push_back(format("Type bits (low byte): 0x%02X", type_bits));
+        group.colour = collision_class_color(color_class);
+        std::size_t records = 0U, f = 0U, w = 0U, c = 0U;
+        for (const auto* k : members) {
+            records += k->count;
+            f += k->floors;
+            w += k->walls;
+            c += k->ceilings;
+        }
+        std::string name = collision_class_name(color_class);
+        name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+        group.heading = name + " \xC2\xB7 " + plural(records, "record", "records");
+        group.lines.push_back(plural(f, "floor", "floors") + ", " + plural(w, "wall", "walls") + ", " +
+                              plural(c, "ceiling", "ceilings"));
+        for (const auto* k : members) {
+            group.lines.push_back(format("flags 0x%08X: ", k->flags) + plural(k->count, "record", "records") + " (" +
+                                  std::to_string(k->floors) + " / " + std::to_string(k->walls) + " / " +
+                                  std::to_string(k->ceilings) + ")");
+        }
+        const unsigned categories = members.front()->flags >> 16U;
         if (categories == 0U) {
-            group.lines.push_back("Categories (flags >> 16): none \xE2\x80\x94 every collision test sees these records");
+            group.lines.push_back("No category bits: every collision test sees these records");
         } else {
             std::string bits;
             for (unsigned bit = 1U; bit <= 0x8000U; bit <<= 1U) {
                 if ((categories & bit) != 0U) bits += format(bits.empty() ? "0x%X" : " + 0x%X", bit);
             }
-            group.lines.push_back(format("Categories (flags >> 16): 0x%04X = ", categories) + bits);
             // The skip masks the EXE is known to pass (0x14005E880's callers).
             std::string skipped;
             if ((categories & 0x10U) != 0U) skipped += "Lady's line of sight (mask 0x10)";
@@ -120,8 +134,8 @@ CollisionReport stage_collision_report(const Session* session) {
                 if (!skipped.empty()) skipped += ", ";
                 skipped += format("objects of type mask 0x%02X", mask);
             }
-            group.lines.push_back(skipped.empty() ? std::string{"No known test skips them"}
-                                                  : "Skipped by: " + skipped + "; every other test sees them");
+            group.lines.push_back("Category bits " + bits + "; " +
+                                  (skipped.empty() ? std::string{"no known test skips them"} : "skipped by " + skipped));
         }
         report.groups.push_back(std::move(group));
     }

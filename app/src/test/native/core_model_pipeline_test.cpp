@@ -363,7 +363,20 @@ int main() {
                    kinds[0].floors == 2U && kinds[1].flags == 0x00020000U && kinds[1].walls == 2U);
             const auto line_kinds = ec::debug_line_kinds(source, kinds);
             assert(line_kinds.size() == 12U && line_kinds[0] == 0U && line_kinds[6] == 1U);
-            assert(dmcresource::collision_kind_color(0) != dmcresource::collision_kind_color(1));
+            // Colours follow the flags, the same in every file: the type byte,
+            // or the category (st000..st006's invisible walls 0x1806 white
+            // whatever their type byte); an unknown category a fixed colour.
+            assert(dmcresource::collision_color_class(0x01U) == 1U && dmcresource::collision_color_class(0x0CU) == 12U &&
+                   dmcresource::collision_color_class(0x30U) == 15U);
+            assert(dmcresource::collision_color_class(0x18060001U) == 18U &&
+                   dmcresource::collision_color_class(0x18060002U) == 18U &&
+                   dmcresource::collision_class_color(18U) == (std::array<std::uint8_t, 3>{255U, 255U, 255U}));
+            const auto unknown = dmcresource::collision_color_class(0x00020000U);
+            assert(unknown >= 20U && unknown < dmcresource::kCollisionClassCount &&
+                   unknown == dmcresource::collision_color_class(0x00020005U));
+            assert(dmcresource::collision_class_color(1U) != dmcresource::collision_class_color(2U));
+            assert(dmcresource::collision_class_name(1U) == "type 0x01" &&
+                   dmcresource::collision_class_name(18U) == "category 0x1806");
         }
 
         // Nearest hit wins: a diagonal shot meets the wall before the floor.
@@ -405,10 +418,12 @@ int main() {
             assert(report.title == "Stage collision (HITS)" && report.groups.size() == 3U);
             assert(report.summary.find("4 records (2 floors, 2 walls, 0 ceilings) in 2 kinds") != std::string::npos);
             assert(!report.groups[0].coloured && report.groups[0].lines.size() == 1U);
-            assert(report.groups[1].coloured && report.groups[1].colour == dmcresource::collision_kind_color(0) &&
+            assert(report.groups[1].coloured && report.groups[1].colour == dmcresource::collision_class_color(0U) &&
+                   report.groups[1].heading == "Type 0x00 \xC2\xB7 2 records" &&
                    report.groups[1].lines[0] == "2 floors, 0 walls, 0 ceilings");
-            assert(report.groups[2].heading.find("flags 0x00020000") != std::string::npos &&
-                   report.groups[2].lines[3].find("objects of type mask 0x02") != std::string::npos);
+            assert(report.groups[2].heading.find("Other category") == 0U &&
+                   report.groups[2].lines[1].find("flags 0x00020000") == 0U &&
+                   report.groups[2].lines[2].find("objects of type mask 0x02") != std::string::npos);
             assert(act::shown_hits_kinds(&hits_view).size() == 2U);
             assert(act::stage_collision_report(nullptr).groups.empty());
 

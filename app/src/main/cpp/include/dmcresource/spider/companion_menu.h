@@ -45,6 +45,9 @@ enum class Companion : int {
     CutsceneSound = 23,
     CutsceneMovie = 24,
     CutsceneSubtitles = 25,
+    // shortcuts: capture what the view shows
+    Photo = 26,
+    Video = 27,
 };
 
 // What only the shell knows.
@@ -54,6 +57,7 @@ struct ShellFacts final {
     bool stage_source{};           // the stage archive's document is retained
     bool room_loaded{};
     bool room_shown{};
+    bool recording{};              // a video of the view is being recorded
 };
 
 // Where an item goes:

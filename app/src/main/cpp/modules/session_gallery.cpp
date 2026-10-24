@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "dmcresource/raster_card.h"
+#include "dmcresource/stage_room.h"
 
 namespace dmcresource {
 namespace {
@@ -243,14 +244,19 @@ const ImagePreview* materialize_child_thumbnail(
 std::unique_ptr<Session> open_uv_gallery(const Session* model) {
     using namespace spider::black_widow;
     if (!has_state(black_widow_state(model), StateFlag::CanShowUv)) return nullptr;
-    auto gallery = std::make_shared<UvGallery>(build_uv_gallery(
-        model->render_mesh, model->render_triangle_texture_slots));
+    // A stage scene's maps come from its merged room (the session's own mesh
+    // is only its framing box).
+    const bool stage = model->stage != nullptr && model->stage->mesh.has_uv0();
+    const auto& mesh = stage ? model->stage->mesh : model->render_mesh;
+    const auto& slots = stage ? model->stage->triangle_texture_slots : model->render_triangle_texture_slots;
+    const auto& textures = stage ? model->stage->textures : model->attached_textures;
+    auto gallery = std::make_shared<UvGallery>(build_uv_gallery(mesh, slots));
     if (gallery->maps.empty()) return nullptr;
     // Each layout takes the proportions of the texture painted on it: the
     // render bank's texture at the triangles' slot.
     std::vector<std::pair<std::uint32_t, std::uint32_t>> texture_sizes;
-    texture_sizes.reserve(model->attached_textures.size());
-    for (const auto& texture : model->attached_textures) {
+    texture_sizes.reserve(textures.size());
+    for (const auto& texture : textures) {
         texture_sizes.emplace_back(texture.available() ? texture.width : 0U,
                                    texture.available() ? texture.height : 0U);
     }

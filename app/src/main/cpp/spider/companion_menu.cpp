@@ -60,6 +60,12 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         }
     }
     if (has(widow::StateFlag::CanSaveSource)) add(menu.shortcuts, Companion::SaveFile, "Save file", "\xF0\x9F\x92\xBE");
+    // Capture what the view shows: a picture, a video (the square stops it).
+    if (has(widow::StateFlag::CanRender)) add(menu.shortcuts, Companion::Photo, "Take a picture", "\xF0\x9F\x93\xB7");
+    if (has(widow::StateFlag::CanRender) || facts.recording) {
+        add(menu.shortcuts, Companion::Video, facts.recording ? "Stop recording" : "Record a video",
+            facts.recording ? "\xE2\x8F\xB9" : "\xF0\x9F\x8E\xA5");
+    }
 
     // Every file: open another, and the build / log window.
     add(menu.rows, Companion::OpenFile, "Open / replace resource");

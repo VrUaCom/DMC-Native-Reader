@@ -965,7 +965,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_collisionKinds(JNIEnv* env, jclass
         jclass string_class = env->FindClass("java/lang/String");
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(kinds.size()), string_class, nullptr);
         for (std::size_t i = 0; i < kinds.size(); ++i) {
-            const auto color = dmcresource::collision_kind_color(i);
+            const auto color = dmcresource::collision_class_color(dmcresource::collision_color_class(kinds[i].flags));
             char text[128];
             std::snprintf(text, sizeof text, "%u|%zu|%zu|%zu|%zu|%u", kinds[i].flags, kinds[i].count,
                           kinds[i].floors, kinds[i].walls, kinds[i].ceilings,
@@ -1192,7 +1192,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_soundPcm(JNIEnv* env, jclass, jlon
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
         JNIEnv* env, jclass, jlong handle, jboolean root_scene, jboolean assembled_pac_source,
-        jboolean stage_source, jboolean room_loaded, jboolean room_shown) {
+        jboolean stage_source, jboolean room_loaded, jboolean room_shown, jboolean recording) {
     const SessionLock jni_lock{session_mutex()};
     try {
         const auto menu = dmcresource::spider::actions::companion_menu(
@@ -1200,7 +1200,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
                                   .assembled_pac_source = assembled_pac_source == JNI_TRUE,
                                   .stage_source = stage_source == JNI_TRUE,
                                   .room_loaded = room_loaded == JNI_TRUE,
-                                  .room_shown = room_shown == JNI_TRUE});
+                                  .room_shown = room_shown == JNI_TRUE,
+                                  .recording = recording == JNI_TRUE});
         jclass type = env->FindClass("com/dmcrengine/nativeviewer/CompanionMenu");
         if (type == nullptr) return nullptr;
         jmethodID make = env->GetMethodID(

@@ -460,6 +460,8 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .reencode_rebuilds_container = session->container_source != nullptr,
         .stage_drawn = session->renderable &&
                        (session->stage != nullptr || stage_room::current() != nullptr),
+        .stage_uv = session->stage != nullptr && !demo::is_demo(session) && session->stage->mesh.has_uv0() &&
+                    !session->stage->textures.empty(),
         .stage_config_loaded = stage_markers::current() != nullptr,
         .stage_markers_visible = stage_markers::visible(),
         .sound_count = sounds,
@@ -2360,6 +2362,9 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         out->room_collision_lines = environment_collision::debug_lines(*session.hits);
         const auto kinds = environment_collision::kinds(*session.hits);
         out->room_collision_kinds = environment_collision::debug_line_kinds(*session.hits, kinds);
+        for (auto& line : out->room_collision_kinds) {
+            line = line < kinds.size() ? collision_color_class(kinds[line].flags) : 0U;
+        }
         view.room_collision_lines = out->room_collision_lines;
         view.room_collision_kinds = out->room_collision_kinds;
     }

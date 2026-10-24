@@ -435,6 +435,7 @@ public final class DmcRenderView extends View {
             if (NativeBridge.renderEx(session, image.getWidth(), image.getHeight(), yaw, pitch, zoom,
                     renderFlags | settingsFlags | lineFlags(image.getWidth(), image.getHeight()),
                     panX, panY, roomYaw, follow, dolly, image)) {
+                drawSubtitle(new Canvas(image), image.getWidth(), image.getHeight());
                 return image;
             }
             image.recycle();
@@ -1267,15 +1268,19 @@ public final class DmcRenderView extends View {
 
     /** The core's subtitle, drawn as it says: centred lines, an outline in its back colour. */
     private void drawSubtitle(Canvas canvas) {
+        drawSubtitle(canvas, getWidth(), getHeight());
+    }
+
+    private void drawSubtitle(Canvas canvas, int width, int height) {
         final String text = subtitle;
         final float[] s = subtitleStyle;
         if (text == null || s == null || s.length < 10) return;
-        final float size = Math.max(8.0f, s[2] * getHeight());
+        final float size = Math.max(8.0f, s[2] * height);
         final int alpha = Math.round(Math.max(0.0f, Math.min(1.0f, s[3])) * 255.0f);
         subtitlePaint.setTextSize(size);
         subtitlePaint.setTextAlign(Paint.Align.CENTER);
-        float y = s[1] * getHeight() + size;
-        final float x = s[0] * getWidth();
+        float y = s[1] * height + size;
+        final float x = s[0] * width;
         for (final String line : text.split("\n")) {
             subtitlePaint.setStyle(Paint.Style.STROKE);
             subtitlePaint.setStrokeWidth(Math.max(2.0f, size * 0.14f));
@@ -1286,6 +1291,22 @@ public final class DmcRenderView extends View {
             canvas.drawText(line, x, y, subtitlePaint);
             y += size * 1.2f;
         }
+    }
+
+    /** The view's picture with its subtitle, at a size of its own (a video frame). */
+    public void drawCapture(Canvas canvas, int width, int height) {
+        final Bitmap shown = staticImagePreview ? bitmap : (showingPreview ? previewBitmap : bitmap);
+        if (shown == null || shown.isRecycled()) return;
+        if (staticImagePreview) {
+            final float scale = Math.min((float) width / shown.getWidth(), (float) height / shown.getHeight());
+            final float left = (width - shown.getWidth() * scale) * 0.5f;
+            final float top = (height - shown.getHeight() * scale) * 0.5f;
+            canvas.drawBitmap(shown, null,
+                    new RectF(left, top, left + shown.getWidth() * scale, top + shown.getHeight() * scale), paint);
+            return;
+        }
+        canvas.drawBitmap(shown, null, new android.graphics.Rect(0, 0, width, height), paint);
+        drawSubtitle(canvas, width, height);
     }
 
     @Override protected void onDraw(Canvas canvas) {

@@ -603,13 +603,48 @@ Vec3 fly_move(const Vec3& eye, float yaw, float pitch, float forward, float stra
             eye.z + b.forward.z * forward + b.right.z * strafe};
 }
 
-std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept {
-    static constexpr std::array<std::array<std::uint8_t, 3>, 12> kPalette{{
-        {90, 190, 255}, {255, 170, 60}, {120, 230, 120}, {255, 100, 140},
-        {190, 140, 255}, {255, 230, 90}, {80, 230, 210}, {255, 130, 80},
-        {170, 200, 90}, {205, 205, 215}, {130, 150, 255}, {240, 110, 220},
+namespace {
+constexpr std::array<std::uint16_t, 4> kKnownCategories{0x1000U, 0x1800U, 0x1806U, 0x186EU};
+}  // namespace
+
+std::uint8_t collision_color_class(std::uint32_t flags) noexcept {
+    const auto category = static_cast<std::uint16_t>(flags >> 16U);
+    if (category == 0U) return static_cast<std::uint8_t>(std::min<std::uint32_t>(flags & 0xFFU, 15U));
+    for (std::size_t i = 0; i < kKnownCategories.size(); ++i) {
+        if (kKnownCategories[i] == category) return static_cast<std::uint8_t>(16U + i);
+    }
+    // Any other category: a fixed hash, the same in every file.
+    return static_cast<std::uint8_t>(20U + (category * 2654435761U >> 29U) % 8U);
+}
+
+std::array<std::uint8_t, 3> collision_class_color(std::uint8_t color_class) noexcept {
+    static constexpr std::array<std::array<std::uint8_t, 3>, kCollisionClassCount> kPalette{{
+        // type bytes 0x00 .. 0x0F
+        {200, 200, 210}, {90, 190, 255}, {255, 170, 60}, {120, 230, 120},
+        {255, 100, 140}, {190, 140, 255}, {255, 230, 90}, {80, 230, 210},
+        {255, 130, 80}, {170, 200, 90}, {130, 150, 255}, {240, 110, 220},
+        {110, 255, 180}, {255, 200, 150}, {175, 130, 95}, {150, 150, 150},
+        // categories 0x1000, 0x1800, 0x1806, 0x186E
+        {255, 60, 60}, {255, 0, 180}, {255, 255, 255}, {0, 255, 255},
+        // other categories
+        {255, 140, 0}, {140, 255, 0}, {0, 140, 255}, {200, 0, 255},
+        {255, 255, 0}, {0, 255, 120}, {255, 80, 200}, {120, 120, 255},
     }};
-    return kPalette[kind % kPalette.size()];
+    return kPalette[color_class < kPalette.size() ? color_class : 15U];
+}
+
+std::string collision_class_name(std::uint8_t color_class) {
+    char text[64];
+    if (color_class < 15U) {
+        std::snprintf(text, sizeof text, "type 0x%02X", color_class);
+    } else if (color_class == 15U) {
+        std::snprintf(text, sizeof text, "type 0x0F and above");
+    } else if (color_class < 20U) {
+        std::snprintf(text, sizeof text, "category 0x%04X", kKnownCategories[color_class - 16U]);
+    } else {
+        std::snprintf(text, sizeof text, "other category (colour %u)", color_class - 19U);
+    }
+    return text;
 }
 
 float framing_camera_distance(std::span<const Vec3> vertices) noexcept {
@@ -1259,8 +1294,8 @@ void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
                   kAttackCollisionColor[2], 255U, pen.collision_px);
     }
     for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
-        const auto kind = i / 2U < view.room_collision_kinds.size() ? view.room_collision_kinds[i / 2U] : 0U;
-        const auto color = collision_kind_color(kind);
+        const auto color_class = i / 2U < view.room_collision_kinds.size() ? view.room_collision_kinds[i / 2U] : 0U;
+        const auto color = collision_class_color(color_class);
         pen.line3(room_place(view, view.room_collision_lines[i]), room_place(view, view.room_collision_lines[i + 1U]),
                   color[0], color[1], color[2], 255U, pen.collision_px);
     }

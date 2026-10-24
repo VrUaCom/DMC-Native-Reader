@@ -48,8 +48,9 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     const bool complete_binding = can_render && has_texture_bindings &&
         model_texture_binding::can_attach_texture_companion(
             *session.render_mesh, session.triangle_texture_slots);
-    const bool can_show_uv = complete_binding &&
-        has_capability(session.capabilities, ResourceCapability::UvCoordinates);
+    // A model's UV maps, or a stage scene's (its merged room mesh).
+    const bool can_show_uv = (complete_binding &&
+        has_capability(session.capabilities, ResourceCapability::UvCoordinates)) || session.stage_uv;
     const bool child_browser_mode =
         has_child_resources && !can_render && !can_preview_image && !session.uv_map_view;
     const bool texture_companion_attachable =
@@ -84,7 +85,7 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
            texture_companion_attachable && session.texture_companion_attached);
 
     set_if(&state, StateFlag::UvMapView, session.uv_map_view);
-    set_if(&state, StateFlag::CanInspectUv, session.uv_data_available);
+    set_if(&state, StateFlag::CanInspectUv, session.uv_data_available || session.stage_uv);
     set_if(&state, StateFlag::CanInspectMeshes, session.object_count != 0U);
     set_if(&state, StateFlag::CanInspectHierarchy, session.hierarchy_node_count != 0U);
     set_if(&state, StateFlag::CanExportPng, session.png_export_available);

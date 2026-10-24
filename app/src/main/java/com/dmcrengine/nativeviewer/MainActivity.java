@@ -178,6 +178,8 @@ public final class MainActivity extends Activity {
     // Stage archive the root scene was assembled from (its files stay
     // browsable from the menu).
     private Uri stagePacUri;
+    /** The video being recorded from the ⋮ menu, or null. */
+    private ViewRecorder recorder;
     // Selected class inside a shared enemy archive (em000.pac); 0 = first.
     private int enemyVariant;
     // Position buttons under the title (one per enemy class / weapon / dress state).
@@ -1621,6 +1623,35 @@ public final class MainActivity extends Activity {
         builder.show();
     }
 
+    /** The ⋮ picture square: the same PNG as the three-finger tap. */
+    private void takePicture() {
+        final Bitmap image = renderView.snapshot();
+        if (image == null) {
+            notice("Nothing to take a picture of", Toast.LENGTH_SHORT);
+            return;
+        }
+        saveScreenshot(image);
+    }
+
+    /** Starts an MP4 of what the view shows (no sound); the same square stops it. */
+    private void startRecording() {
+        try {
+            recorder = ViewRecorder.start(this, renderView.getWidth(), renderView.getHeight(), renderView::drawCapture);
+            notice("\uD83C\uDFA5 Recording — ⋮ ⏹ stops it", Toast.LENGTH_SHORT);
+        } catch (java.io.IOException | RuntimeException error) {
+            recorder = null;
+            notice("Recording failed: " + error.getMessage(), Toast.LENGTH_LONG);
+        }
+    }
+
+    private void stopRecording() {
+        final ViewRecorder current = recorder;
+        recorder = null;
+        if (current == null) return;
+        current.stop(saved -> notice(saved != null ? "\uD83C\uDFA5 Saved " + saved : "Recording failed",
+                Toast.LENGTH_LONG));
+    }
+
     /** PNG into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
     private void saveScreenshot(Bitmap image) {
         final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
@@ -1715,7 +1746,7 @@ public final class MainActivity extends Activity {
         // The core decides the items and names them; this shell lays them out
         // and runs the platform step of the picked id.
         final CompanionMenu menu = NativeBridge.companionMenu(session, isRootScene(),
-                assembledPacUri != null, stagePacUri != null, roomLoaded, roomShown());
+                assembledPacUri != null, stagePacUri != null, roomLoaded, roomShown(), recorder != null);
         if (menu == null) return;
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -1809,6 +1840,8 @@ public final class MainActivity extends Activity {
             case CompanionMenu.STAGE_CLOTH: chooseStagedAssets(REQUEST_STAGE_CLOTH, true); break;
             case CompanionMenu.STAGE_OTHER: chooseStagedAssets(REQUEST_STAGE_OTHER, true); break;
             case CompanionMenu.DIAGNOSTICS: showDiagnosticsDialog(); break;
+            case CompanionMenu.PHOTO: takePicture(); break;
+            case CompanionMenu.VIDEO: if (recorder == null) startRecording(); else stopRecording(); break;
             default: handleOutcome(NativeBridge.runCompanionAction(session, id)); break;
         }
     }
@@ -3957,7 +3990,13 @@ public final class MainActivity extends Activity {
         applyResourceUiState();
     }
 
+    @Override protected void onPause() {
+        stopRecording();
+        super.onPause();
+    }
+
     @Override protected void onDestroy() {
+        stopRecording();
         stopSound();
         closeAllSessions();
         super.onDestroy();

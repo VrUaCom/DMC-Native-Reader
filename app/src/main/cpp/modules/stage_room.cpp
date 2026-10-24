@@ -660,8 +660,12 @@ std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t
             room->collision_lines = environment_collision::debug_lines(
                 room->collision_sources.front());
             room->collision_kinds = environment_collision::kinds(room->collision_sources.front());
+            // Each line pair's colour class, from its record's flags.
             room->collision_line_kinds = environment_collision::debug_line_kinds(
                 room->collision_sources.front(), room->collision_kinds);
+            for (auto& line : room->collision_line_kinds) {
+                line = line < room->collision_kinds.size() ? collision_color_class(room->collision_kinds[line].flags) : 0U;
+            }
         }
         if (room->mesh.indices.size() < 3U) return nullptr;
         mark_translucent(*room);

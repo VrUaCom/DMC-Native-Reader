@@ -88,8 +88,8 @@ struct Room final {
     // inspection overlay.
     std::vector<environment_collision::Source> collision_sources;
     std::vector<Vec3> collision_lines;
-    // Kinds (distinct flag values) of the overlay source and the kind of each
-    // line pair of collision_lines.
+    // Kinds (distinct flag values) of the overlay source and the colour class
+    // of each line pair of collision_lines (collision_color_class).
     std::vector<environment_collision::Kind> collision_kinds;
     std::vector<std::uint8_t> collision_line_kinds;
     std::string name;

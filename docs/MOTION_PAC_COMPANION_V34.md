@@ -452,7 +452,8 @@ one of three places (`companion_menu`):
 - **Squares** (a long press names one; they wrap into rows): the quick
   switches and a cutscene's media: ⚙ Settings, ✋ Gestures, ⌂ room toggle,
   ⇄ next floor spot (while the room shows), 🔊 sound, 🎞 movie, 💬 subtitles,
-  🎬 cutscene camera, 💾 Save.
+  🎬 cutscene camera, 💾 Save, then 📷 picture and 🎥 video (⏹ while it
+  records; the stop square stays even with nothing drawable open).
 - **Rows**: first the ones every file has, always (*Open / replace
   resource*, *Diagnostics / build info*), then the ones that fit what is on
   the screen: a model's tools for a model, the stage tools (stage effects,

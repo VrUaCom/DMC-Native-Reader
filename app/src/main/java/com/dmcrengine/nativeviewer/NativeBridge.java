@@ -108,7 +108,8 @@ public final class NativeBridge {
     public static native SoundPcm soundPcm(long handle, int index);
     /** The ⋮ menu for this session, from the facts only the shell holds. */
     public static native CompanionMenu companionMenu(long handle, boolean rootScene, boolean assembledPacSource,
-                                                     boolean stageSource, boolean roomLoaded, boolean roomShown);
+                                                     boolean stageSource, boolean roomLoaded, boolean roomShown,
+                                                     boolean recording);
     /** Runs a ⋮ item the core carries out (stage config); others answer STEP_NONE. */
     public static native ActionOutcome runCompanionAction(long handle, int id);
     /** The picked .ogg of a cutscene (a descriptor); the core's outcome. */

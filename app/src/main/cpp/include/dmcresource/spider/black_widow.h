@@ -87,6 +87,8 @@ struct ModelSessionView final {
     bool reencode_rebuilds_container{};
     // A stage is drawn: the session is a stage scene or a room is loaded.
     bool stage_drawn{};
+    // A stage scene whose merged mesh has UVs and textures: its UV maps.
+    bool stage_uv{};
     bool stage_config_loaded{};
     bool stage_markers_visible{};
     std::size_t sound_count{};

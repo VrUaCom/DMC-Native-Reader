@@ -76,7 +76,7 @@ struct ViewState {
     // Optional coloured line pairs drawn over the model (collision debug).
     std::span<const Vec3> overlay_lines{};
     std::span<const Vec3> room_collision_lines{};
-    // Kind of each line pair of room_collision_lines (collision_kind_color).
+    // Colour class of each line pair of room_collision_lines (collision_color_class).
     std::span<const std::uint8_t> room_collision_kinds{};
     // Stage configuration markers in room coordinates (stage_markers.h).
     std::span<const OverlayLine> marker_lines{};
@@ -217,7 +217,17 @@ struct CameraBasis final {
                             float strafe, float rise) noexcept;
 
 // Colour of a HITS record kind in the collision overlay and its legend.
-[[nodiscard]] std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept;
+// The colour of a HITS record, from its flags only, so a kind has the same
+// colour in every file: a record with category bits (flags >> 16: the
+// invisible walls, 0x1000 / 0x1800 / 0x1806 / 0x186E in st000..st006) is
+// coloured by its category, the others by their type byte (flags & 0xFF:
+// 0x00..0x0C seen). Classes 0..15 are type bytes (15: 0x0F and above), 16..19
+// the known categories, 20..27 any other category (by a fixed hash).
+inline constexpr std::uint8_t kCollisionClassCount = 28U;
+[[nodiscard]] std::uint8_t collision_color_class(std::uint32_t flags) noexcept;
+[[nodiscard]] std::array<std::uint8_t, 3> collision_class_color(std::uint8_t color_class) noexcept;
+// What a class stands for ("type 0x01", "category 0x1806", ...).
+[[nodiscard]] std::string collision_class_name(std::uint8_t color_class);
 // The colour of a character's attack collision shapes (hitboxes).
 inline constexpr std::array<std::uint8_t, 3> kAttackCollisionColor{255U, 90U, 60U};
 

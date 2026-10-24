@@ -187,6 +187,25 @@ APK verifier.
     - st000 source 0: 4 kinds: `0x1`, `0x9`, `0xA`, `0x18060001`.
     - The coarse source 1 of both stages has one kind, `0x0`.
     - Together that is 8 different values in the detailed sources, 9 with `0x0`.
+  - **One colour per collision type, in every file (v99):** the colour no
+    longer depends on the order the kinds appear in a file. Core
+    `collision_color_class(flags)` picks a class and `collision_class_color`
+    a fixed palette entry:
+    - a known category (`flags >> 16`) wins: `0x1000` red, `0x1800`
+      magenta, `0x1806` white, `0x186E` cyan;
+    - any other category gets one of 8 colours by a fixed hash of its value;
+    - with no category the type byte (`flags & 0xFF`) decides: 16 fixed
+      colours, `0x0F` and above share the last (grey); `0x1` is blue.
+    - The long-press report names the same classes in the same colours.
+- ✅ UV for a stage (v99): an opened st*.pac has the UV tool; the UV gallery
+  shows the stage mesh's UVs per texture (st006: 13 maps, st002: 25).
+- ✅ Picture and video from the ⋮ menu (v99): two squares, 📷 *Take a
+  picture* (the same PNG as the three-finger tap, now with the subtitle) and
+  🎥 *Record a video* (⏹ *Stop recording* while it runs). The video is
+  H.264 MP4 at 30 fps, the long side at most 1280, no sound, saved to
+  Movies/DMC Native Reader (Android 10+; else the app's movie folder). It
+  records the view and its subtitle, not the panels; leaving the app stops
+  it.
   - Resolution adds 2K (2048), 4K (3840), 5K (5120), 6K (6144) and 8K (7680)
     px on the long side. They render larger than the screen, and are shown
     by the software canvas (a bitmap over 100 MB or 4096 px cannot go to the GPU).

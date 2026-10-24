@@ -33,6 +33,8 @@ public final class CompanionMenu {
     public static final int DIAGNOSTICS = 21;
     public static final int CUTSCENE_CAMERA = 22;
     public static final int CUTSCENE_SOUND = 23;
+    public static final int PHOTO = 26;
+    public static final int VIDEO = 27;
 
     public final NativeMenu shortcuts;
     public final NativeMenu rows;

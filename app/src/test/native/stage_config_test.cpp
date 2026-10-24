@@ -429,6 +429,17 @@ int main() {
                                           .stage_source = false, .room_loaded = false, .room_shown = false};
             const auto bare = act::companion_menu(&lone, no_room);
             assert(bare.rows.size() == 2U && bare.more.empty());
+            // While a video records, its square stops it whatever is open;
+            // nothing to draw: no picture square.
+            act::ShellFacts recording = no_room;
+            recording.recording = true;
+            bool stop = false;
+            for (const auto& square : act::companion_menu(&lone, recording).shortcuts) {
+                assert(square.id != static_cast<int>(act::Companion::Photo));
+                stop = stop || (square.id == static_cast<int>(act::Companion::Video) &&
+                                square.label == "Stop recording");
+            }
+            assert(stop);
         }
         assert(act::run_stage_config_menu(menu.items[2].id).message == "Stage config removed");
         assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
