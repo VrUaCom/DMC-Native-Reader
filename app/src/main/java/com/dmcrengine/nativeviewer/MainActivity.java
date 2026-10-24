@@ -177,6 +177,10 @@ public final class MainActivity extends Activity {
     private LinearLayout cameraPanel;
     private LinearLayout cameraDialBar;
     private LinearLayout cameraAdjust;
+    // The open dial's settings: at the top of the view, over it, so the bars
+    // below stay where they are and the view keeps its size.
+    private ScrollView cameraAdjustScroll;
+    private FrameLayout viewportFrame;
     private Button cameraPlayButton;
     private Button cameraRecordButton;
     private Button cameraGyroButton;
@@ -558,6 +562,7 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
         FrameLayout viewport = new FrameLayout(this);
+        viewportFrame = viewport;
         renderView = new DmcRenderView(this);
         renderView.setGestureListener(gestureListener);
         viewport.addView(renderView, new FrameLayout.LayoutParams(
@@ -1674,7 +1679,15 @@ public final class MainActivity extends Activity {
     private static final String PREF_POLARIZER = "camera_polarizer";
     private String[][] cameraRows;
 
-    /** The core's camera settings: {id, section, label, start, options...} per row. */
+    // A camera setting row: {id, section, label, hint, start, options...}.
+    private static final int CAMERA_START_AT = 4;
+    private static final int CAMERA_OPTIONS_AT = 5;
+
+    private static String[] cameraOptions(String[] row) {
+        return java.util.Arrays.copyOfRange(row, CAMERA_OPTIONS_AT, row.length);
+    }
+
+    /** The core's camera settings: {id, section, label, hint, start, options...} per row. */
     private String[][] cameraRows() {
         if (cameraRows == null) {
             final String[] rows = NativeBridge.cameraSettings();
@@ -1685,10 +1698,10 @@ public final class MainActivity extends Activity {
     }
 
     private int cameraChoice(String[] row) {
-        final int start = Integer.parseInt(row[3]);
+        final int start = Integer.parseInt(row[CAMERA_START_AT]);
         final String name = prefs().getString(PREF_CAMERA + row[0], null);
         if (name != null) {
-            for (int i = 4; i < row.length; ++i) if (row[i].equals(name)) return i - 4;
+            for (int i = CAMERA_OPTIONS_AT; i < row.length; ++i) if (row[i].equals(name)) return i - CAMERA_OPTIONS_AT;
         }
         return start;
     }
@@ -1726,12 +1739,24 @@ public final class MainActivity extends Activity {
 
         cameraAdjust = new LinearLayout(this);
         cameraAdjust.setOrientation(LinearLayout.VERTICAL);
-        cameraAdjust.setPadding(dp(14), 0, dp(14), dp(4));
-        cameraAdjust.setVisibility(View.GONE);
-        final ScrollView adjustScroll = new ScrollView(this);
-        adjustScroll.addView(cameraAdjust);
-        cameraPanel.addView(adjustScroll, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        cameraAdjust.setPadding(dp(14), dp(4), dp(14), dp(10));
+        // At most a little over half the view tall; it scrolls past that.
+        cameraAdjustScroll = new ScrollView(this) {
+            @Override protected void onMeasure(int widthSpec, int heightSpec) {
+                final View parent = (View) getParent();
+                final int cap = parent != null && parent.getHeight() > 0
+                        ? Math.round(parent.getHeight() * 0.55f) : dp(320);
+                super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST));
+            }
+        };
+        cameraAdjustScroll.setBackgroundColor(0xee111216);
+        cameraAdjustScroll.setVisibility(View.GONE);
+        cameraAdjustScroll.addView(cameraAdjust);
+        if (viewportFrame != null) {
+            viewportFrame.addView(cameraAdjustScroll, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+            if (noticeView != null) noticeView.bringToFront();  // notices stay readable over it
+        }
 
         final LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -1806,12 +1831,7 @@ public final class MainActivity extends Activity {
     /** Camera mode in or out (the core's setting); the bars follow it. */
     private void toggleCameraMode() {
         final boolean on = !NativeBridge.cameraMode();
-        for (final String[] row : cameraRows()) {
-            if (row[0].equals("finder_mode")) {
-                prefs().edit().putString(PREF_CAMERA + row[0], row[on ? 5 : 4]).apply();
-            }
-        }
-        applyCameraChoices();
+        setCameraOption("finder_mode", on ? 1 : 0);
         renderView.renderNow();
         notice(on ? "📷 Camera mode — the 📷 button above goes back to the scene" : "Scene", Toast.LENGTH_SHORT);
     }
@@ -1842,6 +1862,7 @@ public final class MainActivity extends Activity {
             renderView.postDelayed(cameraDialTick, 500L);
         } else if (changed) {
             cameraDialOpen = null;
+            if (cameraAdjustScroll != null) cameraAdjustScroll.setVisibility(View.GONE);
             refreshMotionStrip();
         }
     }
@@ -1855,16 +1876,12 @@ public final class MainActivity extends Activity {
         for (final String dial : dials) {
             final String[] parts = dial.split("\t", -1);
             if (parts.length < 3) continue;
-            final TextView chip = new TextView(this);
+            // Every dial the same square: its name over its value.
+            final TextView chip = squareTile(parts[1] + "\n" + parts[2]);
             chip.setTag(parts[0]);
-            chip.setGravity(Gravity.CENTER);
-            chip.setTextSize(13f);
-            chip.setPadding(dp(10), dp(4), dp(10), dp(4));
-            chip.setText(parts[1] + "\n" + parts[2]);
             styleChip(chip, parts[0].equals(cameraDialOpen));
             chip.setOnClickListener(v -> openCameraDial(parts[0]));
-            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(DIAL_TILE_DP), dp(DIAL_TILE_DP));
             params.setMarginEnd(dp(6));
             cameraDialBar.addView(chip, params);
         }
@@ -1908,12 +1925,12 @@ public final class MainActivity extends Activity {
     private void stepCameraOption(String id, int step) {
         for (final String[] row : cameraRows()) {
             if (!row[0].equals(id)) continue;
-            final int count = row.length - 4;
+            final int count = row.length - CAMERA_OPTIONS_AT;
             final int next = Math.max(0, Math.min(count - 1, cameraChoice(row) + step));
-            prefs().edit().putString(PREF_CAMERA + row[0], row[4 + next]).apply();
+            prefs().edit().putString(PREF_CAMERA + row[0], row[CAMERA_OPTIONS_AT + next]).apply();
             applyCameraChoices();
             renderView.renderNow();
-            notice(row[2] + ": " + row[4 + next], Toast.LENGTH_SHORT);
+            notice(row[2] + ": " + row[CAMERA_OPTIONS_AT + next], Toast.LENGTH_SHORT);
             updateCameraDials();
             return;
         }
@@ -1921,8 +1938,8 @@ public final class MainActivity extends Activity {
 
     private void setCameraOption(String id, int option) {
         for (final String[] row : cameraRows()) {
-            if (row[0].equals(id) && option >= 0 && option < row.length - 4) {
-                prefs().edit().putString(PREF_CAMERA + row[0], row[4 + option]).apply();
+            if (row[0].equals(id) && option >= 0 && option < row.length - CAMERA_OPTIONS_AT) {
+                prefs().edit().putString(PREF_CAMERA + row[0], row[CAMERA_OPTIONS_AT + option]).apply();
             }
         }
         applyCameraChoices();
@@ -2172,7 +2189,7 @@ public final class MainActivity extends Activity {
     private void openCameraDial(String keys) {
         if (keys.equals(cameraDialOpen)) {
             cameraDialOpen = null;
-            cameraAdjust.setVisibility(View.GONE);
+            cameraAdjustScroll.setVisibility(View.GONE);
             updateCameraDials();
             return;
         }
@@ -2188,17 +2205,17 @@ public final class MainActivity extends Activity {
             }
             if (i < 0 || i >= rows.length) continue;
             final String[] row = rows[i];
-            final String[] options = java.util.Arrays.copyOfRange(row, 4, row.length);
+            final String[] options = cameraOptions(row);
             final java.util.function.IntConsumer pick = k -> {
                 prefs().edit().putString(PREF_CAMERA + row[0], options[k]).apply();
                 applyCameraChoices();
                 renderView.renderNow();
                 updateCameraDials();
             };
-            cameraAdjust.addView(options.length > 12 ? sliderRow(row[2], options, cameraChoice(row), pick)
-                    : choiceRow(row[2], options, cameraChoice(row), pick));
+            cameraAdjust.addView(cameraSettingRow(row, options, pick));
         }
-        cameraAdjust.setVisibility(View.VISIBLE);
+        cameraAdjustScroll.scrollTo(0, 0);
+        cameraAdjustScroll.setVisibility(View.VISIBLE);
         updateCameraDials();
     }
 
@@ -2213,6 +2230,97 @@ public final class MainActivity extends Activity {
             notice("Nothing moves here", Toast.LENGTH_SHORT);
         }
         updateCameraButtons();
+    }
+
+    private static final int DIAL_TILE_DP = 64;
+
+    /** A square tile's text: centred, shrunk to fit (two lines at most). */
+    private TextView squareTile(String text) {
+        final TextView tile = new TextView(this);
+        tile.setGravity(Gravity.CENTER);
+        tile.setMaxLines(2);
+        tile.setPadding(dp(4), dp(4), dp(4), dp(4));
+        tile.setAutoSizeTextTypeUniformWithConfiguration(9, 15, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
+        tile.setText(text);
+        return tile;
+    }
+
+    /** A view whose height is its width: the tiles of the camera's options. */
+    private static final class SquareFrame extends FrameLayout {
+        SquareFrame(android.content.Context context) {
+            super(context);
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            super.onMeasure(widthSpec, widthSpec);
+        }
+    }
+
+    /** A camera setting: its name and hint, then its options as equal squares (a long dial: a slider). */
+    private LinearLayout cameraSettingRow(String[] row, String[] options, java.util.function.IntConsumer pick) {
+        if (options.length > 12) {
+            final LinearLayout block = sliderRow(row[2], options, cameraChoice(row), pick);
+            if (!row[3].isEmpty()) block.addView(hint(row[3]), 1);
+            return block;
+        }
+        return tileRow(row[2], row[3], options, cameraChoice(row), pick);
+    }
+
+    /** Options as rows of equal squares (as many a row as fit, at least five). */
+    private LinearLayout tileRow(String label, String hintText, String[] names, int selected,
+                                 java.util.function.IntConsumer onPick) {
+        final LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(10), 0, dp(4));
+        final TextView title = new TextView(this);
+        title.setText(label);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        block.addView(title);
+        if (hintText != null && !hintText.isEmpty()) {
+            final TextView note = new TextView(this);
+            note.setText(hintText);
+            note.setTextColor(0xff8a90a0);
+            note.setTextSize(12f);
+            block.addView(note);
+        }
+        final int width = getResources().getDisplayMetrics().widthPixels - dp(60);
+        final int perRow = Math.max(5, width / dp(DIAL_TILE_DP + 6));
+        final TextView[] tiles = new TextView[names.length];
+        LinearLayout row = null;
+        for (int i = 0; i < names.length; ++i) {
+            if (i % perRow == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                final LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                rowParams.topMargin = dp(6);
+                block.addView(row, rowParams);
+            }
+            final int index = i;
+            final TextView tile = squareTile(names[i]);
+            tiles[i] = tile;
+            tile.setOnClickListener(v -> {
+                for (int k = 0; k < tiles.length; ++k) styleChip(tiles[k], k == index);
+                onPick.accept(index);
+            });
+            styleChip(tile, i == selected);
+            final SquareFrame square = new SquareFrame(this);
+            square.addView(tile, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            params.setMarginEnd(dp(6));
+            row.addView(square, params);
+        }
+        // The last row's squares as wide as the others.
+        while (row != null && row.getChildCount() < perRow) {
+            final View spacer = new View(this);
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, 1, 1f);
+            params.setMarginEnd(dp(6));
+            row.addView(spacer, params);
+        }
+        return block;
     }
 
     /** A long dial (ISO, shutter, megapixels ...) as a slider; the label shows the value. */
@@ -2263,14 +2371,13 @@ public final class MainActivity extends Activity {
                 section = row[1];
                 content.addView(sectionTitle(section));
             }
-            final String[] options = java.util.Arrays.copyOfRange(row, 4, row.length);
+            final String[] options = cameraOptions(row);
             final java.util.function.IntConsumer pick = i -> {
                 prefs().edit().putString(PREF_CAMERA + row[0], options[i]).apply();
                 applyCameraChoices();
                 renderView.renderNow();
             };
-            content.addView(options.length > 12 ? sliderRow(row[2], options, cameraChoice(row), pick)
-                    : choiceRow(row[2], options, cameraChoice(row), pick));
+            content.addView(cameraSettingRow(row, options, pick));
         }
         dialog.dialog = showPanel("Camera: picture and video", content, null, "Starting values", () -> {
             final android.content.SharedPreferences.Editor editor = prefs().edit();

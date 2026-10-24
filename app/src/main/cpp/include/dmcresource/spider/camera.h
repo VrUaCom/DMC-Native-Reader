@@ -78,6 +78,7 @@ struct Setting final {
     std::string id;       // stable name the shell stores the choice under
     std::string section;  // heading it is listed under
     std::string label;
+    std::string hint;     // what the options mean (they are short)
     std::vector<std::string> options;
     int start{};          // the starting value
 };

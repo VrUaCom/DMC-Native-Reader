@@ -31,7 +31,7 @@ struct Aspect final {
     int h;  // 0 x 0: the view's own shape
 };
 // The camera's frame, the same for its pictures and its videos.
-constexpr Aspect kShapes[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"3:2", 3, 2},    {"4:3", 4, 3},
+constexpr Aspect kShapes[] = {{"View", 0, 0}, {"16:9", 16, 9}, {"3:2", 3, 2},    {"4:3", 4, 3},
                               {"1:1", 1, 1},          {"21:9", 21, 9}, {"2.35:1", 235, 100}, {"9:16", 9, 16},
                               {"2:3", 2, 3}};
 constexpr int kPhotoQualities[] = {100, 95, 90, 85, 75, 60};
@@ -101,58 +101,62 @@ constexpr int count(const T (&)[N]) noexcept {
 
 std::vector<Setting> build_settings() {
     std::vector<Setting> out;
-    const auto add = [&out](Key key, const char* id, const char* section, const char* label,
+    // Option names are short (they sit in square tiles); what they mean is
+    // the setting's hint.
+    const auto add = [&out](Key key, const char* id, const char* section, const char* label, const char* hint,
                             std::vector<std::string> options, int start) {
-        out.push_back(Setting{key, id, section, label, std::move(options), start});
+        out.push_back(Setting{key, id, section, label, hint, std::move(options), start});
     };
     // One camera: its mode, its frame (the pictures' and the videos'), the
     // viewfinder; then what a picture and a video are made into.
     const char* camera = "Camera";
-    add(Key::FinderMode, "finder_mode", camera,
-        "Camera mode (the view through the lens, with the look; two fingers turn a polarizer)", {"Off", "On"}, 0);
+    add(Key::FinderMode, "finder_mode", camera, "Camera mode",
+        "The view through the lens, with the look; two fingers turn a polarizer", {"Off", "On"}, 0);
     {
         std::vector<std::string> names;
         for (const auto& a : kShapes) names.emplace_back(a.label);
-        add(Key::CameraShape, "camera_shape", camera, "Frame (pictures and videos)", std::move(names), 0);
+        add(Key::CameraShape, "camera_shape", camera, "Frame", "The shape of pictures and videos", std::move(names), 0);
     }
-    add(Key::FinderGrid, "finder_grid", camera, "Grid",
-        {"Off", "Thirds", "4 \xC3\x97 4", "Golden ratio", "Centre cross"}, 1);
-    add(Key::FinderInfo, "finder_info", camera, "Settings line", {"Show", "Hide"}, 0);
+    add(Key::FinderGrid, "finder_grid", camera, "Grid", "", {"Off", "Thirds", "4\xC3\x97" "4", "Golden", "Cross"}, 1);
+    add(Key::FinderInfo, "finder_info", camera, "Settings line", "The camera's values over the view",
+        {"Show", "Hide"}, 0);
     const char* picture = "Picture";
     add(Key::PhotoFormat, "photo_format", picture, "File",
-        {"PNG (lossless)", "JPEG", "WebP (lossless)", "RAW (DNG)", "RAW (DNG) + JPEG"}, 0);
-    add(Key::PhotoQuality, "photo_quality", picture, "JPEG quality", {"100", "95", "90", "85", "75", "60"}, 1);
+        "PNG and WebP are lossless; RAW is a DNG (Adobe's open RAW)", {"PNG", "JPEG", "WebP", "RAW", "RAW+JPEG"}, 0);
+    add(Key::PhotoQuality, "photo_quality", picture, "JPEG quality", "", {"100", "95", "90", "85", "75", "60"}, 1);
     add(Key::PhotoRawData, "photo_raw_data", picture, "RAW data",
-        {"Linear RGB (every editor)", "Bayer RGGB (like a sensor)"}, 0);
-    add(Key::PhotoSize, "photo_size", picture, "Size (long side)",
-        {"As the view", "HD 1280", "Full HD 1920", "QHD 2560", "4K 3840", "5K 5120", "6K 6144", "8K 7680"}, 0);
-    add(Key::PhotoMegapixels, "photo_megapixels", picture, "Megapixels (instead of the size)",
-        {"By the size", "2 MP", "5 MP", "8 MP", "12 MP", "16 MP", "20 MP", "24 MP", "33 MP", "40 MP", "48 MP",
-         "64 MP", "100 MP", "124 MP", "150 MP", "200 MP"},
+        "Linear RGB opens in every editor; Bayer is an RGGB mosaic like a sensor's", {"Linear", "Bayer"}, 0);
+    add(Key::PhotoSize, "photo_size", picture, "Size", "The long side in pixels",
+        {"View", "1280", "1920", "2560", "4K", "5K", "6K", "8K"}, 0);
+    add(Key::PhotoMegapixels, "photo_megapixels", picture, "Megapixels", "Instead of the size, in the frame's shape",
+        {"Size", "2 MP", "5 MP", "8 MP", "12 MP", "16 MP", "20 MP", "24 MP", "33 MP", "40 MP", "48 MP", "64 MP",
+         "100 MP", "124 MP", "150 MP", "200 MP"},
         0);
-    add(Key::PhotoTimer, "photo_timer", picture, "Self-timer", {"Off", "2 s", "5 s", "10 s"}, 0);
-    add(Key::PhotoBurst, "photo_burst", picture, "Shots per press", {"1", "3", "5", "10"}, 0);
-    add(Key::PhotoSubtitles, "photo_subtitles", picture, "Subtitles in the picture", {"Show", "Hide"}, 0);
+    add(Key::PhotoTimer, "photo_timer", picture, "Self-timer", "", {"Off", "2 s", "5 s", "10 s"}, 0);
+    add(Key::PhotoBurst, "photo_burst", picture, "Shots per press", "A quarter second apart", {"1", "3", "5", "10"}, 0);
+    add(Key::PhotoSubtitles, "photo_subtitles", picture, "Subtitles in pictures", "", {"Show", "Hide"}, 0);
     const char* video = "Video";
-    add(Key::VideoSize, "video_size", video, "Size",
-        {"720p (HD)", "1080p (Full HD)", "1440p (QHD)", "2160p (4K)"}, 1);
-    add(Key::VideoFps, "video_fps", video, "Frame rate", {"24", "25", "30", "50", "60"}, 2);
-    add(Key::VideoBitrate, "video_bitrate", video, "Bit rate",
-        {"Auto", "4 Mbit/s", "8 Mbit/s", "16 Mbit/s", "32 Mbit/s", "64 Mbit/s", "100 Mbit/s"}, 0);
-    add(Key::VideoCodec, "video_codec", video, "Codec", {"H.264 (AVC)", "H.265 (HEVC)"}, 0);
-    add(Key::VideoKeyframe, "video_keyframe", video, "Key frame every", {"0.5 s", "1 s", "2 s", "5 s"}, 1);
-    add(Key::VideoLimit, "video_limit", video, "Stop after",
-        {"No limit", "15 s", "30 s", "1 min", "5 min", "10 min"}, 0);
-    add(Key::VideoMotionBlur, "video_motion_blur", video, "Motion blur", {"Off", "By the shutter"}, 0);
-    add(Key::VideoSubtitles, "video_subtitles", video, "Subtitles in the video", {"Show", "Hide"}, 0);
-    const char* lens = "Lens";
-    add(Key::LensFocal, "lens_focal", lens, "Focal length (full frame)",
-        {"As the view (pinch)", "14 mm", "18 mm", "24 mm", "28 mm", "35 mm", "50 mm", "85 mm", "105 mm",
-         "135 mm", "200 mm", "300 mm", "400 mm"},
+    add(Key::VideoSize, "video_size", video, "Size", "The short side", {"720p", "1080p", "1440p", "4K"}, 1);
+    add(Key::VideoFps, "video_fps", video, "Frame rate", "", {"24", "25", "30", "50", "60"}, 2);
+    add(Key::VideoBitrate, "video_bitrate", video, "Bit rate", "Mbit/s", {"Auto", "4", "8", "16", "32", "64", "100"},
         0);
-    add(Key::LensVignette, "lens_vignette", lens, "Vignetting", {"Off", "By the aperture", "Strong"}, 0);
-    add(Key::LensDistortion, "lens_distortion", lens, "Distortion", {"Off", "By the focal length"}, 0);
-    add(Key::LensFringe, "lens_fringe", lens, "Colour fringing", {"Off", "Weak", "Strong"}, 0);
+    add(Key::VideoCodec, "video_codec", video, "Codec", "H.264 (AVC) or H.265 (HEVC)", {"H.264", "H.265"}, 0);
+    add(Key::VideoKeyframe, "video_keyframe", video, "Key frame every", "", {"0.5 s", "1 s", "2 s", "5 s"}, 1);
+    add(Key::VideoLimit, "video_limit", video, "Stop after", "", {"Never", "15 s", "30 s", "1 min", "5 min", "10 min"},
+        0);
+    add(Key::VideoMotionBlur, "video_motion_blur", video, "Motion blur", "The frames before blend in by the shutter",
+        {"Off", "Shutter"}, 0);
+    add(Key::VideoSubtitles, "video_subtitles", video, "Subtitles in videos", "", {"Show", "Hide"}, 0);
+    const char* lens = "Lens";
+    add(Key::LensFocal, "lens_focal", lens, "Focal length", "Full frame; Zoom follows the pinch",
+        {"Zoom", "14 mm", "18 mm", "24 mm", "28 mm", "35 mm", "50 mm", "85 mm", "105 mm", "135 mm", "200 mm",
+         "300 mm", "400 mm"},
+        0);
+    add(Key::LensVignette, "lens_vignette", lens, "Vignetting", "Lens: by the aperture", {"Off", "Lens", "Strong"},
+        0);
+    add(Key::LensDistortion, "lens_distortion", lens, "Distortion", "Lens: barrel when wide, pincushion when long",
+        {"Off", "Lens"}, 0);
+    add(Key::LensFringe, "lens_fringe", lens, "Colour fringing", "", {"Off", "Weak", "Strong"}, 0);
     const char* aperture = "Aperture";
     {
         std::vector<std::string> names;
@@ -161,68 +165,70 @@ std::vector<Setting> build_settings() {
             std::snprintf(text, sizeof(text), "f/%g", static_cast<double>(n));
             names.emplace_back(text);
         }
-        add(Key::LensAperture, "lens_aperture", aperture, "Aperture (f-number)", std::move(names), 6);
+        add(Key::LensAperture, "lens_aperture", aperture, "Aperture", "", std::move(names), 6);
     }
-    add(Key::LensDepthOfField, "lens_depth_of_field", aperture,
-        "Depth of field (what is not in focus blurs by the aperture and the focal length)", {"Off", "On"}, 0);
-    add(Key::LensFocus, "lens_focus", aperture, "Focus",
-        {"Auto (the middle of the frame)", "0.5 m", "1 m", "2 m", "3 m", "5 m", "10 m", "20 m", "Infinity"}, 0);
-    add(Key::LensBlades, "lens_blades", aperture, "Aperture blades (the shape of the bokeh)",
+    add(Key::LensDepthOfField, "lens_depth_of_field", aperture, "Depth of field",
+        "What is not in focus blurs by the aperture and the focal length", {"Off", "On"}, 0);
+    add(Key::LensFocus, "lens_focus", aperture, "Focus", "Auto: the middle of the frame, or a double tap",
+        {"Auto", "0.5 m", "1 m", "2 m", "3 m", "5 m", "10 m", "20 m", "\xE2\x88\x9E"}, 0);
+    add(Key::LensBlades, "lens_blades", aperture, "Aperture blades", "The shape of the bokeh",
         {"Round", "9", "8", "7", "6", "5"}, 0);
-    add(Key::LensBokeh, "lens_bokeh", aperture, "Bokeh highlights", {"Soft", "Bright"}, 0);
+    add(Key::LensBokeh, "lens_bokeh", aperture, "Bokeh highlights", "", {"Soft", "Bright"}, 0);
     const char* filter = "Filter";
-    add(Key::FilterPolarizer, "filter_polarizer", filter,
-        "Polarizer (circular; in camera mode two fingers turn it)", {"Off", "On"}, 0);
-    add(Key::FilterPolarizerStrength, "filter_polarizer_strength", filter, "Polarizer strength",
+    add(Key::FilterPolarizer, "filter_polarizer", filter, "Polarizer",
+        "Circular; in camera mode two fingers turn it", {"Off", "On"}, 0);
+    add(Key::FilterPolarizerStrength, "filter_polarizer_strength", filter, "Polarizer strength", "",
         {"Weak", "Medium", "Strong"}, 1);
     const char* exposure = "Exposure";
-    add(Key::ExposureMode, "exposure_mode", exposure, "Mode",
-        {"Auto", "Manual (ISO, shutter, aperture)"}, 0);
+    add(Key::ExposureMode, "exposure_mode", exposure, "Mode", "Manual: the ISO, shutter and aperture count",
+        {"Auto", "Manual"}, 0);
     {
         std::vector<std::string> names;
         for (const int iso : kIsos) names.push_back(iso == 0 ? std::string("Auto") : std::to_string(iso));
-        add(Key::ExposureIso, "exposure_iso", exposure, "ISO", std::move(names), 0);
+        add(Key::ExposureIso, "exposure_iso", exposure, "ISO", "", std::move(names), 0);
     }
     {
         std::vector<std::string> names;
         for (const auto& t : kShutters) names.emplace_back(t.label);
-        add(Key::ExposureShutter, "exposure_shutter", exposure, "Shutter", std::move(names), kShutterStart);
+        add(Key::ExposureShutter, "exposure_shutter", exposure, "Shutter", "", std::move(names), kShutterStart);
     }
-    add(Key::ExposureCompensation, "exposure_compensation", exposure, "Compensation",
-        {"\xE2\x88\x92" "3 EV", "\xE2\x88\x92" "2", "\xE2\x88\x92" "1.5", "\xE2\x88\x92" "1",
-         "\xE2\x88\x92" "0.5", "0", "+0.5", "+1", "+1.5", "+2", "+3 EV"},
+    add(Key::ExposureCompensation, "exposure_compensation", exposure, "Compensation", "EV",
+        {"\xE2\x88\x92" "3", "\xE2\x88\x92" "2", "\xE2\x88\x92" "1.5", "\xE2\x88\x92" "1", "\xE2\x88\x92" "0.5", "0",
+         "+0.5", "+1", "+1.5", "+2", "+3"},
         5);
-    add(Key::ExposureHighlights, "exposure_highlights", exposure, "Highlights", {"Clip", "Soft roll-off"}, 0);
-    add(Key::ExposureNoise, "exposure_noise", exposure, "Sensor noise", {"Off", "By the ISO", "Film grain"}, 1);
+    add(Key::ExposureHighlights, "exposure_highlights", exposure, "Highlights", "", {"Clip", "Soft"}, 0);
+    add(Key::ExposureNoise, "exposure_noise", exposure, "Sensor noise", "By the ISO, or film grain",
+        {"Off", "ISO", "Grain"}, 1);
     const char* colour = "Colour";
-    add(Key::ColourBalance, "colour_balance", colour, "White balance",
-        {"As rendered", "Daylight 5500 K", "Cloudy 6500 K", "Shade 7500 K", "Tungsten 3200 K",
-         "Fluorescent 4000 K", "Flash 5800 K", "Candle 2000 K", "Blue sky 10000 K"},
+    add(Key::ColourBalance, "colour_balance", colour, "White balance", "AWB is as rendered",
+        {"AWB", "Day 5500K", "Cloud 6500K", "Shade 7500K", "Lamp 3200K", "Fluo 4000K", "Flash 5800K",
+         "Candle 2000K", "Sky 10000K"},
         0);
     {
         std::vector<std::string> names;
         for (const char* st : kStyles) names.emplace_back(st);
-        add(Key::ColourStyle, "colour_style", colour, "Picture style", std::move(names), 0);
+        add(Key::ColourStyle, "colour_style", colour, "Picture style", "", std::move(names), 0);
     }
     const std::vector<std::string> steps{"\xE2\x88\x92" "2", "\xE2\x88\x92" "1", "0", "+1", "+2"};
-    add(Key::ColourContrast, "colour_contrast", colour, "Contrast", steps, 2);
-    add(Key::ColourSaturation, "colour_saturation", colour, "Saturation", steps, 2);
-    add(Key::ColourSharpness, "colour_sharpness", colour, "Sharpness", {"Off", "Low", "Medium", "High"}, 0);
+    add(Key::ColourContrast, "colour_contrast", colour, "Contrast", "", steps, 2);
+    add(Key::ColourSaturation, "colour_saturation", colour, "Saturation", "", steps, 2);
+    add(Key::ColourSharpness, "colour_sharpness", colour, "Sharpness", "", {"Off", "Low", "Medium", "High"}, 0);
     const char* gyro = "Gyroscope";
-    add(Key::GyroMode, "gyro_mode", gyro, "Gyroscope (in camera mode, turning the phone turns the camera)",
+    add(Key::GyroMode, "gyro_mode", gyro, "Gyroscope", "In camera mode, turning the phone turns the camera",
         {"Off", "On"}, 0);
     add(Key::GyroHorizon, "gyro_horizon", gyro, "Horizon",
-        {"Locked (level pictures, like a gimbal)", "Follows the phone (the picture tilts with it)"}, 0);
-    add(Key::GyroSensitivity, "gyro_sensitivity", gyro, "Sensitivity", {"0.5\xC3\x97", "1\xC3\x97", "1.5\xC3\x97", "2\xC3\x97"}, 1);
-    add(Key::GyroSmoothing, "gyro_smoothing", gyro, "Smoothing (steadies the hands)",
-        {"Off", "Low", "Medium", "High"}, 2);
+        "Locked: level pictures, like a gimbal; Phone: the picture tilts with the phone", {"Locked", "Phone"}, 0);
+    add(Key::GyroSensitivity, "gyro_sensitivity", gyro, "Sensitivity", "",
+        {"0.5\xC3\x97", "1\xC3\x97", "1.5\xC3\x97", "2\xC3\x97"}, 1);
+    add(Key::GyroSmoothing, "gyro_smoothing", gyro, "Smoothing", "Steadies the hands", {"Off", "Low", "Medium", "High"},
+        2);
     const char* walking = "Walking (ARCore)";
-    add(Key::WalkMode, "walk_mode", walking,
-        "Walk and crouch to move the camera (ARCore; it flies the drone)", {"Off", "On"}, 0);
-    add(Key::WalkScale, "walk_scale", walking, "A metre walked moves the camera",
+    add(Key::WalkMode, "walk_mode", walking, "Walking", "Walk and crouch to move the camera (it flies the drone)",
+        {"Off", "On"}, 0);
+    add(Key::WalkScale, "walk_scale", walking, "A metre walked", "How far it moves the camera",
         {"0.25 m", "0.5 m", "1 m", "2 m", "5 m", "10 m", "20 m"}, 2);
-    add(Key::WalkHeight, "walk_height", walking, "Height",
-        {"Follows you (crouch, stand, climb)", "Fixed (walking only)"}, 0);
+    add(Key::WalkHeight, "walk_height", walking, "Height", "Follows: crouch and stand; Fixed: walking only",
+        {"Follows", "Fixed"}, 0);
     return out;
 }
 

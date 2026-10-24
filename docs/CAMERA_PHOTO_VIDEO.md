@@ -17,7 +17,12 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
   - A row of dials from the core (`camera::dials()`), each showing its value
     the way a camera does: Lens, Aperture, Mode, ISO, Shutter, EV, WB, Frame,
     Focus, CPL, Style, File.
-  - A tapped dial opens its settings under the row. Long dials (ISO,
+  - A tapped dial opens its settings at the top of the view, over it (at
+    most 55 % of its height, scrolling past that). The bars below stay where
+    they are and the view keeps its size.
+  - Dials and options are equal squares. Option names are short (the core's
+    `Setting::options`), and what they mean is the setting's hint under its
+    name (`Setting::hint`). Long dials (ISO,
     shutter) are sliders. Focus also opens the focus distance, blades and
     bokeh; CPL its strength; Style its contrast, saturation and sharpness;
     File the megapixels and the video size.

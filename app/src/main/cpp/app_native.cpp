@@ -699,7 +699,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
 }
 
 // The photo and video camera (core spider/camera.h). Settings: one row per
-// setting, "id\tsection\tlabel\tstart\toption\toption...".
+// setting, "id\tsection\tlabel\thint\tstart\toption\toption...".
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_cameraSettings(JNIEnv* env, jclass) {
     try {
@@ -708,7 +708,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraSettings(JNIEnv* env, jclass
         if (out == nullptr) return nullptr;
         for (std::size_t i = 0; i < list.size(); ++i) {
             const auto& s = list[i];
-            std::string row = s.id + "\t" + s.section + "\t" + s.label + "\t" + std::to_string(s.start);
+            std::string row = s.id + "\t" + s.section + "\t" + s.label + "\t" + s.hint + "\t" + std::to_string(s.start);
             for (const auto& option : s.options) row += "\t" + option;
             jstring text = env->NewStringUTF(row.c_str());
             env->SetObjectArrayElement(out, static_cast<jsize>(i), text);

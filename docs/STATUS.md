@@ -249,6 +249,10 @@ APK verifier.
     - The gyroscope's turns now follow the drone's convention.
     - The drone buttons show the user's drone picture
       (`res/drawable-nodpi/ic_drone.png`, 160 px).
+  - v107: camera settings in squares:
+    - Every dial and option is an equal square tile.
+    - Short option names, with the explanations as hints.
+    - An open dial's settings show at the top of the view, over it.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,
