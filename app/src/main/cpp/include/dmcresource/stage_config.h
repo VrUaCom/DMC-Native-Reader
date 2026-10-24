@@ -206,7 +206,8 @@ using Bytes = std::span<const std::uint8_t>;
 // Every CAM record is one camera and the zones where it is used, in a row to
 // the end of the file (st006cfg: five records, 0x10 -> 0x1240 exactly). The
 // first word is the camera's type, which fixes the record's head; the zone
-// count is at +0x14, the flags at +0x40, and the zones (four (x, y, z, 1)
+// count is the byte at +0x14 (st002 has more bytes after it: 02 01 78), the
+// flags at +0x40, and the zones (four (x, y, z, 1)
 // floor corners, then the height they reach and 12 zero bytes, 0x50 each)
 // close the record:
 // - type 0, a fixed camera, head 0xB0: the eye at +0x90, the field of view

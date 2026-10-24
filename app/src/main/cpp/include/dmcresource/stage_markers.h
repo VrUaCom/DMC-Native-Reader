@@ -119,8 +119,10 @@ struct PlacedEffect final {
 // The stage's fog from its configuration's SEF: the section of value 2 is
 // laid out as a cutscene's GFG fog (st006cfg: f32 1000, f32 2360, then u32
 // 0x34808080, bytes R G B A): from the first distance clear to the second
-// at the colour and alpha (0x80 = 1.0). An inference from that one file
-// and the cutscene clips; none without a configuration of this stage.
+// at the colour and alpha (0x80 = 1.0); st001 writes the distances the
+// other way round (2100, 1680), so the nearer one starts it. An inference
+// from those files and the cutscene clips; none without a configuration of
+// this stage.
 [[nodiscard]] std::optional<ViewState::Fog> stage_fog(std::string_view stage_name);
 
 // The 3D drawing of the markers in room coordinates: spawn and placement

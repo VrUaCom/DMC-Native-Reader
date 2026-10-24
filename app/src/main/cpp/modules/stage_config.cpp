@@ -244,9 +244,9 @@ Result<CamDocument> read_cam(Bytes bytes) {
     // only when every zone it claims has that shape; the walk stops at the
     // first record that does not, and shape scanning reads the rest.
     while (at + kCamRecordHead <= bytes.size() && u32(bytes, at) == kCamZoneFlags) {
-        const auto zones = u32(bytes, at + 0x14U);
+        const std::uint32_t zones = bytes[at + 0x14U];  // a byte (read_cam_shots)
         const auto size = kCamRecordHead + std::size_t{zones} * kCamZone;
-        if (zones == 0U || zones > 1024U || at + size > bytes.size()) break;
+        if (zones == 0U || at + size > bytes.size()) break;
         std::vector<CamArea> found;
         for (std::uint32_t zone = 0U; zone < zones; ++zone) {
             const auto base = at + kCamRecordHead + zone * kCamZone;
@@ -603,8 +603,10 @@ std::vector<CamShot> read_cam_shots(Bytes bytes) {
         } else {
             return {};
         }
-        const std::size_t zones = u32(bytes, at + 0x14U);
-        if (zones == 0U || zones > 64U || at + head + zones * kCamZone > bytes.size()) return {};
+        // The zone count is the byte at +0x14 (st002 keeps 01 78 in the next
+        // two: `02 01 78`).
+        const std::size_t zones = bytes[at + 0x14U];
+        if (zones == 0U || at + head + zones * kCamZone > bytes.size()) return {};
         if (shot.type == kCamFixed) {
             shot.eye = {vec3(bytes, at + 0x90U)};
             shot.target = {vec3(bytes, at + 0x50U)};

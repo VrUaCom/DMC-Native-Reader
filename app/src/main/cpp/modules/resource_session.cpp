@@ -1200,8 +1200,11 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
     const auto& scale = descriptor->scale;
     if (descriptor->mode == 1U) {
         // 0x1402E5D00: camera-facing, extents x in [-Bx, Ax-Bx], y in
-        // [-By, Ay-By], scaled by |row i| of the effect world times the
-        // record scale (0x1402E5FC2 loop).
+        // [-By, Ay-By] on the screen, whose y runs down: up from the root
+        // the sprite reaches By, down Ay - By (st006 / st002's fire E 7, 60 x
+        // 120 pivoted at 30 100, rises from 20 below its root to 100 above,
+        // its glow E 154 sitting 40 up at the flame's middle). Scaled by
+        // |row i| of the effect world times the record scale (0x1402E5FC2).
         const auto row_length = [&world](std::size_t row) {
             const float* r = &world.values[row * 4U];
             return std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
@@ -1214,8 +1217,8 @@ void set_effect_view_basis(float yaw, float pitch) noexcept {
         sprite.extents = true;
         sprite.left = -b[0] * sx;
         sprite.right = (a[0] - b[0]) * sx;
-        sprite.bottom = -b[1] * sy;
-        sprite.top = (a[1] - b[1]) * sy;
+        sprite.bottom = -(a[1] - b[1]) * sy;
+        sprite.top = b[1] * sy;
         if (scale[0] < 0.0F) std::swap(sprite.u0, sprite.u1);
         if (scale[1] < 0.0F) std::swap(sprite.v0, sprite.v1);
         out->push_back(sprite);

@@ -48,8 +48,9 @@ cutscene's camera.
 
 Every CAM record is one camera and the zones where it is used, in a row to
 the end of the file (st006cfg: five records, 0x10 -> 0x1240 exactly). The
-first word is the type, which fixes the record's head; the zone count is at
-+0x14, the flags at +0x40, and the zones close the record (four
+first word is the type, which fixes the record's head; the zone count is the
+byte at +0x14 (st002 keeps `01 78` in the next two bytes), the flags at
++0x40, and the zones close the record (four
 (x, y, z, 1) floor corners, the height they reach, 12 zero bytes; 0x50
 each).
 
@@ -65,6 +66,10 @@ the target rail picks the eye at the same place on the eye rail. st006:
 POS 0 (2500 22 906) -> fixed camera at 3666 774 2524 looking at the
 player; POS 1 -> fixed camera at 2699 734 3295 looking at 2479 300 4192;
 POS 2 -> the rail, eye 2505 113 1179 looking north along the arena.
+Checked on st000 (no CAM: the office is seen from behind its spawn point),
+st001 (one 0x400 record, zones only) and st002 (five records, rails and
+fixed cameras: POS 0 looks down the street of mission 2; POS 2 on the
+upper level shares the ground rail, its zone reaching that high).
 
 Tests: `stage_config_test.cpp` (fixed, rail, overlapping zones, a torn
 file; spawn points, Game camera, another stage's configuration ignored),

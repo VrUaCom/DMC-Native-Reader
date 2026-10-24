@@ -550,7 +550,9 @@ std::optional<ViewState::Fog> stage_fog(std::string_view stage_name) {
                 float start = 0.0F, end = 0.0F;
                 std::memcpy(&start, b.data() + at, 4U);
                 std::memcpy(&end, b.data() + at + 4U, 4U);
-                if (!std::isfinite(start) || !std::isfinite(end) || !(end > start)) continue;
+                if (!std::isfinite(start) || !std::isfinite(end) || start == end) continue;
+                // st001 writes the farther distance first (2100, 1680).
+                if (start > end) std::swap(start, end);
                 ViewState::Fog fog;
                 fog.enabled = true;
                 fog.start = start;

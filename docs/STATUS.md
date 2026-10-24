@@ -216,7 +216,8 @@ APK verifier.
     the room shows the intact one, the break toggle swaps them
     (`stage_room::layout_sets_shown`). The configuration's SEF section 2 is
     the stage's depth fog, read like a cutscene's GFG (st006: 1000 .. 2360,
-    grey at 0x34 of 0x80; an inference from that one file).
+    grey at 0x34 of 0x80; st001 writes the distances the other way round,
+    2100 / 1680, warm grey at 0x51; an inference from those files).
   - **E sprites are coloured and animated (v90):** the E record's colour
     track at +0x174 has the layout of a P track (four 20-byte keys, PS2
     colour 0x80 = 1.0; enable / loop / ease at +0x1C4..+0x1C6), played at
@@ -235,6 +236,10 @@ APK verifier.
     transforms and the GS ALPHA blend (alpha or additive), ported from
     `dmc3.exe` and replayed against emulated runs (synthetic truth in
     `particle_test`; all 109 real records compared over 12 ticks)
+    (v97: an E sprite's pivot is on the screen, whose y runs down: the fire
+    E 7, 60 x 120 pivoted at 30 100, rises from 20 below its root to 100
+    above, its glow E 154 sitting 40 up at the flame's middle; st002's
+    burning drums burn on top again, st006's gargoyles inside their mouths)
     (`docs/research/dmc3-particle-sprt00-exe-v75.md`). Random draws use a fixed
     seed. Classes 0, 2, 5 (no corpus record) are not drawn.
   - **G records are drawn** (all 74 of the corpus): the generator is replayed

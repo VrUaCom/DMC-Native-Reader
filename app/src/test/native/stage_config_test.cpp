@@ -124,7 +124,8 @@ int main() {
             shots.f32(500.0F); shots.zeros(12);
         };
         auto at = shots.bytes.size();
-        shots.u32(0x000U); shots.zeros(0x10); shots.u32(1);
+        // The zone count is the byte at +0x14; st002 keeps 01 78 after it.
+        shots.u32(0x000U); shots.zeros(0x10); shots.u32(0x00780101U);
         shots.pad_to(at + 0x40U); shots.u32(0x200U);
         shots.pad_to(at + 0x50U); shots.f32(0.0F); shots.f32(105.0F); shots.f32(0.0F);
         shots.pad_to(at + 0x90U); shots.f32(500.0F); shots.f32(300.0F); shots.f32(500.0F);
