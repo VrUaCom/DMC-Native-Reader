@@ -437,10 +437,20 @@ it showed every model and stage mirrored. It now negates X before the camera
 rotation, for positions and normals (rengine
 `dmc3-coordinate-handedness-2026-09-24.md`).
 
-The ⋮ menu opens with a row of square shortcuts: ⚙ Settings, then the room
-toggle and *next floor spot* when a room is loaded. The actions follow below
-the row. Settings is a full-screen window, and every choice is stored and
-applied at once:
+The ⋮ menu opens with square shortcuts: ⚙ Settings, ✋ Gestures, 📂 Open,
+then the room toggle and *next floor spot* when a room is loaded (the spot
+only while it shows), a cutscene's 🔊 sound, 🎞 movie, 💬 subtitles and 🎬
+camera, 💾 Save and 🛠 Diagnostics. They wrap into rows as wide as the
+screen allows; a long press names one. The actions follow below them, and
+the whole menu scrolls when it is taller than the screen (v93).
+
+The core offers what fits what is on the screen (`companion_menu`): a
+cutscene gets no model parts, placements, PTX or companions to add; a model
+gets the stage tools (stage effects, stage config) only while a room is
+drawn around it, a stage scene always; one *Browse .PAC files* row.
+
+Settings is a full-screen window, and every choice is stored and applied at
+once:
 
 - Render resolution: 360, 540, 720 or 1024 px on the longest side.
 - Animation frame rate: 20, 30 or 60 fps.

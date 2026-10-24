@@ -395,18 +395,30 @@ int main() {
             assert(has_row(act::Companion::StageConfigLoad) && has_row(act::Companion::StageConfigToggle) &&
                    has_row(act::Companion::StageConfigRemove) && has_row(act::Companion::BrowseStagePac));
             assert(!has_row(act::Companion::AddPac));
-            assert(companions.shortcuts.size() == 2U && !companions.shortcuts[0].icon.empty());
+            // Squares: settings, gestures, open, diagnostics; one browser row.
+            assert(companions.shortcuts.size() == 4U && !companions.shortcuts[0].icon.empty() &&
+                   companions.shortcuts[2].id == static_cast<int>(act::Companion::OpenFile) &&
+                   companions.shortcuts[3].id == static_cast<int>(act::Companion::Diagnostics));
+            assert(has_row(act::Companion::StageEffects) && !has_row(act::Companion::OpenFile));
+            std::size_t browsers = 0U;
+            for (const auto& row : companions.rows) {
+                browsers += row.label.find("Browse") != std::string::npos ? 1U : 0U;
+            }
+            assert(browsers == 1U);
             assert(act::run_companion_action(static_cast<int>(act::Companion::StageConfigToggle)).message ==
                    "Stage config hidden");
             assert(act::run_companion_action(static_cast<int>(act::Companion::StageConfigLoad)).step ==
                    act::ShellStep::PickStageConfig);
             assert(act::run_companion_action(static_cast<int>(act::Companion::OpenFile)).step == act::ShellStep::None);
             act::run_companion_action(static_cast<int>(act::Companion::StageConfigToggle));
-            // A model with no stage around offers no stage config row.
+            // A model with no stage around offers no stage tools; a room loaded
+            // but hidden does not bring them either.
             Session lone;
-            assert(!act::companion_menu(&lone, facts).rows.empty());
-            for (const auto& row : act::companion_menu(&lone, facts).rows) {
-                assert(row.id != static_cast<int>(act::Companion::StageConfigLoad));
+            const act::ShellFacts hidden_room{.root_scene = true, .assembled_pac_source = false,
+                                              .stage_source = false, .room_loaded = true, .room_shown = false};
+            for (const auto& row : act::companion_menu(&lone, hidden_room).rows) {
+                assert(row.id != static_cast<int>(act::Companion::StageConfigLoad) &&
+                       row.id != static_cast<int>(act::Companion::StageEffects));
             }
         }
         assert(act::run_stage_config_menu(menu.items[2].id).message == "Stage config removed");

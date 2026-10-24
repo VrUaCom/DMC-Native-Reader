@@ -26,50 +26,74 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     const auto has = [state](widow::StateFlag flag) { return widow::has_state(state, flag); };
     const bool open = session != nullptr;
     const bool root = open && facts.root_scene;
+    // What is on the screen decides what the menu offers: a cutscene plays
+    // its own scene (no model parts or companions to add), a model shows the
+    // stage tools only while a room is drawn around it.
+    const bool cutscene = demo::is_demo(session);
+    const bool stage_scene = open && session->stage != nullptr && !cutscene;
+    const bool room_drawn = facts.room_loaded && facts.room_shown && !cutscene;
+    const bool model_tools = root && !cutscene;
 
+    // Squares: the frequent actions, a glyph each (the label is its tooltip).
     add(menu.shortcuts, Companion::Settings, "Settings", "\xE2\x9A\x99");
     add(menu.shortcuts, Companion::Gestures, "Gestures", "\xE2\x9C\x8B");
-    if (facts.room_loaded) {
+    add(menu.shortcuts, Companion::OpenFile, "Open / replace resource", "\xF0\x9F\x93\x82");
+    if (facts.room_loaded && !cutscene) {
         add(menu.shortcuts, Companion::RoomToggle, facts.room_shown ? "Hide the room" : "Show the room",
             "\xE2\x8C\x82");
         if (!facts.room_shown) menu.dimmed.push_back(static_cast<int>(Companion::RoomToggle));
         const auto room = stage_room::current();
-        if (room != nullptr && room->spots.size() > 1U) {
+        if (facts.room_shown && room != nullptr && room->spots.size() > 1U) {
             add(menu.shortcuts, Companion::NextRoomSpot, "Next floor spot", "\xE2\x87\x84");
         }
     }
+    if (cutscene) {
+        // A cutscene's sound, movie part and subtitles live beside the archive.
+        add(menu.shortcuts, Companion::CutsceneSound, "Cutscene sound (.ogg)", "\xF0\x9F\x94\x8A");
+        if (video::available()) add(menu.shortcuts, Companion::CutsceneMovie, "Cutscene movie (.wmv)", "\xF0\x9F\x8E\x9E");
+        add(menu.shortcuts, Companion::CutsceneSubtitles, "Subtitles (*_msg_<lang>.txt)", "\xF0\x9F\x92\xAC");
+        // A cutscene whose camera the user took: back to following its cuts.
+        if (!demo::director(session)) {
+            add(menu.shortcuts, Companion::CutsceneCamera, "Cutscene camera (follow the cuts)", "\xF0\x9F\x8E\xAC");
+        }
+    }
+    if (has(widow::StateFlag::CanSaveSource)) add(menu.shortcuts, Companion::SaveFile, "Save file", "\xF0\x9F\x92\xBE");
+    add(menu.shortcuts, Companion::Diagnostics, "Diagnostics / build info", "\xF0\x9F\x9B\xA0");
 
-    add(menu.rows, Companion::OpenFile, "Open / replace resource");
-    if (has(widow::StateFlag::CanReencodeTextures)) add(menu.rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
-    if (has(widow::StateFlag::CanSaveSource)) add(menu.rows, Companion::SaveFile, "Save file\xE2\x80\xA6");
-    if (root && facts.assembled_pac_source) {
-        add(menu.rows, Companion::AddPac, "Add weapon / .PAC\xE2\x80\xA6");
-        add(menu.rows, Companion::BrowseAssembledPac, "Browse .PAC files\xE2\x80\xA6");
+    if (has(widow::StateFlag::CanReencodeTextures) && !cutscene) {
+        add(menu.rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
     }
-    if (root && facts.stage_source) {
-        add(menu.rows, Companion::BrowseStagePac, "Browse .PAC files\xE2\x80\xA6");
-        add(menu.rows, Companion::StageEffects, "Stage effects (st*_effect.pac)\xE2\x80\xA6");
+    // One browser for the archive the scene came from.
+    if (root && (facts.assembled_pac_source || facts.stage_source)) {
+        add(menu.rows, facts.assembled_pac_source ? Companion::BrowseAssembledPac : Companion::BrowseStagePac,
+            "Browse .PAC files\xE2\x80\xA6");
     }
+    if (model_tools && facts.assembled_pac_source) add(menu.rows, Companion::AddPac, "Add weapon / .PAC\xE2\x80\xA6");
     // An assembled PAC already owns its part list; re-composing it from
     // picked files would drop the archive's own MODs.
-    if (root && has(widow::StateFlag::CanAddModelPart) && !facts.assembled_pac_source) {
+    if (model_tools && has(widow::StateFlag::CanAddModelPart) && !facts.assembled_pac_source) {
         add(menu.rows, Companion::AddModParts, "Add .MOD part(s)");
     }
-    if (root && session_composite_part_count(session) > 1U) {
+    if (model_tools && session_composite_part_count(session) > 1U) {
         add(menu.rows, Companion::CompositeParts, "Composite parts / state\xE2\x80\xA6");
         add(menu.rows, Companion::PlaceModPart, "Place MOD part on host joint\xE2\x80\xA6");
         add(menu.rows, Companion::ResetModPlacement, "Reset MOD part placement\xE2\x80\xA6");
     }
-    if (root && has(widow::StateFlag::TextureCompanionAttachable)) add(menu.rows, Companion::AttachPtx, "Attach .PTX texture");
-    if (root && has(widow::StateFlag::CanStageCompanion)) {
+    if (model_tools && has(widow::StateFlag::TextureCompanionAttachable)) {
+        add(menu.rows, Companion::AttachPtx, "Attach .PTX texture");
+    }
+    if (model_tools && has(widow::StateFlag::CanStageCompanion)) {
         add(menu.rows, Companion::StageMotion, "Add animation / motion\xE2\x80\xA6");
         add(menu.rows, Companion::StageTexture, "Add texture asset (.TM2 / .DDS / \xE2\x80\xA6)");
         add(menu.rows, Companion::StagePhysics, "Add physics resource\xE2\x80\xA6");
         add(menu.rows, Companion::StageCloth, "Add cloth resource\xE2\x80\xA6");
         add(menu.rows, Companion::StageOther, "Add other companion\xE2\x80\xA6");
     }
-    // The stage configuration over a stage: spawn points, zones, items.
-    if (has(widow::StateFlag::CanLoadStageConfig)) {
+    // The stage tools: a stage scene, or a room drawn around a model.
+    if (root && (stage_scene || room_drawn)) {
+        add(menu.rows, Companion::StageEffects, "Stage effects (st*_effect.pac)\xE2\x80\xA6");
+    }
+    if ((stage_scene || room_drawn) && has(widow::StateFlag::CanLoadStageConfig)) {
         const bool loaded = has(widow::StateFlag::StageConfigLoaded);
         add(menu.rows, Companion::StageConfigLoad,
             loaded ? "Load another stage config (stNNNcfg.pac)\xE2\x80\xA6" : "Stage config (stNNNcfg.pac)\xE2\x80\xA6");
@@ -79,21 +103,6 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
             add(menu.rows, Companion::StageConfigRemove, "Remove stage config");
         }
     }
-    // A cutscene's sound lives in .ogg files beside the archive.
-    if (demo::is_demo(session)) add(menu.rows, Companion::CutsceneSound, "\xF0\x9F\x94\x8A Cutscene sound (.ogg)\xE2\x80\xA6");
-    // Its movie part, a .wmv beside it too (this build decodes movies).
-    if (demo::is_demo(session) && video::available()) {
-        add(menu.rows, Companion::CutsceneMovie, "\xF0\x9F\x8E\x9E Cutscene movie (.wmv)\xE2\x80\xA6");
-    }
-    // Its subtitles: the message table of a language beside it.
-    if (demo::is_demo(session)) {
-        add(menu.rows, Companion::CutsceneSubtitles, "\xF0\x9F\x92\xAC Subtitles (*_msg_<lang>.txt)\xE2\x80\xA6");
-    }
-    // A cutscene whose camera the user took: back to following its cuts.
-    if (demo::is_demo(session) && !demo::director(session)) {
-        add(menu.rows, Companion::CutsceneCamera, "\xF0\x9F\x8E\xAC Cutscene camera (follow the cuts)");
-    }
-    add(menu.rows, Companion::Diagnostics, "Diagnostics / build info\xE2\x80\xA6");
     return menu;
 }
 

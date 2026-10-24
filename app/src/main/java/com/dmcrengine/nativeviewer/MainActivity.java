@@ -1699,13 +1699,16 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
-    /** The ⋮ menu: a row of square shortcuts (settings first), then actions. */
+    /** The ⋮ menu: square shortcuts (settings first) in rows, then actions; it scrolls when long. */
     private void showCompanionMenu(View anchor) {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setBackgroundColor(0xff23252c);
         panel.setPadding(dp(8), dp(8), dp(8), dp(8));
-        final android.widget.PopupWindow popup = new android.widget.PopupWindow(panel,
+        final android.widget.ScrollView scroller = new android.widget.ScrollView(this);
+        scroller.setBackgroundColor(0xff23252c);
+        scroller.addView(panel);
+        final android.widget.PopupWindow popup = new android.widget.PopupWindow(scroller,
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff23252c));
         popup.setOutsideTouchable(true);
@@ -1716,19 +1719,29 @@ public final class MainActivity extends Activity {
         final CompanionMenu menu = NativeBridge.companionMenu(session, isRootScene(),
                 assembledPacUri != null, stagePacUri != null, roomLoaded, roomShown());
         if (menu == null) return;
-        LinearLayout icons = new LinearLayout(this);
-        icons.setOrientation(LinearLayout.HORIZONTAL);
+        // Squares in rows as wide as the screen allows (a long press names one).
+        final int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        final int perRow = Math.max(3, Math.min(6, (screenWidth - dp(64)) / dp(TOOL_SIZE_DP + 6)));
+        LinearLayout icons = null;
         for (int i = 0; menu.shortcuts != null && i < menu.shortcuts.ids.length; ++i) {
+            if (i % perRow == 0) {
+                icons = new LinearLayout(this);
+                icons.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                rowParams.bottomMargin = dp(6);
+                panel.addView(icons, rowParams);
+            }
             final int id = menu.shortcuts.ids[i];
             final String glyph = i < menu.shortcuts.icons.length ? menu.shortcuts.icons[i] : "";
             final Button button = makeSquareButton(glyph, menu.shortcuts.labels[i], 22f);
+            button.setTooltipText(menu.shortcuts.labels[i]);
             if (menu.isDimmed(id)) button.setAlpha(0.5f);
             button.setOnClickListener(v -> { popup.dismiss(); runCompanion(id); });
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
             params.setMarginEnd(dp(6));
             icons.addView(button, params);
         }
-        panel.addView(icons);
         for (int i = 0; menu.rows != null && i < menu.rows.ids.length; ++i) {
             final int id = menu.rows.ids[i];
             TextView row = new TextView(this);
@@ -1739,6 +1752,13 @@ public final class MainActivity extends Activity {
             row.setOnClickListener(v -> { popup.dismiss(); runCompanion(id); });
             panel.addView(row);
         }
+        // No taller than the room below the anchor: the rest scrolls.
+        final int[] at = new int[2];
+        anchor.getLocationOnScreen(at);
+        final int below = getResources().getDisplayMetrics().heightPixels - (at[1] + anchor.getHeight()) - dp(16);
+        panel.measure(View.MeasureSpec.makeMeasureSpec(screenWidth, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        if (below > dp(120) && panel.getMeasuredHeight() > below) popup.setHeight(below);
         popup.showAsDropDown(anchor);
     }
 
