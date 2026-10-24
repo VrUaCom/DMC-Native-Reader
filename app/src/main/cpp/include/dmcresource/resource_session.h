@@ -372,6 +372,8 @@ struct ViewControls final {
     float zoom_scale{1.0F};
     // A tile of a picture larger than one render (view_renderer.h).
     ViewState::Tile tile{};
+    // The photo camera's development, done by the GPU when it draws.
+    const CameraPost* post{};
 };
 
 // World position of the camera of that view (the start of a fly camera).

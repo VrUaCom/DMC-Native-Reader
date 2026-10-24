@@ -14,6 +14,7 @@
 
 #include "dmcresource/camera_control.h"
 #include "dmcresource/frame_profile.h"
+#include "dmcresource/view_gpu.h"
 #include "dmcresource/demo_session.h"
 
 namespace dmcresource::spider::camera {
@@ -494,6 +495,26 @@ float focus_distance(const std::vector<float>& depth, int w, int h) {
     return *mid;
 }
 
+constexpr int kTaps = 128;
+
+// Golden-angle points in the unit disk, pushed out to the blades' polygon.
+std::array<std::array<float, 2>, kTaps> bokeh_taps() {
+    const int blades = pick(Key::LensBlades, kBlades);
+    std::array<std::array<float, 2>, kTaps> taps{};
+    for (int i = 0; i < kTaps; ++i) {
+        const float rho = std::sqrt((static_cast<float>(i) + 0.5F) / kTaps);
+        const float theta = static_cast<float>(i) * 2.39996323F;
+        float edge = 1.0F;
+        if (blades >= 5) {
+            const float sector = 6.28318531F / static_cast<float>(blades);
+            const float a = std::fmod(theta, sector) - 0.5F * sector;
+            edge = std::cos(0.5F * sector) / std::cos(a);
+        }
+        taps[static_cast<std::size_t>(i)] = {rho * edge * std::cos(theta), rho * edge * std::sin(theta)};
+    }
+    return taps;
+}
+
 // Depth of field of a thin lens of focal length mm at aperture N focused at
 // `focus`: each pixel gathers the pixels inside its circle of confusion
 // (shaped by the blades), a nearer pixel reaching over a farther one but not
@@ -524,21 +545,7 @@ void depth_of_field(RgbaImage* image, const std::vector<float>& depth, float mm,
     float widest = 0.0F;
     for (std::size_t i = 0; i < depth.size(); i += 7U) widest = std::max(widest, radius_at(i));
     if (widest < 0.5F) return;
-    // Golden-angle points in the unit disk, pushed out to the blades' polygon.
-    constexpr int kTaps = 128;
-    const int blades = pick(Key::LensBlades, kBlades);
-    std::array<std::array<float, 2>, kTaps> taps{};
-    for (int i = 0; i < kTaps; ++i) {
-        const float rho = std::sqrt((static_cast<float>(i) + 0.5F) / kTaps);
-        const float theta = static_cast<float>(i) * 2.39996323F;
-        float edge = 1.0F;
-        if (blades >= 5) {
-            const float sector = 6.28318531F / static_cast<float>(blades);
-            const float a = std::fmod(theta, sector) - 0.5F * sector;
-            edge = std::cos(0.5F * sector) / std::cos(a);
-        }
-        taps[static_cast<std::size_t>(i)] = {rho * edge * std::cos(theta), rho * edge * std::sin(theta)};
-    }
+    const auto taps = bokeh_taps();
     const bool bright = choice(Key::LensBokeh) == 1;
     const std::vector<std::uint8_t> src = image->pixels;
     in_bands(h, [&](int row_begin, int row_end) {
@@ -823,13 +830,24 @@ float noise_sigma() noexcept {
 
 // What the camera makes of the light: exposure, white balance, the curves,
 // the style, vignetting, noise and sharpening (a RAW leaves these to the editor).
-void look(RgbaImage* image, std::uint32_t seed) {
-    if (!valid_image(image)) return;
-    const frame_profile::Scope timed{frame_profile::Stage::Camera};
-    const int w = image->width;
-    const int h = image->height;
-    const float scale = static_cast<float>(std::max(w, h)) / 1920.0F;
+// The look's numbers for a picture of that size: per-channel curves, then
+// what mixes the channels. The CPU pass (look) and the GPU's (CameraPost)
+// use the same.
+struct LookParams final {
+    std::array<std::array<std::uint8_t, 256>, 3> curve{};
+    int style{};
+    float saturation{};
+    std::array<float, 3> tint{1.0F, 1.0F, 1.0F};
+    float vignette{};
+    int noise_choice{};
+    float sigma{};
+    int grain{1};
+    float sharpen{};
+};
 
+LookParams look_params(int w, int h) {
+    LookParams out;
+    const float scale = static_cast<float>(std::max(w, h)) / 1920.0F;
     // Exposure, white balance, highlights and contrast are curves per
     // channel; the rest mixes the channels.
     const Exposure e = exposure();
@@ -849,7 +867,6 @@ void look(RgbaImage* image, std::uint32_t seed) {
         default: break;
     }
     const bool soft = choice(Key::ExposureHighlights) == 1;
-    std::array<std::array<std::uint8_t, 256>, 3> curve{};
     for (int c = 0; c < 3; ++c) {
         for (int v = 0; v < 256; ++v) {
             float lin = srgb_to_linear(static_cast<float>(v) / 255.0F) * e.gain * wb[c];
@@ -858,13 +875,39 @@ void look(RgbaImage* image, std::uint32_t seed) {
             const float s = x * x * (3.0F - 2.0F * x);
             x = std::clamp(x + 2.0F * contrast * (s - x), 0.0F, 1.0F);
             x = lift + x * (1.0F - lift * 1.6F);
-            curve[c][v] = static_cast<std::uint8_t>(std::clamp(x * 255.0F + 0.5F, 0.0F, 255.0F));
+            out.curve[c][v] = static_cast<std::uint8_t>(std::clamp(x * 255.0F + 0.5F, 0.0F, 255.0F));
         }
     }
     const float vignette = vignette_strength();
     const int noise_choice = choice(Key::ExposureNoise);
     const float sigma = noise_sigma();
     const int grain = noise_choice == 2 ? std::max(1, static_cast<int>(std::lround(2.0F * scale))) : 1;
+    out.style = style;
+    out.saturation = saturation;
+    out.tint = tint;
+    out.vignette = vignette;
+    out.noise_choice = noise_choice;
+    out.sigma = sigma;
+    out.grain = grain;
+    const int sharpness = choice(Key::ColourSharpness);
+    out.sharpen = sharpness > 0 ? 0.35F * static_cast<float>(sharpness) : 0.0F;
+    return out;
+}
+
+void look(RgbaImage* image, std::uint32_t seed) {
+    if (!valid_image(image)) return;
+    const frame_profile::Scope timed{frame_profile::Stage::Camera};
+    const int w = image->width;
+    const int h = image->height;
+    const LookParams lp = look_params(w, h);
+    const auto& curve = lp.curve;
+    const int style = lp.style;
+    const float saturation = lp.saturation;
+    const auto tint = lp.tint;
+    const float vignette = lp.vignette;
+    const int noise_choice = lp.noise_choice;
+    const float sigma = lp.sigma;
+    const int grain = lp.grain;
     const float cx = 0.5F * static_cast<float>(w);
     const float cy = 0.5F * static_cast<float>(h);
     const float inv_r2 = 1.0F / (cx * cx + cy * cy);
@@ -921,8 +964,68 @@ void look(RgbaImage* image, std::uint32_t seed) {
         }
     }
     });
-    const int sharpness = choice(Key::ColourSharpness);
-    if (sharpness > 0) sharpen(image, 0.35F * static_cast<float>(sharpness));
+    if (lp.sharpen > 0.0F) sharpen(image, lp.sharpen);
+}
+
+// The development as numbers for the GPU (camera_post.h): the same look and
+// optics as the CPU passes, for a w x h frame through a lens of mm.
+CameraPost make_post(int w, int h, float mm, std::uint32_t seed) {
+    CameraPost post;
+    post.enabled = true;
+    const LookParams lp = look_params(w, h);
+    for (std::size_t c = 0; c < 3U; ++c) {
+        for (std::size_t v = 0; v < 256U; ++v) post.curves[c * 256U + v] = lp.curve[c][v];
+    }
+    post.saturation = lp.saturation;
+    post.tint = lp.style == 6 ? std::array<float, 3>{1.0F, 1.0F, 1.0F} : lp.tint;
+    post.cinema = lp.style == 6;
+    post.vignette = lp.vignette;
+    post.noise_sigma = lp.sigma;
+    post.grain = lp.grain;
+    post.chroma_noise = lp.noise_choice == 1;
+    post.seed = seed;
+    post.sharpen = lp.sharpen;
+    post.polarizer = choice(Key::FilterPolarizer) == 1;
+    post.polarizer_strength = pick(Key::FilterPolarizerStrength, kPolarizerStrength);
+    post.polarizer_ring = g_polarizer.load();
+    post.distortion_k = choice(Key::LensDistortion) == 1 ? distortion_k(mm) : 0.0F;
+    post.fringe = choice(Key::LensFringe) == 0 ? 0.0F : (choice(Key::LensFringe) == 1 ? 0.0012F : 0.003F);
+    if (depth_of_field_on()) {
+        post.depth_of_field = true;
+        post.focal_mm = std::max(1.0F, mm);
+        post.coc_k = post.focal_mm * post.focal_mm / exposure().aperture;
+        post.unit_mm = kUnitMm;
+        const float short_side = static_cast<float>(std::min(w, h));
+        post.max_radius = 0.05F * short_side;
+        post.px_per_mm = short_side / 24.0F;
+        post.auto_focus_half = std::max(1.0F, short_side / 40.0F);
+        // A chosen distance, the touched point, or the auto focus (0).
+        const float chosen = pick(Key::LensFocus, kFocusUnits);
+        const float point = g_focus_point.load();
+        const float units = chosen > 0.0F ? chosen : point;
+        post.focus_mm = !(units > 0.0F) ? 0.0F : (!std::isfinite(units) || units >= 1.0e9F) ? -1.0F : units * kUnitMm;
+        const auto taps = bokeh_taps();
+        post.taps = kTaps;
+        for (std::size_t i = 0; i < taps.size(); ++i) {
+            post.tap_xy[i * 2U] = taps[i][0];
+            post.tap_xy[i * 2U + 1U] = taps[i][1];
+        }
+        post.bright_bokeh = choice(Key::LensBokeh) == 1;
+    }
+    return post;
+}
+
+// The GPU develops this frame: it draws it (on), it is not turned (a rolled
+// picture is sampled back on the CPU) and not too large for its targets.
+bool gpu_develops(int w, int h) noexcept {
+    return gpu_view_enabled() && gpu_view_backend() != nullptr && std::fabs(camera_roll()) < 1.0e-4F &&
+           static_cast<long long>(w) * h <= 4096LL * 4096LL;
+}
+
+// After a GPU frame: what its auto focus found.
+void take_focus(const CameraPost& post) noexcept {
+    if (post.focus_found > 0.0F) g_focus.store(post.focus_found);
+    else if (post.focus_found == 0.0F) g_focus.store(kInfinity);
 }
 
 }  // namespace
@@ -1493,12 +1596,26 @@ RgbaImage render_capture(const Session* session, Kind kind, int view_width, int 
     }
     ViewControls framed = controls;
     frame_controls(kind, view_width, view_height, &framed);
-    std::vector<float> depth;
-    auto image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
-                               depth_of_field_on() ? &depth : nullptr);
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
-    develop(&image, g_seed.fetch_add(1U), focal_mm(lens), &depth);
+    const std::uint32_t seed = g_seed.fetch_add(1U);
+    RgbaImage image;
+    bool developed = false;
+    if (gpu_develops(p.width, p.height)) {
+        // The GPU develops it as it draws it (one render, no depth pass).
+        const CameraPost post = make_post(p.width, p.height, focal_mm(lens), seed);
+        framed.post = &post;
+        image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed, nullptr);
+        framed.post = nullptr;
+        developed = post.applied;
+        if (developed) take_focus(post);
+    }
+    if (!developed) {
+        std::vector<float> depth;
+        image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                              depth_of_field_on() ? &depth : nullptr);
+        develop(&image, seed, focal_mm(lens), &depth);
+    }
     if (kind == Kind::Video && choice(Key::VideoMotionBlur) == 1 && !image.pixels.empty()) {
         const Exposure e = exposure();
         const float a = std::clamp(1.0F - 1.0F / (2.0F * e.shutter_seconds * static_cast<float>(p.fps)), 0.0F, 0.85F);
@@ -1599,14 +1716,28 @@ RgbaImage render_view_frame(const Session* session, int width, int height, float
     ViewControls framed = controls;
     const float fixed = fixed_lens_zoom();
     if (fixed > 0.0F) framed.lens_zoom = finder_zoom(Kind::Photo, zoom, width, height);
-    // A frame while the view moves skips the depth of field (it needs a
-    // second, software pass for the depth).
+    const float mm = focal_mm(capture_zoom(Kind::Photo, effective_view_zoom(session, zoom), width, height));
+    const std::uint32_t seed = g_seed.fetch_add(1U);
+    if (gpu_develops(width, height)) {
+        // The GPU develops the viewfinder as it draws it.
+        const CameraPost post = make_post(width, height, mm, seed);
+        framed.post = &post;
+        auto image = render_rolled(session, width, height, yaw, pitch, zoom, render_flags, framed, nullptr);
+        if (post.applied) {
+            take_focus(post);
+            return image;
+        }
+        framed.post = nullptr;
+        develop(&image, seed, mm, nullptr);
+        return image;
+    }
+    // On the CPU a frame while the view moves skips the depth of field (it
+    // needs a second, software pass for the depth).
     std::vector<float> depth;
     const bool moving = has_render_flag(render_flags, RenderFlag::Preview);
     auto image = render_rolled(session, width, height, yaw, pitch, zoom, render_flags, framed,
                                depth_of_field_on() && !moving ? &depth : nullptr);
-    develop(&image, g_seed.fetch_add(1U),
-            focal_mm(capture_zoom(Kind::Photo, effective_view_zoom(session, zoom), width, height)), &depth);
+    develop(&image, seed, mm, &depth);
     return image;
 }
 

@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdint>
 #include <vector>
+
+#include "dmcresource/camera_post.h"
 #include <span>
 
 #include "dmcresource/image_preview.h"
@@ -113,6 +115,8 @@ struct ViewState {
     // When set, filled with each pixel's distance from the camera (infinity
     // where nothing was drawn): the photo camera's depth of field reads it.
     std::vector<float>* depth_out{};
+    // The photo camera's development for a GPU frame (null: none).
+    const CameraPost* post{};
     // One tile of a picture larger than a render (the photo camera's 124 MP
     // and more): the focal length of the whole picture's short side, the
     // whole picture's centre relative to this tile's (pixels), its height.

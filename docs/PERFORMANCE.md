@@ -41,6 +41,42 @@ the phone and the stages say what to do first.
 - The GPU read back no longer makes a pass over every pixel to set alpha.
   Alpha is cleared to 1 and masked out of drawing.
 
+## Done in v110: the photo camera on the GPU (step 4)
+
+- The core writes the development as numbers (`camera_post.h`,
+  `camera::make_post`): the look's curves as a 256-entry table per channel,
+  saturation, tint or the cinema grade, vignetting, noise (the same hash),
+  sharpening, distortion and fringing, the polarizer's ring and strength,
+  and the depth of field's lens, focus and bokeh taps.
+- The GLES backend runs it on the frame it drew, with no CPU pass and no
+  second software render for the depth:
+  1. The drawn frame and its depth are blitted (MSAA resolved) into
+     textures.
+  2. The auto focus reads a 16 × 16 grid of camera distances in the middle
+     (packed into RGBA8, 1 KB back) and the CPU takes the median.
+  3. The depth of field gathers up to 128 shaped taps per pixel from the
+     colour and the depth texture, a nearer pixel reaching over a farther
+     one.
+  4. The lens (distortion, fringing), the polarizer and the look.
+  5. Sharpening.
+  6. The read back of the result.
+- The CPU path stays for frames the GPU does not draw: the software
+  renderer, a rolled camera (its picture is turned on the CPU), pictures
+  past 4096 × 4096, tiles and RAW.
+- Checked on the desktop with Mesa's llvmpipe (OpenGL ES 3.2 through EGL
+  surfaceless; the app's own backend file). On st002 the GPU and the CPU
+  differ by 3.9 on average with no development at all (two rasterisers). With
+  the lens, the polarizer, sharpening and the depth of field the difference
+  stays there (1.2–5.9). The auto focus agrees (870 against 873 units).
+
+## Testing GPU work off the phone
+
+`android/gles_view_backend.cpp` builds on Linux with Mesa's EGL and GLES
+(`libegl-dev libgles-dev`, `EGL_PLATFORM=surfaceless`). A probe installs it
+and renders through `render_session` like the app, so the GPU passes are
+checked picture by picture before they reach the phone. llvmpipe's timings
+mean nothing; only the phone's benchmark counts.
+
 ## The plan, in order of gain
 
 1. **Asynchronous read back** (pixel pack buffers with fences, two or three
@@ -54,7 +90,7 @@ the phone and the stages say what to do first.
 3. **Skinning on the GPU.** The bone matrices go to the vertex shader, and
    the model's vertices stay on the GPU instead of being rebuilt and
    uploaded every frame (step 3). Medium-large work.
-4. **The photo camera as a shader.** The curves, colour, vignetting, noise,
+4. **The photo camera as a shader** (done in v110). The curves, colour, vignetting, noise,
    polarizer and lens run as a fragment pass on the GPU frame. The depth of
    field reads the GPU's depth texture instead of drawing the whole frame
    again in software for its depth, which today is the most expensive part

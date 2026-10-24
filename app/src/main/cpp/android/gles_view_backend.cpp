@@ -17,6 +17,7 @@
 #include <GLES2/gl2ext.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <cstddef>
 #include <cstring>
@@ -180,6 +181,221 @@ void main() {
     o = t;
 }
 )";
+
+// ---- The photo camera's development (CameraPost) -----------------------------
+// Full-screen passes over the drawn frame: the depth of field (from the
+// frame's own depth), then the lens, polarizer and look, then sharpening.
+// The numbers are the core's (spider/camera.cpp); these only evaluate them.
+
+constexpr const char* kFullVertex = R"(#version 300 es
+void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+
+// Camera distance from the depth buffer: clip z = p.x * c.z + p.y, w = c.z.
+constexpr const char* kDepthHelpers = R"(
+uniform highp sampler2D u_depth;
+uniform vec2 u_proj;
+// Scene units; < 0 where nothing was drawn (infinity).
+float distance_at(ivec2 p) {
+    float d = texelFetch(u_depth, p, 0).r;
+    if (d >= 0.999999) return -1.0;
+    return u_proj.y / ((2.0 * d - 1.0) - u_proj.x);
+}
+)";
+
+// The auto focus: a 16 x 16 grid over the middle of the frame, distances
+// packed into RGBA8 (units x 16 as a 32-bit integer) for the CPU's median.
+constexpr const char* kFocusFragment = R"(#version 300 es
+precision highp float;
+precision highp int;
+%DEPTH%
+uniform ivec2 u_size;
+uniform float u_half;
+out vec4 o;
+void main() {
+    vec2 cell = floor(gl_FragCoord.xy);
+    vec2 p = vec2(u_size) * 0.5 + (cell - 7.5) / 7.5 * u_half;
+    float z = distance_at(ivec2(clamp(p, vec2(0.0), vec2(u_size) - 1.0)));
+    uint v = z < 0.0 ? 0u : uint(clamp(z * 16.0, 1.0, 4.0e9));
+    o = vec4(float(v & 255u), float((v >> 8) & 255u), float((v >> 16) & 255u), float(v >> 24)) / 255.0;
+}
+)";
+
+constexpr const char* kDofFragment = R"(#version 300 es
+precision highp float;
+precision highp int;
+%DEPTH%
+uniform sampler2D u_color;
+uniform ivec2 u_size;
+uniform float u_focus_mm;  // > 0 that distance, < 0 infinity
+uniform float u_f;
+uniform float u_k;
+uniform float u_unit;
+uniform float u_px_per_mm;
+uniform float u_max_r;
+uniform int u_taps;
+uniform int u_bright;
+uniform vec2 u_tap[128];
+out vec4 o;
+float to_mm(float z) { return z < 0.0 ? -1.0 : max(z * u_unit, u_f * 1.05); }
+float radius(float zmm) {
+    float coc;
+    if (u_focus_mm > 0.0) {
+        float s = max(u_focus_mm, u_f * 1.05);
+        coc = zmm < 0.0 ? u_k / (s - u_f) : u_k / (s - u_f) * abs(zmm - s) / zmm;
+    } else {
+        coc = zmm < 0.0 ? 0.0 : u_k / zmm;
+    }
+    return min(u_max_r, 0.5 * coc * u_px_per_mm);
+}
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec4 c0 = texelFetch(u_color, p, 0);
+    float zp = to_mm(distance_at(p));
+    float r = radius(zp);
+    if (r < 0.5) { o = c0; return; }
+    int n = clamp(int(r * r * 1.5) + 4, 4, u_taps);
+    vec3 sum = vec3(0.0);
+    float weights = 0.0;
+    for (int t = 0; t < 128; ++t) {
+        if (t >= n) break;
+        vec2 d = u_tap[t] * r;
+        ivec2 q = clamp(p + ivec2(round(d)), ivec2(0), u_size - 1);
+        float zq = to_mm(distance_at(q));
+        float rq = radius(zq);
+        // A nearer pixel reaches over this one; a farther one no further than this one's own circle.
+        bool nearer = zq >= 0.0 && (zp < 0.0 || zq < zp);
+        float reach = nearer ? rq : min(rq, r);
+        if (reach + 0.5 < length(d)) continue;
+        vec3 c = texelFetch(u_color, q, 0).rgb;
+        float w = 1.0;
+        if (u_bright == 1) w += 8.0 * max(0.0, dot(c, vec3(0.2126, 0.7152, 0.0722)) - 0.75);
+        sum += w * c;
+        weights += w;
+    }
+    o = vec4(weights > 0.0 ? sum / weights : c0.rgb, 1.0);
+}
+)";
+
+constexpr const char* kLookFragment = R"(#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D u_src;
+uniform sampler2D u_curves;  // 256 x 1: r, g, b curves
+uniform ivec2 u_size;
+uniform float u_k;
+uniform float u_fringe;
+uniform int u_pol;
+uniform float u_pol_strength;
+uniform float u_ring;
+uniform float u_sat;
+uniform vec3 u_tint;
+uniform int u_cinema;
+uniform float u_vignette;
+uniform float u_sigma;
+uniform int u_grain;
+uniform int u_chroma;
+uniform uint u_seed;
+out vec4 o;
+float s2l(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+float l2s(float v) { v = clamp(v, 0.0, 1.0); return v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
+uint hash(uint x, uint y, uint seed) {
+    uint h = x * 0x8DA6B343u ^ y * 0xD8163841u ^ seed * 0xCB1AB31Fu;
+    h ^= h >> 13u;
+    h *= 0x5BD1E995u;
+    h ^= h >> 15u;
+    return h;
+}
+float noise(uint h) { return (float(h & 0xFFFFu) + float(h >> 16u)) / 65535.0 - 1.0; }
+vec3 at(vec2 pixel) { return texture(u_src, (pixel + 0.5) / vec2(u_size)).rgb; }
+void main() {
+    vec2 xy = floor(gl_FragCoord.xy);
+    vec2 size = vec2(u_size);
+    vec2 c = size * 0.5;
+    float hd = length(c);
+    vec2 d = (xy + 0.5 - c) / hd;
+    vec3 col;
+    if (u_k == 0.0 && u_fringe == 0.0) {
+        col = texelFetch(u_src, ivec2(xy), 0).rgb;
+    } else {
+        // Distortion (the corners stay the corners) and fringing, radial.
+        float scale = (1.0 + u_k * dot(d, d)) / (1.0 + u_k);
+        col.g = at(c + d * scale * hd - 0.5).g;
+        col.r = at(c + d * scale * (1.0 + u_fringe) * hd - 0.5).r;
+        col.b = at(c + d * scale * (1.0 - u_fringe) * hd - 0.5).b;
+    }
+    if (u_pol == 1) {
+        float hi = max(col.r, max(col.g, col.b));
+        float lo = min(col.r, min(col.g, col.b));
+        float saturation = hi > 1.0e-3 ? (hi - lo) / hi : 0.0;
+        float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+        float glare = smoothstep(0.55, 0.95, luma) * (1.0 - saturation);
+        float sky = clamp((col.b - max(col.r, col.g)) / max(col.b, 1.0e-3), 0.0, 1.0) * smoothstep(0.25, 0.7, col.b);
+        float polarized = clamp(0.15 + 0.85 * glare + 0.6 * sky, 0.0, 0.95);
+        float light = 0.5 * (xy.x / size.x - 0.5) + 0.3 * (xy.y / size.y - 0.5);
+        float s = sin(u_ring - light);
+        float held = u_pol_strength * polarized * s * s;
+        vec3 lin = vec3(s2l(col.r), s2l(col.g), s2l(col.b)) * (1.0 - held);
+        float l = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+        lin = l + (lin - l) * (1.0 + 0.8 * held);
+        col = vec3(l2s(lin.r), l2s(lin.g), l2s(lin.b));
+    }
+    ivec3 i = ivec3(clamp(col * 255.0 + 0.5, 0.0, 255.0));
+    vec3 v = vec3(texelFetch(u_curves, ivec2(i.r, 0), 0).r, texelFetch(u_curves, ivec2(i.g, 0), 0).g,
+                  texelFetch(u_curves, ivec2(i.b, 0), 0).b) * 255.0;
+    float luma = dot(v, vec3(0.2126, 0.7152, 0.0722));
+    if (u_sat != 0.0) v = luma + (v - luma) * (1.0 + u_sat);
+    if (u_cinema == 1) {
+        float t = luma / 255.0;
+        v.r *= 0.92 + 0.16 * t;
+        v.b *= 1.08 - 0.18 * t;
+    } else {
+        v *= u_tint;
+    }
+    if (u_vignette > 0.0) {
+        vec2 off = xy - c;
+        float rr = dot(off, off) / dot(c, c);
+        v *= 1.0 - u_vignette * rr * sqrt(rr);
+    }
+    if (u_sigma > 0.0) {
+        float shade = 1.3 - 0.7 * clamp(luma / 255.0, 0.0, 1.0);
+        uint gx = uint(xy.x) / uint(u_grain);
+        uint gy = uint(xy.y) / uint(u_grain);
+        v += noise(hash(gx, gy, u_seed)) * u_sigma * shade;
+        if (u_chroma == 1) {
+            v.r += noise(hash(gx, gy, u_seed ^ 0x9E3779B9u)) * u_sigma * 0.6 * shade;
+            v.b += noise(hash(gx, gy, u_seed ^ 0x7F4A7C15u)) * u_sigma * 0.6 * shade;
+        }
+    }
+    o = vec4(clamp((v + 0.5) / 255.0, 0.0, 1.0), 1.0);
+}
+)";
+
+constexpr const char* kSharpenFragment = R"(#version 300 es
+precision highp float;
+uniform sampler2D u_src;
+uniform ivec2 u_size;
+uniform float u_amount;
+out vec4 o;
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec3 c = texelFetch(u_src, p, 0).rgb;
+    if (p.x == 0 || p.y == 0 || p.x == u_size.x - 1 || p.y == u_size.y - 1) { o = vec4(c, 1.0); return; }
+    vec3 around = texelFetch(u_src, p + ivec2(1, 0), 0).rgb + texelFetch(u_src, p - ivec2(1, 0), 0).rgb +
+                  texelFetch(u_src, p + ivec2(0, 1), 0).rgb + texelFetch(u_src, p - ivec2(0, 1), 0).rgb;
+    o = vec4(clamp(c + u_amount * (c - around * 0.25), 0.0, 1.0), 1.0);
+}
+)";
+
+std::string with_depth(const char* source) {
+    std::string text = source;
+    const auto at = text.find("%DEPTH%");
+    if (at != std::string::npos) text.replace(at, 7, kDepthHelpers);
+    return text;
+}
 
 GLuint compile(GLenum type, const char* source) {
     const GLuint shader = glCreateShader(type);
@@ -486,6 +702,233 @@ private:
         return true;
     }
 
+    // ---- the photo camera's development ----------------------------------
+
+    bool ensure_post_programs() {
+        if (post_tried_) return post_ready_;
+        post_tried_ = true;
+        focus_program_ = link(kFullVertex, with_depth(kFocusFragment).c_str());
+        dof_program_ = link(kFullVertex, with_depth(kDofFragment).c_str());
+        look_program_ = link(kFullVertex, kLookFragment);
+        sharpen_program_ = link(kFullVertex, kSharpenFragment);
+        glGenVertexArrays(1, &full_vao_);
+        curves_tex_ = make_texture(GL_RGBA8, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
+        post_ready_ = focus_program_ != 0U && dof_program_ != 0U && look_program_ != 0U && sharpen_program_ != 0U &&
+                      full_vao_ != 0U && curves_tex_ != 0U && glGetError() == GL_NO_ERROR;
+        return post_ready_;
+    }
+
+    static GLuint make_texture(GLenum internal, int width, int height, GLenum format, GLenum type, GLint filter) {
+        GLuint id = 0U;
+        glGenTextures(1, &id);
+        glBindTexture(GL_TEXTURE_2D, id);
+        glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(internal), width, height, 0, format, type, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0U);
+        return id;
+    }
+
+    static GLuint make_fbo(GLuint color, GLuint depth_stencil) {
+        GLuint fbo = 0U;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
+        if (depth_stencil != 0U) {
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, depth_stencil, 0);
+        }
+        const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+        if (!complete) {
+            glDeleteFramebuffers(1, &fbo);
+            return 0U;
+        }
+        return fbo;
+    }
+
+    // The frame's colour and depth as textures, two more to pass between
+    // passes, and the auto focus's 16 x 16.
+    bool ensure_post_targets(int width, int height) {
+        if (width == post_width_ && height == post_height_ && post_fbo_ != 0U) return true;
+        destroy_post_targets();
+        post_color_ = make_texture(GL_RGBA8, width, height, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+        post_depth_ = make_texture(GL_DEPTH24_STENCIL8, width, height, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, GL_NEAREST);
+        ping_ = make_texture(GL_RGBA8, width, height, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+        pong_ = make_texture(GL_RGBA8, width, height, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR);
+        focus_tex_ = make_texture(GL_RGBA8, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST);
+        post_fbo_ = make_fbo(post_color_, post_depth_);
+        ping_fbo_ = make_fbo(ping_, 0U);
+        pong_fbo_ = make_fbo(pong_, 0U);
+        focus_fbo_ = make_fbo(focus_tex_, 0U);
+        if (post_fbo_ == 0U || ping_fbo_ == 0U || pong_fbo_ == 0U || focus_fbo_ == 0U || glGetError() != GL_NO_ERROR) {
+            destroy_post_targets();
+            return false;
+        }
+        post_width_ = width;
+        post_height_ = height;
+        return true;
+    }
+
+    void destroy_post_targets() {
+        const GLuint fbos[4] = {post_fbo_, ping_fbo_, pong_fbo_, focus_fbo_};
+        const GLuint textures[5] = {post_color_, post_depth_, ping_, pong_, focus_tex_};
+        glDeleteFramebuffers(4, fbos);
+        glDeleteTextures(5, textures);
+        post_fbo_ = ping_fbo_ = pong_fbo_ = focus_fbo_ = 0U;
+        post_color_ = post_depth_ = ping_ = pong_ = focus_tex_ = 0U;
+        post_width_ = post_height_ = 0;
+        glGetError();
+    }
+
+    void full_pass(GLuint target, int width, int height) {
+        glBindFramebuffer(GL_FRAMEBUFFER, target);
+        glViewport(0, 0, width, height);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+
+    static void bind_unit(GLuint unit, GLuint texture) {
+        glActiveTexture(GL_TEXTURE0 + unit);
+        glBindSampler(unit, 0U);
+        glBindTexture(GL_TEXTURE_2D, texture);
+    }
+
+    // The development: the frame (resolved) and its depth, the auto focus
+    // when it is asked for, the depth of field, the lens / polarizer / look,
+    // sharpening, then the read back of the last.
+    bool develop(const GpuViewFrame& frame, const dmcresource::CameraPost& post, RgbaImage& image) {
+        const int w = frame.width;
+        const int h = frame.height;
+        if (static_cast<long long>(w) * h > 4096LL * 4096LL) return false;
+        if (!ensure_post_programs() || !ensure_post_targets(w, h)) return false;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, post_fbo_);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glDepthMask(GL_FALSE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glBindVertexArray(full_vao_);
+        const float proj_z = frame.projection[2];
+        const float proj_w = frame.projection[3];
+
+        GLuint source = post_color_;
+        if (post.depth_of_field) {
+            float focus_mm = post.focus_mm;
+            if (focus_mm == 0.0F) {
+                // The auto focus: the median distance in the middle.
+                glUseProgram(focus_program_);
+                bind_unit(1U, post_depth_);
+                glUniform1i(glGetUniformLocation(focus_program_, "u_depth"), 1);
+                glUniform2f(glGetUniformLocation(focus_program_, "u_proj"), proj_z, proj_w);
+                glUniform2i(glGetUniformLocation(focus_program_, "u_size"), w, h);
+                glUniform1f(glGetUniformLocation(focus_program_, "u_half"), post.auto_focus_half);
+                full_pass(focus_fbo_, 16, 16);
+                std::array<std::uint8_t, 16U * 16U * 4U> packed{};
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, focus_fbo_);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, packed.data());
+                std::vector<float> near;
+                for (std::size_t i = 0; i < packed.size(); i += 4U) {
+                    const std::uint32_t v = packed[i] | (packed[i + 1U] << 8U) | (packed[i + 2U] << 16U) |
+                                            (static_cast<std::uint32_t>(packed[i + 3U]) << 24U);
+                    if (v != 0U) near.push_back(static_cast<float>(v) / 16.0F);
+                }
+                if (near.empty()) {
+                    post.focus_found = 0.0F;  // the sky: infinity
+                    focus_mm = -1.0F;
+                } else {
+                    std::nth_element(near.begin(), near.begin() + static_cast<std::ptrdiff_t>(near.size() / 2U),
+                                     near.end());
+                    post.focus_found = near[near.size() / 2U];
+                    focus_mm = post.focus_found * post.unit_mm;
+                }
+            } else {
+                post.focus_found = focus_mm > 0.0F ? focus_mm / post.unit_mm : 0.0F;
+            }
+            glUseProgram(dof_program_);
+            bind_unit(0U, post_color_);
+            bind_unit(1U, post_depth_);
+            const auto at = [this](const char* name) { return glGetUniformLocation(dof_program_, name); };
+            glUniform1i(at("u_color"), 0);
+            glUniform1i(at("u_depth"), 1);
+            glUniform2f(at("u_proj"), proj_z, proj_w);
+            glUniform2i(at("u_size"), w, h);
+            glUniform1f(at("u_focus_mm"), focus_mm);
+            glUniform1f(at("u_f"), post.focal_mm);
+            glUniform1f(at("u_k"), post.coc_k);
+            glUniform1f(at("u_unit"), post.unit_mm);
+            glUniform1f(at("u_px_per_mm"), post.px_per_mm);
+            glUniform1f(at("u_max_r"), post.max_radius);
+            glUniform1i(at("u_taps"), std::clamp(post.taps, 1, 128));
+            glUniform1i(at("u_bright"), post.bright_bokeh ? 1 : 0);
+            glUniform2fv(at("u_tap"), 128, post.tap_xy.data());
+            full_pass(ping_fbo_, w, h);
+            source = ping_;
+        }
+
+        // The lens, the polarizer and the look.
+        std::array<std::uint8_t, 256U * 4U> curves{};
+        for (std::size_t v = 0; v < 256U; ++v) {
+            curves[v * 4U] = post.curves[v];
+            curves[v * 4U + 1U] = post.curves[256U + v];
+            curves[v * 4U + 2U] = post.curves[512U + v];
+            curves[v * 4U + 3U] = 255U;
+        }
+        glBindTexture(GL_TEXTURE_2D, curves_tex_);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 1, GL_RGBA, GL_UNSIGNED_BYTE, curves.data());
+        glUseProgram(look_program_);
+        bind_unit(0U, source);
+        bind_unit(1U, curves_tex_);
+        const auto at = [this](const char* name) { return glGetUniformLocation(look_program_, name); };
+        glUniform1i(at("u_src"), 0);
+        glUniform1i(at("u_curves"), 1);
+        glUniform2i(at("u_size"), w, h);
+        glUniform1f(at("u_k"), post.distortion_k);
+        glUniform1f(at("u_fringe"), post.fringe);
+        glUniform1i(at("u_pol"), post.polarizer ? 1 : 0);
+        glUniform1f(at("u_pol_strength"), post.polarizer_strength);
+        glUniform1f(at("u_ring"), post.polarizer_ring);
+        glUniform1f(at("u_sat"), post.saturation);
+        glUniform3f(at("u_tint"), post.tint[0], post.tint[1], post.tint[2]);
+        glUniform1i(at("u_cinema"), post.cinema ? 1 : 0);
+        glUniform1f(at("u_vignette"), post.vignette);
+        glUniform1f(at("u_sigma"), post.noise_sigma);
+        glUniform1i(at("u_grain"), std::max(1, post.grain));
+        glUniform1i(at("u_chroma"), post.chroma_noise ? 1 : 0);
+        glUniform1ui(at("u_seed"), post.seed);
+        const GLuint look_target = source == ping_ ? pong_fbo_ : ping_fbo_;
+        GLuint result = source == ping_ ? pong_ : ping_;
+        GLuint result_fbo = look_target;
+        full_pass(look_target, w, h);
+
+        if (post.sharpen > 0.0F) {
+            glUseProgram(sharpen_program_);
+            bind_unit(0U, result);
+            glUniform1i(glGetUniformLocation(sharpen_program_, "u_src"), 0);
+            glUniform2i(glGetUniformLocation(sharpen_program_, "u_size"), w, h);
+            glUniform1f(glGetUniformLocation(sharpen_program_, "u_amount"), post.sharpen);
+            result_fbo = result == ping_ ? pong_fbo_ : ping_fbo_;
+            result = result == ping_ ? pong_ : ping_;
+            full_pass(result_fbo, w, h);
+        }
+        bind_unit(1U, 0U);
+        bind_unit(0U, 0U);
+        glBindVertexArray(0);
+        glDepthMask(GL_TRUE);
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, result_fbo);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        image.width = w;
+        image.height = h;
+        image.pixels.resize(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4U);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, image.pixels.data());
+        return glGetError() == GL_NO_ERROR;
+    }
+
     void destroy_target() {
         glBindFramebuffer(GL_FRAMEBUFFER, 0U);
         const GLuint fbos[2] = {fbo_, resolve_fbo_};
@@ -762,6 +1205,18 @@ private:
         // Submitting is done; the read back waits for the GPU to finish.
         draw_timer.reset();
         const frame_profile::Scope read_timer{frame_profile::Stage::Readback};
+        // The photo camera developed here, on the drawn frame and its depth.
+        if (frame.post != nullptr && frame.post->enabled) {
+            const bool developed = develop(frame, *frame.post, image);
+            frame.post->applied = developed;
+            if (developed) {
+                glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                trim_textures();
+                return glGetError() == GL_NO_ERROR;
+            }
+            glGetError();
+        }
         // Resolve and read back: GL row 0 is image row 0 (the projection
         // flips y), so the rows land top-down as RgbaImage stores them.
         GLuint read_fbo = fbo_;
@@ -786,6 +1241,14 @@ private:
 
     std::mutex mutex_;
     bool failed_{false};
+    // The photo camera's passes and targets (made on first use).
+    bool post_tried_{false};
+    bool post_ready_{false};
+    GLuint focus_program_{}, dof_program_{}, look_program_{}, sharpen_program_{};
+    GLuint full_vao_{}, curves_tex_{};
+    GLuint post_color_{}, post_depth_{}, ping_{}, pong_{}, focus_tex_{};
+    GLuint post_fbo_{}, ping_fbo_{}, pong_fbo_{}, focus_fbo_{};
+    int post_width_{}, post_height_{};
     unsigned failures_{0U};
     std::string description_;
     EGLDisplay display_{EGL_NO_DISPLAY};

@@ -264,6 +264,13 @@ APK verifier.
     - The camera passes run on every core: 1080p went from 212 to 69 ms.
     - No alpha pass after the GPU read back.
     - A five-step plan.
+  - v110: the photo camera's development runs on the GPU:
+    - The look, the lens and the polarizer.
+    - The depth of field, from the GPU's depth; the auto focus reads a
+      16 × 16 middle.
+    - Sharpening.
+    - The software depth render and the CPU passes are gone from GPU frames.
+    - Checked with Mesa llvmpipe on the desktop.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

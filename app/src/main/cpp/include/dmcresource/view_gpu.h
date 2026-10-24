@@ -9,6 +9,7 @@
 #include "dmcresource/image_preview.h"
 #include "dmcresource/mesh.h"
 #include "dmcresource/render_scene.h"
+#include "dmcresource/camera_post.h"
 
 // GPU view rendering: render_view's triangle passes on the graphics chip.
 //
@@ -160,6 +161,10 @@ struct GpuViewFrame final {
         std::array<float, 4> far_colour{};
     };
     Fog fog{};
+
+    // The photo camera's development (null: the frame as drawn). The
+    // backend sets post->applied when it developed the frame.
+    const CameraPost* post{};
 };
 
 class GpuViewBackend {

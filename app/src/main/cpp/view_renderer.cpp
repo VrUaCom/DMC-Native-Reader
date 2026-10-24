@@ -2103,6 +2103,7 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
     static constexpr std::uint8_t kBackgrounds[4][3] = {{18U, 18U, 22U}, {72U, 74U, 80U}, {196U, 198U, 204U}, {0U, 0U, 0U}};
     GpuViewFrame out;
     out.options = gpu_view_options();
+    out.post = view.post;
     out.width = width;
     out.height = height;
     const auto& bg = kBackgrounds[view.background & 3U];
