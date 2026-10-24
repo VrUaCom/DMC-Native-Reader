@@ -67,7 +67,17 @@ mission, not m07_c00's:
 In an archive's list, slot 0 shows as SCRIPT, a name list as NAMES and an
 effect manifest as FX-IDS (all .txt; `demo::looks_like_script`,
 `demo::looks_like_name_list`, `demo::looks_like_effect_list`), and the PAC or
-PNST after a name list shows the names it holds.
+PNST after a name list shows the names it holds. An empty clip text
+(`# End` alone, an unused track's Set file) shows as EMPTY.
+
+Opening such a container names its files with the list
+(`ChildResource::member_names`): "#1 · m07_b00_CameraSet.txt · CLIPS",
+"#0 · st500_3.scm · SCM", "#0 · cm_c001.cam · DEMO-CAM", "#3 · G 105 · BIN";
+a file name is also what the file saves as.
+
+A cutscene opens as its scene. `⋮ → Browse .PAC files…` opens the archive's
+files as a gallery (`open_files_view`, companion 29), as a stage's and an
+assembled PAC's do.
 
 The cutscene's picture ends with its last Camera or Fade clip (m01_s00:
 frame 5949 of 12455). Pad vibration, subtitles and one effect clip run on

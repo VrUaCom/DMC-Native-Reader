@@ -49,6 +49,8 @@ enum class Companion : int {
     Photo = 26,
     Video = 27,
     CameraSettings = 28,
+    // rows: a cutscene archive's own files
+    BrowseCutscenePac = 29,
 };
 
 // What only the shell knows.
@@ -85,6 +87,9 @@ struct CompanionMenu final {
 // The same with the opened session, for the items that act on it (the
 // cutscene camera).
 [[nodiscard]] ActionOutcome run_companion_action(Session* session, int id) noexcept;
+// The same, for the items that open a session (a cutscene's files): it is
+// handed back through `opened` with ShellStep::OpenSession.
+[[nodiscard]] ActionOutcome run_companion_action(Session* session, int id, std::unique_ptr<Session>* opened) noexcept;
 
 // The picked file of a cutscene: a sound (Ogg Vorbis) plays along the
 // timeline (demo_session.h attach_audio), a movie (.wmv) becomes its movie

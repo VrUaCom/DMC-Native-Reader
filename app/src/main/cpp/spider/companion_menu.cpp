@@ -76,6 +76,9 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     if (root && (facts.assembled_pac_source || facts.stage_source)) {
         add(menu.rows, facts.assembled_pac_source ? Companion::BrowseAssembledPac : Companion::BrowseStagePac,
             "Browse .PAC files\xE2\x80\xA6");
+    } else if (root && demo::is_demo(session) && session != nullptr && !session->children.empty()) {
+        // A cutscene plays as its scene; its archive's files are one step away.
+        add(menu.rows, Companion::BrowseCutscenePac, "Browse .PAC files\xE2\x80\xA6");
     }
     if (has(widow::StateFlag::CanReencodeTextures)) {
         add(model_rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
@@ -116,6 +119,26 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         }
     }
     return menu;
+}
+
+ActionOutcome run_companion_action(Session* session, int id, std::unique_ptr<Session>* opened) noexcept {
+    if (static_cast<Companion>(id) != Companion::BrowseCutscenePac) return run_companion_action(session, id);
+    ActionOutcome out;
+    try {
+        auto files = open_files_view(session);
+        if (files == nullptr || opened == nullptr) {
+            out.message = "This cutscene has no files to browse";
+            return out;
+        }
+        *opened = std::move(files);
+        out.ok = true;
+        out.step = ShellStep::OpenSession;
+        out.title = (session->source_name.empty() ? std::string{"Cutscene"} : session->source_name) +
+                    " \xC2\xB7 files";
+    } catch (...) {
+        out = {};
+    }
+    return out;
 }
 
 ActionOutcome run_companion_action(Session* session, int id) noexcept {

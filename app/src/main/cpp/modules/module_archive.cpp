@@ -98,6 +98,11 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         if (demo::looks_like_script(text)) return {Format::Unknown, "SCRIPT", "txt"};
         if (demo::looks_like_name_list(text)) return {Format::Unknown, "NAMES", "txt"};
         if (demo::looks_like_effect_list(text)) return {Format::Unknown, "FX-IDS", "txt"};
+        // A clip text with nothing in it (an unused track's Set file).
+        if (const auto body = text.substr(0, text.find('\0'));
+            body == "# End\r\n" || body == "# End\n" || body == "# End") {
+            return {Format::Unknown, "EMPTY", "txt"};
+        }
     }
     if (bytes != nullptr && size > 0U) {
         try {
@@ -233,8 +238,11 @@ PipelineResult run_pac_module(const NativeModule& module,
                           " · " + size_text(entry.size);
             // A name list names the files of the container after it.
             std::vector<std::string> names;
+            const std::string_view payload_text{reinterpret_cast<const char*>(payload), payload_size};
             if (std::string_view{kind.family} == "NAMES") {
-                names = demo::list_names(std::string_view{reinterpret_cast<const char*>(payload), payload_size});
+                names = demo::list_names(payload_text);
+            } else if (std::string_view{kind.family} == "FX-IDS") {
+                names = demo::effect_ids(payload_text);
             } else if (!listed_names.empty() && (kind.format == Format::Pac || kind.format == Format::Demo ||
                                                  kind.format == Format::Pnst)) {
                 std::string joined;
@@ -243,6 +251,7 @@ PipelineResult run_pac_module(const NativeModule& module,
                 }
                 if (listed_names.size() > 3U) joined += ", +" + std::to_string(listed_names.size() - 3U);
                 child.title += " · " + joined;
+                child.member_names = listed_names;
             }
             child.source_span = SourceSpan{entry.offset, entry.size};
             child.probe = dmcresource::probe(child.suggested_filename, payload, payload_size);

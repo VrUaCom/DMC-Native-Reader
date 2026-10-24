@@ -1549,7 +1549,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_runCompanionAction(JNIEnv* env, jclass, jlong handle, jint id) {
     const SessionLock jni_lock{session_mutex()};
-    return outcome_object(env, dmcresource::spider::actions::run_companion_action(from_handle(handle), id));
+    std::unique_ptr<Session> opened;
+    const auto outcome = dmcresource::spider::actions::run_companion_action(from_handle(handle), id, &opened);
+    return outcome_object(env, outcome, opened ? to_handle(opened.release()) : 0);
 }
 
 // The picture a session exports: {width, height}, chosen by the core.

@@ -36,6 +36,8 @@ public final class CompanionMenu {
     public static final int PHOTO = 26;
     public static final int VIDEO = 27;
     public static final int CAMERA_SETTINGS = 28;
+    /** A cutscene's own files: the core opens them as a gallery (ActionOutcome STEP_OPEN_SESSION). */
+    public static final int BROWSE_CUTSCENE_PAC = 29;
 
     public final NativeMenu shortcuts;
     public final NativeMenu rows;

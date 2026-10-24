@@ -342,6 +342,11 @@ bool looks_like_effect_list(std::string_view text) noexcept {
     return fine && ended && ids > 0U;
 }
 
+std::vector<std::string> effect_ids(std::string_view text) {
+    if (!looks_like_effect_list(text)) return {};
+    return name_list(text.substr(0, text.find('\0')), nullptr);
+}
+
 std::vector<std::string> list_names(std::string_view text) {
     if (!looks_like_name_list(text)) return {};
     return name_list(text.substr(0, text.find('\0')), nullptr);

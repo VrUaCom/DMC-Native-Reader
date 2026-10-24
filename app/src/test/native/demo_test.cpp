@@ -268,6 +268,13 @@ int main() {
     // the timeline its movie plays on ----
     auto opened = open_session("m99_t00.pac", archive.data(), archive.size());
     assert(opened && demo::is_demo(opened.get()) && opened->probe.format == Format::Demo && opened->renderable);
+    // Its archive's files, one step away: the same children as a gallery,
+    // nothing drawn.
+    {
+        const auto files = open_files_view(opened.get());
+        assert(files && !files->renderable && files->children.size() == opened->children.size());
+        assert(!open_files_view(nullptr));
+    }
     // The fog of the GFG clip while it runs; the pad vibration eased over
     // its clip (200 to 0 over 10 frames).
     assert(motion::load_library_motion(opened.get(), 0).ok);

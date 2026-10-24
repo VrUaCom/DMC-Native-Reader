@@ -340,11 +340,44 @@ const ImagePreview* session_child_preview(
     return scratch;
 }
 
+std::unique_ptr<Session> open_files_view(const Session* session) {
+    if (session == nullptr || session->children.empty()) return nullptr;
+    auto files = std::make_unique<Session>();
+    files->probe = session->probe;
+    files->inspection = session->inspection;
+    files->children = session->children;
+    files->capabilities = capability(ResourceCapability::Inspection) |
+                          capability(ResourceCapability::ChildResources);
+    files->source_bytes = session->source_bytes;
+    files->source_name = session->source_name;
+    files->detail = session->detail;
+    return files;
+}
+
 std::unique_ptr<Session> open_session_child(const Session* parent, int index) {
     if (!valid_child(parent, index)) return nullptr;
     if (!parent->uv_gallery) {
         const auto& child = parent->children[static_cast<std::size_t>(index)];
         auto session = session_from_child(child);
+        // Its archive's name list names its slots: "#3 · BIN · 16 B" becomes
+        // "#3 · m07_b00_Motion00Set.txt · EMPTY · 16 B".
+        if (session && !child.member_names.empty()) {
+            for (auto& member : session->children) {
+                if (member.id.rfind("slot-", 0U) != 0U) continue;
+                std::size_t slot = 0U;
+                const auto* first = member.id.data() + 5U;
+                const auto* last = member.id.data() + member.id.size();
+                const auto [ptr, ec] = std::from_chars(first, last, slot);
+                if (ec != std::errc{} || ptr != last || slot >= child.member_names.size()) continue;
+                const auto& name = child.member_names[slot];
+                const auto dot = member.title.find(" \xC2\xB7 ");
+                member.title = dot == std::string::npos ? name + " \xC2\xB7 " + member.title
+                                                        : member.title.substr(0, dot) + " \xC2\xB7 " + name +
+                                                              member.title.substr(dot);
+                // A file name is what it saves as; an effect id is not one.
+                if (name.find('.') != std::string::npos) member.suggested_filename = name;
+            }
+        }
         // A texture-bearing child of a PAC that kept its bytes remembers its
         // container, so the Spider re-encode rebuilds the whole PAC.
         if (session && session->source_bytes && parent->source_bytes &&

@@ -331,6 +331,9 @@ struct CompositePartState final {
 [[nodiscard]] const ImagePreview* session_child_preview(
     const Session* session, int index, ImagePreview* scratch);
 [[nodiscard]] std::unique_ptr<Session> open_session_child(const Session* session, int index);
+// The files of a session that opens as a scene but is an archive (a
+// cutscene's PAC): the same children as a file gallery, nothing drawn.
+[[nodiscard]] std::unique_ptr<Session> open_files_view(const Session* session);
 
 // Dual Visual / Info surface. The active preview is the image exposed to
 // platform shells; sessions without info_preview behave exactly as before.
