@@ -329,6 +329,10 @@ APK verifier.
     - Opening a cutscene's container names its files from the name list
       before it (Set texts, models, motions, cameras, effect ids); empty
       clip texts show as EMPTY.
+  - Shaders (no version, not in the renderer yet): 67 GLSL ES shaders of
+    our own that behave like the HD port's, written clean-room from
+    behaviour specifications (`docs/cleanroom/`,
+    `app/src/main/cpp/android/shaders/dmc3/`).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

@@ -17,6 +17,8 @@ specification, nothing else.
   `layout(location = 0) out vec4 o_colour;` unless the specification says
   otherwise.
 - A fragment shader declares only the inputs it reads.
+- Names a specification uses that GLSL reserves or already defines
+  (`packed`, `step`, ...) are renamed in the shader; the behaviour stays.
 
 ## Names
 

@@ -112,3 +112,6 @@ less-equal, greater, not-equal, greater-equal; anything else passes.
   approximation, with LIG2 / the stage lights as the data.
 - The PS2 texture functions and alpha tests per batch.
 - The cutscenes' screen effects (ScrEfc clips) and the fog table as passes.
+
+Our own shaders with this behaviour, written clean-room from specifications
+(no source text): `docs/cleanroom/`, `app/src/main/cpp/android/shaders/dmc3/`.
