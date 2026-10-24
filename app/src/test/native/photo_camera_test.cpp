@@ -378,13 +378,16 @@ int main() {
         (void)cam::gyro_turn(0.0F, 0.0F, 0.0F);
         turn = cam::gyro_turn(0.4F, 0.0F, 0.0F);
         assert(std::abs(turn[0] + 0.1F) < 1e-5F);
-        // The phone's roll tilts the picture only when the horizon follows it.
+        // The phone's roll turns the camera with it (the scene keeps the
+        // world's horizon on the tilted screen) unless the horizon is the
+        // screen's (a gimbal).
         cam::gyro_reset();
         choose_named(cam::Key::GyroSmoothing, "Off");
         (void)cam::gyro_turn(0.0F, 0.0F, 0.25F);
-        assert(cam::camera_roll() == 0.0F);
-        choose(cam::Key::GyroHorizon, 1);
         assert(std::abs(cam::camera_roll() - 0.25F) < 1e-5F);
+        choose_named(cam::Key::GyroHorizon, "Screen");
+        assert(cam::camera_roll() == 0.0F);
+        choose_named(cam::Key::GyroHorizon, "World");
         assert(cam::viewfinder(nullptr, 300, 300, 1.0F, false, 0).status.find("ROLL +14") != std::string::npos);
         cam::gyro_reset();
         cam::reset_choices();

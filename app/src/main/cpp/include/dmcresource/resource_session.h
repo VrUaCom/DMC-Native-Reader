@@ -374,6 +374,8 @@ struct ViewControls final {
     ViewState::Tile tile{};
     // The photo camera's development, done by the GPU when it draws.
     const CameraPost* post{};
+    // The camera's roll about its axis (radians).
+    float roll{};
 };
 
 // World position of the camera of that view (the start of a fly camera).

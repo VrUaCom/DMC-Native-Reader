@@ -2203,6 +2203,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     }
     view.tile = controls.tile;
     view.post = controls.post;
+    view.roll_radians = std::isfinite(controls.roll) ? controls.roll : 0.0F;
     if (std::isfinite(controls.lens_zoom) && controls.lens_zoom > 0.0F) view.zoom = controls.lens_zoom;
     if (std::isfinite(controls.zoom_scale) && controls.zoom_scale > 0.0F && controls.zoom_scale != 1.0F) {
         view.zoom = std::clamp(view.zoom * controls.zoom_scale, 0.05F, 64.0F);

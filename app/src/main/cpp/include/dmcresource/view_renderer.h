@@ -112,6 +112,9 @@ struct ViewState {
         float far_alpha{};
     };
     Fog fog{};
+    // The camera turned about its own axis (radians; positive clockwise,
+    // the picture turning the other way): the photo camera's roll.
+    float roll_radians{};
     // When set, filled with each pixel's distance from the camera (infinity
     // where nothing was drawn): the photo camera's depth of field reads it.
     std::vector<float>* depth_out{};

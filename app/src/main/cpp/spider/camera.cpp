@@ -219,7 +219,9 @@ std::vector<Setting> build_settings() {
     add(Key::GyroMode, "gyro_mode", gyro, "Gyroscope", "In camera mode, turning the phone turns the camera",
         {"Off", "On"}, 0);
     add(Key::GyroHorizon, "gyro_horizon", gyro, "Horizon",
-        "Locked: level pictures, like a gimbal; Phone: the picture tilts with the phone", {"Locked", "Phone"}, 0);
+        "World: the scene keeps the world's horizon as you tilt the phone (pictures tilt, like a real camera's); "
+        "Screen: pictures stay level, like a gimbal (the scene turns with the phone)",
+        {"World", "Screen"}, 0);
     add(Key::GyroSensitivity, "gyro_sensitivity", gyro, "Sensitivity", "",
         {"0.5\xC3\x97", "1\xC3\x97", "1.5\xC3\x97", "2\xC3\x97"}, 1);
     add(Key::GyroSmoothing, "gyro_smoothing", gyro, "Smoothing", "Steadies the hands", {"Off", "Low", "Medium", "High"},
@@ -1015,11 +1017,10 @@ CameraPost make_post(int w, int h, float mm, std::uint32_t seed) {
     return post;
 }
 
-// The GPU develops this frame: it draws it (on), it is not turned (a rolled
-// picture is sampled back on the CPU) and not too large for its targets.
+// The GPU develops this frame: it draws it (on) and the frame is not too
+// large for its targets.
 bool gpu_develops(int w, int h) noexcept {
-    return gpu_view_enabled() && gpu_view_backend() != nullptr && std::fabs(camera_roll()) < 1.0e-4F &&
-           static_cast<long long>(w) * h <= 4096LL * 4096LL;
+    return gpu_view_enabled() && gpu_view_backend() != nullptr && static_cast<long long>(w) * h <= 4096LL * 4096LL;
 }
 
 // After a GPU frame: what its auto focus found.
@@ -1221,66 +1222,14 @@ RgbaImage render_large(const Session* session, int width, int height, float yaw,
 
 namespace {
 
-// A picture through a camera rolled about its axis: a larger frame of the
-// same focal length (it holds the turned one), sampled back turned. A
-// pinhole camera turned about its axis is exactly its picture turned.
+// A picture through the camera rolled about its axis: the roll is part of
+// the camera's projection (the CPU's and the GPU's alike), so the frame is
+// drawn turned, at its own size.
 RgbaImage render_rolled(const Session* session, int width, int height, float yaw, float pitch, float zoom,
                         std::uint32_t render_flags, const ViewControls& controls, std::vector<float>* depth) {
-    const float roll = camera_roll();
-    if (std::fabs(roll) < 1.0e-4F) {
-        return render_large(session, width, height, yaw, pitch, zoom, render_flags, controls, depth);
-    }
-    const float c = std::cos(roll);
-    const float s = std::sin(roll);
-    const int big_w = (static_cast<int>(std::ceil(width * std::fabs(c) + height * std::fabs(s))) + 3) & ~1;
-    const int big_h = (static_cast<int>(std::ceil(width * std::fabs(s) + height * std::fabs(c))) + 3) & ~1;
-    ViewControls wide = controls;
-    wide.tile.on = true;
-    wide.tile.focal_side = static_cast<float>(std::min(width, height));
-    wide.tile.principal_x = 0.0F;
-    wide.tile.principal_y = 0.0F;
-    wide.tile.full_height = height;
-    std::vector<float> big_depth;
-    const auto big = render_large(session, big_w, big_h, yaw, pitch, zoom, render_flags, wide,
-                                  depth != nullptr ? &big_depth : nullptr);
-    if (!valid_image(&big)) return {};
-    RgbaImage out;
-    out.width = width;
-    out.height = height;
-    out.pixels.assign(static_cast<std::size_t>(width) * height * 4U, 255U);
-    const bool with_depth = depth != nullptr && big_depth.size() == static_cast<std::size_t>(big_w) * big_h;
-    if (depth != nullptr) depth->assign(with_depth ? static_cast<std::size_t>(width) * height : 0U, kInfinity);
-    in_bands(height, [&](int row_begin, int row_end) {
-        for (int y = row_begin; y < row_end; ++y) {
-            for (int x = 0; x < width; ++x) {
-                const float dx = static_cast<float>(x) + 0.5F - 0.5F * static_cast<float>(width);
-                const float dy = static_cast<float>(y) + 0.5F - 0.5F * static_cast<float>(height);
-                const float sx = std::clamp(0.5F * big_w + dx * c - dy * s - 0.5F, 0.0F, static_cast<float>(big_w - 1));
-                const float sy = std::clamp(0.5F * big_h + dx * s + dy * c - 0.5F, 0.0F, static_cast<float>(big_h - 1));
-                const int x0 = static_cast<int>(sx);
-                const int y0 = static_cast<int>(sy);
-                const int x1 = std::min(x0 + 1, big_w - 1);
-                const int y1 = std::min(y0 + 1, big_h - 1);
-                const float fx = sx - static_cast<float>(x0);
-                const float fy = sy - static_cast<float>(y0);
-                auto* o = &out.pixels[(static_cast<std::size_t>(y) * width + x) * 4U];
-                for (int k = 0; k < 3; ++k) {
-                    const auto at = [&](int px, int py) {
-                        return static_cast<float>(big.pixels[(static_cast<std::size_t>(py) * big_w + px) * 4U + k]);
-                    };
-                    const float top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
-                    const float bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
-                    o[k] = static_cast<std::uint8_t>(std::clamp(top + (bottom - top) * fy + 0.5F, 0.0F, 255.0F));
-                }
-                if (with_depth) {
-                    const int nx = std::lround(sx) < big_w ? static_cast<int>(std::lround(sx)) : big_w - 1;
-                    const int ny = std::lround(sy) < big_h ? static_cast<int>(std::lround(sy)) : big_h - 1;
-                    (*depth)[static_cast<std::size_t>(y) * width + x] = big_depth[static_cast<std::size_t>(ny) * big_w + nx];
-                }
-            }
-        }
-    });
-    return out;
+    ViewControls rolled = controls;
+    rolled.roll = camera_roll();
+    return render_large(session, width, height, yaw, pitch, zoom, render_flags, rolled, depth);
 }
 
 struct GyroState final {
@@ -1347,7 +1296,9 @@ void gyro_reset() noexcept {
 }
 
 float camera_roll() noexcept {
-    const bool follows = gyro_active() && choice(Key::GyroHorizon) == 1;
+    // World: the camera turns with the phone about its axis, so on the
+    // tilted screen the scene stays level with the world.
+    const bool follows = gyro_active() && choice(Key::GyroHorizon) == 0;
     return wrap_angle(g_roll_manual.load() + (follows ? g_roll_phone.load() : 0.0F));
 }
 

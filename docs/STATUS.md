@@ -271,6 +271,10 @@ APK verifier.
     - Sharpening.
     - The software depth render and the CPU passes are gone from GPU frames.
     - Checked with Mesa llvmpipe on the desktop.
+  - v111: the horizon holds the world's level as the phone tilts.
+    - Horizon "World" is the start; "Screen" is the gimbal.
+    - The roll is part of the camera's projection on the CPU and the GPU,
+      so a rolled frame is drawn at its own size, and the GPU develops it.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

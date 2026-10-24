@@ -56,7 +56,17 @@ struct CameraFrame {
     // a tile of a picture larger than one render (ViewState::tile).
     float principal_x{};
     float principal_y{};
+    // The camera turned about its own axis (ViewState::roll_radians).
+    float roll_cos{1.0F};
+    float roll_sin{0.0F};
 };
+
+// Camera space of a point already turned and panned: the camera's roll
+// about its axis (positive: the camera turns clockwise, the picture the
+// other way).
+[[nodiscard]] inline Vec3 roll_camera(const CameraFrame& frame, float x, float y, float z) noexcept {
+    return {x * frame.roll_cos - y * frame.roll_sin, x * frame.roll_sin + y * frame.roll_cos, z};
+}
 
 constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
 
@@ -97,8 +107,9 @@ P2 project_in_frame(const CameraFrame& frame, const Vec3& world, float yaw, floa
     const auto r = rotate(local, yaw, pitch);
     const float z_cam = r.z + frame.camera_distance;
     const float inv_z = 1.0F / std::max(z_cam, 1.0e-3F);
-    return {static_cast<float>(width) * 0.5F + frame.principal_x + zoom * frame.focal_px * (r.x - frame.pan_x) * inv_z,
-           static_cast<float>(height) * 0.5F + frame.principal_y - zoom * frame.focal_px * (r.y - frame.pan_y) * inv_z,
+    const Vec3 c = roll_camera(frame, r.x - frame.pan_x, r.y - frame.pan_y, r.z);
+    return {static_cast<float>(width) * 0.5F + frame.principal_x + zoom * frame.focal_px * c.x * inv_z,
+           static_cast<float>(height) * 0.5F + frame.principal_y - zoom * frame.focal_px * c.y * inv_z,
            r.z};
 }
 
@@ -110,6 +121,10 @@ CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int h
     auto frame = compute_camera_frame(
         view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices} : view.framing_vertices,
         width, height);
+    if (view.roll_radians != 0.0F && std::isfinite(view.roll_radians)) {
+        frame.roll_cos = std::cos(view.roll_radians);
+        frame.roll_sin = std::sin(view.roll_radians);
+    }
     if (view.tile.on) {
         // One tile of a larger picture: that picture's focal length, its
         // centre where it falls in this tile.
@@ -757,7 +772,8 @@ struct RoomFrame {
         const auto w = room_place(view, rm.vertices[i]);
         const auto r = rotate({w.x - frame.center.x, w.y - frame.center.y, w.z - frame.center.z},
                               view.yaw_radians, view.pitch_radians);
-        Cv c{r.x - frame.pan_x, r.y - frame.pan_y, r.z + cd, 0.0F, 0.0F, 128.0F, 128.0F, 128.0F, 128.0F};
+        const Vec3 rc = roll_camera(frame, r.x - frame.pan_x, r.y - frame.pan_y, r.z + cd);
+        Cv c{rc.x, rc.y, rc.z, 0.0F, 0.0F, 128.0F, 128.0F, 128.0F, 128.0F};
         if (uv) {
             c.u = rm.uv0[i].u;
             c.v = rm.uv0[i].v;
@@ -1281,7 +1297,7 @@ struct OverlayPen final {
     [[nodiscard]] Vec3 to_cam(const Vec3& world) const {
         const auto r = rotate({world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z},
                               view.yaw_radians, view.pitch_radians);
-        return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
+        return roll_camera(frame, r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance);
     }
     [[nodiscard]] P2 cam_point(const Vec3& c) const {
         const float inv = 1.0F / c.z;
@@ -1561,7 +1577,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
         const auto& w = mesh.vertices[i];
         const Vec3 local{w.x - frame.center.x, w.y - frame.center.y, w.z - frame.center.z};
         const auto r = rotate(local, view.yaw_radians, view.pitch_radians);
-        out.cam = {r.x - frame.pan_x, r.y - frame.pan_y, r.z + cd};
+        out.cam = roll_camera(frame, r.x - frame.pan_x, r.y - frame.pan_y, r.z + cd);
         out.s = p[i];
         if (mesh.has_uv0()) {
             out.u = mesh.uv0[i].u;
@@ -1850,6 +1866,13 @@ std::array<float, 16> camera_matrix(const CameraFrame& frame, const ViewState& v
         m[12 + row] = r[row * 3 + 0] * d.x + r[row * 3 + 1] * d.y + r[row * 3 + 2] * d.z + shift[row];
     }
     m[15] = 1.0F;
+    // The roll turns camera x and y (rows 0 and 1 of every column).
+    for (int col = 0; col < 4; ++col) {
+        const float x = m[col * 4];
+        const float y = m[col * 4 + 1];
+        m[col * 4] = frame.roll_cos * x - frame.roll_sin * y;
+        m[col * 4 + 1] = frame.roll_sin * x + frame.roll_cos * y;
+    }
     return m;
 }
 
@@ -2312,7 +2335,7 @@ ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& vie
     const auto to_camera = [&](const Vec3& world) {
         const auto r = rotate({world.x - frame.center.x, world.y - frame.center.y, world.z - frame.center.z},
                               view.yaw_radians, view.pitch_radians);
-        return Vec3{r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance};
+        return roll_camera(frame, r.x - frame.pan_x, r.y - frame.pan_y, r.z + frame.camera_distance);
     };
     // Moller-Trumbore; t along dir (camera z), barycentrics u, v.
     const auto hit = [&](const Vec3& a, const Vec3& b, const Vec3& c, float* t, float* u, float* v) {

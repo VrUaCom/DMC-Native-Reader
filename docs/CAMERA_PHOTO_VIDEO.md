@@ -91,14 +91,17 @@ are off in camera mode. ℹ in the camera bar shows all of this in the app.
 - Smoothing takes a share of each turn per reading: off 100 %, low 50 %,
   medium 25 %, high 12 %. Sensitivity: 0.5×, 1×, 1.5×, 2×.
 - Horizon:
-  - **Locked**: the phone's roll is ignored, so pictures stay level, like a
-    gimbal.
-  - **Follows the phone**: the picture rolls with the phone, so in the hand
-    the scene stays level with the world, and the picture is tilted.
-- **Roll** is rendered exactly. A frame large enough to hold the turned one
-  is drawn with the same focal length (`ViewState::tile` with a centred
-  projection, so the GPU draws it too), then sampled back turned. Pictures,
-  videos and RAW all carry it. The settings line shows GYRO and ROLL.
+  - **World** (the start): the camera turns about its axis with the phone,
+    so on the tilted screen the scene keeps the world's horizon, like a real
+    camera's viewfinder. The pictures come out tilted.
+  - **Screen**: the phone's roll is ignored, so the pictures stay level,
+    like a gimbal, and the scene turns with the phone.
+- **Roll** is part of the camera's projection (`ViewState::roll_radians`).
+  The software renderer turns camera x and y after the pan, and the GPU's
+  view matrix carries it. The frame is drawn turned at its own size, with
+  nothing sampled back. The GPU's development (`camera_post.h`) works with
+  it. Pictures, videos and RAW all carry it. The settings line shows GYRO
+  and ROLL.
 - Walking and crouching (6DoF) are ARCore's (below).
 
 ## Walking (ARCore, 6DoF)
@@ -177,7 +180,7 @@ from it.
 | | Highlights | **Clip**, soft roll-off |
 | | Sensor noise | Off, **by the ISO** (none at ISO 100), film grain |
 | Gyroscope | Gyroscope | **Off**, On |
-| | Horizon | **Locked**, follows the phone |
+| | Horizon | **World**, Screen |
 | | Sensitivity | 0.5×, **1×**, 1.5×, 2× |
 | | Smoothing | Off, low, **medium**, high |
 | Walking (ARCore) | Walk and crouch | **Off**, On |
