@@ -253,6 +253,11 @@ APK verifier.
     - Every dial and option is an equal square tile.
     - Short option names, with the explanations as hints.
     - An open dial's settings show at the top of the view, over it.
+  - v108: camera mode's camera is free in space:
+    - It is the fly camera without sticks, so it turns where it stands
+      instead of round an orbit point.
+    - The drone adds the sticks.
+    - Leaving camera mode orbits again with the same picture.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

@@ -398,7 +398,12 @@ public final class MainActivity extends Activity {
                 renderView.isRoomCollisionVisible());
         final boolean flyAvailable = viewTools && blackWidowState.canFly;
         if (!flyAvailable && renderView.isFlyMode()) renderView.setFlyMode(false);
-        syncToggleButton(flyButton, flyAvailable, renderView.isFlyMode());
+        // A view opened in camera mode gets the free camera too.
+        if (flyAvailable && cameraUi && !renderView.isFlyMode() && renderView.setFlyMode(true, false)) {
+            applyResourceUiState();
+            return;
+        }
+        syncToggleButton(flyButton, flyAvailable, renderView.isDroneFlying());
         syncToggleButton(breakButton, viewTools && blackWidowState.canBreakRoom, blackWidowState.roomBroken);
 
         syncToggleButton(uvButton,
@@ -1785,7 +1790,10 @@ public final class MainActivity extends Activity {
         big2.setMarginEnd(dp(14));
         actions.addView(cameraRecordButton, big2);
         final Button reset = makeSquareButton("🔄", "Reset view", 20f);
-        reset.setOnClickListener(v -> renderView.resetView());
+        reset.setOnClickListener(v -> {
+            renderView.resetView();
+            freeCamera();
+        });
         addToolButton(actions, reset);
         cameraGyroButton = makeSquareButton("🧭", "Gyroscope: turn the phone to turn the camera", 20f);
         cameraGyroButton.setOnClickListener(v -> toggleGyro());
@@ -1817,15 +1825,24 @@ public final class MainActivity extends Activity {
 
     /** The drone (the fly camera with its sticks) on or off; the same button goes back to the orbit. */
     private void toggleDrone() {
-        final boolean fly = !renderView.isFlyMode();
-        if (!renderView.setFlyMode(fly)) {
+        // In camera mode the camera is already free: the drone adds the sticks.
+        final boolean fly = !renderView.isDroneFlying();
+        final boolean ok = cameraUi ? renderView.setFlyMode(true, fly) : renderView.setFlyMode(fly);
+        if (!ok) {
             notice("No drone here", Toast.LENGTH_SHORT);
             return;
         }
         notice(fly ? "Drone: left thumb flies (forward / back, sideways), right thumb looks (turn, tilt); "
                         + "fly forward while looking up or down to climb or descend"
-                   : "Orbit camera", Toast.LENGTH_LONG);
+                   : cameraUi ? "Free camera: one finger turns it where it stands" : "Orbit camera",
+                Toast.LENGTH_LONG);
         applyResourceUiState();
+    }
+
+    /** Camera mode's camera: free in space at its own eye (fly without the sticks), when the view has one. */
+    private void freeCamera() {
+        if (!cameraUi || session == 0 || renderView.isFlyMode() || !blackWidowState.canFly) return;
+        if (renderView.setFlyMode(true, false)) applyResourceUiState();
     }
 
     /** Camera mode in or out (the core's setting); the bars follow it. */
@@ -1856,11 +1873,17 @@ public final class MainActivity extends Activity {
         toolScroll.setVisibility(on || uiHidden ? View.GONE : View.VISIBLE);
         if (on) {
             motionScroll.setVisibility(View.GONE);
+            freeCamera();
             refreshCameraDials();
             updateCameraButtons();
             renderView.removeCallbacks(cameraDialTick);
             renderView.postDelayed(cameraDialTick, 500L);
         } else if (changed) {
+            // Back to the scene: the orbit again (the drone keeps flying).
+            if (renderView.isFlyMode() && !renderView.isDroneFlying()) {
+                renderView.setFlyMode(false);
+                applyResourceUiState();
+            }
             cameraDialOpen = null;
             if (cameraAdjustScroll != null) cameraAdjustScroll.setVisibility(View.GONE);
             refreshMotionStrip();
@@ -1997,8 +2020,8 @@ public final class MainActivity extends Activity {
         }
         // Walking flies the drone: its eye is what the steps move.
         if (!renderView.isFlyMode()) {
-            if (!renderView.setFlyMode(true)) {
-                notice("Walking needs the drone, and this view has none", Toast.LENGTH_LONG);
+            if (!renderView.setFlyMode(true, false)) {
+                notice("Walking needs a camera free in space, and this view has none", Toast.LENGTH_LONG);
                 return;
             }
             applyResourceUiState();
@@ -2111,10 +2134,15 @@ public final class MainActivity extends Activity {
     /** How camera mode is used: its gestures, the gyroscope, the volume keys. */
     private void showCameraHelp() {
         final String text = "CAMERA MODE\n"
-                + "📷 beside ⋮ goes in and back out. Set the scene up, shoot, go back, set it up again.\n\n"
+                + "📷 beside ⋮ goes in and back out. Set the scene up, shoot, go back, set it up again.\n"
+                + "In camera mode the camera is free in space: it stands where it is and turns there (no orbit "
+                + "round a point); the drone button adds the sticks to fly it; back in the scene it orbits again "
+                + "with the same picture.\n\n"
                 + "GESTURES\n"
                 + "• Pinch — zoom (focal length)\n"
-                + "• One finger — turn the camera (with the gyroscope too: aim it without moving the phone)\n"
+                + "• One finger — turn the camera where it stands (with the gyroscope too: aim it without "
+                + "moving the phone)\n"
+                + "• Hold one finger, slide another up / down — move the camera forward / back\n"
                 + "• Two fingers drag — move the camera sideways, up and down\n"
                 + "• Two fingers twist — turn the polarizer (Filter → Polarizer on)\n"
                 + "• Two-finger tap — level the camera (no roll) and re-centre the gyroscope\n"

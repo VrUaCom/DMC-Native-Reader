@@ -127,6 +127,10 @@ public final class DmcRenderView extends View {
     // sideways), right half: look (turn, tilt). Flying forward follows the
     // view, so looking up and pushing forward climbs.
     private boolean flyMode;
+    // Fly without the sticks is the free camera of camera mode: it stands
+    // at its own eye and the usual gestures turn it where it stands (no
+    // orbit point), pinch zooms, the gyroscope and walking move it.
+    private boolean sticks = true;
     private final int[] stickId = {MotionEvent.INVALID_POINTER_ID, MotionEvent.INVALID_POINTER_ID};
     private final float[] stickBaseX = new float[2], stickBaseY = new float[2];
     private final float[] stickX = new float[2], stickY = new float[2];
@@ -290,7 +294,7 @@ public final class DmcRenderView extends View {
         scaleDetector = new ScaleGestureDetector(context,
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     @Override public boolean onScale(ScaleGestureDetector detector) {
-                        if (staticImagePreview || flyMode || multiMode == MULTI_DOLLY
+                        if (staticImagePreview || (flyMode && sticks) || multiMode == MULTI_DOLLY
                                 || multiMode == MULTI_CLOSE_PAN || tripleMode == TRIPLE_TURN) {
                             return false;
                         }
@@ -751,6 +755,11 @@ public final class DmcRenderView extends View {
 
     // ---- Fly camera ----------------------------------------------------------
 
+    /** Flying with the sticks (the drone), not the free camera. */
+    public boolean isDroneFlying() {
+        return flyMode && sticks;
+    }
+
     public boolean isFlyMode() {
         return flyMode;
     }
@@ -761,6 +770,24 @@ public final class DmcRenderView extends View {
      * frames the model / stage again from the direction it last looked.
      */
     public boolean setFlyMode(boolean on) {
+        return setFlyMode(on, true);
+    }
+
+    /**
+     * The camera at its own eye (on) or orbiting again (off); with sticks it is the drone, without
+     * them the free camera of camera mode. Already flying, only the sticks change.
+     */
+    public boolean setFlyMode(boolean on, boolean withSticks) {
+        if (on && flyMode) {
+            if (sticks != withSticks) {
+                for (int side = 0; side < 2; ++side) releaseStick(side);
+                removeCallbacks(flyTick);
+                sticks = withSticks;
+                hud.reset();
+                renderNow();
+            }
+            return true;
+        }
         if (on == flyMode) return true;
         if (on) {
             if (session == 0 || staticImagePreview || isUvLayoutVisible()) return false;
@@ -780,6 +807,7 @@ public final class DmcRenderView extends View {
             endDolly();
             hud.reset();
             flyMode = true;
+            sticks = withSticks;
         } else {
             leaveFly();
         }
@@ -1538,7 +1566,7 @@ public final class DmcRenderView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (staticImagePreview) return true;
-        if (flyMode) return onFlyTouch(event);
+        if (flyMode && sticks) return onFlyTouch(event);
 
         scaleDetector.onTouchEvent(event);
         // A new touch resets the state below before the tap detector sees it
@@ -1667,9 +1695,16 @@ public final class DmcRenderView extends View {
                     if (Math.hypot(x - downX, y - downY) > 8.0f * density) claimCamera();
                     float dx = x - lastX;
                     float dy = y - lastY;
-                    // Grab-and-turn: the surface under the finger follows it.
-                    yaw -= dx * 0.008f;
-                    pitch -= dy * 0.008f;
+                    if (flyMode) {
+                        // The free camera turns where it stands; what is under
+                        // the finger follows it.
+                        yaw += dx * 0.008f;
+                        pitch += dy * 0.008f;
+                    } else {
+                        // Grab-and-turn: the surface under the finger follows it.
+                        yaw -= dx * 0.008f;
+                        pitch -= dy * 0.008f;
+                    }
                     pitch = Math.max(-1.55f, Math.min(1.55f, pitch));
                     renderThrottled(false);
                 }
@@ -1872,8 +1907,11 @@ public final class DmcRenderView extends View {
                 final float vx = velocity.getXVelocity();
                 final float vy = velocity.getYVelocity();
                 if (Math.hypot(vx, vy) > 900.0f * density / 2.5f) {
-                    spinYaw = vx * 0.008f;
-                    spinPitch = vy * 0.008f * 0.5f;
+                    // The free camera turns the other way round (it stands
+                    // still, the world spins past).
+                    final float sign = flyMode ? -1.0f : 1.0f;
+                    spinYaw = sign * vx * 0.008f;
+                    spinPitch = sign * vy * 0.008f * 0.5f;
                     spinLastMs = SystemClock.uptimeMillis();
                     postOnAnimation(spinTick);
                 }

@@ -38,6 +38,22 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
   Reader` (Android 10+; older systems: the app's own folders). Videos have no
   sound.
 
+## A camera free in space
+
+- In camera mode the camera stands at its own eye: the fly camera without
+  the sticks. It does not orbit a point.
+  - One finger turns it where it stands; what is under the finger follows
+    the finger.
+  - Pinch zooms. Two fingers move it sideways and up/down. Hold one finger
+    and slide another to move it forward/back.
+  - The gyroscope and walking turn and move it.
+- The drone button adds the sticks to the same free camera.
+- Back in the scene, it orbits again from where the camera stands, so the
+  picture stays the same. If the drone was flying, it keeps flying.
+- A view opened in camera mode gets the free camera too (where the view has
+  a fly camera: stages and collision views). Reset view goes back to the
+  start, still free.
+
 ## Camera mode gestures
 
 | Gesture | Does |
