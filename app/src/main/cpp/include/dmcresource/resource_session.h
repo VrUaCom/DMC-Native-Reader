@@ -391,6 +391,11 @@ struct ViewControls final {
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
     const ViewControls& controls);
+// The same frame with each pixel's distance from the camera in `depth`
+// (infinity where nothing was drawn; empty for a movie or a UV map).
+[[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
+    int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,
+    const ViewControls& controls, std::vector<float>* depth);
 
 // What lies under image pixel (x, y) of that same view: the model, the room
 // (with the room point) and the nearest drawn joint ("joint 9 · name (part)").

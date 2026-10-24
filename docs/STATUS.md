@@ -207,7 +207,10 @@ APK verifier.
   - Picture: file, quality, size up to 8K, shape, self-timer, burst.
   - Video: size up to 4K, shape, frame rate, bit rate, H.264/H.265, key
     frames, a time limit, motion blur.
-  - Lens: focal length, aperture, vignetting, distortion, fringing.
+  - Lens: focal length, vignetting, distortion, fringing.
+  - Aperture (v101): the f-number, depth of field (focus auto or a
+    distance), blade count (bokeh shape), bright bokeh.
+  - Picture size by megapixels (v101): 2 … 64 MP in the picture's shape.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

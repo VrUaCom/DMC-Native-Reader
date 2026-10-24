@@ -4,7 +4,9 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <mutex>
+#include <thread>
 #include <utility>
 
 #include "dmcresource/demo_session.h"
@@ -28,6 +30,11 @@ constexpr Aspect kVideoAspects[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"4:
                                     {"21:9", 21, 9}, {"9:16", 9, 16}};
 constexpr int kPhotoQualities[] = {100, 95, 90, 85, 75, 60};
 constexpr int kPhotoLongSides[] = {0, 1280, 1920, 2560, 3840, 5120, 6144, 7680};
+constexpr int kMegapixels[] = {0, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64};
+constexpr float kInfinity = std::numeric_limits<float>::infinity();
+constexpr float kFocusUnits[] = {0.0F, 50.0F, 100.0F, 200.0F, 300.0F, 500.0F, 1000.0F, 2000.0F, kInfinity};
+constexpr int kBlades[] = {0, 9, 8, 7, 6, 5};
+constexpr float kUnitMm = 10.0F;  // a scene unit is about a centimetre (a character is ~180 tall)
 constexpr int kTimers[] = {0, 2, 5, 10};
 constexpr int kBursts[] = {1, 3, 5, 10};
 constexpr int kVideoShortSides[] = {720, 1080, 1440, 2160};
@@ -65,6 +72,10 @@ std::vector<Setting> build_settings() {
     add(Key::PhotoQuality, "photo_quality", picture, "JPEG quality", {"100", "95", "90", "85", "75", "60"}, 1);
     add(Key::PhotoSize, "photo_size", picture, "Size (long side)",
         {"As the view", "HD 1280", "Full HD 1920", "QHD 2560", "4K 3840", "5K 5120", "6K 6144", "8K 7680"}, 0);
+    add(Key::PhotoMegapixels, "photo_megapixels", picture, "Megapixels (instead of the size)",
+        {"By the size", "2 MP", "5 MP", "8 MP", "12 MP", "16 MP", "20 MP", "24 MP", "33 MP", "40 MP", "48 MP",
+         "64 MP"},
+        0);
     add(Key::PhotoAspect, "photo_aspect", picture, "Shape", aspects(kPhotoAspects), 0);
     add(Key::PhotoTimer, "photo_timer", picture, "Self-timer", {"Off", "2 s", "5 s", "10 s"}, 0);
     add(Key::PhotoBurst, "photo_burst", picture, "Shots per press", {"1", "3", "5", "10"}, 0);
@@ -87,11 +98,19 @@ std::vector<Setting> build_settings() {
         {"As the view (pinch)", "14 mm", "18 mm", "24 mm", "28 mm", "35 mm", "50 mm", "85 mm", "105 mm",
          "135 mm", "200 mm"},
         0);
-    add(Key::LensAperture, "lens_aperture", lens, "Aperture",
-        {"f/1.4", "f/2", "f/2.8", "f/4", "f/5.6", "f/8", "f/11", "f/16", "f/22"}, 3);
     add(Key::LensVignette, "lens_vignette", lens, "Vignetting", {"Off", "By the aperture", "Strong"}, 0);
     add(Key::LensDistortion, "lens_distortion", lens, "Distortion", {"Off", "By the focal length"}, 0);
     add(Key::LensFringe, "lens_fringe", lens, "Colour fringing", {"Off", "Weak", "Strong"}, 0);
+    const char* aperture = "Aperture";
+    add(Key::LensAperture, "lens_aperture", aperture, "Aperture (f-number)",
+        {"f/1.4", "f/2", "f/2.8", "f/4", "f/5.6", "f/8", "f/11", "f/16", "f/22"}, 3);
+    add(Key::LensDepthOfField, "lens_depth_of_field", aperture,
+        "Depth of field (what is not in focus blurs by the aperture and the focal length)", {"Off", "On"}, 0);
+    add(Key::LensFocus, "lens_focus", aperture, "Focus",
+        {"Auto (the middle of the frame)", "0.5 m", "1 m", "2 m", "3 m", "5 m", "10 m", "20 m", "Infinity"}, 0);
+    add(Key::LensBlades, "lens_blades", aperture, "Aperture blades (the shape of the bokeh)",
+        {"Round", "9", "8", "7", "6", "5"}, 0);
+    add(Key::LensBokeh, "lens_bokeh", aperture, "Bokeh highlights", {"Soft", "Bright"}, 0);
     const char* exposure = "Exposure";
     add(Key::ExposureMode, "exposure_mode", exposure, "Mode",
         {"Auto", "Manual (ISO, shutter, aperture)"}, 0);
@@ -330,6 +349,129 @@ std::string clock_text(int seconds) {
     return text;
 }
 
+std::atomic<float> g_focus{kInfinity};
+
+// Runs rows [0, height) in bands on the machine's cores.
+template <typename Band>
+void in_bands(int height, Band&& band) {
+    const int threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 16);
+    if (threads == 1 || height < 64) {
+        band(0, height);
+        return;
+    }
+    std::vector<std::thread> workers;
+    const int step = (height + threads - 1) / threads;
+    for (int begin = 0; begin < height; begin += step) {
+        workers.emplace_back([&band, begin, end = std::min(height, begin + step)] { band(begin, end); });
+    }
+    for (auto& worker : workers) worker.join();
+}
+
+// The focus distance: a chosen one, or the middle of the frame (the median
+// of what is drawn there).
+float focus_distance(const std::vector<float>& depth, int w, int h) {
+    const float chosen = pick(Key::LensFocus, kFocusUnits);
+    if (chosen > 0.0F) return chosen;
+    const int half = std::max(1, std::min(w, h) / 40);
+    std::vector<float> near_middle;
+    for (int y = h / 2 - half; y <= h / 2 + half; ++y) {
+        for (int x = w / 2 - half; x <= w / 2 + half; ++x) {
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            const float z = depth[static_cast<std::size_t>(y) * w + x];
+            if (std::isfinite(z) && z > 0.0F) near_middle.push_back(z);
+        }
+    }
+    if (near_middle.empty()) return kInfinity;
+    const auto mid = near_middle.begin() + static_cast<std::ptrdiff_t>(near_middle.size() / 2U);
+    std::nth_element(near_middle.begin(), mid, near_middle.end());
+    return *mid;
+}
+
+// Depth of field of a thin lens of focal length mm at aperture N focused at
+// `focus`: each pixel gathers the pixels inside its circle of confusion
+// (shaped by the blades), a nearer pixel reaching over a farther one but not
+// the other way round, so a sharp subject keeps its edge.
+void depth_of_field(RgbaImage* image, const std::vector<float>& depth, float mm, float aperture) {
+    const int w = image->width;
+    const int h = image->height;
+    if (depth.size() != static_cast<std::size_t>(w) * h || w < 8 || h < 8) return;
+    const float focus = focus_distance(depth, w, h);
+    g_focus.store(focus);
+    const float f = std::max(1.0F, mm);
+    const float s = std::isfinite(focus) ? std::max(focus * kUnitMm, f * 1.05F) : kInfinity;
+    const float px_per_mm = static_cast<float>(std::min(w, h)) / 24.0F;
+    const float max_radius = 0.05F * static_cast<float>(std::min(w, h));
+    const float k = f * f / aperture;
+    std::vector<float> radius(depth.size(), 0.0F);
+    float widest = 0.0F;
+    for (std::size_t i = 0; i < depth.size(); ++i) {
+        const float z = std::isfinite(depth[i]) ? std::max(depth[i] * kUnitMm, f * 1.05F) : kInfinity;
+        float coc = 0.0F;
+        if (std::isfinite(s)) {
+            coc = std::isfinite(z) ? k / (s - f) * std::fabs(z - s) / z : k / (s - f);
+        } else if (std::isfinite(z)) {
+            coc = k / z;
+        }
+        radius[i] = std::min(max_radius, 0.5F * coc * px_per_mm);
+        widest = std::max(widest, radius[i]);
+    }
+    if (widest < 0.5F) return;
+    // Golden-angle points in the unit disk, pushed out to the blades' polygon.
+    constexpr int kTaps = 128;
+    const int blades = pick(Key::LensBlades, kBlades);
+    std::array<std::array<float, 2>, kTaps> taps{};
+    for (int i = 0; i < kTaps; ++i) {
+        const float rho = std::sqrt((static_cast<float>(i) + 0.5F) / kTaps);
+        const float theta = static_cast<float>(i) * 2.39996323F;
+        float edge = 1.0F;
+        if (blades >= 5) {
+            const float sector = 6.28318531F / static_cast<float>(blades);
+            const float a = std::fmod(theta, sector) - 0.5F * sector;
+            edge = std::cos(0.5F * sector) / std::cos(a);
+        }
+        taps[static_cast<std::size_t>(i)] = {rho * edge * std::cos(theta), rho * edge * std::sin(theta)};
+    }
+    const bool bright = choice(Key::LensBokeh) == 1;
+    const std::vector<std::uint8_t> src = image->pixels;
+    in_bands(h, [&](int row_begin, int row_end) {
+        for (int y = row_begin; y < row_end; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const std::size_t p = static_cast<std::size_t>(y) * w + x;
+                const float r = radius[p];
+                if (r < 0.5F) continue;
+                const int n = std::clamp(static_cast<int>(r * r * 1.5F) + 4, 4, kTaps);
+                const float zp = depth[p];
+                float sum[3] = {0.0F, 0.0F, 0.0F};
+                float weights = 0.0F;
+                for (int t = 0; t < n; ++t) {
+                    const float dx = taps[static_cast<std::size_t>(t)][0] * r;
+                    const float dy = taps[static_cast<std::size_t>(t)][1] * r;
+                    const int qx = std::clamp(x + static_cast<int>(std::lround(dx)), 0, w - 1);
+                    const int qy = std::clamp(y + static_cast<int>(std::lround(dy)), 0, h - 1);
+                    const std::size_t q = static_cast<std::size_t>(qy) * w + qx;
+                    const float reach = !(depth[q] < zp) ? std::min(radius[q], r) : radius[q];
+                    if (reach + 0.5F < std::sqrt(dx * dx + dy * dy)) continue;
+                    const auto* c = &src[q * 4U];
+                    float weight = 1.0F;
+                    if (bright) {
+                        const float luma = (0.2126F * c[0] + 0.7152F * c[1] + 0.0722F * c[2]) / 255.0F;
+                        weight += 8.0F * std::max(0.0F, luma - 0.75F);
+                    }
+                    sum[0] += weight * c[0];
+                    sum[1] += weight * c[1];
+                    sum[2] += weight * c[2];
+                    weights += weight;
+                }
+                if (weights <= 0.0F) continue;
+                auto* out = &image->pixels[p * 4U];
+                for (int c = 0; c < 3; ++c) {
+                    out[c] = static_cast<std::uint8_t>(std::clamp(sum[c] / weights + 0.5F, 0.0F, 255.0F));
+                }
+            }
+        }
+    });
+}
+
 }  // namespace
 
 const std::vector<Setting>& settings() {
@@ -361,9 +503,15 @@ Plan plan(Kind kind, int view_width, int view_height) noexcept {
     const auto [aw, ah] = shape(kind, view_width, view_height);
     if (kind == Kind::Photo) {
         const int long_side = pick(Key::PhotoSize, kPhotoLongSides);
+        const int megapixels = pick(Key::PhotoMegapixels, kMegapixels);
         float w = 0.0F;
         float h = 0.0F;
-        if (long_side == 0) {
+        if (megapixels > 0) {
+            // The pixel count in the picture's shape; the renderer's 8192
+            // side caps it (a 50 MP square is 64 MP at most).
+            w = std::sqrt(static_cast<float>(megapixels) * 1.0e6F * aw / ah);
+            h = w * ah / aw;
+        } else if (long_side == 0) {
             const Rect frame = frame_in_view(kind, view_width, view_height);
             w = frame.width;
             h = frame.height;
@@ -453,13 +601,15 @@ Exposure exposure() noexcept {
     return out;
 }
 
-void develop(RgbaImage* image, std::uint32_t seed, float mm) {
+void develop(RgbaImage* image, std::uint32_t seed, float mm, const std::vector<float>* depth) {
     if (image == nullptr || image->width <= 0 || image->height <= 0 ||
         image->pixels.size() < static_cast<std::size_t>(image->width) * image->height * 4U) {
         return;
     }
     const int w = image->width;
     const int h = image->height;
+    // The optics first: what the lens does not focus, then its distortion.
+    if (depth != nullptr && depth_of_field_on()) depth_of_field(image, *depth, mm, exposure().aperture);
     const float scale = static_cast<float>(std::max(w, h)) / 1920.0F;
     const float k = choice(Key::LensDistortion) == 1 ? distortion_k(mm) : 0.0F;
     const float fringe = choice(Key::LensFringe) == 0 ? 0.0F : (choice(Key::LensFringe) == 1 ? 0.0012F : 0.003F);
@@ -564,6 +714,10 @@ void develop(RgbaImage* image, std::uint32_t seed, float mm) {
     if (sharpness > 0) sharpen(image, 0.35F * static_cast<float>(sharpness));
 }
 
+bool depth_of_field_on() noexcept { return choice(Key::LensDepthOfField) == 1; }
+
+float last_focus() noexcept { return g_focus.load(); }
+
 void develop(RgbaImage* image, std::uint32_t seed) {
     const float fixed = fixed_lens_zoom();
     develop(image, seed, fixed > 0.0F ? focal_mm(fixed) : 50.0F);
@@ -578,10 +732,12 @@ RgbaImage render_capture(const Session* session, Kind kind, int view_width, int 
     }
     ViewControls framed = controls;
     frame_controls(kind, view_width, view_height, &framed);
-    auto image = render_session(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed);
+    std::vector<float> depth;
+    auto image = render_session(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                                depth_of_field_on() ? &depth : nullptr);
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
-    develop(&image, g_seed.fetch_add(1U), focal_mm(lens));
+    develop(&image, g_seed.fetch_add(1U), focal_mm(lens), &depth);
     if (kind == Kind::Video && choice(Key::VideoMotionBlur) == 1 && !image.pixels.empty()) {
         const Exposure e = exposure();
         const float a = std::clamp(1.0F - 1.0F / (2.0F * e.shutter_seconds * static_cast<float>(p.fps)), 0.0F, 0.85F);
@@ -613,9 +769,14 @@ RgbaImage render_view_frame(const Session* session, int width, int height, float
     ViewControls framed = controls;
     const float fixed = fixed_lens_zoom();
     if (fixed > 0.0F) framed.lens_zoom = finder_zoom(Kind::Photo, zoom, width, height);
-    auto image = render_session(session, width, height, yaw, pitch, zoom, render_flags, framed);
+    // A frame while the view moves skips the depth of field (it needs a
+    // second, software pass for the depth).
+    std::vector<float> depth;
+    const bool moving = has_render_flag(render_flags, RenderFlag::Preview);
+    auto image = render_session(session, width, height, yaw, pitch, zoom, render_flags, framed,
+                                depth_of_field_on() && !moving ? &depth : nullptr);
     develop(&image, g_seed.fetch_add(1U),
-            focal_mm(capture_zoom(Kind::Photo, effective_view_zoom(session, zoom), width, height)));
+            focal_mm(capture_zoom(Kind::Photo, effective_view_zoom(session, zoom), width, height)), &depth);
     return image;
 }
 
@@ -662,6 +823,18 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
                            "  " + aperture + "  " + std::to_string(static_cast<int>(std::lround(focal_mm(zoom)))) +
                            " mm  " + (kelvin == 0 ? std::string("AWB") : std::to_string(kelvin) + " K") + "  " +
                            kStyles[std::clamp(choice(Key::ColourStyle), 0, count(kStyles) - 1)];
+        if (depth_of_field_on()) {
+            const float focus = pick(Key::LensFocus, kFocusUnits) > 0.0F ? pick(Key::LensFocus, kFocusUnits)
+                                                                         : last_focus();
+            char text[32];
+            if (std::isfinite(focus)) {
+                std::snprintf(text, sizeof(text), "  %s %.1f m", pick(Key::LensFocus, kFocusUnits) > 0.0F ? "MF" : "AF",
+                              static_cast<double>(focus * kUnitMm / 1000.0F));
+            } else {
+                std::snprintf(text, sizeof(text), "  %s \xE2\x88\x9E", pick(Key::LensFocus, kFocusUnits) > 0.0F ? "MF" : "AF");
+            }
+            line += text;
+        }
         const float ev = pick(Key::ExposureCompensation, kCompensation);
         if (ev != 0.0F) {
             char text[32];
@@ -670,8 +843,11 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
         }
         if (!recording) {
             constexpr const char* formats[] = {"PNG", "JPEG", "WebP"};
+            char megapixels[24];
+            std::snprintf(megapixels, sizeof(megapixels), " %.1f MP",
+                          static_cast<double>(p.width) * static_cast<double>(p.height) / 1.0e6);
             line += "  " + std::string(formats[std::clamp(p.format, 0, 2)]) + " " + std::to_string(p.width) +
-                    "\xC3\x97" + std::to_string(p.height);
+                    "\xC3\x97" + std::to_string(p.height) + megapixels;
         }
         status = status.empty() ? line : status + "\n" + line;
     }

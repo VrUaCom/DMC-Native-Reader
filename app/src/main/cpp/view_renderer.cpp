@@ -1769,6 +1769,13 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
                                        row_begin, row_end, image, depth);
             }
         });
+        if (view.depth_out != nullptr) {
+            // Depths are camera distances less cd.
+            *view.depth_out = depth;
+            for (auto& z : *view.depth_out) {
+                if (std::isfinite(z)) z += cd;
+            }
+        }
     }
 
     draw_overlays(pen, hierarchy);
@@ -2216,6 +2223,12 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             drawn = false;
         }
         if (drawn) {
+            // The GPU keeps its depth: the software pass gives the same
+            // frame's depth when the photo camera asks for it.
+            if (view.depth_out != nullptr) {
+                (void)render_view_software(mesh, image.width, image.height, view, nullptr,
+                                           triangle_texture_slots, textures);
+            }
             const OverlayPen pen{image, frame, view};
             draw_overlays(pen, hierarchy);
             g_gpu_frames.fetch_add(1U);

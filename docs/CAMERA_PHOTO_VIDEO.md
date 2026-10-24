@@ -24,6 +24,7 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | Picture | File | **PNG**, JPEG, WebP lossless |
 | | JPEG quality | 100, **95**, 90, 85, 75, 60 |
 | | Size (long side) | **As the view**, 1280, 1920, 2560, 3840, 5120, 6144, 7680 (8K) |
+| | Megapixels (instead of the size) | **By the size**, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64 MP (in the picture's shape; the 8192 side of the renderer caps it) |
 | | Shape | **As the view**, 16:9, 3:2, 4:3, 1:1, 21:9, 9:16, 2:3 |
 | | Self-timer | **Off**, 2, 5, 10 s |
 | | Shots per press | **1**, 3, 5, 10 (a quarter second apart) |
@@ -38,10 +39,14 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | | Motion blur | **Off**, by the shutter (the frames before blend in) |
 | | Subtitles in the video | **Show**, Hide |
 | Lens | Focal length (full frame) | **As the view (pinch)**, 14 … 200 mm |
-| | Aperture | f/1.4 … **f/4** … f/22 |
 | | Vignetting | **Off**, by the aperture, strong |
 | | Distortion | **Off**, by the focal length (barrel when wide, pincushion when long) |
 | | Colour fringing | **Off**, weak, strong |
+| Aperture | Aperture (f-number) | f/1.4 … **f/4** … f/22 (exposure in manual mode, vignetting, depth of field) |
+| | Depth of field | **Off**, On |
+| | Focus | **Auto (the middle of the frame)**, 0.5, 1, 2, 3, 5, 10, 20 m, infinity |
+| | Aperture blades | **Round**, 9, 8, 7, 6, 5 (the shape of the bokeh) |
+| | Bokeh highlights | **Soft**, bright |
 | Exposure | Mode | **Auto** (the rendered picture, moved by the compensation), Manual |
 | | ISO | **Auto**, 50 … 25600 |
 | | Shutter | 1/8000 … **1/60** … 1 s |
@@ -84,4 +89,16 @@ The starting values leave the picture exactly as the view renders it.
   recorder encodes the latest frame at the frame rate. The encoder is checked
   first, so a size or codec the phone cannot encode is a clear message.
 
-Not yet: depth of field (needs the renderer's depth), a photo's motion blur.
+- **Depth of field.** The capture is rendered with each pixel's distance
+  from the camera. The GPU keeps its depth, so a software pass of the same
+  frame gives it. A scene unit counts as a centimetre. The focus is the chosen
+  distance, or the median distance in the middle of the frame (shown as AF in
+  the settings line). A thin lens gives each pixel's circle of confusion:
+  f² / (N (s − f)) · |z − s| / z on a 24 mm short side, capped at 5 % of the
+  picture. Each pixel gathers up to 128 golden-angle points in its circle,
+  pushed out to the blades' polygon. A nearer pixel reaches over a farther
+  one but not the other way round, so a sharp subject keeps its edge. Bright
+  bokeh weighs highlights up to 3 times. The viewfinder skips it while the
+  view moves. On a 4-core desktop a 4K picture takes about 0.8 s.
+
+Not yet: a photo's motion blur.

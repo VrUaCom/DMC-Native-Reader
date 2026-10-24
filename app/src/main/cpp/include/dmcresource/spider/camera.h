@@ -23,6 +23,7 @@ enum class Key : std::uint8_t {
     PhotoFormat,
     PhotoQuality,
     PhotoSize,
+    PhotoMegapixels,
     PhotoAspect,
     PhotoTimer,
     PhotoBurst,
@@ -37,10 +38,14 @@ enum class Key : std::uint8_t {
     VideoMotionBlur,
     VideoSubtitles,
     LensFocal,
-    LensAperture,
     LensVignette,
     LensDistortion,
     LensFringe,
+    LensAperture,
+    LensDepthOfField,
+    LensFocus,
+    LensBlades,
+    LensBokeh,
     ExposureMode,
     ExposureIso,
     ExposureShutter,
@@ -127,9 +132,16 @@ struct Exposure final {
 
 // Develops a rendered picture with the lens, exposure and colour settings.
 // seed varies the sensor noise from frame to frame; mm is the focal length
-// the distortion follows (the fixed lens, else 50 mm, without it).
-void develop(RgbaImage* image, std::uint32_t seed, float mm);
+// the distortion and the depth of field follow (the fixed lens, else 50 mm,
+// without it); depth (each pixel's camera distance, scene units of 1 cm)
+// gives the depth of field when it is on.
+void develop(RgbaImage* image, std::uint32_t seed, float mm, const std::vector<float>* depth = nullptr);
 void develop(RgbaImage* image, std::uint32_t seed);
+// Whether the depth of field is on (a capture then renders its depth too).
+[[nodiscard]] bool depth_of_field_on() noexcept;
+// The distance (scene units) the last developed frame was focused at;
+// infinity when nothing was in the middle.
+[[nodiscard]] float last_focus() noexcept;
 
 // A picture or a video frame of the session: rendered at plan() size with
 // capture_zoom(), then developed. A video frame blends the frames before it

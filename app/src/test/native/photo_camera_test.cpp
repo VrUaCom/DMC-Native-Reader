@@ -1,6 +1,7 @@
 // The reader's photo and video camera (spider/camera.h): the settings and
 // their starting values, the sizes of pictures and videos, the framing that
 // keeps a capture equal to the viewfinder, the exposure and the developing.
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <vector>
@@ -133,6 +134,65 @@ int main() {
     cam::develop(&image, 1U);
     assert(image.pixels[0] < 120U && image.pixels[(32U * 65U + 32U) * 4U] == 200U);
     cam::reset_choices();
+
+    // Megapixels in the picture's shape: 12 MP at 4:3 is 4000 x 3000; 64 MP
+    // at 16:9 meets the renderer's 8192 side.
+    choose(cam::Key::PhotoMegapixels, 4);
+    choose(cam::Key::PhotoAspect, 3);
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 4000 && photo.height == 3000);
+    choose(cam::Key::PhotoMegapixels, 11);
+    choose(cam::Key::PhotoAspect, 1);
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 8192 && photo.height == 4608);
+    cam::reset_choices();
+
+    // Depth of field: a far wall behind a near, sharp square. Focused on the
+    // square (auto, the middle), the square stays sharp and the wall's
+    // stripes blur; at f/22 they stay sharper than at f/1.4.
+    {
+        const auto scene = [](std::vector<float>* depth) {
+            auto picture = grey(200, 120, 0U);
+            depth->assign(200U * 120U, 2000.0F);
+            for (int y = 0; y < 120; ++y) {
+                for (int x = 0; x < 200; ++x) {
+                    auto* px = &picture.pixels[(static_cast<std::size_t>(y) * 200U + x) * 4U];
+                    const bool square = x >= 80 && x < 120 && y >= 40 && y < 80;
+                    const std::uint8_t v = square ? ((x / 2) % 2 == 0 ? 255U : 0U) : ((x / 4) % 2 == 0 ? 255U : 0U);
+                    px[0] = px[1] = px[2] = v;
+                    if (square) (*depth)[static_cast<std::size_t>(y) * 200U + x] = 150.0F;
+                }
+            }
+            return picture;
+        };
+        const auto contrast_at = [](const RgbaImage& picture, int x0, int y) {
+            int lo = 255;
+            int hi = 0;
+            for (int x = x0; x < x0 + 8; ++x) {
+                const int v = picture.pixels[(static_cast<std::size_t>(y) * 200U + x) * 4U];
+                lo = std::min(lo, v);
+                hi = std::max(hi, v);
+            }
+            return hi - lo;
+        };
+        choose(cam::Key::LensDepthOfField, 1);
+        choose(cam::Key::LensAperture, 0);  // f/1.4
+        std::vector<float> depth;
+        auto wide = scene(&depth);
+        cam::develop(&wide, 1U, 85.0F, &depth);
+        assert(std::abs(cam::last_focus() - 150.0F) < 1e-3F);
+        assert(contrast_at(wide, 96, 60) > 200);  // the square: sharp
+        assert(contrast_at(wide, 20, 10) < 60);   // the wall: blurred
+        choose(cam::Key::LensAperture, 8);  // f/22
+        auto narrow = scene(&depth);
+        cam::develop(&narrow, 1U, 85.0F, &depth);
+        assert(contrast_at(narrow, 20, 10) > contrast_at(wide, 20, 10));
+        // Off, nothing moves.
+        cam::reset_choices();
+        auto off = scene(&depth);
+        cam::develop(&off, 1U, 85.0F, &depth);
+        assert(contrast_at(off, 20, 10) == 255);
+    }
 
     // The viewfinder: off at the start; on, it frames the picture with the
     // thirds and writes the settings; recording frames the video.

@@ -110,6 +110,9 @@ struct ViewState {
         float far_alpha{};
     };
     Fog fog{};
+    // When set, filled with each pixel's distance from the camera (infinity
+    // where nothing was drawn): the photo camera's depth of field reads it.
+    std::vector<float>* depth_out{};
     int mesh_line_px{1};
     int collision_line_px{1};
     // Resource-backed EXE effect presentation. The runtime supplies explicit

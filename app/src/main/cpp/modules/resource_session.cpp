@@ -2444,6 +2444,14 @@ RgbaImage render_uv_map_export(const Session* session) {
 
 RgbaImage render_session(const Session* session, int requested_width, int requested_height, float yaw,
                          float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls) {
+    return render_session(session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls,
+                          nullptr);
+}
+
+RgbaImage render_session(const Session* session, int requested_width, int requested_height, float yaw,
+                         float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                         std::vector<float>* depth) {
+    if (depth != nullptr) depth->clear();
     if (session == nullptr) return {};
     if (session->uv_gallery && session->uv_map_index &&
         *session->uv_map_index < session->uv_gallery->maps.size()) {
@@ -2461,6 +2469,7 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
     if (!session->renderable) return {};
     PreparedView prepared;
     prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    prepared.view.depth_out = depth;
     const Mesh& presented =
         prepared.dynamic_presentation
             ? prepared.presentation_mesh
