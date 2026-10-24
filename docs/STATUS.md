@@ -340,6 +340,13 @@ APK verifier.
       picture stays as before; fog follows the game's curve.
     - Settings → Graphics → Shaders (GPU): DMC3 or the Reader's own; the
       Renderer info lists the shaders of the last frame.
+  - v122:
+    - ⋮ → Effects (play any): every V, G, E and P of the loaded banks (the
+      file's, the stage effect bank, a cutscene's) loops at the model's
+      feet, or in the middle of the picture with a free or cutscene camera.
+    - Each row names the game classes whose code starts it: a catalog of
+      all 875 effect spawn calls of dmc3.exe (research
+      dmc3-effect-spawn-sites-v122.md).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

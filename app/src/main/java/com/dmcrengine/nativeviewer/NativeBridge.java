@@ -105,6 +105,10 @@ public final class NativeBridge {
     /** id 0: the card went away. */
     public static native ActionOutcome runMarkerCardAction(int marker, int id);
     public static native NativeMenu soundMenu(long handle);
+    /** Every effect of the loaded banks to play on the view (ids: rows; -1 stops). */
+    public static native NativeMenu effectMenu(long handle);
+    /** Plays effect row {@code id} of {@link #effectMenu} at the model's feet, looping; -1 stops. */
+    public static native ActionOutcome playEffect(long handle, int id);
     public static native SoundPcm soundPcm(long handle, int index);
     /** The ⋮ menu for this session, from the facts only the shell holds. */
     public static native CompanionMenu companionMenu(long handle, boolean rootScene, boolean assembledPacSource,

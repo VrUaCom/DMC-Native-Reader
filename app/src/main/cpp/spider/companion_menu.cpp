@@ -80,6 +80,10 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         // A cutscene plays as its scene; its archive's files are one step away.
         add(menu.rows, Companion::BrowseCutscenePac, "Browse .PAC files\xE2\x80\xA6");
     }
+    // Any effect of the banks loaded with the scene, played on its own.
+    if (open && !effect_choices(session).empty()) {
+        add(menu.rows, Companion::Effects, "Effects (play any)\xE2\x80\xA6");
+    }
     if (has(widow::StateFlag::CanReencodeTextures)) {
         add(model_rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
     }

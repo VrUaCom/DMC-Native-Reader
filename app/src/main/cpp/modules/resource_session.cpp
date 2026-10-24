@@ -1699,6 +1699,67 @@ void append_demo_effects(const Session& session, PreparedView* out) {
     out->effect_sprites.insert(out->effect_sprites.end(), staged.begin(), staged.end());
 }
 
+// The effect started from the ⋮ menu, on a wall clock, looping: at the feet
+// of what is shown (a stage: its floor spot); with a free or a cutscene's
+// camera, in the middle of the picture at the depth of the models.
+void append_launched_effect(const Session& session, std::span<const Vec3> rest, PreparedView* out) {
+    if (out == nullptr || !session.launched_effect) return;
+    const auto& launched = *session.launched_effect;
+    const Session& host = launched.host ? *launched.host : session;
+    const auto dispatch = dispatch_kind_for_effect_kind(launched.kind);
+    if (dispatch == 0xFFU) return;
+    Vec3 at = out->view.room_pivot;
+    if (!rest.empty()) {
+        double x = 0.0, z = 0.0;
+        float floor = std::numeric_limits<float>::infinity();
+        for (const auto& v : rest) {
+            x += v.x;
+            z += v.z;
+            floor = std::min(floor, v.y);
+        }
+        const auto n = static_cast<double>(rest.size());
+        at = {static_cast<float>(x / n), floor, static_cast<float>(z / n)};
+    }
+    if (out->view.fly) {
+        // In front of the nearest model in the middle of the picture (within
+        // about 20 degrees of the view axis), so it is not hidden behind it.
+        const auto& eye = out->view.fly_eye;
+        const auto forward = camera_basis(out->view.yaw_radians, out->view.pitch_radians).forward;
+        const auto along = [&](const Vec3& v) {
+            return (v.x - eye.x) * forward.x + (v.y - eye.y) * forward.y + (v.z - eye.z) * forward.z;
+        };
+        float depth = std::max(along(at), 1.0F);
+        const std::size_t step = std::max<std::size_t>(1U, rest.size() / 4096U);
+        for (std::size_t i = 0U; i < rest.size(); i += step) {
+            const auto& v = rest[i];
+            const float t = along(v);
+            if (!(t > 1.0F)) continue;
+            const Vec3 off{v.x - eye.x - forward.x * t, v.y - eye.y - forward.y * t, v.z - eye.z - forward.z * t};
+            if (off.x * off.x + off.y * off.y + off.z * off.z < t * t * 0.13F) depth = std::min(depth, t * 0.7F);
+        }
+        at = {eye.x + forward.x * depth, eye.y + forward.y * depth, eye.z + forward.z * depth};
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - launched.started;
+    const float frames = static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()) * 0.06F;
+    const float age = std::fmod(frames, std::max(launched.period, 1.0F));
+    set_effect_view_basis(out->view.yaw_radians, out->view.pitch_radians);
+    motion::EffectChildRef root;
+    root.effect_kind = launched.kind;
+    root.effect_id = launched.id;
+    root.resource_slot = launched.slot;
+    root.dispatch_kind = dispatch;
+    root.evidence = motion::EvidenceStatus::STRUCTURAL_CONFIRMED;
+    root.scale = {1.0F, 1.0F, 1.0F};
+    Matrix4 world;
+    world.values = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, at.x, at.y, at.z, 1.0F};
+    motion::RuntimeEffectInstance instance;
+    std::vector<ViewState::EffectSprite> staged;
+    (void)collect_effect_children(host, instance, root, world, age, &staged, 0U);
+    if (staged.empty()) return;
+    if (launched.host) out->effect_host = launched.host;
+    out->effect_sprites.insert(out->effect_sprites.end(), staged.begin(), staged.end());
+}
+
 [[nodiscard]] Vec3 transform_dynamic_vertex(
     const Vec3& p, const Matrix4& m) noexcept {
     return {
@@ -2344,6 +2405,7 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     }
     if (!view.uv_layout) {
         append_demo_effects(session, out);
+        append_launched_effect(session, rest, out);
         view.effect_sprites = out->effect_sprites;
     }
     // Depth fog: a cutscene's GFG clip, else the configuration's fog of the
@@ -2412,6 +2474,7 @@ float session_camera_distance(const Session* session) noexcept {
 bool room_animated(const Session* session) noexcept {
     try {
         if (session == nullptr) return false;
+        if (session->launched_effect) return true;
         const bool has_host = stage_room::effect_host() != nullptr;
         const auto moves = [has_host](const stage_room::Room& room) {
             return !room.uv_scrolls.empty() || (has_host && !stage_effects(room).empty());
@@ -2422,6 +2485,62 @@ bool room_animated(const Session* session) noexcept {
     } catch (...) {
         return false;
     }
+}
+
+std::vector<EffectChoice> effect_choices(const Session* session) {
+    std::vector<EffectChoice> out;
+    if (session == nullptr) return out;
+    const auto add = [&out](const Session& host, EffectChoice::Source source) {
+        for (const char kind : {'V', 'G', 'E', 'P'}) {
+            for (const auto& bank : host.effect_banks) {
+                for (const auto& record : bank.bank.records) {
+                    if (record.kind != kind || record.bytes.empty()) continue;
+                    EffectChoice choice;
+                    choice.kind = kind;
+                    choice.id = record.id;
+                    choice.slot = bank.resource_slot;
+                    choice.source = source;
+                    choice.frames = effect_extent(host, kind, record.id, bank.resource_slot, 0);
+                    if (kind == 'V') {
+                        if (const auto composite = effect_bank::composite_record(record)) {
+                            choice.parts = static_cast<int>(composite->entries.size());
+                        }
+                    }
+                    out.push_back(choice);
+                }
+            }
+        }
+    };
+    add(*session, EffectChoice::Source::own);
+    if (const auto stage = stage_room::effect_host(); stage && stage.get() != session) {
+        add(*stage, EffectChoice::Source::stage);
+    }
+    if (const auto cutscene = demo::effect_host(*session)) add(*cutscene, EffectChoice::Source::cutscene);
+    return out;
+}
+
+bool launch_effect(Session* session, const EffectChoice& choice) {
+    if (session == nullptr) return false;
+    std::shared_ptr<const Session> host;
+    if (choice.source == EffectChoice::Source::stage) host = stage_room::effect_host();
+    if (choice.source == EffectChoice::Source::cutscene) host = demo::effect_host(*session);
+    if (choice.source != EffectChoice::Source::own && !host) return false;
+    const Session& bank_host = host ? *host : *session;
+    if (find_effect_record(bank_host, choice.kind, choice.id, choice.slot) == nullptr) return false;
+    Session::LaunchedEffect launched;
+    launched.kind = choice.kind;
+    launched.id = choice.id;
+    launched.slot = choice.slot;
+    launched.host = std::move(host);
+    launched.started = std::chrono::steady_clock::now();
+    // One play and a short pause before it starts again.
+    launched.period = std::clamp(effect_extent(bank_host, choice.kind, choice.id, choice.slot, 0) + 30.0F, 30.0F, 1200.0F);
+    session->launched_effect = std::move(launched);
+    return true;
+}
+
+void stop_launched_effect(Session* session) noexcept {
+    if (session != nullptr) session->launched_effect.reset();
 }
 
 float session_dolly_limit(const Session* session) noexcept {

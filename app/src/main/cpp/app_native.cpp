@@ -1496,6 +1496,22 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_soundMenu(JNIEnv* env, jclass, jlo
     } catch (...) { return nullptr; }
 }
 
+// Every effect the view can play, and playing one (-1 stops); the core
+// writes the rows and the line.
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_effectMenu(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        return menu_object(env, stage_actions::effect_menu(from_handle(handle)));
+    } catch (...) { return nullptr; }
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_playEffect(JNIEnv* env, jclass, jlong handle, jint id) {
+    const SessionLock jni_lock{session_mutex()};
+    return outcome_object(env, stage_actions::play_effect(from_handle(handle), id));
+}
+
 // SoundPcm(int sampleRate, short[] samples, String message)
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_soundPcm(JNIEnv* env, jclass, jlong handle, jint index) {

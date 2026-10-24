@@ -3,9 +3,11 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <utility>
 
 #include "dmcresource/demo_session.h"
+#include "dmcresource/effect_spawn_sites.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/cpp23_language.h"
 #include "dmcresource/stage_markers.h"
@@ -222,6 +224,71 @@ ActionOutcome run_marker_card_action(int marker, int id, std::unique_ptr<Session
         // Close, or the card dismissed.
         stage_markers::set_selected(-1);
         return outcome(true);
+    } catch (...) {
+        return {};
+    }
+}
+
+namespace {
+
+// "V 488 · 6 parts · 1.6 s · stage bank · in the game: CEm034Shl04"
+std::string effect_title(const EffectChoice& choice) {
+    std::string title(1, choice.kind);
+    title += " " + std::to_string(choice.id);
+    if (choice.parts > 0) title += " \xC2\xB7 " + std::to_string(choice.parts) + (choice.parts == 1 ? " part" : " parts");
+    char seconds[32];
+    std::snprintf(seconds, sizeof(seconds), " \xC2\xB7 %.1f s", static_cast<double>(choice.frames) / 60.0);
+    title += seconds;
+    if (choice.source == EffectChoice::Source::stage) title += " \xC2\xB7 stage bank";
+    if (choice.source == EffectChoice::Source::cutscene) title += " \xC2\xB7 cutscene bank";
+    const auto owners = effect_sites::owners(choice.kind, choice.id);
+    if (!owners.empty()) {
+        title += " \xC2\xB7 in the game: ";
+        for (std::size_t i = 0U; i < owners.size() && i < 3U; ++i) {
+            if (i != 0U) title += ", ";
+            title += owners[i];
+        }
+        if (owners.size() > 3U) title += " +" + std::to_string(owners.size() - 3U);
+    }
+    return title;
+}
+
+}  // namespace
+
+Menu effect_menu(const Session* session) {
+    Menu menu;
+    const auto choices = effect_choices(session);
+    // A list cannot carry a message: the title says where it plays, and
+    // "in the game" on a row names the classes whose code starts it.
+    menu.title = "Play an effect (" + std::to_string(choices.size()) + "): at the feet, looping";
+    if (session != nullptr && session->launched_effect) {
+        const auto& playing = *session->launched_effect;
+        menu.items.push_back({-1, "\xE2\x96\xA0 Stop " + std::string(1, playing.kind) + " " + std::to_string(playing.id)});
+    }
+    for (std::size_t i = 0U; i < choices.size(); ++i) {
+        menu.items.push_back({static_cast<int>(i), effect_title(choices[i])});
+    }
+    return menu;
+}
+
+ActionOutcome play_effect(Session* session, int id) noexcept {
+    try {
+        ActionOutcome out;
+        if (id < 0) {
+            stop_launched_effect(session);
+            out.ok = true;
+            out.message = "Effect stopped";
+            return out;
+        }
+        const auto choices = effect_choices(session);
+        const auto i = static_cast<std::size_t>(id);
+        if (i >= choices.size() || !launch_effect(session, choices[i])) {
+            out.message = "That effect is not loaded any more";
+            return out;
+        }
+        out.ok = true;
+        out.message = "\xE2\x96\xB6 " + effect_title(choices[i]);
+        return out;
     } catch (...) {
         return {};
     }

@@ -96,6 +96,15 @@ struct MarkerCard final {
 // selection.
 [[nodiscard]] ActionOutcome run_marker_card_action(int marker, int id, std::unique_ptr<Session>* opened) noexcept;
 
+// ---- effects ---------------------------------------------------------------
+
+// Every effect the view can play (effect_choices), one row each with what
+// the game's code that starts it is (effect_spawn_sites.h); "Stop" first while
+// one plays. Ids: the choice's index; -1 stops.
+[[nodiscard]] Menu effect_menu(const Session* session);
+// Plays the picked one at the model's feet, again and again (or stops).
+[[nodiscard]] ActionOutcome play_effect(Session* session, int id) noexcept;
+
 // ---- sounds ----------------------------------------------------------------
 
 // The sounds of a session to choose from (empty items when it has none).

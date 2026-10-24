@@ -107,3 +107,5 @@ The curves are therefore in banks not yet seen, such as
     (SHADERS.md).
 - The name tables, if a copy of the game has them as loose files, would give
   every effect id its original name.
+
+Who starts which effect in the code: dmc3-effect-spawn-sites-v122.md.

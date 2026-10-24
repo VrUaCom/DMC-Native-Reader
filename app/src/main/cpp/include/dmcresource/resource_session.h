@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -224,6 +225,19 @@ struct Session {
     };
     std::vector<EffectBank> effect_banks;
 
+    // An effect started from the ⋮ menu (spider/effect_launcher.h): played
+    // on a wall clock from `started`, looping every `period` game frames, at
+    // the model's feet (a stage: its floor spot).
+    struct LaunchedEffect final {
+        char kind{};
+        std::uint16_t id{};
+        std::uint32_t slot{};
+        std::shared_ptr<const Session> host;  // null: this session's own banks
+        std::chrono::steady_clock::time_point started{};
+        float period{60.0F};
+    };
+    std::optional<LaunchedEffect> launched_effect;
+
     // Dynamic CEm034 CShell visuals stay outside the persistent composite.
     // Source geometry/textures are retained once; active/world are presentation
     // state driven only by the recovered Shl actor lifecycle.
@@ -399,6 +413,24 @@ struct ViewControls final {
 // scrolls, or effects (its layout's or its configuration's STE) with the
 // stage's effect bank loaded. The shell keeps redrawing it while true.
 [[nodiscard]] bool room_animated(const Session* session) noexcept;
+
+// The effects the view can play by themselves (the ⋮ menu's Effects):
+// every V, G, E and P record of this session's banks, of the stage effect
+// bank and of a cutscene's bank, in that order.
+struct EffectChoice final {
+    enum class Source : std::uint8_t { own, stage, cutscene };
+    char kind{};
+    std::uint16_t id{};
+    std::uint32_t slot{};
+    Source source{};
+    float frames{};   // one play, in game frames (60 a second)
+    int parts{};      // a V's entries
+};
+[[nodiscard]] std::vector<EffectChoice> effect_choices(const Session* session);
+// Starts `choice` on the view, from its first frame, looping (false: it is
+// not in the banks any more).
+bool launch_effect(Session* session, const EffectChoice& choice);
+void stop_launched_effect(Session* session) noexcept;
 
 [[nodiscard]] RgbaImage render_session(const Session* session, int requested_width,
     int requested_height, float yaw, float pitch, float zoom, std::uint32_t render_flags,

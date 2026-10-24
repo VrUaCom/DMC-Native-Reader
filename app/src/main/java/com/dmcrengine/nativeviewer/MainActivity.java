@@ -819,6 +819,18 @@ public final class MainActivity extends Activity {
         return new File(getFilesDir(), EFFECTS_FILE);
     }
 
+    /** The core's list of every loaded effect; the picked one plays on the view until stopped. */
+    private void chooseEffect() {
+        if (session == 0) return;
+        showNativeMenu(NativeBridge.effectMenu(session), id -> {
+            final ActionOutcome outcome = NativeBridge.playEffect(session, id);
+            if (outcome != null && outcome.message != null && !outcome.message.isEmpty()) {
+                notice(outcome.message, Toast.LENGTH_SHORT);
+            }
+            renderView.renderNow();
+        });
+    }
+
     private void roomEffectsChoose() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -2944,6 +2956,7 @@ public final class MainActivity extends Activity {
             case CompanionMenu.BROWSE_ASSEMBLED_PAC: browseAssembledPac(); break;
             case CompanionMenu.BROWSE_STAGE_PAC: if (stagePacUri != null) browsePac(stagePacUri); break;
             case CompanionMenu.STAGE_EFFECTS: roomEffectsChoose(); break;
+            case CompanionMenu.EFFECTS: chooseEffect(); break;
             case CompanionMenu.ADD_MOD_PARTS: chooseAdditionalMods(); break;
             case CompanionMenu.COMPOSITE_PARTS: showCompositePartsDialog(); break;
             case CompanionMenu.PLACE_MOD_PART: showPlaceModPartDialog(); break;

@@ -51,6 +51,8 @@ enum class Companion : int {
     CameraSettings = 28,
     // rows: a cutscene archive's own files
     BrowseCutscenePac = 29,
+    // rows: play any effect of the loaded banks (stage_actions.h effect_menu)
+    Effects = 30,
 };
 
 // What only the shell knows.
