@@ -94,6 +94,9 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         if (motion::looks_like_tsc(text)) return {Format::Tsc, "TSC", "tsc"};
         if (motion::looks_like_clt(text)) return {Format::Clt, "CLT", "clt"};
         if (demo::looks_like_clips(text)) return {Format::DemoClips, "CLIPS", "txt"};
+        // A cutscene archive's script and the name list of its clip texts.
+        if (demo::looks_like_script(text)) return {Format::Unknown, "SCRIPT", "txt"};
+        if (demo::looks_like_name_list(text)) return {Format::Unknown, "NAMES", "txt"};
     }
     if (bytes != nullptr && size > 0U) {
         try {
@@ -189,6 +192,8 @@ PipelineResult run_pac_module(const NativeModule& module,
         std::size_t populated = 0U;
         std::size_t by_format[32]{};
         std::size_t shadows = 0U;
+        // The names a name list slot gave the container after it.
+        std::vector<std::string> listed_names;
         for (const auto& entry : document.entries) {
             if (!entry.populated || entry.size == 0U || !entry.valid(document.container_size)) {
                 continue;
@@ -199,7 +204,7 @@ PipelineResult run_pac_module(const NativeModule& module,
             auto kind = archive::classify_payload(payload, payload_size);
             // Attack index: the slot before a shape table whose entries all
             // name one of its shapes (0x14005C260 takes the pair together).
-            if (kind.format == Format::Unknown) {
+            if (kind.format == Format::Unknown && std::string_view{kind.family} == "BIN") {
                 for (const auto& next : document.entries) {
                     if (next.slot_index <= entry.slot_index || !next.populated || next.size == 0U ||
                         !next.valid(document.container_size)) {
@@ -225,6 +230,18 @@ PipelineResult run_pac_module(const NativeModule& module,
             child.suggested_filename = archive::slot_filename(entry.slot_index, kind);
             child.title = "#" + std::to_string(entry.slot_index) + " · " + kind.family +
                           " · " + size_text(entry.size);
+            // A name list names the files of the container after it.
+            std::vector<std::string> names;
+            if (std::string_view{kind.family} == "NAMES") {
+                names = demo::list_names(std::string_view{reinterpret_cast<const char*>(payload), payload_size});
+            } else if (!listed_names.empty() && (kind.format == Format::Pac || kind.format == Format::Demo)) {
+                std::string joined;
+                for (std::size_t i = 0; i < listed_names.size() && i < 3U; ++i) {
+                    joined += (i == 0U ? "" : ", ") + listed_names[i];
+                }
+                if (listed_names.size() > 3U) joined += ", +" + std::to_string(listed_names.size() - 3U);
+                child.title += " · " + joined;
+            }
             child.source_span = SourceSpan{entry.offset, entry.size};
             child.probe = dmcresource::probe(child.suggested_filename, payload, payload_size);
             child.capabilities = capability(ResourceCapability::Inspection);
@@ -234,6 +251,11 @@ PipelineResult run_pac_module(const NativeModule& module,
             child.source_bytes.assign(payload, payload + payload_size);
             child.detail = std::string{kind.family} + " payload in " + family + " slot " +
                            std::to_string(entry.slot_index) + " (" + size_text(entry.size) + ")";
+            if (!names.empty()) {
+                child.detail += "\nNames the files of the next slot:";
+                for (const auto& name : names) child.detail += "\n  " + name;
+            }
+            listed_names = std::move(names);
             child.trace = std::string{"[OK] canonical."} + (pnst ? "pnst" : "pac") +
                           ".relative-slot-container\n[OK] native.archive.classify";
             child.inspection.format = kind.family;

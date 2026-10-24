@@ -246,6 +246,22 @@ int main() {
     view = demo::view_of(look);
     assert(near(view.yaw, 1.5707963F) && near(view.pitch, 0.7853982F) && view.zoom > 1.0F);
 
+    // ---- the archive's own texts: the script and a name list ----
+    {
+        const std::string script = "; (# = section)\r\n\r\n# Load\r\nCamera\t\tm99_t00_CameraLoad.txt\r\n\r\n"
+                                   "# Set\r\nCamera\t\tm99_t00_CameraSet.txt\r\n\r\n# End\r\n";
+        assert(demo::looks_like_script(script + std::string(8, '\0')));
+        assert(!demo::looks_like_script("# Load\r\n# Set\r\n"));  // no comment first
+        const std::string names = "m99_t00_PadVibeSet.txt\r\nm99_t00_MessageSet.txt\r\n# End\r\n";
+        assert(demo::looks_like_name_list(names + std::string(9, '\0')));
+        const auto listed = demo::list_names(names);
+        assert(listed.size() == 2U && listed[0] == "m99_t00_PadVibeSet.txt" && listed[1] == "m99_t00_MessageSet.txt");
+        assert(!demo::looks_like_name_list("m99_t00_PadVibeSet.txt\r\n"));        // no # End
+        assert(!demo::looks_like_name_list("Camera m99.txt\r\n# End\r\n"));     // a blank in a name
+        assert(!demo::looks_like_name_list("# End\r\n"));                          // no names
+        assert(!demo::looks_like_name_list(script));
+    }
+
     // ---- opened: no models, no stage, but pad vibration -> a movie's track,
     // the timeline its movie plays on ----
     auto opened = open_session("m99_t00.pac", archive.data(), archive.size());

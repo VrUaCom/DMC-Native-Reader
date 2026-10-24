@@ -315,6 +315,10 @@ APK verifier.
     - The GPU draws the lines, crosses and labels (hitboxes, room collision,
       stage markers, bones) itself, so those frames also go straight to the
       screen without a read back.
+  - v118:
+    - A cutscene archive's script and name lists show as SCRIPT and NAMES
+      (.txt) instead of BIN, and the PAC after a name list shows the names
+      of its files (m07_c00_movie.pac read through, CUTSCENES.md).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

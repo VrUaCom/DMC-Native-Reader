@@ -20,6 +20,32 @@ A PAC:
 `*_movie.pac` carries only the PadVibe and Message clips of a cutscene that
 plays as a movie.
 
+m07_c00_movie.pac (15 120 bytes) is one:
+
+- Slot 0: the full script, the same as a real-time cutscene's (WorkRate,
+  Camera, Model / Motion / Hide 00 to 31, Effect, EffectI 00 and 01, Light,
+  PadVibe, Message, ScrEfc, Fade, Program, Sound). It is Shift-JIS; its
+  comments read "# = the start of a section", "; = a comment", "load" and
+  "clip".
+- Slot 1: the name list of slot 2, `m07_c00_PadVibeSet.txt` and
+  `m07_c00_MessageSet.txt`.
+- Slot 2: a PAC of those two texts. Of the 30 Set files the script names,
+  only these two exist: the movie brings the picture and the sound itself.
+- PadVibe: 29 clips from frame 330 to 12122. Per clip: `LMotorSt` and
+  `LMotorEd` (the large motor's strength at the start and the end, 0-255),
+  `SMotorSt` and `SMotorEd` (the small motor, off or on), `Life` (frames).
+- Message: 13 clips, `No` 1800 to 1813 (1810 is not used), frames 1920 to
+  9900. The text is in the language's `*_msg_<lang>.txt`.
+- The clips are not in frame order (5691 comes before 5675, 7311 before
+  7012, and 9112, 1108 and 1466 come last). The Reader takes every clip by
+  its own frame, so the order does not matter.
+- The timeline is 12142 frames (12122 + 20), 3 min 22 s at 60 frames a
+  second: the length of m07_c00's movie.
+
+In an archive's list, slot 0 shows as SCRIPT and a name list as NAMES (both
+.txt, `demo::looks_like_script`, `demo::looks_like_name_list`), and the
+container after a name list shows the names it holds.
+
 The cutscene's picture ends with its last Camera or Fade clip (m01_s00:
 frame 5949 of 12455). Pad vibration, subtitles and one effect clip run on
 to 12455: they belong to the movie that follows the real-time part. Lights

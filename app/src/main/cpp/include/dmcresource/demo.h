@@ -138,6 +138,14 @@ struct Clip final {
 };
 
 [[nodiscard]] bool looks_like_clips(std::string_view text) noexcept;
+
+// The archive's own texts, met as slots: the script of slot 0 (";"
+// comments, "# Load" names what to load, "# Set" the clip texts of each
+// kind and track) and a name list ("m01_s00_PadVibeSet.txt" lines up to
+// "# End", the files of the container after it, in slot order).
+[[nodiscard]] bool looks_like_script(std::string_view text) noexcept;
+[[nodiscard]] bool looks_like_name_list(std::string_view text) noexcept;
+[[nodiscard]] std::vector<std::string> list_names(std::string_view text);
 [[nodiscard]] std::vector<Clip> parse_clips(std::string_view text);
 
 // ---- the archive ----------------------------------------------------------

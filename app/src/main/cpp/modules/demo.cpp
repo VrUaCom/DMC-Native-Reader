@@ -291,6 +291,38 @@ std::string Clip::value(std::string_view key) const {
     return {};
 }
 
+bool looks_like_script(std::string_view text) noexcept {
+    text = text.substr(0, text.find('\0'));
+    return !text.empty() && text.front() == ';' && text.find("# Load") != std::string_view::npos &&
+           text.find("# Set") != std::string_view::npos;
+}
+
+bool looks_like_name_list(std::string_view text) noexcept {
+    text = text.substr(0, text.find('\0'));
+    if (text.empty() || text.size() > 64U * 1024U) return false;
+    bool ended = false;
+    std::size_t names = 0U;
+    bool fine = true;
+    each_line(text, [&](std::string_view line) {
+        if (!fine || ended || line.empty() || line.front() == ';') return;
+        if (line == "# End") {
+            ended = true;
+            return;
+        }
+        // A file name: printable, no blanks, with an extension.
+        const bool name = line.size() <= 96U && line.find('.') != std::string_view::npos &&
+                          std::all_of(line.begin(), line.end(), [](char c) { return c > ' ' && c < 127; });
+        if (name) ++names;
+        else fine = false;
+    });
+    return fine && ended && names > 0U;
+}
+
+std::vector<std::string> list_names(std::string_view text) {
+    if (!looks_like_name_list(text)) return {};
+    return name_list(text.substr(0, text.find('\0')), nullptr);
+}
+
 bool looks_like_clips(std::string_view text) noexcept {
     const auto clip = text.find("# Clip");
     return clip != std::string_view::npos && text.find("SetFrame", clip) != std::string_view::npos &&
