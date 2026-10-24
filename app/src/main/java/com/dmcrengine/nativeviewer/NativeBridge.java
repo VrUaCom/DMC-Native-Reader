@@ -277,7 +277,8 @@ public final class NativeBridge {
     public static native int[] cameraPlan(int kind, int viewWidth, int viewHeight);
     public static native boolean renderCapture(long handle, int kind, int viewWidth, int viewHeight, float yaw,
                                                float pitch, float zoom, int renderFlags, float panX, float panY,
-                                               float roomYaw, boolean follow, float dolly, Bitmap target);
+                                               float roomYaw, boolean follow, float dolly, float motionFrame,
+                                               float motionFps, Bitmap target);
     public static native int renderVideoFrame(long handle, int viewWidth, int viewHeight, float yaw, float pitch,
                                               float zoom, int renderFlags, float panX, float panY, float roomYaw,
                                               boolean follow, float dolly, float motionFrame,
@@ -322,7 +323,8 @@ public final class NativeBridge {
     /** A RAW picture (DNG) into the open file fd; developed (or null) gets the developed picture. */
     public static native boolean writeCaptureDng(long handle, int viewWidth, int viewHeight, float yaw, float pitch,
                                                  float zoom, int renderFlags, float panX, float panY, float roomYaw,
-                                                 boolean follow, float dolly, int fd, Bitmap developed);
+                                                 boolean follow, float dolly, float motionFrame, float motionFps,
+                                                 int fd, Bitmap developed);
     /** {float[] {shown, x, y, w, h, grid lines x0, y0, x1, y1 ...}, the settings line}. */
     public static native Object[] viewfinder(long handle, int width, int height, float zoom, boolean recording,
                                              int seconds);

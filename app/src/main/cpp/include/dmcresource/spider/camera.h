@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <vector>
@@ -58,6 +59,7 @@ enum class Key : std::uint8_t {
     ExposureCompensation,
     ExposureHighlights,
     ExposureNoise,
+    ExposureSupport,
     ColourBalance,
     ColourStyle,
     ColourContrast,
@@ -177,6 +179,27 @@ void develop(RgbaImage* image, std::uint32_t seed);
 [[nodiscard]] RgbaImage render_capture(const Session* session, Kind kind, int view_width, int view_height,
                                        float yaw, float pitch, float zoom, std::uint32_t render_flags,
                                        const ViewControls& controls);
+
+// What moves while a picture's shutter is open, besides the camera's shake
+// (the Holding setting, and the phone's own turns with the gyroscope): the
+// scene's motion, as the frame it shows when the shutter closes and how
+// many frames a second it plays (NaN or 0: still).
+struct SceneMotion final {
+    float frame{std::numeric_limits<float>::quiet_NaN()};
+    float frames_per_second{};
+};
+// A picture exposed over the shutter: while the scene or the camera moves,
+// it is the mean (in linear light) of renders along the shutter's time, so
+// a slow shutter blurs what moves and a hand-held camera shakes. The
+// session is posed along the way and left at motion.frame.
+[[nodiscard]] RgbaImage render_capture(Session* session, Kind kind, int view_width, int view_height, float yaw,
+                                       float pitch, float zoom, std::uint32_t render_flags,
+                                       const ViewControls& controls, const SceneMotion& motion);
+// The shutter time a picture is exposed for (Auto: the camera's own, 1/60
+// or 1/focal length, whichever is shorter) and whether it is slower than a
+// hand can hold at that focal length (the viewfinder's SHAKE).
+[[nodiscard]] float picture_shutter(float mm) noexcept;
+[[nodiscard]] bool shake_warning(float mm) noexcept;
 void begin_video();
 
 // A picture of width x height in tiles of at most max_side when it is larger
@@ -194,6 +217,9 @@ void begin_video();
 [[nodiscard]] bool capture_raw(const Session* session, int view_width, int view_height, float yaw, float pitch,
                                float zoom, std::uint32_t render_flags, const ViewControls& controls, int fd,
                                RgbaImage* developed);
+[[nodiscard]] bool capture_raw(Session* session, int view_width, int view_height, float yaw, float pitch,
+                               float zoom, std::uint32_t render_flags, const ViewControls& controls, int fd,
+                               RgbaImage* developed, const SceneMotion& motion);
 [[nodiscard]] bool write_dng(int fd, const RgbaImage& optical, const RgbaImage& preview, bool bayer,
                              std::uint32_t seed, float focal_length_mm);
 

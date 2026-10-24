@@ -305,6 +305,12 @@ APK verifier.
       Manual, where they set the brightness (Auto keeps it, so they barely
       changed the picture). An Auto ISO becomes 100 so the picture starts
       where it was.
+  - v116:
+    - Pictures are exposed over the shutter: a playing cutscene or motion
+      (and its camera) blurs at slow shutters, frozen at fast ones.
+    - Holding (Tripod / Hand-held / Stabilised) shakes slow hand-held
+      pictures; with the gyroscope the phone's own turns blur them. SHAKE in
+      the viewfinder warns.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

@@ -476,6 +476,10 @@ public final class DmcRenderView extends View {
         float yaw, pitch, zoom, panX, panY, roomYaw, dolly;
         boolean follow;
         int flags;
+        // The motion playing when the shutter was pressed (NaN, 0: still):
+        // a slow shutter blurs it.
+        float motionFrame = Float.NaN;
+        float motionFps;
         String subtitle;
         float[] subtitleStyle;
         Bitmap still;  // a still image is copied as it is
@@ -500,6 +504,13 @@ public final class DmcRenderView extends View {
         state.dolly = dolly;
         state.follow = follow;
         state.flags = renderFlags | settingsFlags | lineFlags(plan[0], plan[1]);
+        if (motionPlaying) {
+            state.motionFrame = currentMotionFrame(SystemClock.uptimeMillis());
+            if (motionEndFrame > 0.0f && motionLoopStartFrame >= motionEndFrame) {
+                state.motionFrame = Math.min(state.motionFrame, motionEndFrame);
+            }
+            state.motionFps = MOTION_FRAMES_PER_SECOND * motionSpeed;
+        }
         state.subtitle = subtitle;
         state.subtitleStyle = subtitleStyle;
         return state;
@@ -517,7 +528,7 @@ public final class DmcRenderView extends View {
             final Bitmap image = Bitmap.createBitmap(plan[0], plan[1], Bitmap.Config.ARGB_8888);
             if (NativeBridge.renderCapture(state.session, 0, state.viewWidth, state.viewHeight, state.yaw,
                     state.pitch, state.zoom, state.flags, state.panX, state.panY, state.roomYaw, state.follow,
-                    state.dolly, image)) {
+                    state.dolly, state.motionFrame, state.motionFps, image)) {
                 if (plan[9] != 0) drawSubtitleOn(new Canvas(image), image.getWidth(), image.getHeight(), state);
                 return image;
             }
@@ -536,7 +547,7 @@ public final class DmcRenderView extends View {
         if (state.session == 0) return false;
         final boolean ok = NativeBridge.writeCaptureDng(state.session, state.viewWidth, state.viewHeight, state.yaw,
                 state.pitch, state.zoom, state.flags, state.panX, state.panY, state.roomYaw, state.follow,
-                state.dolly, fd, developed);
+                state.dolly, state.motionFrame, state.motionFps, fd, developed);
         if (ok && developed != null && subtitles && state.subtitle != null) {
             drawSubtitleOn(new Canvas(developed), developed.getWidth(), developed.getHeight(), state);
         }

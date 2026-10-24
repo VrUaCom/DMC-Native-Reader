@@ -372,6 +372,23 @@ int main() {
             assert(cam::follow_up(cam::Key::ExposureShutter, 3).changes.empty());
             cam::reset_choices();
         }
+        // The shutter a picture is exposed for: Auto's program keeps 1/60 or
+        // 1/focal length; Manual's is the dial's. SHAKE when a hand cannot
+        // hold it (about 1/focal length; a stabiliser 4 stops more).
+        assert(std::abs(cam::picture_shutter(50.0F) - 1.0F / 60.0F) < 1e-6F);
+        assert(std::abs(cam::picture_shutter(200.0F) - 1.0F / 200.0F) < 1e-6F);
+        choose(cam::Key::ExposureMode, 1);
+        choose_named(cam::Key::ExposureShutter, "1/4");
+        assert(std::abs(cam::picture_shutter(50.0F) - 0.25F) < 1e-6F);
+        assert(!cam::shake_warning(50.0F));  // tripod
+        choose_named(cam::Key::ExposureSupport, "Hand-held");
+        assert(cam::shake_warning(50.0F));
+        choose_named(cam::Key::ExposureSupport, "Stabilised");
+        assert(!cam::shake_warning(50.0F) && cam::shake_warning(200.0F));
+        choose_named(cam::Key::ExposureShutter, "1/60");
+        choose_named(cam::Key::ExposureSupport, "Hand-held");
+        assert(!cam::shake_warning(50.0F) && cam::shake_warning(85.0F));
+        cam::reset_choices();
         // No cutscene: camera mode never waits for cuts.
         assert(!cam::follows_cuts(nullptr));
         assert(!cam::holds_screen_orientation());

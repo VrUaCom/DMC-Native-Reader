@@ -768,16 +768,18 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_renderCapture(
         JNIEnv* env, jclass, jlong handle, jint kind, jint view_width, jint view_height, jfloat yaw,
         jfloat pitch, jfloat zoom, jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat dolly, jobject target) {
+        jboolean follow, jfloat dolly, jfloat motion_frame, jfloat motion_fps, jobject target) {
     namespace cam = dmcresource::spider::camera;
     const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
+    Session* session = from_handle(handle);
     if (session == nullptr) return JNI_FALSE;
     try {
+        // The scene moving while the shutter is open: the playing motion.
+        const cam::SceneMotion motion{motion_frame, motion_fps};
         const auto image = cam::render_capture(session, kind == 1 ? cam::Kind::Video : cam::Kind::Photo,
                                                view_width, view_height, yaw, pitch, zoom,
                                                static_cast<std::uint32_t>(render_flags),
-                                               view_controls(pan_x, pan_y, room_yaw, follow, dolly));
+                                               view_controls(pan_x, pan_y, room_yaw, follow, dolly), motion);
         return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
     } catch (...) { return JNI_FALSE; }
 }
@@ -816,18 +818,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderVideoFrame(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_writeCaptureDng(
         JNIEnv* env, jclass, jlong handle, jint view_width, jint view_height, jfloat yaw, jfloat pitch, jfloat zoom,
-        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly, jint fd,
-        jobject developed) {
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly,
+        jfloat motion_frame, jfloat motion_fps, jint fd, jobject developed) {
     namespace cam = dmcresource::spider::camera;
     const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
+    Session* session = from_handle(handle);
     if (session == nullptr || fd < 0) return JNI_FALSE;
     try {
         dmcresource::RgbaImage image;
         const bool ok = cam::capture_raw(session, view_width, view_height, yaw, pitch, zoom,
                                          static_cast<std::uint32_t>(render_flags),
                                          view_controls(pan_x, pan_y, room_yaw, follow, dolly), fd,
-                                         developed != nullptr ? &image : nullptr);
+                                         developed != nullptr ? &image : nullptr,
+                                         cam::SceneMotion{motion_frame, motion_fps});
         if (!ok) return JNI_FALSE;
         if (developed != nullptr && !image_to_bitmap(env, developed, image)) return JNI_FALSE;
         return JNI_TRUE;

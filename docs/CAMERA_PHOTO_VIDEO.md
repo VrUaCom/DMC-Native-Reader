@@ -91,6 +91,33 @@ are off in camera mode. ℹ in the camera bar shows all of this in the app.
   where it was and the dial that was turned moves it; a notice says so. Mode
   → Auto goes back.
 
+## The shutter: motion blur and shake
+
+- A picture is exposed over its shutter time (`camera::render_capture` with
+  `SceneMotion`). When the scene or the camera moves while the shutter is
+  open, the core renders it in steps along that time and takes their mean in
+  linear light, then develops it once (on the CPU):
+  - the playing motion or cutscene is posed at each step (its camera too),
+    so what moves blurs and what stands stays sharp;
+  - the camera follows its shake: a hand's slow sway (0.015 rad/s one way,
+    chosen per picture) and its 9 Hz tremor (0.0004 rad) when Hand-held, a
+    sixteenth of both when Stabilised; with the gyroscope on, the phone's
+    measured turning (smoothed over 0.1 s) as well.
+- The steps: two per scene frame and one per 1.5 px the camera's path covers
+  (a full-frame lens: 24 mm short side), at most 32 for small pictures, 24 to
+  8 MP, 16 to 25 MP, 8 to 60 MP, 4 beyond.
+- Auto's shutter is the program's own: 1/60, or 1/focal length when the lens
+  is longer. Manual's is the dial's (`camera::picture_shutter`).
+- The viewfinder shows SHAKE when the shutter is slower than a hand holds
+  (about 1/focal length; ×16 stabilised) and the camera is hand-held or the
+  gyroscope is on (`camera::shake_warning`).
+- RAW (DNG) pictures are exposed the same way. Videos blur by the frames
+  before them (Motion blur), as before.
+- Checked on m03_s00 (desktop GLES): a playing cutscene at 0.5" blurs the
+  walking character and the panning background while the standing one stays
+  sharp; the brightness is the same as at 1/1000 with the ISO and aperture
+  matched.
+
 ## The screen's orientation
 
 - Turning the phone keeps everything as it is: the scene, the camera, a
@@ -214,6 +241,7 @@ from it.
 | | Compensation | −3 … **0** … +3 EV |
 | | Highlights | **Clip**, soft roll-off |
 | | Sensor noise | Off, **by the ISO** (none at ISO 100), film grain |
+| | Holding | **Tripod**, Hand-held (shakes slower than about 1/focal length), Stabilised (4 stops more) |
 | Gyroscope | Gyroscope | **Off**, On |
 | | Horizon | **World**, Screen |
 | | Sensitivity | 0.5×, **1×**, 1.5×, 2× |

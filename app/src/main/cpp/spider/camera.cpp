@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +17,7 @@
 #include "dmcresource/frame_profile.h"
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/demo_session.h"
+#include "dmcresource/motion/motion_player.h"
 
 namespace dmcresource::spider::camera {
 namespace {
@@ -202,6 +204,9 @@ std::vector<Setting> build_settings() {
     add(Key::ExposureHighlights, "exposure_highlights", exposure, "Highlights", "", {"Clip", "Soft"}, 0);
     add(Key::ExposureNoise, "exposure_noise", exposure, "Sensor noise", "By the ISO, or film grain",
         {"Off", "ISO", "Grain"}, 1);
+    add(Key::ExposureSupport, "exposure_support", exposure, "Holding",
+        "Hand-held, a slow shutter shakes (slower than about 1/focal length); a stabiliser holds 4 stops more",
+        {"Tripod", "Hand-held", "Stabilised"}, 0);
     const char* colour = "Colour";
     add(Key::ColourBalance, "colour_balance", colour, "White balance", "AWB is as rendered",
         {"AWB", "Day 5500K", "Cloud 6500K", "Shade 7500K", "Lamp 3200K", "Fluo 4000K", "Flash 5800K",
@@ -1258,7 +1263,14 @@ struct GyroState final {
     float heading{};
     float elevation{};
     float roll{};
+    std::chrono::steady_clock::time_point last{};
 };
+// How fast the gyroscope turns the camera now (radians a second of yaw and
+// pitch, smoothed over about 0.1 s): a picture taken while the phone moves
+// is blurred by it.
+std::atomic<float> g_gyro_rate_yaw{0.0F};
+std::atomic<float> g_gyro_rate_pitch{0.0F};
+std::atomic<std::int64_t> g_gyro_rate_at{0};
 std::mutex& gyro_mutex() {
     static std::mutex m;
     return m;
@@ -1290,9 +1302,12 @@ std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexc
     }
     const std::scoped_lock lock{gyro_mutex()};
     auto& g = gyro_state();
+    const auto now = std::chrono::steady_clock::now();
     if (!g.started) {
-        g = {true, heading, elevation, roll};
+        g = {true, heading, elevation, roll, now};
         g_roll_phone.store(roll);
+        g_gyro_rate_yaw.store(0.0F);
+        g_gyro_rate_pitch.store(0.0F);
         return {0.0F, 0.0F};
     }
     // Each reading takes a share of the way to the phone (the smoothing);
@@ -1309,7 +1324,16 @@ std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexc
     const bool steep = std::fabs(g.elevation) > 1.3F;
     // As the drone's look stick: turning right lowers the yaw, looking up
     // raises the pitch.
-    return {steep ? 0.0F : -heading_step * sensitivity, elevation_step * sensitivity};
+    const std::array<float, 2> turn{steep ? 0.0F : -heading_step * sensitivity, elevation_step * sensitivity};
+    const float dt = std::chrono::duration<float>(now - g.last).count();
+    g.last = now;
+    if (dt > 1.0e-4F && dt < 0.25F) {
+        const float share = 1.0F - std::exp(-dt / 0.1F);
+        g_gyro_rate_yaw.store(g_gyro_rate_yaw.load() + share * (turn[0] / dt - g_gyro_rate_yaw.load()));
+        g_gyro_rate_pitch.store(g_gyro_rate_pitch.load() + share * (turn[1] / dt - g_gyro_rate_pitch.load()));
+    }
+    g_gyro_rate_at.store(now.time_since_epoch().count());
+    return turn;
 }
 
 void gyro_reset() noexcept {
@@ -1535,22 +1559,194 @@ bool write_dng(int fd, const RgbaImage& optical, const RgbaImage& preview, bool 
     return true;
 }
 
+float picture_shutter(float mm) noexcept {
+    // Auto: the camera's program keeps the shutter at 1/60, or faster than
+    // the focal length so a hand can hold it.
+    if (choice(Key::ExposureMode) == 0) return 1.0F / std::max(60.0F, mm);
+    return exposure().shutter_seconds;
+}
+
+namespace {
+
+// A hand's sway (radians a second, drifting one way through an exposure)
+// and its tremor (radians, about 9 Hz); a stabiliser holds 4 stops of both.
+constexpr float kHandDrift = 0.015F;
+constexpr float kHandTremor = 0.0004F;
+constexpr float kTremorHz = 9.0F;
+constexpr float kStabiliser = 1.0F / 16.0F;
+
+float hold_factor() noexcept {
+    return choice(Key::ExposureSupport) == 2 ? kStabiliser : 1.0F;
+}
+
+// The gyroscope's turning now, when its readings are fresh.
+std::array<float, 2> gyro_rate() noexcept {
+    if (!gyro_active()) return {0.0F, 0.0F};
+    const auto at = std::chrono::steady_clock::time_point{
+        std::chrono::steady_clock::duration{g_gyro_rate_at.load()}};
+    if (std::chrono::steady_clock::now() - at > std::chrono::milliseconds{250}) return {0.0F, 0.0F};
+    return {g_gyro_rate_yaw.load(), g_gyro_rate_pitch.load()};
+}
+
+std::uint32_t mix(std::uint32_t x) noexcept {
+    x ^= x >> 16U;
+    x *= 0x7FEB352DU;
+    x ^= x >> 15U;
+    x *= 0x846CA68BU;
+    x ^= x >> 16U;
+    return x;
+}
+
+// Where the scene and the camera are while the shutter is open, relative
+// to the moment it closes (tau from -shutter to 0 seconds).
+struct ExposurePath final {
+    int steps{1};
+    float shutter{};
+    float scene_fps{};        // the scene's frames a second (0: still)
+    float drift_yaw{};        // radians a second
+    float drift_pitch{};
+    float tremor{};           // radians
+    float phase_yaw{};
+    float phase_pitch{};
+    [[nodiscard]] std::array<float, 2> camera_at(float tau) const noexcept {
+        const float w = 2.0F * 3.14159265F * kTremorHz;
+        return {drift_yaw * tau + tremor * (std::sin(w * tau + phase_yaw) - std::sin(phase_yaw)),
+                drift_pitch * tau + tremor * (std::sin(1.13F * w * tau + phase_pitch) - std::sin(phase_pitch))};
+    }
+};
+
+ExposurePath exposure_path(const SceneMotion& motion, float mm, int width, int height, std::uint32_t seed) {
+    ExposurePath out;
+    out.shutter = picture_shutter(mm);
+    const float t = out.shutter;
+    if (std::isfinite(motion.frame) && motion.frames_per_second > 0.0F) out.scene_fps = motion.frames_per_second;
+    const float hold = hold_factor();
+    const auto measured = gyro_rate();
+    out.drift_yaw = measured[0] * hold;
+    out.drift_pitch = measured[1] * hold;
+    // A hand-held camera without the gyroscope sways a way of its own.
+    if (choice(Key::ExposureSupport) != 0 && measured[0] == 0.0F && measured[1] == 0.0F) {
+        const float angle = static_cast<float>(mix(seed) % 6283U) * 0.001F;
+        out.drift_yaw = kHandDrift * hold * std::cos(angle);
+        out.drift_pitch = kHandDrift * hold * std::sin(angle);
+    }
+    if (choice(Key::ExposureSupport) != 0 || gyro_active()) out.tremor = kHandTremor * hold;
+    out.phase_yaw = static_cast<float>(mix(seed ^ 0x9E37U) % 6283U) * 0.001F;
+    out.phase_pitch = static_cast<float>(mix(seed ^ 0x7F4AU) % 6283U) * 0.001F;
+    // Steps: two a scene frame, and one per 1.5 px the camera's path covers
+    // (a full-frame lens: the short side is 24 mm).
+    const float px_per_radian = static_cast<float>(std::min(width, height)) * mm / 24.0F;
+    const float sway = std::hypot(out.drift_yaw, out.drift_pitch) * t +
+                       2.0F * out.tremor * std::min(1.0F, t * kTremorHz * 2.0F);
+    const float scene_steps = out.scene_fps * t * 2.0F;
+    const float camera_steps = sway * px_per_radian / 1.5F;
+    const double pixels = static_cast<double>(width) * height;
+    const int cap = pixels <= 2.2e6 ? 32 : pixels <= 8.5e6 ? 24 : pixels <= 25.0e6 ? 16 : pixels <= 60.0e6 ? 8 : 4;
+    out.steps = std::clamp(static_cast<int>(std::ceil(std::max(scene_steps, camera_steps))), 1, cap);
+    return out;
+}
+
+// The picture integrated over the shutter: the mean in linear light of
+// path.steps renders along it (the session posed at each), undeveloped;
+// `depth`, when given, is the closing moment's.
+RgbaImage expose(Session* session, const ExposurePath& path, const SceneMotion& motion, int width, int height,
+                 float yaw, float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                 std::vector<float>* depth) {
+    if (path.steps <= 1 || session == nullptr) {
+        return render_rolled(session, width, height, yaw, pitch, zoom, render_flags, controls, depth);
+    }
+    static const auto to_linear = [] {
+        std::array<float, 256> table{};
+        for (int v = 0; v < 256; ++v) table[static_cast<std::size_t>(v)] = srgb_to_linear(static_cast<float>(v) / 255.0F);
+        return table;
+    }();
+    static const auto to_srgb = [] {
+        std::array<std::uint8_t, 4096> table{};
+        for (int i = 0; i < 4096; ++i) {
+            table[static_cast<std::size_t>(i)] = static_cast<std::uint8_t>(
+                std::lround(linear_to_srgb(static_cast<float>(i) / 4095.0F) * 255.0F));
+        }
+        return table;
+    }();
+    const bool posed = path.scene_fps > 0.0F;
+    RgbaImage mean;
+    std::vector<float> sums;  // linear, one per channel; kept only for small pictures
+    for (int k = 0; k < path.steps; ++k) {
+        const float tau = ((static_cast<float>(k) + 0.5F) / static_cast<float>(path.steps) - 1.0F) * path.shutter;
+        if (posed) (void)motion::apply_motion_frame(session, std::max(0.0F, motion.frame + tau * path.scene_fps));
+        const auto turn = path.camera_at(tau);
+        const bool last = k + 1 == path.steps;
+        auto image = render_rolled(session, width, height, yaw + turn[0],
+                                   std::clamp(pitch + turn[1], -1.55F, 1.55F), zoom, render_flags, controls,
+                                   last ? depth : nullptr);
+        if (!valid_image(&image)) {
+            mean = {};
+            break;
+        }
+        if (k == 0) {
+            mean = std::move(image);
+            if (static_cast<long long>(width) * height <= 9000000LL) {
+                sums.resize(static_cast<std::size_t>(width) * height * 3U);
+                for (std::size_t i = 0, j = 0; j < sums.size(); i += 4U, j += 3U) {
+                    for (std::size_t c = 0; c < 3U; ++c) sums[j + c] = to_linear[mean.pixels[i + c]];
+                }
+            }
+            continue;
+        }
+        // A running mean: in floats when they fit, else kept in the picture
+        // itself (8-bit sRGB between steps).
+        const float share = 1.0F / static_cast<float>(k + 1);
+        for (std::size_t i = 0, j = 0; i + 3U < image.pixels.size(); i += 4U, j += 3U) {
+            for (std::size_t c = 0; c < 3U; ++c) {
+                const float x = to_linear[image.pixels[i + c]];
+                float m;
+                if (!sums.empty()) {
+                    m = sums[j + c] += x;
+                    m *= share;
+                } else {
+                    m = to_linear[mean.pixels[i + c]];
+                    m += (x - m) * share;
+                }
+                mean.pixels[i + c] = to_srgb[static_cast<std::size_t>(std::clamp(m, 0.0F, 1.0F) * 4095.0F + 0.5F)];
+            }
+        }
+    }
+    if (posed) (void)motion::apply_motion_frame(session, motion.frame);
+    return mean;
+}
+
+}  // namespace
+
+bool shake_warning(float mm) noexcept {
+    if (choice(Key::ExposureSupport) == 0 && !gyro_active()) return false;
+    const float limit = 1.0F / std::max(mm, 1.0F) / hold_factor();
+    return picture_shutter(mm) > limit * 1.01F;
+}
+
 bool capture_raw(const Session* session, int view_width, int view_height, float yaw, float pitch, float zoom,
                  std::uint32_t render_flags, const ViewControls& controls, int fd, RgbaImage* developed) {
+    return capture_raw(const_cast<Session*>(session), view_width, view_height, yaw, pitch, zoom, render_flags,
+                       controls, fd, developed, SceneMotion{});
+}
+
+bool capture_raw(Session* session, int view_width, int view_height, float yaw, float pitch, float zoom,
+                 std::uint32_t render_flags, const ViewControls& controls, int fd, RgbaImage* developed,
+                 const SceneMotion& motion) {
     if (session == nullptr || session->uv_gallery) return false;
     const Plan p = plan(Kind::Photo, view_width, view_height);
     ViewControls framed = controls;
     frame_controls(Kind::Photo, view_width, view_height, &framed);
-    std::vector<float> depth;
-    auto image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
-                               depth_of_field_on() ? &depth : nullptr);
-    if (!valid_image(&image)) return false;
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
     const float mm = focal_mm(lens);
+    const std::uint32_t seed = g_seed.fetch_add(1U);
+    std::vector<float> depth;
+    const auto path = exposure_path(motion, mm, p.width, p.height, seed);
+    auto image = expose(session, path, motion, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                        depth_of_field_on() ? &depth : nullptr);
+    if (!valid_image(&image)) return false;
     optics(&image, mm, &depth);
     depth = {};
-    const std::uint32_t seed = g_seed.fetch_add(1U);
     auto preview = preview_of(image);
     look(&preview, seed);
     if (!write_dng(fd, image, preview, choice(Key::PhotoRawData) == 1, seed, mm)) return false;
@@ -1563,6 +1759,14 @@ bool capture_raw(const Session* session, int view_width, int view_height, float 
 
 RgbaImage render_capture(const Session* session, Kind kind, int view_width, int view_height, float yaw,
                          float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls) {
+    // Nothing is posed without a scene motion: the session stays as it is.
+    return render_capture(const_cast<Session*>(session), kind, view_width, view_height, yaw, pitch, zoom,
+                          render_flags, controls, SceneMotion{});
+}
+
+RgbaImage render_capture(Session* session, Kind kind, int view_width, int view_height, float yaw, float pitch,
+                         float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                         const SceneMotion& motion) {
     if (session == nullptr) return {};
     const Plan p = plan(kind, view_width, view_height);
     if (session->uv_gallery) {
@@ -1572,12 +1776,17 @@ RgbaImage render_capture(const Session* session, Kind kind, int view_width, int 
     frame_controls(kind, view_width, view_height, &framed);
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
+    const float mm = focal_mm(lens);
     const std::uint32_t seed = g_seed.fetch_add(1U);
+    // A picture whose scene or camera moves while the shutter is open is
+    // exposed in steps and developed on the CPU; a video frame blurs by
+    // the frames before it instead (below).
+    const ExposurePath path = kind == Kind::Photo ? exposure_path(motion, mm, p.width, p.height, seed) : ExposurePath{};
     RgbaImage image;
     bool developed = false;
-    if (gpu_develops(p.width, p.height)) {
+    if (path.steps <= 1 && gpu_develops(p.width, p.height)) {
         // The GPU develops it as it draws it (one render, no depth pass).
-        const CameraPost post = make_post(p.width, p.height, focal_mm(lens), seed);
+        const CameraPost post = make_post(p.width, p.height, mm, seed);
         framed.post = &post;
         image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed, nullptr);
         framed.post = nullptr;
@@ -1586,9 +1795,9 @@ RgbaImage render_capture(const Session* session, Kind kind, int view_width, int 
     }
     if (!developed) {
         std::vector<float> depth;
-        image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
-                              depth_of_field_on() ? &depth : nullptr);
-        develop(&image, seed, focal_mm(lens), &depth);
+        image = expose(session, path, motion, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                       depth_of_field_on() ? &depth : nullptr);
+        develop(&image, seed, mm, &depth);
     }
     if (kind == Kind::Video && choice(Key::VideoMotionBlur) == 1 && !image.pixels.empty()) {
         const Exposure e = exposure();
@@ -1626,7 +1835,8 @@ std::vector<Dial> dials() {
                    {Key::ExposureHighlights, Key::ExposureNoise}});
     const int iso = pick(Key::ExposureIso, kIsos);
     out.push_back({Key::ExposureIso, "ISO", iso > 0 ? std::to_string(iso) : std::string("Auto"), {}});
-    out.push_back({Key::ExposureShutter, "Shutter", pick(Key::ExposureShutter, kShutters).label, {}});
+    out.push_back({Key::ExposureShutter, "Shutter", pick(Key::ExposureShutter, kShutters).label,
+                   {Key::ExposureSupport}});
     const float ev = pick(Key::ExposureCompensation, kCompensation);
     char text[24];
     std::snprintf(text, sizeof(text), ev == 0.0F ? "\xC2\xB1" "0" : "%+g", static_cast<double>(ev));
@@ -1766,6 +1976,7 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
                            kStyles[std::clamp(choice(Key::ColourStyle), 0, count(kStyles) - 1)];
         if (follows_cuts(session)) line += "  CUTS";
         else if (gyro_active()) line += "  GYRO";
+        if (shake_warning(focal_mm(zoom))) line += "  SHAKE";
         if (walk_active()) line += "  WALK";
         const float roll_degrees = camera_roll() * 57.2957795F;
         if (std::fabs(roll_degrees) >= 0.5F) {
