@@ -162,6 +162,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     spider/stage_actions.cpp
     spider/app_info.cpp
     spider/companion_menu.cpp
+    spider/collision_report.cpp
     view_renderer.cpp
 )
 

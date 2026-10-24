@@ -125,6 +125,15 @@ APK verifier.
   - bullets stop there with their EXE hit effect (Shl00 V473, Shl05 V277);
   - the grenade bounces on the HITS (EXE raycast `0x1402C64F0` response);
   - EXE query `0x14005E880` and its category mask are documented;
+  - a long press on ▦ (or on ◎, the hitboxes) opens the core's own account
+    in the app's window (v98, spider `collision_report.h`): which HITS is
+    shown (its file, the stage, the room), its sources (the first drawn),
+    then one group per record kind in its drawing colour: records, floors /
+    walls / ceilings, the type bits and the category bits with the known
+    tests that skip them; for hitboxes the shapes by type and the attacks
+    grouped by the target layers they hit;
+  - the ↑ open tool sits in the toolbar only while nothing is open; with a
+    file open it is *Open / replace resource* in the ⋮ menu;
   - [Details](research/dmc3-shell-effect-runtime-exe-v73.md#stage-collision-hits).
 - ✅ A stage archive (st*.pac) opens as its assembled scene instead of the
   file gallery:

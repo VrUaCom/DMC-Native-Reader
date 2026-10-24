@@ -195,6 +195,8 @@ public final class NativeBridge {
      * string each: "flags|records|floors|walls|ceilings|rgb".
      */
     public static native String[] collisionKinds(long handle);
+    /** The core's account of the collision: {title, summary, "rgb|heading|lines"...}; attack: hitboxes, else HITS. */
+    public static native String[] collisionReport(long handle, boolean attack);
     /** {framing distance at dolly 0 (model units), largest dolly} of the session. */
     public static native float[] cameraMetrics(long handle);
     /** Builds the viewer room from a stage archive; its summary, or null. */

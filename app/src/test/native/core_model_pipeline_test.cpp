@@ -9,6 +9,8 @@
 #include "dmcresource/stage_room.h"
 #include "dmcresource/environment_collision.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/collision_debug.h"
+#include "dmcresource/spider/collision_report.h"
 
 #include <algorithm>
 #include <bit>
@@ -392,6 +394,46 @@ int main() {
         const auto back = room::model_to_room(placement, room::room_to_model(placement, p));
         assert(std::fabs(back.x - p.x) < 1.0e-3F && std::fabs(back.y - p.y) < 1.0e-3F &&
                std::fabs(back.z - p.z) < 1.0e-3F);
+
+        // The collision reports (long press on the collision tools): the
+        // HITS shown, its sources, then a group a kind in its drawing colour.
+        {
+            namespace act = dmcresource::spider::actions;
+            dmcresource::Session hits_view;
+            hits_view.hits = std::make_shared<const ec::Source>(source);
+            const auto report = act::stage_collision_report(&hits_view);
+            assert(report.title == "Stage collision (HITS)" && report.groups.size() == 3U);
+            assert(report.summary.find("4 records (2 floors, 2 walls, 0 ceilings) in 2 kinds") != std::string::npos);
+            assert(!report.groups[0].coloured && report.groups[0].lines.size() == 1U);
+            assert(report.groups[1].coloured && report.groups[1].colour == dmcresource::collision_kind_color(0) &&
+                   report.groups[1].lines[0] == "2 floors, 0 walls, 0 ceilings");
+            assert(report.groups[2].heading.find("flags 0x00020000") != std::string::npos &&
+                   report.groups[2].lines[3].find("objects of type mask 0x02") != std::string::npos);
+            assert(act::shown_hits_kinds(&hits_view).size() == 2U);
+            assert(act::stage_collision_report(nullptr).groups.empty());
+
+            // Hitboxes: two shapes, two attacks used (an empty mask is not).
+            auto binding = std::make_shared<dmcresource::collision::CollisionBinding>();
+            binding->name = "pl000";
+            binding->node_count = 10U;
+            dmcresource::collision::Shape sphere;
+            sphere.type = 2U;
+            sphere.radius = 30.0F;
+            dmcresource::collision::Shape box;
+            box.type = 3U;
+            box.size = {10.0F, 20.0F, 5.0F};
+            binding->shapes = {sphere, box};
+            binding->attacks = {{1U, 3U, 0U}, {0U, 3U, 0U}, {3U, 4U, 1U}};
+            dmcresource::Session fighter;
+            fighter.collision = binding;
+            const auto attacks = act::attack_collision_report(&fighter);
+            assert(attacks.summary.find("2 attacks used of 3 entries, 2 shapes") != std::string::npos);
+            assert(attacks.groups.size() == 3U && attacks.groups[0].heading == "Shapes" &&
+                   attacks.groups[0].colour == dmcresource::kAttackCollisionColor);
+            assert(attacks.groups[1].heading == "Target layers 1 \xC2\xB7 1 attack" &&
+                   attacks.groups[1].lines[0] == "attack 0: bone 3, sphere #0, radius 30.0");
+            assert(attacks.groups[2].heading == "Target layers 1 + 2 \xC2\xB7 1 attack");
+        }
 
         // Layout states (st006's sets, comments in Shift-JIS): the entrance
         // ice and its broken demo variant, a DUMMY shard parked to the side,

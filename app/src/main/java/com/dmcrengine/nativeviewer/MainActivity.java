@@ -132,6 +132,7 @@ public final class MainActivity extends Activity {
     private Button hierarchyButton;
     private Button uvButton;
     private Button shadowButton;
+    private Button openButton;
     private Button collisionButton;
     private Button stageCollisionButton;
     private Button soundButton;
@@ -339,6 +340,8 @@ public final class MainActivity extends Activity {
             resetButton.setContentDescription("Reset view");
             setToolAvailable(resetButton, hasSession && blackWidowState.canRender);
         }
+
+        setToolAvailable(openButton, !hasSession);
 
         syncToggleButton(wireButton,
                 hasSession && (blackWidowState.canWireframe || blackWidowState.canInspectMeshes),
@@ -580,9 +583,10 @@ public final class MainActivity extends Activity {
                 HorizontalScrollView.LayoutParams.WRAP_CONTENT,
                 HorizontalScrollView.LayoutParams.WRAP_CONTENT));
 
-        Button open = makeSquareButton("↑", "Open resource or combine multiple MOD files", 28f);
-        open.setOnClickListener(v -> chooseFile());
-        addToolButton(bar, open);
+        // Open: here while nothing is open; with a file open it is in the ⋮ menu.
+        openButton = makeSquareButton("↑", "Open resource or combine multiple MOD files", 28f);
+        openButton.setOnClickListener(v -> chooseFile());
+        addToolButton(bar, openButton);
 
         resetButton = makeSquareButton("🔄", "Reset view", 20f);
         resetButton.setOnClickListener(v -> handleResetOrExport());
@@ -635,10 +639,9 @@ public final class MainActivity extends Activity {
             }
             applyResourceUiState();
         });
+        // Long press: what the hitboxes are, grouped (the core's account).
         collisionButton.setOnLongClickListener(v -> {
-            collisionCursor = -2;
-            renderView.setCollisionVisible(false);
-            applyResourceUiState();
+            showCollisionReport(true);
             return true;
         });
         addToolButton(bar, collisionButton);
@@ -660,6 +663,10 @@ public final class MainActivity extends Activity {
                             + " HITS source(s)"
                          : "Stage collision hidden (still active)", Toast.LENGTH_SHORT);
             applyResourceUiState();
+        });
+        stageCollisionButton.setOnLongClickListener(v -> {
+            showCollisionReport(false);
+            return true;
         });
         addToolButton(bar, stageCollisionButton);
 
@@ -1076,6 +1083,56 @@ public final class MainActivity extends Activity {
             row.addView(text);
             content.addView(row);
         }
+    }
+
+    /** The core's collision report in the app's window: a summary, then coloured groups. */
+    private void showCollisionReport(boolean attack) {
+        if (session == 0) return;
+        final String[] report = NativeBridge.collisionReport(session, attack);
+        if (report == null || report.length < 2) return;
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(16));
+        TextView summary = new TextView(this);
+        summary.setText(report[1]);
+        summary.setTextColor(0xffe0e3ea);
+        summary.setTextSize(14f);
+        summary.setPadding(0, 0, 0, dp(8));
+        content.addView(summary);
+        for (int i = 2; i < report.length; ++i) {
+            final String[] part = report[i].split("\\|", 3);
+            if (part.length < 3) continue;
+            final long rgb = Long.parseLong(part[0]);
+            final int color = rgb < 0 ? 0xffffffff : (0xff000000 | (int) rgb);
+            LinearLayout header = new LinearLayout(this);
+            header.setOrientation(LinearLayout.HORIZONTAL);
+            header.setGravity(Gravity.CENTER_VERTICAL);
+            header.setPadding(0, dp(10), 0, dp(4));
+            if (rgb >= 0) {
+                final View swatch = new View(this);
+                swatch.setBackgroundColor(color);
+                LinearLayout.LayoutParams swatchParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+                swatchParams.setMarginEnd(dp(10));
+                header.addView(swatch, swatchParams);
+            }
+            TextView heading = new TextView(this);
+            heading.setText(part[1]);
+            heading.setTextColor(color);
+            heading.setTextSize(15f);
+            heading.setTypeface(Typeface.DEFAULT_BOLD);
+            header.addView(heading, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            content.addView(header);
+            if (!part[2].isEmpty()) {
+                TextView lines = new TextView(this);
+                lines.setText(part[2]);
+                lines.setTextColor(0xffc8ccd6);
+                lines.setTextSize(13f);
+                lines.setTextIsSelectable(true);
+                lines.setPadding(rgb >= 0 ? dp(28) : 0, 0, 0, 0);
+                content.addView(lines);
+            }
+        }
+        new PanelBuilder().setTitle(report[0]).setView(content).show();
     }
 
     // ---- Benchmark

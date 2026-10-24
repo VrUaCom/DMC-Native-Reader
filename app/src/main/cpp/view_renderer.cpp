@@ -1255,7 +1255,8 @@ struct OverlayPen final {
 void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
     const ViewState& view = pen.view;
     for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
-        pen.line3(view.overlay_lines[i], view.overlay_lines[i + 1U], 255U, 90U, 60U, 255U, pen.collision_px);
+        pen.line3(view.overlay_lines[i], view.overlay_lines[i + 1U], kAttackCollisionColor[0], kAttackCollisionColor[1],
+                  kAttackCollisionColor[2], 255U, pen.collision_px);
     }
     for (std::size_t i = 0U; i + 1U < view.room_collision_lines.size(); i += 2U) {
         const auto kind = i / 2U < view.room_collision_kinds.size() ? view.room_collision_kinds[i / 2U] : 0U;

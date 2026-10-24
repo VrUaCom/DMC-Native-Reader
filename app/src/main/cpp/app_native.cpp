@@ -29,6 +29,7 @@
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/camera_control.h"
 #include "dmcresource/demo_session.h"
+#include "dmcresource/spider/collision_report.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/spider/app_info.h"
 #include "dmcresource/spider/companion_menu.h"
@@ -959,15 +960,8 @@ extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_collisionKinds(JNIEnv* env, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
-    std::vector<dmcresource::environment_collision::Kind> kinds;
     try {
-        if (session != nullptr && session->hits != nullptr) {
-            kinds = dmcresource::environment_collision::kinds(*session->hits);
-        } else if (session != nullptr && session->stage != nullptr) {
-            kinds = session->stage->collision_kinds;
-        } else if (const auto room = dmcresource::stage_room::current()) {
-            kinds = room->collision_kinds;
-        }
+        const auto kinds = dmcresource::spider::actions::shown_hits_kinds(session);
         jclass string_class = env->FindClass("java/lang/String");
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(kinds.size()), string_class, nullptr);
         for (std::size_t i = 0; i < kinds.size(); ++i) {
@@ -978,6 +972,37 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_collisionKinds(JNIEnv* env, jclass
                           (static_cast<unsigned>(color[0]) << 16U) | (static_cast<unsigned>(color[1]) << 8U) |
                               static_cast<unsigned>(color[2]));
             env->SetObjectArrayElement(out, static_cast<jsize>(i), env->NewStringUTF(text));
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// The core's account of the session's collision (spider collision_report.h):
+// {title, summary, then one entry a group: "rgb|heading|line\nline..."},
+// rgb -1 for a group without a colour. `attack`: the hitboxes, else HITS.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_collisionReport(JNIEnv* env, jclass, jlong handle, jboolean attack) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto* session = from_handle(handle);
+        const auto report = attack == JNI_TRUE ? dmcresource::spider::actions::attack_collision_report(session)
+                                               : dmcresource::spider::actions::stage_collision_report(session);
+        std::vector<std::string> entries{report.title, report.summary};
+        for (const auto& group : report.groups) {
+            const long rgb = group.coloured ? (static_cast<long>(group.colour[0]) << 16) |
+                                                  (static_cast<long>(group.colour[1]) << 8) | group.colour[2]
+                                            : -1L;
+            std::string entry = std::to_string(rgb) + "|" + group.heading + "|";
+            for (std::size_t i = 0; i < group.lines.size(); ++i) {
+                if (i > 0U) entry.push_back('\n');
+                entry += group.lines[i];
+            }
+            entries.push_back(std::move(entry));
+        }
+        jclass string_class = env->FindClass("java/lang/String");
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(entries.size()), string_class, nullptr);
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), env->NewStringUTF(entries[i].c_str()));
         }
         return out;
     } catch (...) { return nullptr; }

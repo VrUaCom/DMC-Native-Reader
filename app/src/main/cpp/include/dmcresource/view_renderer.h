@@ -218,6 +218,8 @@ struct CameraBasis final {
 
 // Colour of a HITS record kind in the collision overlay and its legend.
 [[nodiscard]] std::array<std::uint8_t, 3> collision_kind_color(std::size_t kind) noexcept;
+// The colour of a character's attack collision shapes (hitboxes).
+inline constexpr std::array<std::uint8_t, 3> kAttackCollisionColor{255U, 90U, 60U};
 
 // Framing distance (model units) of the camera at dolly 0 for these vertices.
 [[nodiscard]] float framing_camera_distance(std::span<const Vec3> vertices) noexcept;
