@@ -29,8 +29,13 @@ m07_c00_movie.pac (15 120 bytes) is one:
   "clip".
 - Slot 1: the name list of slot 2, `m07_c00_PadVibeSet.txt` and
   `m07_c00_MessageSet.txt`.
-- Slot 2: a PAC of those two texts. Of the 30 Set files the script names,
-  only these two exist: the movie brings the picture and the sound itself.
+- Slot 2: a PAC of those two texts. The script names 108 Set files (and 108
+  Load files): WorkRate, Camera, Model / Motion / Hide 00 to 31, Effect,
+  EffectI 00 and 01, Light, PadVibe, Message, ScrEfc, Fade, Program,
+  Sound. Only these two exist: the movie brings the picture and the sound
+  itself. The script is the real-time m07_c00's: a real-time archive holds
+  every Set file its script names (m03_s00: 105 of 105, m01_s00: 116 of
+  116), a movie track only these two (m01_s00_movie: 2 of 116).
 - PadVibe: 29 clips from frame 330 to 12122. Per clip: `LMotorSt` and
   `LMotorEd` (the large motor's strength at the start and the end, 0-255),
   `SMotorSt` and `SMotorEd` (the small motor, off or on), `Life` (frames).
