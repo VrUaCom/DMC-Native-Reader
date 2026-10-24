@@ -311,6 +311,10 @@ APK verifier.
     - Holding (Tripod / Hand-held / Stabilised) shakes slow hand-held
       pictures; with the gyroscope the phone's own turns blur them. SHAKE in
       the viewfinder warns.
+  - v117:
+    - The GPU draws the lines, crosses and labels (hitboxes, room collision,
+      stage markers, bones) itself, so those frames also go straight to the
+      screen without a read back.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

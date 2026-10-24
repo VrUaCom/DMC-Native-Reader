@@ -337,6 +337,36 @@ void fill_convex_quad(RgbaImage& image, const P2 (&v)[4], std::uint8_t r, std::u
 // Screen-clipped line (Liang-Barsky) of `width` image pixels with optional
 // alpha: a segment may have one end far outside the image after the
 // near-plane clip. Width 1 is a Bresenham line; wider ones are a rectangle.
+// The part of segment a-b inside a width x height image (a margin for a
+// wide line); false when none is.
+bool clip_segment(int image_width, int image_height, P2 a, P2 b, int width, P2* out0, P2* out1) {
+    if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) return false;
+    const float half = 0.5F * static_cast<float>(std::max(1, width));
+    const float margin = width > 1 ? half + 1.0F : 0.0F;
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    float t0 = 0.0F, t1 = 1.0F;
+    const auto clip = [&](float p, float q) {
+        if (p == 0.0F) return q >= 0.0F;
+        const float t = q / p;
+        if (p < 0.0F) {
+            if (t > t1) return false;
+            t0 = std::max(t0, t);
+        } else {
+            if (t < t0) return false;
+            t1 = std::min(t1, t);
+        }
+        return true;
+    };
+    const float max_x = static_cast<float>(image_width - 1) + margin;
+    const float max_y = static_cast<float>(image_height - 1) + margin;
+    if (!clip(-dx, a.x + margin) || !clip(dx, max_x - a.x) || !clip(-dy, a.y + margin) || !clip(dy, max_y - a.y)) {
+        return false;
+    }
+    *out0 = P2{a.x + dx * t0, a.y + dy * t0, 0.0F};
+    *out1 = P2{a.x + dx * t1, a.y + dy * t1, 0.0F};
+    return true;
+}
+
 void line_clip(RgbaImage& image, P2 a, P2 b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
                std::uint8_t alpha = 255U, int width = 1, const std::uint8_t* cap_background = nullptr) {
     if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) return;
@@ -1288,6 +1318,9 @@ struct OverlayPen final {
     float line_near;
     int mesh_px;
     int collision_px;
+    // Set: the pen writes the GPU's overlay instead of pixels (image then
+    // only gives the size).
+    GpuViewFrame::Overlay* record{};
 
     OverlayPen(RgbaImage& target, const CameraFrame& camera, const ViewState& state)
         : image(target), frame(camera), view(state), zoom(std::clamp(state.zoom, 0.15F, 8.0F)),
@@ -1315,7 +1348,91 @@ struct OverlayPen final {
             const float t = (line_near - b.z) / (a.z - b.z);
             b = {b.x + (a.x - b.x) * t, b.y + (a.y - b.y) * t, line_near};
         }
-        line_clip(image, cam_point(a), cam_point(b), r, g, bl, alpha, width, cap_background);
+        segment(cam_point(a), cam_point(b), r, g, bl, alpha, width, cap_background);
+    }
+
+    // An image-space line: pixels, or the GPU's quad covering the same ones
+    // (square caps; a 1-pixel line's pixels are rounded, as Bresenham's).
+    void segment(P2 a, P2 b, std::uint8_t r, std::uint8_t g, std::uint8_t bl, std::uint8_t alpha, int width,
+                 const std::uint8_t* cap_background = nullptr) const {
+        if (record == nullptr) {
+            line_clip(image, a, b, r, g, bl, alpha, width, cap_background);
+            return;
+        }
+        P2 p0, p1;
+        if (!clip_segment(image.width, image.height, a, b, width, &p0, &p1)) return;
+        const float shift = width > 1 ? 0.0F : 0.5F;
+        const float half = 0.5F * static_cast<float>(std::max(1, width));
+        const float len = std::hypot(p1.x - p0.x, p1.y - p0.y);
+        float ux = 1.0F, uy = 0.0F;
+        if (len > 1.0e-4F) {
+            ux = (p1.x - p0.x) / len;
+            uy = (p1.y - p0.y) / len;
+        }
+        const float sx = p0.x + shift - ux * half, sy = p0.y + shift - uy * half;
+        const float ex = p1.x + shift + ux * half, ey = p1.y + shift + uy * half;
+        const float nx = -uy * half, ny = ux * half;
+        quad({{{sx + nx, sy + ny}, {ex + nx, ey + ny}, {ex - nx, ey - ny}, {sx - nx, sy - ny}}}, r, g, bl, alpha);
+    }
+
+    void quad(const std::array<std::array<float, 2>, 4>& corners, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
+              std::uint8_t alpha) const {
+        const std::array<float, 4> colour{static_cast<float>(r), static_cast<float>(g), static_cast<float>(bl),
+                                          static_cast<float>(alpha)};
+        for (const int k : {0, 1, 2, 0, 2, 3}) {
+            const auto& c = corners[static_cast<std::size_t>(k)];
+            record->triangles.push_back({c[0], c[1], 0.0F, 0.0F, 0.0F, colour});
+        }
+    }
+
+    // A bone's cross (marker()).
+    void mark(P2 point, std::uint8_t shade, int width) const {
+        if (record == nullptr) {
+            marker(image, point, shade, width);
+            return;
+        }
+        const float x = static_cast<float>(std::lround(point.x));
+        const float y = static_cast<float>(std::lround(point.y));
+        const int w = std::max(1, width);
+        const float reach = static_cast<float>(1 + w);
+        const float low = static_cast<float>(-(w - 1) / 2);
+        const float high = low + static_cast<float>(w);
+        const auto blue = static_cast<std::uint8_t>(std::min(255, shade + 10));
+        quad({{{x - reach, y + low}, {x + reach + 1.0F, y + low}, {x + reach + 1.0F, y + high}, {x - reach, y + high}}},
+             shade, shade, blue, 255U);
+        quad({{{x + low, y - reach}, {x + high, y - reach}, {x + high, y + reach + 1.0F}, {x + low, y + reach + 1.0F}}},
+             shade, shade, blue, 255U);
+    }
+
+    // A label: the 5x7 text with a dark rim one step around it.
+    void label(int x, int y, const std::string& text, const std::array<std::uint8_t, 3>& color, int scale) const {
+        static constexpr std::array<std::array<int, 2>, 4> kRim{{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}};
+        if (record == nullptr) {
+            for (const auto& [dx, dy] : kRim) {
+                raster::draw_text(image.pixels, image.width, image.height, x + dx * scale, y + dy * scale, text,
+                                  raster::Rgb{10, 10, 12}, scale);
+            }
+            raster::draw_text(image.pixels, image.width, image.height, x, y, text,
+                              raster::Rgb{color[0], color[1], color[2]}, scale);
+            return;
+        }
+        GpuViewFrame::Overlay::Label out;
+        const int w = static_cast<int>(text.size()) * 6 * scale + 2 * scale;
+        const int h = 9 * scale;
+        if (w <= 2 * scale || x + w < -scale || y + h < -scale || x - scale > image.width || y - scale > image.height) {
+            return;
+        }
+        out.x = static_cast<float>(x - scale);
+        out.y = static_cast<float>(y - scale);
+        out.image.width = static_cast<std::uint32_t>(w);
+        out.image.height = static_cast<std::uint32_t>(h);
+        out.image.rgba8.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4U, 0U);
+        for (const auto& [dx, dy] : kRim) {
+            raster::draw_text(out.image.rgba8, w, h, scale + dx * scale, scale + dy * scale, text,
+                              raster::Rgb{10, 10, 12}, scale);
+        }
+        raster::draw_text(out.image.rgba8, w, h, scale, scale, text, raster::Rgb{color[0], color[1], color[2]}, scale);
+        record->labels.push_back(std::move(out));
     }
 };
 
@@ -1350,13 +1467,7 @@ void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
             const auto p = pen.cam_point(c);
             const int x = static_cast<int>(std::lround(p.x)) + 3 * scale;
             const int y = static_cast<int>(std::lround(p.y)) - 9 * scale;
-            static constexpr std::array<std::array<int, 2>, 4> kRim{{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}};
-            for (const auto& [dx, dy] : kRim) {
-                raster::draw_text(pen.image.pixels, pen.image.width, pen.image.height, x + dx * scale,
-                                  y + dy * scale, label.text, raster::Rgb{10, 10, 12}, scale);
-            }
-            raster::draw_text(pen.image.pixels, pen.image.width, pen.image.height, x, y, label.text,
-                              raster::Rgb{label.color[0], label.color[1], label.color[2]}, scale);
+            pen.label(x, y, label.text, {label.color[0], label.color[1], label.color[2]}, scale);
         }
     }
 
@@ -1368,7 +1479,7 @@ void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
         }
         for (const auto& point : hierarchy->points) {
             const Vec3 c = pen.to_cam(point);
-            if (c.z >= pen.line_near) marker(pen.image, pen.cam_point(c), 255U, pen.mesh_px);
+            if (c.z >= pen.line_near) pen.mark(pen.cam_point(c), 255U, pen.mesh_px);
         }
     }
 }
@@ -1841,7 +1952,7 @@ void lay_fade(const ViewState& view, RgbaImage* image) {
     }
 }
 
-// Whether anything is drawn on the CPU over a GPU frame (draw_overlays).
+// Whether anything is drawn over the frame (draw_overlays).
 bool has_overlays(const ViewState& view, const HierarchyOverlay* hierarchy) {
     return view.overlay_lines.size() >= 2U || view.room_collision_lines.size() >= 2U || !view.marker_lines.empty() ||
            !view.marker_labels.empty() || (hierarchy != nullptr && hierarchy->available());
@@ -2292,9 +2403,18 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                                               triangle_texture_slots, textures);
             }();
             gpu.fade = view.fade;
+            // The lines, crosses and labels go to the GPU too: it draws
+            // them over the finished frame.
+            if (has_overlays(view, hierarchy)) {
+                RgbaImage size_only;
+                size_only.width = image.width;
+                size_only.height = image.height;
+                OverlayPen pen{size_only, frame, view};
+                pen.record = &gpu.overlay;
+                draw_overlays(pen, hierarchy);
+            }
             // Straight to the window when nothing is drawn after the GPU.
-            gpu.present = view.present && gpu_present_enabled() && view.depth_out == nullptr &&
-                          !has_overlays(view, hierarchy);
+            gpu.present = view.present && gpu_present_enabled() && view.depth_out == nullptr;
             // A frame that may be shown needs no buffer unless it is read back.
             if (!gpu.present) {
                 image.pixels.resize(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U);
@@ -2318,8 +2438,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                 (void)render_view_software(mesh, image.width, image.height, view, nullptr,
                                            triangle_texture_slots, textures);
             }
-            const OverlayPen pen{image, frame, view};
-            draw_overlays(pen, hierarchy);
+            // The GPU drew the overlays over it.
             g_gpu_frames.fetch_add(1U);
             return image;
         }

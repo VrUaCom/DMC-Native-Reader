@@ -99,7 +99,29 @@ the phone and the stages say what to do first.
   only by the filtering. The GPU fade differs from the CPU fade by 0.15 on
   m03_b00 (the rasterisers alone: 0.58).
 - Next: the overlays (lines, markers, labels, bones) as GPU passes, so
-  those frames are shown directly too.
+  those frames are shown directly too (done in v117).
+
+## Done in v117: the overlays on the GPU (step 5 finished)
+
+- `draw_overlays` writes through the `OverlayPen`. For a GPU frame the pen
+  records instead of rasterising (`GpuViewFrame::overlay`):
+  - lines as quads (square caps, the CPU's clip to the picture; a 1-pixel
+    line is shifted half a pixel to cover the pixels Bresenham's rounding
+    picks);
+  - the bones' crosses as two rectangles;
+  - labels as small pictures of the 5x7 text with its rim, drawn by the same
+    `raster::draw_text` into a transparent image.
+- The backend draws them over the finished frame (after the development,
+  no depth test, alpha blended), into the frame it then shows or reads
+  back. Label textures are a small pool reused every frame.
+- Frames with hitboxes, room collision, stage markers and bones now go
+  straight to the screen too. Only videos, pictures, UV views, movies, the
+  benchmark and a refused window still read back.
+- Checked with Mesa on st001 with its stage configuration and the room
+  collision: the GPU and CPU pictures match line for line, labels included.
+  The masks of changed pixels overlap by 0.72 (1-pixel lines pick
+  neighbouring pixels on the two rasterisers). Shown straight on the window,
+  the frame equals the read back one exactly.
 
 ## Testing GPU work off the phone
 
@@ -127,8 +149,8 @@ mean nothing; only the phone's benchmark counts.
    field reads the GPU's depth texture instead of drawing the whole frame
    again in software for its depth, which today is the most expensive part
    of camera mode with the depth of field on. Large work.
-5. **Showing the frame without a round trip** (first part done in v113;
-   the overlays on the GPU are left). GLES draws straight into the
+5. **Showing the frame without a round trip** (done in v113 and v117;
+   the overlays too). GLES draws straight into the
    view's window surface (SurfaceView or TextureView). The HUD, subtitles
    and viewfinder are drawn by a Canvas view on top, and the lines and
    labels move to the GPU. Steps 5 to 7 above disappear. Captures (photo,

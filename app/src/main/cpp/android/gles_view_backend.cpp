@@ -943,6 +943,7 @@ private:
         glBindVertexArray(0);
         glDepthMask(GL_TRUE);
 
+        draw_overlay(frame, result_fbo);
         // Shown on the window: the result stays where it is.
         if (shown_fbo != nullptr) {
             *shown_fbo = result_fbo;
@@ -1291,6 +1292,7 @@ private:
                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
             read_fbo = resolve_fbo_;
         }
+        draw_overlay(frame, read_fbo);
         // A development that did not run is the CPU's to do: it needs the pixels.
         const bool undeveloped = frame.post != nullptr && frame.post->enabled;
         if (show && !undeveloped && present(read_fbo, frame.width, frame.height)) {
@@ -1310,6 +1312,73 @@ private:
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         trim_textures();
         return glGetError() == GL_NO_ERROR;
+    }
+
+    // The lines, crosses and labels over the finished frame in `fbo` (no
+    // depth test; opaque, as the CPU draws them).
+    void draw_overlay(const GpuViewFrame& frame, GLuint fbo) {
+        const auto& overlay = frame.overlay;
+        if (overlay.empty()) return;
+        const float w = static_cast<float>(frame.width);
+        const float h = static_cast<float>(frame.height);
+        const float z = 0.5F * (frame.near_z + frame.far_z) - frame.camera_distance;
+        std::vector<GpuScreenVertex> vertices = overlay.triangles;
+        for (auto& v : vertices) v.z = z;
+        const std::size_t solid = vertices.size();
+        for (const auto& label : overlay.labels) {
+            const float x0 = label.x, y0 = label.y;
+            const float x1 = x0 + static_cast<float>(label.image.width);
+            const float y1 = y0 + static_cast<float>(label.image.height);
+            const std::array<float, 4> white{255.0F, 255.0F, 255.0F, 255.0F};
+            const GpuScreenVertex corners[4] = {{x0, y0, z, 0.0F, 0.0F, white}, {x1, y0, z, 1.0F, 0.0F, white},
+                                                {x1, y1, z, 1.0F, 1.0F, white}, {x0, y1, z, 0.0F, 1.0F, white}};
+            for (const int k : {0, 1, 2, 0, 2, 3}) vertices.push_back(corners[k]);
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, frame.width, frame.height);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_CULL_FACE);
+        glDepthMask(GL_FALSE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendEquation(GL_FUNC_ADD);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glUseProgram(screen_program_);
+        glUniform2f(screen_size_, w, h);
+        glUniform3f(screen_depth_, frame.projection[2], frame.projection[3], frame.camera_distance);
+        glUniform1i(screen_tex_, 0);
+        glBindVertexArray(screen_vao_);
+        glBindBuffer(GL_ARRAY_BUFFER, screen_vbo_);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(GpuScreenVertex)),
+                     vertices.data(), GL_STREAM_DRAW);
+        if (solid > 0U) {
+            glUniform1i(screen_textured_, 0);
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(solid));
+        }
+        // Labels: a few small textures, the same ones every frame.
+        if (label_textures_.size() < overlay.labels.size()) {
+            const std::size_t old = label_textures_.size();
+            label_textures_.resize(overlay.labels.size());
+            glGenTextures(static_cast<GLsizei>(label_textures_.size() - old), label_textures_.data() + old);
+        }
+        glActiveTexture(GL_TEXTURE0);
+        glBindSampler(0U, nearest_);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        for (std::size_t i = 0U; i < overlay.labels.size(); ++i) {
+            const auto& image = overlay.labels[i].image;
+            if (!image.available()) continue;
+            glBindTexture(GL_TEXTURE_2D, label_textures_[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(image.width),
+                         static_cast<GLsizei>(image.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba8.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+            glUniform1i(screen_textured_, 1);
+            glDrawArrays(GL_TRIANGLES, static_cast<GLint>(solid + i * 6U), 6);
+        }
+        glBindVertexArray(0);
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
     }
 
     bool read_back(GLuint fbo, int width, int height, RgbaImage& image) {
@@ -1414,6 +1483,7 @@ private:
 
     std::mutex mutex_;
     bool failed_{false};
+    std::vector<GLuint> label_textures_;
     EGLConfig config_{};
     bool window_config_{false};
     void* window_{};

@@ -170,6 +170,23 @@ struct GpuViewFrame final {
     // laid before the development.
     std::array<float, 4> fade{};
 
+    // The lines, crosses and labels over the finished frame (after the
+    // development, no depth test), as the CPU's overlays draw them: image
+    // pixels, x right and y down. Solid triangles (rgba 0..255, 3 a
+    // triangle), and labels with their own small picture (the 5x7 text and
+    // its dark rim, transparent around it) at their top-left corner.
+    struct Overlay final {
+        std::vector<GpuScreenVertex> triangles;
+        struct Label final {
+            float x{};
+            float y{};
+            ImagePreview image;
+        };
+        std::vector<Label> labels;
+        [[nodiscard]] bool empty() const noexcept { return triangles.empty() && labels.empty(); }
+    };
+    Overlay overlay;
+
     // Show the frame on the backend's window (set_window) instead of
     // reading it back; the backend sets `presented` when it did, and the
     // image is then left without pixels.

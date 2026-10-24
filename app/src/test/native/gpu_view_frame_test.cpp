@@ -1,6 +1,7 @@
 // GPU view frame contract (view_gpu.h) with a recording backend: render_view
 // hands the triangle passes to the backend with the software rasteriser's
-// camera and rules, draws the line overlays on the result, and falls back to
+// camera and rules, hands it the line overlays to draw over its result
+// (screen-space triangles), and falls back to
 // the software picture whenever the backend refuses a frame.
 #include <cassert>
 #include <cmath>
@@ -29,6 +30,7 @@ struct Recording final {
     GpuGeometry room_geometry;
     std::vector<Vec3> floor;
     std::vector<Vec3> shadow;
+    std::size_t overlay_triangles{};
 };
 
 class RecordingBackend final : public GpuViewBackend {
@@ -49,6 +51,7 @@ public:
         last.room_key = frame.room_key;
         last.floor = frame.floor;
         last.shadow = frame.shadow;
+        last.overlay_triangles = frame.overlay.triangles.size();
         if (frame.room) last.room_geometry = frame.build_room();
         if (!accept) return false;
         for (std::size_t i = 0U; i < image.pixels.size(); i += 4U) {
@@ -160,12 +163,15 @@ int main() {
             const float cz = m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14];
             assert(cz > backend.last.near_z && cz < backend.last.far_z);
         }
-        // The bones are drawn over the backend's picture (it only cleared).
+        // The bones go to the backend to draw over its picture: two edges
+        // and three crosses (two quads each), six vertices a quad; nothing
+        // is drawn on the CPU over what it returned (it only cleared).
+        assert(backend.last.overlay_triangles == (2U + 3U * 2U) * 6U);
         std::size_t white = 0U;
         for (std::size_t i = 0U; i < image.pixels.size(); i += 4U) {
             white += image.pixels[i] == 255U && image.pixels[i + 1U] == 255U && image.pixels[i + 2U] == 255U;
         }
-        assert(white > 20U);
+        assert(white == 0U);
     }
 
     // 4. A refused frame is the software picture, byte for byte.
