@@ -61,6 +61,10 @@ public final class DmcRenderView extends View {
         void onToggleUi();
         /** The three-finger tap: a picture, as the camera settings say. */
         void onTakePicture();
+        /** Camera mode: a camera setting one option up or down (three fingers up / down: the exposure). */
+        void onCameraStep(String settingId, int step);
+        /** Camera mode: the two-finger tap levels the camera. */
+        void onCameraLevel();
         void onGestureNotice(String text);
         /** A native action answered a gesture (a held marker's card, ...). */
         void onActionOutcome(ActionOutcome outcome);
@@ -80,6 +84,16 @@ public final class DmcRenderView extends View {
 
     // Touch state.
     private static final int EDGE_NONE = 0, EDGE_LEFT = 1, EDGE_RIGHT = 2, EDGE_TOP = 3;
+    // Camera mode: the right edge is the focus ring.
+    private static final int EDGE_FOCUS = 4;
+    // Camera mode's own gestures (read when a touch starts): three fingers
+    // roll the camera or step the exposure, a two-finger tap levels it.
+    private boolean cameraGestures;
+    private static final int CAMERA_TRIPLE_UNDECIDED = 0, CAMERA_TRIPLE_ROLL = 1, CAMERA_TRIPLE_EV = 2;
+    private int cameraTriple;
+    private boolean cameraTripleUsed;
+    private float cameraTripleAngle, cameraTripleStartAngle, cameraTripleY, cameraTripleEvY;
+    private float cameraPairX, cameraPairY;
     private static final float EDGE_DP = 48.0f;
     private int edgeStart = EDGE_NONE;
     private int maxPointers;
@@ -323,6 +337,16 @@ public final class DmcRenderView extends View {
             }
 
             @Override public boolean onDoubleTap(MotionEvent e) {
+                if (cameraGestures && singleFingerGesture()) {
+                    // Camera mode: focus there.
+                    final float sx = (float) renderWidth() / Math.max(1, getWidth());
+                    final float sy = (float) renderHeight() / Math.max(1, getHeight());
+                    notice(NativeBridge.cameraFocusAt(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
+                            renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly, e.getX() * sx, e.getY() * sy));
+                    performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK);
+                    renderNow();
+                    return true;
+                }
                 if (!singleFingerGesture() || !enabled(G_DOUBLE_TAP)) return false;
                 final String hit = (renderFlags & RENDER_ROOM) != 0 ? pick(e.getX(), e.getY(), true) : "";
                 if (hit.startsWith("placed")) {
@@ -340,6 +364,13 @@ public final class DmcRenderView extends View {
 
             @Override public void onLongPress(MotionEvent e) {
                 if (!singleFingerGesture()) return;
+                if (cameraGestures) {
+                    // Camera mode: lock the focus where it is, or let it go.
+                    notice(NativeBridge.cameraFocusLock());
+                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    renderNow();
+                    return;
+                }
                 // The core decides what the press means (a stage-config
                 // marker, then the joint, then scrubbing) and writes the line.
                 final ActionOutcome outcome = hold(e.getX(), e.getY());
@@ -1538,7 +1569,11 @@ public final class DmcRenderView extends View {
                 tripleMode = TRIPLE_NORMAL;
                 final float edge = EDGE_DP * density;
                 edgeStart = EDGE_NONE;
-                if (enabled(G_TOP_UI) && lastY < edge) {
+                cameraGestures = session != 0 && NativeBridge.cameraMode();
+                cameraTripleUsed = false;
+                if (cameraGestures && lastX > getWidth() - edge && lastY >= edge) {
+                    edgeStart = EDGE_FOCUS;
+                } else if (enabled(G_TOP_UI) && lastY < edge) {
                     edgeStart = EDGE_TOP;
                 } else if (enabled(G_EDGE_MOTION) && lastX < edge) {
                     edgeStart = EDGE_LEFT;
@@ -1561,8 +1596,11 @@ public final class DmcRenderView extends View {
                     endDolly();
                     multiMode = MULTI_NORMAL;
                     if (event.getPointerCount() == 3) beginTriple(event); else endTurn();
+                    if (event.getPointerCount() == 3 && cameraGestures) beginCameraTriple(event);
                 } else if (event.getPointerCount() == 2) {
                     beginPair(event);
+                    cameraPairX = multiX;
+                    cameraPairY = multiY;
                 }
                 return true;
             case MotionEvent.ACTION_POINTER_UP: {
@@ -1605,11 +1643,20 @@ public final class DmcRenderView extends View {
                     final float mx = x - downX, my = y - downY;
                     if (Math.hypot(mx, my) > 16.0f * density) {
                         final boolean along = edgeStart == EDGE_TOP ? (my > Math.abs(mx))
-                                : edgeStart == EDGE_LEFT ? (mx > Math.abs(my)) : (-mx > Math.abs(my));
+                                : edgeStart == EDGE_LEFT ? (mx > Math.abs(my))
+                                : edgeStart == EDGE_FOCUS ? (Math.abs(my) > Math.abs(mx)) : (-mx > Math.abs(my));
                         if (!along) edgeStart = EDGE_NONE;
                     }
                 }
-                if (scrubbing) {
+                if (edgeStart == EDGE_FOCUS && maxPointers == 1) {
+                    // The focus ring: up focuses farther, down nearer (a
+                    // screen height is about twenty times the distance).
+                    final float steps = -(y - lastY) / Math.max(1, getHeight()) * 3.0f;
+                    if (Math.abs(steps) > 0.0005f) {
+                        notice(NativeBridge.cameraFocusRing(steps));
+                        renderThrottled(false);
+                    }
+                } else if (scrubbing) {
                     // About 8 px per frame, clamped to the motion.
                     scrubFrame = Math.max(0.0f, scrubFrame + (x - lastX) / (8.0f * density / 2.5f));
                     final float end = NativeBridge.motionEndFrame(session);
@@ -1696,6 +1743,12 @@ public final class DmcRenderView extends View {
             sy += event.getY(i);
         }
         final float cx = sx / n, cy = sy / n;
+        if (n == 3 && maxPointers == 3 && cameraGestures) {
+            moveCameraTriple(event, cy);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
         if (n == 3 && maxPointers == 3) {
             if (tripleMode == TRIPLE_UNDECIDED) decideTriple(event);
             if (tripleMode == TRIPLE_TURN) moveTurn(event);
@@ -1772,6 +1825,25 @@ public final class DmcRenderView extends View {
             recycleVelocity();
             return;
         }
+        if (cameraGestures && maxPointers == 2) {
+            // A short two-finger tap that neither moved nor pinched: level.
+            final boolean still = Math.hypot(multiX - cameraPairX, multiY - cameraPairY) < 12.0f * density
+                    && Math.abs(zoom - touchZoom) < 0.01f;
+            if (still && duration < 300 && gestureListener != null) gestureListener.onCameraLevel();
+            recycleVelocity();
+            return;
+        }
+        if (cameraGestures && maxPointers >= 3) {
+            // Three fingers that only touched take the picture; no variant
+            // swipe and no follow switch in camera mode.
+            if (maxPointers == 3 && !cameraTripleUsed && duration < 500
+                    && Math.hypot(multiX - multiStartX, multiY - multiStartY) < 24.0f * density
+                    && gestureListener != null) {
+                gestureListener.onTakePicture();
+            }
+            recycleVelocity();
+            return;
+        }
         if (maxPointers >= 4) {
             if (enabled(G_FOLLOW) && duration < 500) {
                 follow = !follow;
@@ -1815,6 +1887,65 @@ public final class DmcRenderView extends View {
 
     // ---- turn: one finger holds, two others twist round it -> the camera
     // turns round the model (or the centre of the stage).
+
+    private void beginCameraTriple(MotionEvent event) {
+        cameraTriple = CAMERA_TRIPLE_UNDECIDED;
+        cameraTripleStartAngle = (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
+        cameraTripleAngle = cameraTripleStartAngle;
+        cameraTripleY = (event.getY(0) + event.getY(1) + event.getY(2)) / 3.0f;
+        cameraTripleEvY = cameraTripleY;
+    }
+
+    /** Camera mode, three fingers: twisted they roll the camera, moved up / down they step the exposure. */
+    private void moveCameraTriple(MotionEvent event, float cy) {
+        final float density = getResources().getDisplayMetrics().density;
+        final float angle = (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
+        if (cameraTriple == CAMERA_TRIPLE_UNDECIDED) {
+            float turned = angle - cameraTripleStartAngle;
+            if (turned > Math.PI) turned -= (float) (2.0 * Math.PI);
+            if (turned < -Math.PI) turned += (float) (2.0 * Math.PI);
+            if (Math.abs(turned) > 0.15f) {
+                cameraTriple = CAMERA_TRIPLE_ROLL;
+                cameraTripleUsed = true;
+            } else if (Math.abs(cy - cameraTripleY) > 30.0f * density) {
+                cameraTriple = CAMERA_TRIPLE_EV;
+                cameraTripleUsed = true;
+                cameraTripleEvY = cy;
+            }
+        }
+        if (cameraTriple == CAMERA_TRIPLE_ROLL) {
+            float delta = angle - cameraTripleAngle;
+            if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
+            if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
+            // The picture turns with the fingers: the camera the other way.
+            final float roll = NativeBridge.cameraRoll(-delta);
+            notice("Roll " + Math.round(Math.toDegrees(roll)) + "\u00b0");
+            renderThrottled(false);
+        } else if (cameraTriple == CAMERA_TRIPLE_EV && gestureListener != null) {
+            // Every 50 dp up brightens by one step, down darkens.
+            final float step = 50.0f * density;
+            while (cameraTripleEvY - cy >= step) {
+                gestureListener.onCameraStep("exposure_compensation", 1);
+                cameraTripleEvY -= step;
+            }
+            while (cy - cameraTripleEvY >= step) {
+                gestureListener.onCameraStep("exposure_compensation", -1);
+                cameraTripleEvY += step;
+            }
+        }
+        cameraTripleAngle = angle;
+    }
+
+    /** The gyroscope's turn of the camera (radians). */
+    public void turnBy(float dYaw, float dPitch) {
+        if (session == 0 || staticImagePreview) return;
+        if (dYaw != 0.0f || dPitch != 0.0f) {
+            claimCamera();
+            yaw += dYaw;
+            pitch = Math.max(-1.55f, Math.min(1.55f, pitch + dPitch));
+        }
+        renderThrottled(false);
+    }
 
     private void beginTriple(MotionEvent event) {
         tripleMode = enabled(G_TURN) ? TRIPLE_UNDECIDED : TRIPLE_NORMAL;

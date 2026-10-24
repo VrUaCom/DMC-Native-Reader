@@ -281,6 +281,20 @@ public final class NativeBridge {
     public static native boolean cameraMode();
     /** The camera bar's dials: "setting index[,index ...]\ttitle\tvalue". */
     public static native String[] cameraDials();
+    /** Gyroscope on in camera mode. */
+    public static native boolean gyroActive();
+    /** A phone reading (heading, elevation, roll; radians) gives the camera's turn {yaw, pitch}. */
+    public static native float[] gyroTurn(float heading, float elevation, float roll);
+    public static native void gyroReset();
+    /** Rolls the camera by radians (0 reads it). */
+    public static native float cameraRoll(float radians);
+    public static native void cameraLevel();
+    /** Focus where a finger tapped (view render pixels); the line to show. */
+    public static native String cameraFocusAt(long handle, int width, int height, float yaw, float pitch, float zoom,
+                                              int renderFlags, float panX, float panY, float roomYaw, boolean follow,
+                                              float dolly, float x, float y);
+    public static native String cameraFocusLock();
+    public static native String cameraFocusRing(float steps);
     /** True in camera mode with the polarizer on: two fingers turn it. */
     public static native boolean cameraPolarizerTurnable();
     /** Turns the polarizer by radians (0 reads it); its angle, 0 .. pi. */

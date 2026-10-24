@@ -179,7 +179,12 @@ public final class MainActivity extends Activity {
     private LinearLayout cameraAdjust;
     private Button cameraPlayButton;
     private Button cameraRecordButton;
+    private Button cameraGyroButton;
     private boolean cameraUi;
+    // The phone's turns for the gyroscope (camera mode, gyroscope on).
+    private android.hardware.SensorManager sensorManager;
+    private boolean gyroListening;
+    private boolean volumeHeld;
     private String cameraDialOpen;  // the open dial's indexes, or null
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
@@ -710,15 +715,8 @@ public final class MainActivity extends Activity {
 
         // Camera mode: orbit (turn round the model / stage) or fly (joysticks
         // under the fingers: left moves, right looks). The same button goes back.
-        flyButton = makeSquareButton("\u2708", "Camera mode: orbit / fly", 18f);
-        flyButton.setOnClickListener(v -> {
-            final boolean fly = !renderView.isFlyMode();
-            if (!renderView.setFlyMode(fly)) return;
-            notice(fly ? "Fly camera: left thumb moves (forward / back, sideways), right thumb looks "
-                            + "(turn, tilt); fly forward while looking up or down to climb or descend"
-                       : "Orbit camera", Toast.LENGTH_LONG);
-            applyResourceUiState();
-        });
+        flyButton = makeSquareButton("\uD83D\uDE81", "Drone: orbit / fly", 18f);
+        flyButton.setOnClickListener(v -> toggleDrone());
         addToolButton(bar, flyButton);
 
         // Breakable stage objects ("# SET n BREAK"): show them broken (their
@@ -1461,6 +1459,17 @@ public final class MainActivity extends Activity {
             takePicture();
         }
 
+        @Override public void onCameraStep(String settingId, int step) {
+            stepCameraOption(settingId, step);
+        }
+
+        @Override public void onCameraLevel() {
+            NativeBridge.cameraLevel();
+            NativeBridge.gyroReset();
+            renderView.renderNow();
+            notice("Level", Toast.LENGTH_SHORT);
+        }
+
         @Override public void onGestureNotice(String text) {
             notice(text, Toast.LENGTH_SHORT);
         }
@@ -1677,6 +1686,7 @@ public final class MainActivity extends Activity {
         NativeBridge.setCameraChoices(choices);
         NativeBridge.setCameraPolarizer(prefs().getFloat(PREF_POLARIZER, 0.0f));
         if (cameraPanel != null) setCameraUi(NativeBridge.cameraMode());
+        if (cameraPanel != null) updateGyro();
     }
 
     // ---- Camera mode: the camera's own bar in place of the scene's two
@@ -1737,14 +1747,42 @@ public final class MainActivity extends Activity {
         final Button reset = makeSquareButton("🔄", "Reset view", 20f);
         reset.setOnClickListener(v -> renderView.resetView());
         addToolButton(actions, reset);
+        cameraGyroButton = makeSquareButton("🧭", "Gyroscope: turn the phone to turn the camera", 20f);
+        cameraGyroButton.setOnClickListener(v -> toggleGyro());
+        addToolButton(actions, cameraGyroButton);
+        final Button drone = makeSquareButton("\uD83D\uDE81", "Drone: orbit / fly", 20f);
+        drone.setOnClickListener(v -> toggleDrone());
+        addToolButton(actions, drone);
+        final Button help = makeSquareButton("ℹ", "Gestures and gyroscope", 20f);
+        help.setOnClickListener(v -> showCameraHelp());
+        addToolButton(actions, help);
         final Button back = makeSquareButton("↩", "Back to the scene", 20f);
         back.setOnClickListener(v -> toggleCameraMode());
         addToolButton(actions, back);
-        cameraPanel.addView(actions, new LinearLayout.LayoutParams(
+        // The actions scroll sideways when the screen is narrow.
+        final HorizontalScrollView actionScroll = new HorizontalScrollView(this);
+        actionScroll.setHorizontalScrollBarEnabled(false);
+        actionScroll.setFillViewport(true);
+        actionScroll.addView(actions, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT, HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        cameraPanel.addView(actionScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         root.addView(cameraPanel, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** The drone (the fly camera with its sticks) on or off; the same button goes back to the orbit. */
+    private void toggleDrone() {
+        final boolean fly = !renderView.isFlyMode();
+        if (!renderView.setFlyMode(fly)) {
+            notice("No drone here", Toast.LENGTH_SHORT);
+            return;
+        }
+        notice(fly ? "🚁 Drone: left thumb flies (forward / back, sideways), right thumb looks (turn, tilt); "
+                        + "fly forward while looking up or down to climb or descend"
+                   : "Orbit camera", Toast.LENGTH_LONG);
+        applyResourceUiState();
     }
 
     /** Camera mode in or out (the core's setting); the bars follow it. */
@@ -1836,6 +1874,182 @@ public final class MainActivity extends Activity {
     private void updateCameraButtons() {
         if (cameraPlayButton != null) cameraPlayButton.setText(renderView.isMotionPlaying() ? "⏸" : "▶");
         if (cameraRecordButton != null) cameraRecordButton.setText(recorder != null ? "⏹" : "🎥");
+        if (cameraGyroButton != null) {
+            final boolean on = NativeBridge.gyroActive();
+            cameraGyroButton.setActivated(on);
+            cameraGyroButton.setAlpha(on ? 1.0f : 0.55f);
+        }
+    }
+
+    /** A camera setting one option up or down (by its id), as the dials and gestures turn it. */
+    private void stepCameraOption(String id, int step) {
+        for (final String[] row : cameraRows()) {
+            if (!row[0].equals(id)) continue;
+            final int count = row.length - 4;
+            final int next = Math.max(0, Math.min(count - 1, cameraChoice(row) + step));
+            prefs().edit().putString(PREF_CAMERA + row[0], row[4 + next]).apply();
+            applyCameraChoices();
+            renderView.renderNow();
+            notice(row[2] + ": " + row[4 + next], Toast.LENGTH_SHORT);
+            updateCameraDials();
+            return;
+        }
+    }
+
+    private void setCameraOption(String id, int option) {
+        for (final String[] row : cameraRows()) {
+            if (row[0].equals(id) && option >= 0 && option < row.length - 4) {
+                prefs().edit().putString(PREF_CAMERA + row[0], row[4 + option]).apply();
+            }
+        }
+        applyCameraChoices();
+    }
+
+    /** The gyroscope on or off (the core's setting); it works in camera mode. */
+    private void toggleGyro() {
+        final boolean on = !NativeBridge.gyroActive();
+        setCameraOption("gyro_mode", on ? 1 : 0);
+        notice(on ? "🧭 Gyroscope: turn the phone to turn the camera; two-finger tap levels it"
+                  : "Gyroscope off", Toast.LENGTH_SHORT);
+        updateCameraButtons();
+    }
+
+    // The phone's orientation (game rotation vector: no compass jumps) as the
+    // camera's heading, elevation and roll for the core, with the screen's
+    // own rotation taken out.
+    private final android.hardware.SensorEventListener gyroListener = new android.hardware.SensorEventListener() {
+        private final float[] rotation = new float[9];
+        private final float[] screen = new float[9];
+
+        @Override public void onSensorChanged(android.hardware.SensorEvent event) {
+            android.hardware.SensorManager.getRotationMatrixFromVector(rotation, event.values);
+            int x = android.hardware.SensorManager.AXIS_X;
+            int y = android.hardware.SensorManager.AXIS_Y;
+            switch (getWindowManager().getDefaultDisplay().getRotation()) {
+                case android.view.Surface.ROTATION_90:
+                    x = android.hardware.SensorManager.AXIS_Y;
+                    y = android.hardware.SensorManager.AXIS_MINUS_X;
+                    break;
+                case android.view.Surface.ROTATION_180:
+                    x = android.hardware.SensorManager.AXIS_MINUS_X;
+                    y = android.hardware.SensorManager.AXIS_MINUS_Y;
+                    break;
+                case android.view.Surface.ROTATION_270:
+                    x = android.hardware.SensorManager.AXIS_MINUS_Y;
+                    y = android.hardware.SensorManager.AXIS_X;
+                    break;
+                default:
+                    break;
+            }
+            android.hardware.SensorManager.remapCoordinateSystem(rotation, x, y, screen);
+            // The screen's right, up and out of it, in the world (z is up).
+            final float rightZ = screen[6], upZ = screen[7];
+            final float forwardX = -screen[2], forwardY = -screen[5], forwardZ = -screen[8];
+            final float heading = (float) Math.atan2(forwardX, forwardY);
+            final float elevation = (float) Math.asin(Math.max(-1.0f, Math.min(1.0f, forwardZ)));
+            final float roll = (float) Math.atan2(-rightZ, upZ);
+            final float[] turn = NativeBridge.gyroTurn(heading, elevation, roll);
+            if (turn != null && turn.length == 2) renderView.turnBy(turn[0], turn[1]);
+        }
+
+        @Override public void onAccuracyChanged(android.hardware.Sensor sensor, int accuracy) { }
+    };
+
+    /** Listens to the phone while the gyroscope works (camera mode, on, app in front). */
+    private void updateGyro() {
+        final boolean want = cameraUi && NativeBridge.gyroActive() && !isFinishing();
+        if (want == gyroListening) return;
+        if (sensorManager == null) sensorManager = (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
+        if (sensorManager == null) return;
+        if (want) {
+            android.hardware.Sensor sensor = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR);
+            if (sensor == null) sensor = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR);
+            if (sensor == null) {
+                notice("This phone has no gyroscope", Toast.LENGTH_LONG);
+                return;
+            }
+            NativeBridge.gyroReset();
+            gyroListening = sensorManager.registerListener(gyroListener, sensor,
+                    android.hardware.SensorManager.SENSOR_DELAY_GAME);
+        } else {
+            sensorManager.unregisterListener(gyroListener);
+            gyroListening = false;
+            NativeBridge.gyroReset();
+            renderView.renderNow();
+        }
+    }
+
+    private void stopGyro() {
+        if (sensorManager != null && gyroListening) sensorManager.unregisterListener(gyroListener);
+        gyroListening = false;
+    }
+
+    /** How camera mode is used: its gestures, the gyroscope, the volume keys. */
+    private void showCameraHelp() {
+        final String text = "CAMERA MODE\n"
+                + "📷 beside ⋮ goes in and back out. Set the scene up, shoot, go back, set it up again.\n\n"
+                + "GESTURES\n"
+                + "• Pinch — zoom (focal length)\n"
+                + "• One finger — turn the camera (with the gyroscope too: aim it without moving the phone)\n"
+                + "• Two fingers drag — move the camera sideways, up and down\n"
+                + "• Two fingers twist — turn the polarizer (Filter → Polarizer on)\n"
+                + "• Two-finger tap — level the camera (no roll) and re-centre the gyroscope\n"
+                + "• Three fingers twist — roll the camera left / right (a Dutch angle)\n"
+                + "• Three fingers up / down — exposure compensation, a step per 50 dp\n"
+                + "• Three-finger tap — take a picture\n"
+                + "• Double tap — focus there (Focus dial: depth of field on to see it)\n"
+                + "• Long press — lock the focus where it is (AF lock); again — auto focus\n"
+                + "• Slide along the right edge — the focus ring: up farther, down nearer\n"
+                + "• Volume button — the shutter; hold it — start / stop a video\n\n"
+                + "GYROSCOPE\n"
+                + "• 🧭 in the camera bar turns it on (or 🎛 → Gyroscope).\n"
+                + "• Turn the phone left / right — the camera turns; tilt it up / down — the camera looks "
+                + "up / down. Hold the phone upright or sideways: the picture follows the screen.\n"
+                + "• It adds the phone's turns to the camera's, so a finger, the drone's sticks and the phone "
+                + "all turn it together.\n"
+                + "• Horizon: Locked keeps pictures level whatever the phone does (like a gimbal); Follows "
+                + "the phone tilts the picture as you tilt the phone.\n"
+                + "• Sensitivity 2× turns the camera twice as far as the phone; Smoothing steadies the hands.\n"
+                + "• Looking straight up or down the turn left / right is held (the heading means nothing there).\n\n"
+                + "DRONE\n"
+                + "• 🚁 (in the camera bar and the tools) flies the camera: the left stick flies, the right "
+                + "stick looks; with the gyroscope the phone looks around too.\n\n"
+                + "Walking and crouching to move the camera (ARCore) come later.";
+        new PanelBuilder().setTitle("Camera: gestures and gyroscope").setMessage(text)
+                .setPositiveButton("Close", null).show();
+    }
+
+    @Override public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
+        if (cameraUi && (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP
+                || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            if (event.getRepeatCount() == 0) {
+                volumeHeld = false;
+                event.startTracking();
+            }
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override public boolean onKeyLongPress(int keyCode, android.view.KeyEvent event) {
+        if (cameraUi && (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP
+                || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            volumeHeld = true;
+            if (recorder == null) startRecording(); else stopRecording();
+            updateCameraButtons();
+            return true;
+        }
+        return super.onKeyLongPress(keyCode, event);
+    }
+
+    @Override public boolean onKeyUp(int keyCode, android.view.KeyEvent event) {
+        if (cameraUi && (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP
+                || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            if (!volumeHeld && !event.isCanceled()) takePicture();
+            volumeHeld = false;
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
     }
 
     private void openCameraDial(String keys) {
@@ -2187,7 +2401,8 @@ public final class MainActivity extends Activity {
         always.setTextColor(0xffc8ccd6);
         always.setTextSize(14f);
         always.setPadding(0, dp(8), 0, dp(4));
-        always.setText("Always on: one finger turns the view, pinch zooms.");
+        always.setText("Always on: one finger turns the view, pinch zooms. Camera mode has gestures of its own "
+                + "(ℹ in the camera bar): roll, exposure, focus by touch, the focus ring, the gyroscope.");
         content.addView(always);
 
         content.addView(choiceRow("Camera (a four-finger tap switches it)",
@@ -4475,7 +4690,13 @@ public final class MainActivity extends Activity {
         applyResourceUiState();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (cameraPanel != null) updateGyro();
+    }
+
     @Override protected void onPause() {
+        stopGyro();
         stopRecording();
         prefs().edit().putFloat(PREF_POLARIZER, NativeBridge.cameraPolarizer(0.0f)).apply();
         super.onPause();

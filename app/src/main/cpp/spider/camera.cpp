@@ -74,6 +74,19 @@ constexpr Shutter kShutters[] = {
     {"1/1000", 0.001F},  {"1/1250", 0.0008F}, {"1/1600", 0.000625F}, {"1/2000", 0.0005F}};
 constexpr int kShutterStart = 33;  // 1/60
 constexpr float kPolarizerStrength[] = {0.5F, 0.75F, 1.0F};
+constexpr float kGyroSensitivity[] = {0.5F, 1.0F, 1.5F, 2.0F};
+constexpr float kGyroFollow[] = {1.0F, 0.5F, 0.25F, 0.12F};  // the share of a turn taken per reading
+constexpr float kPi = 3.14159265F;
+
+float wrap_angle(float a) noexcept {
+    while (a > kPi) a -= 2.0F * kPi;
+    while (a <= -kPi) a += 2.0F * kPi;
+    return a;
+}
+
+std::atomic<float> g_roll_manual{0.0F};
+std::atomic<float> g_roll_phone{0.0F};
+std::atomic<float> g_focus_point{0.0F};  // scene units; 0: auto
 constexpr float kCompensation[] = {-3.0F, -2.0F, -1.5F, -1.0F, -0.5F, 0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F};
 constexpr int kKelvin[] = {0, 5500, 6500, 7500, 3200, 4000, 5800, 2000, 10000};
 constexpr const char* kStyles[] = {"Standard", "Vivid", "Neutral", "Monochrome", "Sepia", "Film", "Cinema"};
@@ -193,6 +206,14 @@ std::vector<Setting> build_settings() {
     add(Key::ColourContrast, "colour_contrast", colour, "Contrast", steps, 2);
     add(Key::ColourSaturation, "colour_saturation", colour, "Saturation", steps, 2);
     add(Key::ColourSharpness, "colour_sharpness", colour, "Sharpness", {"Off", "Low", "Medium", "High"}, 0);
+    const char* gyro = "Gyroscope";
+    add(Key::GyroMode, "gyro_mode", gyro, "Gyroscope (in camera mode, turning the phone turns the camera)",
+        {"Off", "On"}, 0);
+    add(Key::GyroHorizon, "gyro_horizon", gyro, "Horizon",
+        {"Locked (level pictures, like a gimbal)", "Follows the phone (the picture tilts with it)"}, 0);
+    add(Key::GyroSensitivity, "gyro_sensitivity", gyro, "Sensitivity", {"0.5\xC3\x97", "1\xC3\x97", "1.5\xC3\x97", "2\xC3\x97"}, 1);
+    add(Key::GyroSmoothing, "gyro_smoothing", gyro, "Smoothing (steadies the hands)",
+        {"Off", "Low", "Medium", "High"}, 2);
     return out;
 }
 
@@ -419,6 +440,7 @@ void in_bands(int height, Band&& band) {
 float focus_distance(const std::vector<float>& depth, int w, int h) {
     const float chosen = pick(Key::LensFocus, kFocusUnits);
     if (chosen > 0.0F) return chosen;
+    if (g_focus_point.load() > 0.0F) return g_focus_point.load();
     const int half = std::max(1, std::min(w, h) / 40);
     std::vector<float> near_middle;
     for (int y = h / 2 - half; y <= h / 2 + half; ++y) {
@@ -1015,11 +1037,13 @@ RgbaImage render_large(const Session* session, int width, int height, float yaw,
     out.pixels.resize(static_cast<std::size_t>(width) * height * 4U);
     if (depth != nullptr) depth->assign(static_cast<std::size_t>(width) * height, kInfinity);
     std::vector<float> tile_depth;
-    for (const auto [ty, th] : spans(height, tile_limit)) {
-        for (const auto [tx, tw] : spans(width, tile_limit)) {
+    for (const auto& [ty, th] : spans(height, tile_limit)) {
+        for (const auto& [tx, tw] : spans(width, tile_limit)) {
             ViewControls tiled = controls;
             tiled.tile.on = true;
-            tiled.tile.focal_side = static_cast<float>(std::min(width, height));
+            // A picture with a focal length of its own (a rolled one) keeps it.
+            tiled.tile.focal_side = controls.tile.on ? controls.tile.focal_side
+                                                     : static_cast<float>(std::min(width, height));
             tiled.tile.principal_x = 0.5F * static_cast<float>(width) - static_cast<float>(tx) - 0.5F * static_cast<float>(tw);
             tiled.tile.principal_y = 0.5F * static_cast<float>(height) - static_cast<float>(ty) - 0.5F * static_cast<float>(th);
             tiled.tile.full_height = height;
@@ -1037,6 +1061,211 @@ RgbaImage render_large(const Session* session, int width, int height, float yaw,
         }
     }
     return out;
+}
+
+namespace {
+
+// A picture through a camera rolled about its axis: a larger frame of the
+// same focal length (it holds the turned one), sampled back turned. A
+// pinhole camera turned about its axis is exactly its picture turned.
+RgbaImage render_rolled(const Session* session, int width, int height, float yaw, float pitch, float zoom,
+                        std::uint32_t render_flags, const ViewControls& controls, std::vector<float>* depth) {
+    const float roll = camera_roll();
+    if (std::fabs(roll) < 1.0e-4F) {
+        return render_large(session, width, height, yaw, pitch, zoom, render_flags, controls, depth);
+    }
+    const float c = std::cos(roll);
+    const float s = std::sin(roll);
+    const int big_w = (static_cast<int>(std::ceil(width * std::fabs(c) + height * std::fabs(s))) + 3) & ~1;
+    const int big_h = (static_cast<int>(std::ceil(width * std::fabs(s) + height * std::fabs(c))) + 3) & ~1;
+    ViewControls wide = controls;
+    wide.tile.on = true;
+    wide.tile.focal_side = static_cast<float>(std::min(width, height));
+    wide.tile.principal_x = 0.0F;
+    wide.tile.principal_y = 0.0F;
+    wide.tile.full_height = height;
+    std::vector<float> big_depth;
+    const auto big = render_large(session, big_w, big_h, yaw, pitch, zoom, render_flags, wide,
+                                  depth != nullptr ? &big_depth : nullptr);
+    if (!valid_image(&big)) return {};
+    RgbaImage out;
+    out.width = width;
+    out.height = height;
+    out.pixels.assign(static_cast<std::size_t>(width) * height * 4U, 255U);
+    const bool with_depth = depth != nullptr && big_depth.size() == static_cast<std::size_t>(big_w) * big_h;
+    if (depth != nullptr) depth->assign(with_depth ? static_cast<std::size_t>(width) * height : 0U, kInfinity);
+    in_bands(height, [&](int row_begin, int row_end) {
+        for (int y = row_begin; y < row_end; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const float dx = static_cast<float>(x) + 0.5F - 0.5F * static_cast<float>(width);
+                const float dy = static_cast<float>(y) + 0.5F - 0.5F * static_cast<float>(height);
+                const float sx = std::clamp(0.5F * big_w + dx * c - dy * s - 0.5F, 0.0F, static_cast<float>(big_w - 1));
+                const float sy = std::clamp(0.5F * big_h + dx * s + dy * c - 0.5F, 0.0F, static_cast<float>(big_h - 1));
+                const int x0 = static_cast<int>(sx);
+                const int y0 = static_cast<int>(sy);
+                const int x1 = std::min(x0 + 1, big_w - 1);
+                const int y1 = std::min(y0 + 1, big_h - 1);
+                const float fx = sx - static_cast<float>(x0);
+                const float fy = sy - static_cast<float>(y0);
+                auto* o = &out.pixels[(static_cast<std::size_t>(y) * width + x) * 4U];
+                for (int k = 0; k < 3; ++k) {
+                    const auto at = [&](int px, int py) {
+                        return static_cast<float>(big.pixels[(static_cast<std::size_t>(py) * big_w + px) * 4U + k]);
+                    };
+                    const float top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+                    const float bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+                    o[k] = static_cast<std::uint8_t>(std::clamp(top + (bottom - top) * fy + 0.5F, 0.0F, 255.0F));
+                }
+                if (with_depth) {
+                    const int nx = std::lround(sx) < big_w ? static_cast<int>(std::lround(sx)) : big_w - 1;
+                    const int ny = std::lround(sy) < big_h ? static_cast<int>(std::lround(sy)) : big_h - 1;
+                    (*depth)[static_cast<std::size_t>(y) * width + x] = big_depth[static_cast<std::size_t>(ny) * big_w + nx];
+                }
+            }
+        }
+    });
+    return out;
+}
+
+struct GyroState final {
+    bool started{};
+    float heading{};
+    float elevation{};
+    float roll{};
+};
+std::mutex& gyro_mutex() {
+    static std::mutex m;
+    return m;
+}
+GyroState& gyro_state() {
+    static GyroState state;
+    return state;
+}
+
+}  // namespace
+
+bool gyro_active() noexcept { return finder_on() && choice(Key::GyroMode) == 1; }
+
+std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexcept {
+    if (!gyro_active() || !std::isfinite(heading) || !std::isfinite(elevation) || !std::isfinite(roll)) {
+        return {0.0F, 0.0F};
+    }
+    const std::scoped_lock lock{gyro_mutex()};
+    auto& g = gyro_state();
+    if (!g.started) {
+        g = {true, heading, elevation, roll};
+        g_roll_phone.store(roll);
+        return {0.0F, 0.0F};
+    }
+    // Each reading takes a share of the way to the phone (the smoothing);
+    // the camera turns by what the smoothed phone turned, times the
+    // sensitivity. Looking straight up or down the heading means nothing.
+    const float follow = pick(Key::GyroSmoothing, kGyroFollow);
+    const float sensitivity = pick(Key::GyroSensitivity, kGyroSensitivity);
+    const float heading_step = follow * wrap_angle(heading - g.heading);
+    const float elevation_step = follow * (elevation - g.elevation);
+    g.heading = wrap_angle(g.heading + heading_step);
+    g.elevation += elevation_step;
+    g.roll = wrap_angle(g.roll + follow * wrap_angle(roll - g.roll));
+    g_roll_phone.store(g.roll);
+    const bool steep = std::fabs(g.elevation) > 1.3F;
+    // Turning right grows the view's yaw; looking up lowers its pitch.
+    return {steep ? 0.0F : heading_step * sensitivity, -elevation_step * sensitivity};
+}
+
+void gyro_reset() noexcept {
+    const std::scoped_lock lock{gyro_mutex()};
+    gyro_state().started = false;
+    g_roll_phone.store(0.0F);
+}
+
+float camera_roll() noexcept {
+    const bool follows = gyro_active() && choice(Key::GyroHorizon) == 1;
+    return wrap_angle(g_roll_manual.load() + (follows ? g_roll_phone.load() : 0.0F));
+}
+
+float turn_roll(float radians) noexcept {
+    if (std::isfinite(radians)) g_roll_manual.store(wrap_angle(g_roll_manual.load() + radians));
+    return camera_roll();
+}
+
+void level_camera() noexcept { g_roll_manual.store(0.0F); }
+
+float focus_at(const Session* session, int width, int height, float yaw, float pitch, float zoom,
+               std::uint32_t render_flags, const ViewControls& controls, float x, float y) {
+    if (session == nullptr || session->uv_gallery || width <= 0 || height <= 0) return 0.0F;
+    // A small render of the same view is enough to know what is there.
+    const float scale = std::min(1.0F, 480.0F / static_cast<float>(std::max(width, height)));
+    const int w = std::max(16, static_cast<int>(width * scale));
+    const int h = std::max(16, static_cast<int>(height * scale));
+    ViewControls framed = controls;
+    if (fixed_lens_zoom() > 0.0F) framed.lens_zoom = finder_zoom(Kind::Photo, zoom, width, height);
+    std::vector<float> depth;
+    const auto small = render_rolled(session, w, h, yaw, pitch, zoom,
+                                     render_flags | render_flag(RenderFlag::Preview), framed, &depth);
+    if (depth.size() != static_cast<std::size_t>(w) * h) return 0.0F;
+    const int cx = std::clamp(static_cast<int>(x * w / width), 0, w - 1);
+    const int cy = std::clamp(static_cast<int>(y * h / height), 0, h - 1);
+    std::vector<float> near;
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            const int px = std::clamp(cx + dx, 0, w - 1);
+            const int py = std::clamp(cy + dy, 0, h - 1);
+            const float z = depth[static_cast<std::size_t>(py) * w + px];
+            if (std::isfinite(z) && z > 0.0F) near.push_back(z);
+        }
+    }
+    // Nothing there (the sky): focus at infinity.
+    float distance = 1.0e9F;
+    if (!near.empty()) {
+        std::nth_element(near.begin(), near.begin() + static_cast<std::ptrdiff_t>(near.size() / 2U), near.end());
+        distance = near[near.size() / 2U];
+    }
+    g_focus_point.store(distance);
+    (void)small;
+    return distance;
+}
+
+bool toggle_focus_lock() noexcept {
+    if (g_focus_point.load() > 0.0F) {
+        g_focus_point.store(0.0F);
+        return false;
+    }
+    const float found = g_focus.load();
+    g_focus_point.store(std::isfinite(found) && found > 0.0F ? found : 1.0e9F);
+    return true;
+}
+
+float turn_focus_ring(float steps) noexcept {
+    float base = g_focus_point.load();
+    if (!(base > 0.0F) || base >= 1.0e9F) {
+        const float found = g_focus.load();
+        base = std::isfinite(found) && found > 0.0F ? found : 500.0F;
+    }
+    const float distance = std::clamp(base * std::exp(std::isfinite(steps) ? steps : 0.0F), 20.0F, 1.0e6F);
+    g_focus_point.store(distance);
+    return distance;
+}
+
+float focus_point() noexcept { return g_focus_point.load(); }
+
+void clear_focus_point() noexcept { g_focus_point.store(0.0F); }
+
+float units_to_metres(float units) noexcept { return units * kUnitMm / 1000.0F; }
+
+std::string focus_message(float units) {
+    std::string text;
+    if (!(units > 0.0F)) {
+        text = "Auto focus";
+    } else if (units >= 1.0e9F) {
+        text = "Focus: infinity";
+    } else {
+        char line[32];
+        std::snprintf(line, sizeof(line), "Focus %.1f m", static_cast<double>(units_to_metres(units)));
+        text = line;
+    }
+    if (!depth_of_field_on()) text += " (the Focus dial turns the depth of field on to see it)";
+    return text;
 }
 
 bool write_dng(int fd, const RgbaImage& optical, const RgbaImage& preview, bool bayer, std::uint32_t seed,
@@ -1172,8 +1401,8 @@ bool capture_raw(const Session* session, int view_width, int view_height, float 
     ViewControls framed = controls;
     frame_controls(Kind::Photo, view_width, view_height, &framed);
     std::vector<float> depth;
-    auto image = render_large(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
-                              depth_of_field_on() ? &depth : nullptr);
+    auto image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                               depth_of_field_on() ? &depth : nullptr);
     if (!valid_image(&image)) return false;
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
@@ -1201,8 +1430,8 @@ RgbaImage render_capture(const Session* session, Kind kind, int view_width, int 
     ViewControls framed = controls;
     frame_controls(kind, view_width, view_height, &framed);
     std::vector<float> depth;
-    auto image = render_large(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
-                              depth_of_field_on() ? &depth : nullptr);
+    auto image = render_rolled(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                               depth_of_field_on() ? &depth : nullptr);
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
     develop(&image, g_seed.fetch_add(1U), focal_mm(lens), &depth);
@@ -1252,7 +1481,18 @@ std::vector<Dial> dials() {
     out.push_back({Key::CameraShape, "Frame",
                    choice(Key::CameraShape) == 0 ? std::string("View") : option(Key::CameraShape), {}});
     std::string focus = "Off";
-    if (depth_of_field_on()) focus = choice(Key::LensFocus) == 0 ? std::string("AF") : option(Key::LensFocus);
+    if (depth_of_field_on()) {
+        focus = choice(Key::LensFocus) != 0 ? option(Key::LensFocus) : std::string("AF");
+        const float point = g_focus_point.load();
+        if (choice(Key::LensFocus) == 0 && point > 0.0F) {
+            if (point >= 1.0e9F) {
+                focus = "MF \xE2\x88\x9E";
+            } else {
+                std::snprintf(text, sizeof(text), "MF %.1f m", static_cast<double>(units_to_metres(point)));
+                focus = text;
+            }
+        }
+    }
     out.push_back({Key::LensDepthOfField, "Focus", focus, {Key::LensFocus, Key::LensBlades, Key::LensBokeh}});
     std::string polarizer = "Off";
     if (choice(Key::FilterPolarizer) == 1) {
@@ -1299,8 +1539,8 @@ RgbaImage render_view_frame(const Session* session, int width, int height, float
     // second, software pass for the depth).
     std::vector<float> depth;
     const bool moving = has_render_flag(render_flags, RenderFlag::Preview);
-    auto image = render_session(session, width, height, yaw, pitch, zoom, render_flags, framed,
-                                depth_of_field_on() && !moving ? &depth : nullptr);
+    auto image = render_rolled(session, width, height, yaw, pitch, zoom, render_flags, framed,
+                               depth_of_field_on() && !moving ? &depth : nullptr);
     develop(&image, g_seed.fetch_add(1U),
             focal_mm(capture_zoom(Kind::Photo, effective_view_zoom(session, zoom), width, height)), &depth);
     return image;
@@ -1349,6 +1589,13 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
                            "  " + aperture + "  " + std::to_string(static_cast<int>(std::lround(focal_mm(zoom)))) +
                            " mm  " + (kelvin == 0 ? std::string("AWB") : std::to_string(kelvin) + " K") + "  " +
                            kStyles[std::clamp(choice(Key::ColourStyle), 0, count(kStyles) - 1)];
+        if (gyro_active()) line += "  GYRO";
+        const float roll_degrees = camera_roll() * 57.2957795F;
+        if (std::fabs(roll_degrees) >= 0.5F) {
+            char text[24];
+            std::snprintf(text, sizeof(text), "  ROLL %+.0f\xC2\xB0", static_cast<double>(roll_degrees));
+            line += text;
+        }
         if (choice(Key::FilterPolarizer) == 1) {
             char text[24];
             float degrees = std::fmod(polarizer_angle() * 57.2957795F, 180.0F);
@@ -1357,14 +1604,17 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
             line += text;
         }
         if (depth_of_field_on()) {
-            const float focus = pick(Key::LensFocus, kFocusUnits) > 0.0F ? pick(Key::LensFocus, kFocusUnits)
-                                                                         : last_focus();
+            const bool chosen = pick(Key::LensFocus, kFocusUnits) > 0.0F;
+            const bool point = !chosen && g_focus_point.load() > 0.0F;
+            const float focus = chosen ? pick(Key::LensFocus, kFocusUnits)
+                                : point ? (g_focus_point.load() >= 1.0e9F ? kInfinity : g_focus_point.load())
+                                        : last_focus();
             char text[32];
             if (std::isfinite(focus)) {
-                std::snprintf(text, sizeof(text), "  %s %.1f m", pick(Key::LensFocus, kFocusUnits) > 0.0F ? "MF" : "AF",
+                std::snprintf(text, sizeof(text), "  %s %.1f m", chosen || point ? "MF" : "AF",
                               static_cast<double>(focus * kUnitMm / 1000.0F));
             } else {
-                std::snprintf(text, sizeof(text), "  %s \xE2\x88\x9E", pick(Key::LensFocus, kFocusUnits) > 0.0F ? "MF" : "AF");
+                std::snprintf(text, sizeof(text), "  %s \xE2\x88\x9E", chosen || point ? "MF" : "AF");
             }
             line += text;
         }

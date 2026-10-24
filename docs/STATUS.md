@@ -230,6 +230,17 @@ APK verifier.
     - The two bottom rows become the camera's bar: the core's dials (each
       opens its settings in place) and the shutter, record, play/pause,
       settings, reset and back buttons.
+  - v105: the gyroscope (3DoF), camera mode gestures, and the drone:
+    - Turning the phone turns the camera: horizon locked or following the
+      phone, sensitivity, smoothing.
+    - Exact roll.
+    - Three fingers roll the camera or step the EV; a two-finger tap levels
+      it.
+    - Focus by touch: double tap, AF lock, and the right-edge focus ring.
+    - The volume keys are the shutter (hold: video).
+    - ℹ explains it all in the app.
+    - ✈ became the 🚁 drone, also in the camera bar.
+    - [Details](CAMERA_PHOTO_VIDEO.md).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

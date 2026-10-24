@@ -846,6 +846,68 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraDials(JNIEnv* env, jclass) {
     } catch (...) { return nullptr; }
 }
 
+// Gyroscope (core camera): active in camera mode with it on; a reading of
+// the phone (heading, elevation, roll) gives the camera's turn {yaw, pitch}.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_gyroActive(JNIEnv*, jclass) {
+    return dmcresource::spider::camera::gyro_active() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_gyroTurn(JNIEnv* env, jclass, jfloat heading, jfloat elevation,
+                                                       jfloat roll) {
+    const auto turn = dmcresource::spider::camera::gyro_turn(heading, elevation, roll);
+    jfloatArray out = env->NewFloatArray(2);
+    if (out != nullptr) env->SetFloatArrayRegion(out, 0, 2, turn.data());
+    return out;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_gyroReset(JNIEnv*, jclass) {
+    dmcresource::spider::camera::gyro_reset();
+}
+
+// The camera's roll: turned by radians (0 reads it).
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraRoll(JNIEnv*, jclass, jfloat radians) {
+    return dmcresource::spider::camera::turn_roll(radians);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraLevel(JNIEnv*, jclass) {
+    dmcresource::spider::camera::level_camera();
+}
+
+// Focus where a finger tapped (view render pixels); the line to show.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFocusAt(
+        JNIEnv* env, jclass, jlong handle, jint width, jint height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly, jfloat x,
+        jfloat y) {
+    namespace cam = dmcresource::spider::camera;
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const float units = cam::focus_at(from_handle(handle), width, height, yaw, pitch, zoom,
+                                          static_cast<std::uint32_t>(render_flags),
+                                          view_controls(pan_x, pan_y, room_yaw, follow, dolly), x, y);
+        return env->NewStringUTF(cam::focus_message(units).c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFocusLock(JNIEnv* env, jclass) {
+    namespace cam = dmcresource::spider::camera;
+    const bool locked = cam::toggle_focus_lock();
+    const std::string text = locked ? "AF lock: " + cam::focus_message(cam::focus_point()) : "Auto focus";
+    return env->NewStringUTF(text.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFocusRing(JNIEnv* env, jclass, jfloat steps) {
+    namespace cam = dmcresource::spider::camera;
+    return env->NewStringUTF(cam::focus_message(cam::turn_focus_ring(steps)).c_str());
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_cameraPolarizerTurnable(JNIEnv*, jclass) {
     return dmcresource::spider::camera::polarizer_turnable() ? JNI_TRUE : JNI_FALSE;

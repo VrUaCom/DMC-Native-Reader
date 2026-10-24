@@ -63,6 +63,10 @@ enum class Key : std::uint8_t {
     ColourContrast,
     ColourSaturation,
     ColourSharpness,
+    GyroMode,
+    GyroHorizon,
+    GyroSensitivity,
+    GyroSmoothing,
     Count,
 };
 
@@ -178,6 +182,42 @@ void begin_video();
                                           float pitch, float zoom, std::uint32_t render_flags,
                                           const ViewControls& controls);
 [[nodiscard]] bool finder_on() noexcept;
+
+// ---- Gyroscope, roll and focus by touch (camera mode) ----------------------
+
+// The phone's turns become the camera's while camera mode and the
+// gyroscope are on. The shell reads the phone's heading (radians, turning
+// right grows it), elevation (up grows it) and roll (clockwise grows it) and
+// gets back how far to turn the camera's yaw and pitch: changes, not
+// angles, so a finger, the drone's sticks and the phone turn it together.
+// Smoothing and sensitivity are the settings'. The phone's roll tilts the
+// picture unless the horizon is locked.
+[[nodiscard]] bool gyro_active() noexcept;
+[[nodiscard]] std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexcept;
+void gyro_reset() noexcept;
+
+// The camera's roll about its axis (radians, clockwise grows it): the
+// three-finger twist's plus the phone's when the horizon follows it.
+[[nodiscard]] float camera_roll() noexcept;
+float turn_roll(float radians) noexcept;
+// Level: no roll from the fingers.
+void level_camera() noexcept;
+
+// Focus by touch: the distance (scene units) under view pixel (x, y) of
+// that view through the viewfinder (the depth of a small render), kept as
+// the focus point; a lock keeps what the auto focus found; the focus ring
+// moves the point nearer or farther (log steps). A focus chosen in the
+// settings wins over the point; clear_focus_point() goes back to auto.
+[[nodiscard]] float focus_at(const Session* session, int width, int height, float yaw, float pitch, float zoom,
+                             std::uint32_t render_flags, const ViewControls& controls, float x, float y);
+[[nodiscard]] bool toggle_focus_lock() noexcept;
+float turn_focus_ring(float steps) noexcept;
+[[nodiscard]] float focus_point() noexcept;
+void clear_focus_point() noexcept;
+[[nodiscard]] float units_to_metres(float units) noexcept;
+// What a focus gesture says: "Focus 3.2 m", "Focus: infinity", "Auto focus",
+// and how to see it when the depth of field is off.
+[[nodiscard]] std::string focus_message(float units);
 
 // The dials of the camera mode's bar, in order: the setting each one turns
 // (and the ones that go with it, shown together when it is opened), its

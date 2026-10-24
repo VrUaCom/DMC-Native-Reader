@@ -33,6 +33,58 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
   Reader` (Android 10+; older systems: the app's own folders). Videos have no
   sound.
 
+## Camera mode gestures
+
+| Gesture | Does |
+|---|---|
+| Pinch | Zoom (focal length) |
+| One finger | Turn the camera; with the gyroscope it aims without moving the phone |
+| Two fingers drag | Move the camera sideways, up and down |
+| Two fingers twist | Turn the polarizer (when it is on) |
+| Two-finger tap | Level the camera (no roll) and re-centre the gyroscope |
+| Three fingers twist | Roll the camera (the picture turns with the fingers) |
+| Three fingers up / down | Exposure compensation, a step per 50 dp |
+| Three-finger tap | Take a picture |
+| Double tap | Focus there (a small render's depth under the finger) |
+| Long press | AF lock: keep the focus the auto focus found; again — auto |
+| Slide along the right edge | The focus ring: up farther, down nearer, in log steps |
+| Volume button | Shutter; hold it to start / stop a video |
+
+The three-finger sideways swipe (variants) and the four-finger tap (follow)
+are off in camera mode. ℹ in the camera bar shows all of this in the app.
+
+## Gyroscope (3DoF)
+
+- 🧭 in the camera bar, or 🎛 → Gyroscope. It works in camera mode.
+- The phone's orientation comes from the game rotation vector (no compass,
+  so no jumps), with the screen's own rotation taken out. The camera looks
+  out of the back of the phone.
+- The core (`camera::gyro_turn`) turns the readings into how far the camera
+  turns, not where it points. A finger, the drone's sticks and the phone all
+  turn it together, and turning the phone back turns the camera back
+  (× the sensitivity).
+  - Turning right grows the yaw; looking up lowers the pitch.
+  - Looking more than about 75° up or down holds the yaw, because the
+    heading means nothing there.
+- Smoothing takes a share of each turn per reading: off 100 %, low 50 %,
+  medium 25 %, high 12 %. Sensitivity: 0.5×, 1×, 1.5×, 2×.
+- Horizon:
+  - **Locked**: the phone's roll is ignored, so pictures stay level, like a
+    gimbal.
+  - **Follows the phone**: the picture rolls with the phone, so in the hand
+    the scene stays level with the world, and the picture is tilted.
+- **Roll** is rendered exactly. A frame large enough to hold the turned one
+  is drawn with the same focal length (`ViewState::tile` with a centred
+  projection, so the GPU draws it too), then sampled back turned. Pictures,
+  videos and RAW all carry it. The settings line shows GYRO and ROLL.
+- Walking and crouching (6DoF) need ARCore and come later.
+
+## Drone
+
+The fly camera (left stick flies, right stick looks) is the drone: 🚁 in
+the tools and in the camera bar. In camera mode the gyroscope looks around
+from it.
+
 ## Settings (starting value in bold)
 
 | Section | Setting | Options |
@@ -74,6 +126,10 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | | Compensation | −3 … **0** … +3 EV |
 | | Highlights | **Clip**, soft roll-off |
 | | Sensor noise | Off, **by the ISO** (none at ISO 100), film grain |
+| Gyroscope | Gyroscope | **Off**, On |
+| | Horizon | **Locked**, follows the phone |
+| | Sensitivity | 0.5×, **1×**, 1.5×, 2× |
+| | Smoothing | Off, low, **medium**, high |
 | Colour | White balance | **As rendered**, 5500, 6500, 7500, 3200, 4000, 5800, 2000, 10000 K |
 | | Picture style | **Standard**, Vivid, Neutral, Monochrome, Sepia, Film, Cinema |
 | | Contrast, saturation | −2 … **0** … +2 |

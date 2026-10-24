@@ -341,6 +341,66 @@ int main() {
         cam::reset_choices();
     }
 
+    // Roll: the three-finger twist turns the camera about its axis; level
+    // takes it back.
+    assert(std::abs(cam::turn_roll(0.3F) - 0.3F) < 1e-5F && std::abs(cam::camera_roll() - 0.3F) < 1e-5F);
+    cam::level_camera();
+    assert(cam::camera_roll() == 0.0F);
+
+    // Gyroscope: only in camera mode with it on; the first reading is where
+    // the phone stands; then the camera turns by what the phone turned
+    // (right grows the yaw, up lowers the pitch), times the sensitivity.
+    {
+        assert(!cam::gyro_active() && cam::gyro_turn(0.0F, 0.0F, 0.0F)[0] == 0.0F);
+        choose(cam::Key::FinderMode, 1);
+        choose(cam::Key::GyroMode, 1);
+        choose_named(cam::Key::GyroSmoothing, "Off");
+        assert(cam::gyro_active());
+        cam::gyro_reset();
+        auto turn = cam::gyro_turn(1.0F, 0.1F, 0.0F);
+        assert(turn[0] == 0.0F && turn[1] == 0.0F);
+        turn = cam::gyro_turn(1.1F, 0.15F, 0.0F);
+        assert(std::abs(turn[0] - 0.1F) < 1e-5F && std::abs(turn[1] + 0.05F) < 1e-5F);
+        choose_named(cam::Key::GyroSensitivity, "2\xC3\x97");
+        turn = cam::gyro_turn(1.2F, 0.15F, 0.0F);
+        assert(std::abs(turn[0] - 0.2F) < 1e-5F);
+        // Across the wrap of the heading, still a small turn.
+        cam::gyro_reset();
+        (void)cam::gyro_turn(3.1F, 0.0F, 0.0F);
+        turn = cam::gyro_turn(-3.1F, 0.0F, 0.0F);
+        assert(std::abs(turn[0] - 2.0F * (6.2831853F - 6.2F)) < 1e-3F);
+        // Smoothing takes a share of the turn per reading.
+        choose_named(cam::Key::GyroSensitivity, "1\xC3\x97");
+        choose_named(cam::Key::GyroSmoothing, "Medium");
+        cam::gyro_reset();
+        (void)cam::gyro_turn(0.0F, 0.0F, 0.0F);
+        turn = cam::gyro_turn(0.4F, 0.0F, 0.0F);
+        assert(std::abs(turn[0] - 0.1F) < 1e-5F);
+        // The phone's roll tilts the picture only when the horizon follows it.
+        cam::gyro_reset();
+        choose_named(cam::Key::GyroSmoothing, "Off");
+        (void)cam::gyro_turn(0.0F, 0.0F, 0.25F);
+        assert(cam::camera_roll() == 0.0F);
+        choose(cam::Key::GyroHorizon, 1);
+        assert(std::abs(cam::camera_roll() - 0.25F) < 1e-5F);
+        assert(cam::viewfinder(nullptr, 300, 300, 1.0F, false, 0).status.find("ROLL +14") != std::string::npos);
+        cam::gyro_reset();
+        cam::reset_choices();
+    }
+
+    // Focus by touch: the ring moves the point in log steps from what the
+    // auto focus found; a lock keeps that, a second press lets it go.
+    {
+        cam::clear_focus_point();
+        const float found = cam::turn_focus_ring(0.0F);
+        assert(found > 0.0F);
+        assert(std::abs(cam::turn_focus_ring(0.69314718F) - 2.0F * found) < 0.01F * found);
+        assert(!cam::toggle_focus_lock() && cam::focus_point() == 0.0F);
+        assert(cam::toggle_focus_lock() && cam::focus_point() > 0.0F);
+        assert(std::abs(cam::units_to_metres(250.0F) - 2.5F) < 1e-5F);
+        cam::clear_focus_point();
+    }
+
     // The viewfinder: off at the start; on, it frames the picture with the
     // thirds and writes the settings; recording frames the video.
     assert(!cam::viewfinder(nullptr, 2400, 1080, 1.0F, false, 0).shown);

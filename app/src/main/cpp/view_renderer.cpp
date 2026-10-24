@@ -2225,8 +2225,9 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const std::vector<std::uint32_t>* triangle_texture_slots,
                       const std::vector<ImagePreview>* textures) {
     // A tile of a larger picture is drawn here: the GPU frame has no
-    // off-centre projection.
-    auto* backend = gpu_view_enabled() && !view.tile.on ? gpu_view_backend() : nullptr;
+    // off-centre projection (a focal length of its own it has).
+    const bool off_centre = view.tile.on && (view.tile.principal_x != 0.0F || view.tile.principal_y != 0.0F);
+    auto* backend = gpu_view_enabled() && !off_centre ? gpu_view_backend() : nullptr;
     if (backend != nullptr && !view.wireframe && !view.uv_layout && !mesh.vertices.empty() &&
         mesh.indices.size() >= 3U) {
         RgbaImage image;
