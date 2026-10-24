@@ -21,17 +21,19 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 
 | Section | Setting | Options |
 |---|---|---|
+| Camera | Camera mode | **Off**, On (the view through the lens with the look, the frame, the grid, the settings line; two fingers turn the polarizer) |
+| | Frame (pictures and videos) | **As the view**, 16:9, 3:2, 4:3, 1:1, 21:9, 2.35:1, 9:16, 2:3 |
+| | Grid | Off, **thirds**, 4 × 4, golden ratio, centre cross |
+| | Settings line | **Show**, Hide |
 | Picture | File | **PNG**, JPEG, WebP lossless, RAW (DNG), RAW (DNG) + JPEG |
 | | JPEG quality | 100, **95**, 90, 85, 75, 60 |
 | | RAW data | **Linear RGB** (every editor), Bayer RGGB (one colour a pixel, like a sensor) |
 | | Size (long side) | **As the view**, 1280, 1920, 2560, 3840, 5120, 6144, 7680 (8K) |
 | | Megapixels (instead of the size) | **By the size**, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64, 100, 124, 150, 200 MP (in the picture's shape, a side at most 24576) |
-| | Shape | **As the view**, 16:9, 3:2, 4:3, 1:1, 21:9, 9:16, 2:3, 2.35:1 |
 | | Self-timer | **Off**, 2, 5, 10 s |
 | | Shots per press | **1**, 3, 5, 10 (a quarter second apart) |
 | | Subtitles in the picture | **Show**, Hide |
 | Video | Size | 720p, **1080p**, 1440p, 2160p (the short side; the long side at most 4096) |
-| | Shape | As the view, **16:9**, 4:3, 1:1, 21:9, 9:16, 2.35:1 |
 | | Frame rate | 24, 25, **30**, 50, 60 |
 | | Bit rate | **Auto** (0.12 bit per pixel for H.264, 0.07 for H.265), 4 … 100 Mbit/s |
 | | Codec | **H.264**, H.265 |
@@ -43,14 +45,16 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | | Vignetting | **Off**, by the aperture, strong |
 | | Distortion | **Off**, by the focal length (barrel when wide, pincushion when long) |
 | | Colour fringing | **Off**, weak, strong |
-| Aperture | Aperture (f-number) | f/1.4 … **f/4** … f/22 (exposure in manual mode, vignetting, depth of field) |
+| Aperture | Aperture (f-number) | f/0.5, f/0.95, f/1.2, f/1.4, f/2, f/2.8, **f/4**, f/5.6, f/8, f/11, f/16, f/22 (exposure in manual mode, vignetting, depth of field) |
 | | Depth of field | **Off**, On |
 | | Focus | **Auto (the middle of the frame)**, 0.5, 1, 2, 3, 5, 10, 20 m, infinity |
 | | Aperture blades | **Round**, 9, 8, 7, 6, 5 (the shape of the bokeh) |
 | | Bokeh highlights | **Soft**, bright |
+| Filter | Polarizer | **Off**, On (circular; in camera mode two fingers turn it) |
+| | Polarizer strength | Weak, **medium**, strong |
 | Exposure | Mode | **Auto** (the rendered picture, moved by the compensation), Manual |
-| | ISO | **Auto**, 50 … 25600 |
-| | Shutter | 1/8000 … **1/60** … 1 s |
+| | ISO | **Auto**, then thirds of a stop 25, 32, 40, 50 … 102400, then whole stops 204800, 409600, 819200, 1638400, 3276800, 4000000 (a slider) |
+| | Shutter | Thirds of a stop 30", 25", 20" … 1", 0.8" … 1/4 … **1/60** … 1/2000 (a slider) |
 | | Compensation | −3 … **0** … +3 EV |
 | | Highlights | **Clip**, soft roll-off |
 | | Sensor noise | Off, **by the ISO** (none at ISO 100), film grain |
@@ -58,13 +62,26 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | | Picture style | **Standard**, Vivid, Neutral, Monochrome, Sepia, Film, Cinema |
 | | Contrast, saturation | −2 … **0** … +2 |
 | | Sharpness | **Off**, low, medium, high |
-| Viewfinder | Viewfinder in the view | **Off**, On (the lens and the look live, the frame, the grid, the settings line) |
-| | Grid | Off, **thirds**, 4 × 4, golden ratio, centre cross |
-| | Settings line | **Show**, Hide |
 
 The starting values leave the picture exactly as the view renders it.
 
 ## How it works
+
+- **One camera.** Pictures and videos come from the same camera: the same
+  frame, lens, aperture, filter, exposure and look. Only what a picture and
+  a video are made into differs (file, megapixels, resolution, codec). The
+  📷 and 🎥 squares stay separate. A choice is kept by its option's name, so
+  a dial that gains values keeps what was chosen. Dials longer than 12
+  values (ISO, shutter, megapixels, focal length) are sliders.
+- **Polarizer.** It is part of the optics, so a RAW keeps it. Each pixel's
+  light is partly polarized: 15 % of everything, up to 85 % more for whitish
+  glare and highlights, up to 60 % for the blue of a sky. The filter holds
+  back strength × polarized × sin²(ring − the light's angle). That angle
+  turns slowly across the frame, as a sky's does. What it holds back darkens
+  the pixel in linear light and deepens its colour. In camera mode the
+  two-finger twist turns the ring instead of the view; half a turn is the
+  same filter. The settings line shows CPL and the angle. In manual exposure
+  it takes about 1.5 stops.
 
 - **Framing.** A capture of another shape than the view is the largest rect
   of that shape in the view, and is rendered at its own size with the zoom

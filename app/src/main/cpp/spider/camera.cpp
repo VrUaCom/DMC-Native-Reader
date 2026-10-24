@@ -29,11 +29,10 @@ struct Aspect final {
     int w;
     int h;  // 0 x 0: the view's own shape
 };
-constexpr Aspect kPhotoAspects[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"3:2", 3, 2}, {"4:3", 4, 3},
-                                    {"1:1", 1, 1}, {"21:9", 21, 9}, {"9:16", 9, 16}, {"2:3", 2, 3},
-                                    {"2.35:1", 235, 100}};
-constexpr Aspect kVideoAspects[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"4:3", 4, 3}, {"1:1", 1, 1},
-                                    {"21:9", 21, 9}, {"9:16", 9, 16}, {"2.35:1", 235, 100}};
+// The camera's frame, the same for its pictures and its videos.
+constexpr Aspect kShapes[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"3:2", 3, 2},    {"4:3", 4, 3},
+                              {"1:1", 1, 1},          {"21:9", 21, 9}, {"2.35:1", 235, 100}, {"9:16", 9, 16},
+                              {"2:3", 2, 3}};
 constexpr int kPhotoQualities[] = {100, 95, 90, 85, 75, 60};
 constexpr int kPhotoLongSides[] = {0, 1280, 1920, 2560, 3840, 5120, 6144, 7680};
 constexpr int kMegapixels[] = {0, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64, 100, 124, 150, 200};
@@ -49,9 +48,32 @@ constexpr int kMbps[] = {0, 4, 8, 16, 32, 64, 100};
 constexpr int kKeyframeMs[] = {500, 1000, 2000, 5000};
 constexpr int kLimits[] = {0, 15, 30, 60, 300, 600};
 constexpr int kFocalMm[] = {0, 14, 18, 24, 28, 35, 50, 85, 105, 135, 200, 300, 400};
-constexpr float kApertures[] = {1.4F, 2.0F, 2.8F, 4.0F, 5.6F, 8.0F, 11.0F, 16.0F, 22.0F};
-constexpr int kIsos[] = {0, 50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600};
-constexpr int kShutterDenominators[] = {8000, 4000, 2000, 1000, 500, 250, 125, 60, 30, 15, 8, 4, 2, 1};
+constexpr float kApertures[] = {0.5F, 0.95F, 1.2F, 1.4F, 2.0F, 2.8F, 4.0F, 5.6F, 8.0F, 11.0F, 16.0F, 22.0F};
+// The ISO dial: thirds of a stop from 25 to 102400 (a camera's own range),
+// then whole stops of the extended range up to 4 000 000 (0: auto).
+constexpr int kIsos[] = {0,      25,     32,     40,      50,      64,      80,      100,     125,    160,
+                         200,    250,    320,    400,     500,     640,     800,     1000,    1250,   1600,
+                         2000,   2500,   3200,   4000,    5000,    6400,    8000,    10000,   12800,  16000,
+                         20000,  25600,  32000,  40000,   51200,   64000,   80000,   102400,  204800, 409600,
+                         819200, 1638400, 3276800, 4000000};
+// The shutter dial: thirds of a stop from 30 s to 1/2000 s.
+struct Shutter final {
+    const char* label;
+    float seconds;
+};
+constexpr Shutter kShutters[] = {
+    {"30\"", 30.0F},    {"25\"", 25.0F},    {"20\"", 20.0F},    {"15\"", 15.0F},    {"13\"", 13.0F},
+    {"10\"", 10.0F},    {"8\"", 8.0F},      {"6\"", 6.0F},      {"5\"", 5.0F},      {"4\"", 4.0F},
+    {"3.2\"", 3.2F},    {"2.5\"", 2.5F},    {"2\"", 2.0F},      {"1.6\"", 1.6F},    {"1.3\"", 1.3F},
+    {"1\"", 1.0F},      {"0.8\"", 0.8F},    {"0.6\"", 0.6F},    {"0.5\"", 0.5F},    {"0.4\"", 0.4F},
+    {"0.3\"", 0.3F},    {"1/4", 0.25F},     {"1/5", 0.2F},       {"1/6", 1.0F / 6},   {"1/8", 0.125F},
+    {"1/10", 0.1F},      {"1/13", 1.0F / 13}, {"1/15", 1.0F / 15}, {"1/20", 0.05F},     {"1/25", 0.04F},
+    {"1/30", 1.0F / 30}, {"1/40", 0.025F},   {"1/50", 0.02F},     {"1/60", 1.0F / 60}, {"1/80", 0.0125F},
+    {"1/100", 0.01F},    {"1/125", 0.008F},  {"1/160", 1.0F / 160}, {"1/200", 0.005F}, {"1/250", 0.004F},
+    {"1/320", 1.0F / 320}, {"1/400", 0.0025F}, {"1/500", 0.002F}, {"1/640", 1.0F / 640}, {"1/800", 0.00125F},
+    {"1/1000", 0.001F},  {"1/1250", 0.0008F}, {"1/1600", 0.000625F}, {"1/2000", 0.0005F}};
+constexpr int kShutterStart = 33;  // 1/60
+constexpr float kPolarizerStrength[] = {0.5F, 0.75F, 1.0F};
 constexpr float kCompensation[] = {-3.0F, -2.0F, -1.5F, -1.0F, -0.5F, 0.0F, 0.5F, 1.0F, 1.5F, 2.0F, 3.0F};
 constexpr int kKelvin[] = {0, 5500, 6500, 7500, 3200, 4000, 5800, 2000, 10000};
 constexpr const char* kStyles[] = {"Standard", "Vivid", "Neutral", "Monochrome", "Sepia", "Film", "Cinema"};
@@ -68,11 +90,19 @@ std::vector<Setting> build_settings() {
                             std::vector<std::string> options, int start) {
         out.push_back(Setting{key, id, section, label, std::move(options), start});
     };
-    const auto aspects = [](const auto& list) {
+    // One camera: its mode, its frame (the pictures' and the videos'), the
+    // viewfinder; then what a picture and a video are made into.
+    const char* camera = "Camera";
+    add(Key::FinderMode, "finder_mode", camera,
+        "Camera mode (the view through the lens, with the look; two fingers turn a polarizer)", {"Off", "On"}, 0);
+    {
         std::vector<std::string> names;
-        for (const auto& a : list) names.emplace_back(a.label);
-        return names;
-    };
+        for (const auto& a : kShapes) names.emplace_back(a.label);
+        add(Key::CameraShape, "camera_shape", camera, "Frame (pictures and videos)", std::move(names), 0);
+    }
+    add(Key::FinderGrid, "finder_grid", camera, "Grid",
+        {"Off", "Thirds", "4 \xC3\x97 4", "Golden ratio", "Centre cross"}, 1);
+    add(Key::FinderInfo, "finder_info", camera, "Settings line", {"Show", "Hide"}, 0);
     const char* picture = "Picture";
     add(Key::PhotoFormat, "photo_format", picture, "File",
         {"PNG (lossless)", "JPEG", "WebP (lossless)", "RAW (DNG)", "RAW (DNG) + JPEG"}, 0);
@@ -85,14 +115,12 @@ std::vector<Setting> build_settings() {
         {"By the size", "2 MP", "5 MP", "8 MP", "12 MP", "16 MP", "20 MP", "24 MP", "33 MP", "40 MP", "48 MP",
          "64 MP", "100 MP", "124 MP", "150 MP", "200 MP"},
         0);
-    add(Key::PhotoAspect, "photo_aspect", picture, "Shape", aspects(kPhotoAspects), 0);
     add(Key::PhotoTimer, "photo_timer", picture, "Self-timer", {"Off", "2 s", "5 s", "10 s"}, 0);
     add(Key::PhotoBurst, "photo_burst", picture, "Shots per press", {"1", "3", "5", "10"}, 0);
     add(Key::PhotoSubtitles, "photo_subtitles", picture, "Subtitles in the picture", {"Show", "Hide"}, 0);
     const char* video = "Video";
     add(Key::VideoSize, "video_size", video, "Size",
         {"720p (HD)", "1080p (Full HD)", "1440p (QHD)", "2160p (4K)"}, 1);
-    add(Key::VideoAspect, "video_aspect", video, "Shape", aspects(kVideoAspects), 1);
     add(Key::VideoFps, "video_fps", video, "Frame rate", {"24", "25", "30", "50", "60"}, 2);
     add(Key::VideoBitrate, "video_bitrate", video, "Bit rate",
         {"Auto", "4 Mbit/s", "8 Mbit/s", "16 Mbit/s", "32 Mbit/s", "64 Mbit/s", "100 Mbit/s"}, 0);
@@ -111,8 +139,15 @@ std::vector<Setting> build_settings() {
     add(Key::LensDistortion, "lens_distortion", lens, "Distortion", {"Off", "By the focal length"}, 0);
     add(Key::LensFringe, "lens_fringe", lens, "Colour fringing", {"Off", "Weak", "Strong"}, 0);
     const char* aperture = "Aperture";
-    add(Key::LensAperture, "lens_aperture", aperture, "Aperture (f-number)",
-        {"f/1.4", "f/2", "f/2.8", "f/4", "f/5.6", "f/8", "f/11", "f/16", "f/22"}, 3);
+    {
+        std::vector<std::string> names;
+        for (const float n : kApertures) {
+            char text[16];
+            std::snprintf(text, sizeof(text), "f/%g", static_cast<double>(n));
+            names.emplace_back(text);
+        }
+        add(Key::LensAperture, "lens_aperture", aperture, "Aperture (f-number)", std::move(names), 6);
+    }
     add(Key::LensDepthOfField, "lens_depth_of_field", aperture,
         "Depth of field (what is not in focus blurs by the aperture and the focal length)", {"Off", "On"}, 0);
     add(Key::LensFocus, "lens_focus", aperture, "Focus",
@@ -120,15 +155,23 @@ std::vector<Setting> build_settings() {
     add(Key::LensBlades, "lens_blades", aperture, "Aperture blades (the shape of the bokeh)",
         {"Round", "9", "8", "7", "6", "5"}, 0);
     add(Key::LensBokeh, "lens_bokeh", aperture, "Bokeh highlights", {"Soft", "Bright"}, 0);
+    const char* filter = "Filter";
+    add(Key::FilterPolarizer, "filter_polarizer", filter,
+        "Polarizer (circular; in camera mode two fingers turn it)", {"Off", "On"}, 0);
+    add(Key::FilterPolarizerStrength, "filter_polarizer_strength", filter, "Polarizer strength",
+        {"Weak", "Medium", "Strong"}, 1);
     const char* exposure = "Exposure";
     add(Key::ExposureMode, "exposure_mode", exposure, "Mode",
         {"Auto", "Manual (ISO, shutter, aperture)"}, 0);
-    add(Key::ExposureIso, "exposure_iso", exposure, "ISO",
-        {"Auto", "50", "100", "200", "400", "800", "1600", "3200", "6400", "12800", "25600"}, 0);
     {
         std::vector<std::string> names;
-        for (const int d : kShutterDenominators) names.push_back(d == 1 ? "1 s" : "1/" + std::to_string(d));
-        add(Key::ExposureShutter, "exposure_shutter", exposure, "Shutter", std::move(names), 7);
+        for (const int iso : kIsos) names.push_back(iso == 0 ? std::string("Auto") : std::to_string(iso));
+        add(Key::ExposureIso, "exposure_iso", exposure, "ISO", std::move(names), 0);
+    }
+    {
+        std::vector<std::string> names;
+        for (const auto& t : kShutters) names.emplace_back(t.label);
+        add(Key::ExposureShutter, "exposure_shutter", exposure, "Shutter", std::move(names), kShutterStart);
     }
     add(Key::ExposureCompensation, "exposure_compensation", exposure, "Compensation",
         {"\xE2\x88\x92" "3 EV", "\xE2\x88\x92" "2", "\xE2\x88\x92" "1.5", "\xE2\x88\x92" "1",
@@ -143,19 +186,13 @@ std::vector<Setting> build_settings() {
         0);
     {
         std::vector<std::string> names;
-        for (const char* s : kStyles) names.emplace_back(s);
+        for (const char* st : kStyles) names.emplace_back(st);
         add(Key::ColourStyle, "colour_style", colour, "Picture style", std::move(names), 0);
     }
     const std::vector<std::string> steps{"\xE2\x88\x92" "2", "\xE2\x88\x92" "1", "0", "+1", "+2"};
     add(Key::ColourContrast, "colour_contrast", colour, "Contrast", steps, 2);
     add(Key::ColourSaturation, "colour_saturation", colour, "Saturation", steps, 2);
     add(Key::ColourSharpness, "colour_sharpness", colour, "Sharpness", {"Off", "Low", "Medium", "High"}, 0);
-    const char* finder = "Viewfinder";
-    add(Key::FinderMode, "finder_mode", finder, "Viewfinder in the view (the lens and the look, live)",
-        {"Off", "On"}, 0);
-    add(Key::FinderGrid, "finder_grid", finder, "Grid",
-        {"Off", "Thirds", "4 \xC3\x97 4", "Golden ratio", "Centre cross"}, 1);
-    add(Key::FinderInfo, "finder_info", finder, "Settings line", {"Show", "Hide"}, 0);
     return out;
 }
 
@@ -179,7 +216,8 @@ int multiple_of_16(int v) noexcept { return std::max(16, v / 16 * 16); }
 
 // The shape of a capture (w:h), the view's own when 0 x 0.
 std::pair<float, float> shape(Kind kind, int view_width, int view_height) noexcept {
-    const Aspect a = kind == Kind::Photo ? pick(Key::PhotoAspect, kPhotoAspects) : pick(Key::VideoAspect, kVideoAspects);
+    (void)kind;  // one camera: pictures and videos share its frame
+    const Aspect a = pick(Key::CameraShape, kShapes);
     if (a.w == 0 || a.h == 0) return {static_cast<float>(std::max(1, view_width)), static_cast<float>(std::max(1, view_height))};
     return {static_cast<float>(a.w), static_cast<float>(a.h)};
 }
@@ -595,7 +633,7 @@ float focal_mm(float zoom) noexcept { return kHalfShortSideMm * zoom / kTanHalfF
 
 Exposure exposure() noexcept {
     Exposure out;
-    out.shutter_seconds = 1.0F / static_cast<float>(pick(Key::ExposureShutter, kShutterDenominators));
+    out.shutter_seconds = pick(Key::ExposureShutter, kShutters).seconds;
     out.aperture = pick(Key::LensAperture, kApertures);
     const float compensation = std::exp2(pick(Key::ExposureCompensation, kCompensation));
     const int chosen_iso = pick(Key::ExposureIso, kIsos);
@@ -606,10 +644,12 @@ Exposure exposure() noexcept {
         out.gain = compensation;
         return out;
     }
-    // Manual: ISO 100 at 1/60 and f/4 is the rendered picture.
-    const float light = out.shutter_seconds * 60.0F * (4.0F / out.aperture) * (4.0F / out.aperture);
+    // Manual: ISO 100 at 1/60 and f/4 is the rendered picture; a polarizer
+    // takes about a stop and a half.
+    float light = out.shutter_seconds * 60.0F * (4.0F / out.aperture) * (4.0F / out.aperture);
+    if (choice(Key::FilterPolarizer) == 1) light *= 0.35F;
     out.iso = chosen_iso > 0 ? chosen_iso
-                             : std::clamp(static_cast<int>(std::lround(100.0F / light)), 50, 25600);
+                             : static_cast<int>(std::clamp(std::lround(100.0 / light), 25L, 4000000L));
     out.gain = static_cast<float>(out.iso) / 100.0F * light * compensation;
     return out;
 }
@@ -621,10 +661,71 @@ bool valid_image(const RgbaImage* image) noexcept {
            image->pixels.size() >= static_cast<std::size_t>(image->width) * image->height * 4U;
 }
 
-// What the lens does to the light: the depth of field, the distortion and
-// the colour fringing (a RAW keeps these).
+std::atomic<float> g_polarizer{0.0F};
+
+// The circular polarizer: each pixel's light is partly polarized (glare and
+// whitish highlights the most, the blue of the sky, a little everything);
+// the filter passes that part by cos² of its ring against the light's
+// polarization, which turns slowly across the frame as a sky's does. What
+// it holds back darkens the pixel and leaves its colour deeper.
+void polarizer_pass(RgbaImage* image) {
+    const int w = image->width;
+    const int h = image->height;
+    const float strength = pick(Key::FilterPolarizerStrength, kPolarizerStrength);
+    const float ring = g_polarizer.load();
+    std::array<float, 256> linear{};
+    for (int v = 0; v < 256; ++v) linear[static_cast<std::size_t>(v)] = srgb_to_linear(static_cast<float>(v) / 255.0F);
+    std::array<std::uint8_t, 4096> encode{};
+    for (int i = 0; i < 4096; ++i) {
+        encode[static_cast<std::size_t>(i)] =
+            static_cast<std::uint8_t>(std::lround(linear_to_srgb(static_cast<float>(i) / 4095.0F) * 255.0F));
+    }
+    const auto smooth = [](float a, float b, float x) {
+        const float t = std::clamp((x - a) / (b - a), 0.0F, 1.0F);
+        return t * t * (3.0F - 2.0F * t);
+    };
+    in_bands(h, [&](int row_begin, int row_end) {
+        for (int y = row_begin; y < row_end; ++y) {
+            for (int x = 0; x < w; ++x) {
+                auto* p = &image->pixels[(static_cast<std::size_t>(y) * w + x) * 4U];
+                const float r = p[0] / 255.0F;
+                const float g = p[1] / 255.0F;
+                const float b = p[2] / 255.0F;
+                const float hi = std::max({r, g, b});
+                const float lo = std::min({r, g, b});
+                const float saturation = hi > 1.0e-3F ? (hi - lo) / hi : 0.0F;
+                const float luma = 0.2126F * r + 0.7152F * g + 0.0722F * b;
+                const float glare = smooth(0.55F, 0.95F, luma) * (1.0F - saturation);
+                const float sky = std::clamp((b - std::max(r, g)) / std::max(b, 1.0e-3F), 0.0F, 1.0F) *
+                                  smooth(0.25F, 0.7F, b);
+                const float polarized = std::clamp(0.15F + 0.85F * glare + 0.6F * sky, 0.0F, 0.95F);
+                const float light_angle = 0.5F * (static_cast<float>(x) / w - 0.5F) +
+                                          0.3F * (static_cast<float>(y) / h - 0.5F);
+                const float s = std::sin(ring - light_angle);
+                const float held = strength * polarized * s * s;
+                // Darker by what is held back, the colour deeper by it.
+                float lr = linear[p[0]] * (1.0F - held);
+                float lg = linear[p[1]] * (1.0F - held);
+                float lb = linear[p[2]] * (1.0F - held);
+                const float l = 0.2126F * lr + 0.7152F * lg + 0.0722F * lb;
+                const float deeper = 1.0F + 0.8F * held;
+                lr = l + (lr - l) * deeper;
+                lg = l + (lg - l) * deeper;
+                lb = l + (lb - l) * deeper;
+                const auto out = [&](float v) { return encode[static_cast<std::size_t>(std::clamp(v, 0.0F, 1.0F) * 4095.0F + 0.5F)]; };
+                p[0] = out(lr);
+                p[1] = out(lg);
+                p[2] = out(lb);
+            }
+        }
+    });
+}
+
+// What the lens does to the light: the polarizer in front of it, the depth
+// of field, the distortion and the colour fringing (a RAW keeps these).
 void optics(RgbaImage* image, float mm, const std::vector<float>* depth) {
     if (!valid_image(image)) return;
+    if (choice(Key::FilterPolarizer) == 1) polarizer_pass(image);
     if (depth != nullptr && depth_of_field_on()) depth_of_field(image, *depth, mm, exposure().aperture);
     const float k = choice(Key::LensDistortion) == 1 ? distortion_k(mm) : 0.0F;
     const float fringe = choice(Key::LensFringe) == 0 ? 0.0F : (choice(Key::LensFringe) == 1 ? 0.0012F : 0.003F);
@@ -964,6 +1065,8 @@ bool write_dng(int fd, const RgbaImage& optical, const RgbaImage& preview, bool 
         rationals(33434, false, {static_cast<double>(e.shutter_seconds)}),
         rationals(33437, false, {static_cast<double>(e.aperture)}),
         shorts(34855, {static_cast<std::uint32_t>(std::clamp(e.iso, 1, 65535))}),
+        shorts(34864, {3U}),  // SensitivityType: ISO speed, the whole of it below
+        longs(34867, {static_cast<std::uint32_t>(std::max(e.iso, 1))}),
         rationals(37386, false, {static_cast<double>(focal_length_mm)}),
         bytes(50706, {1U, 4U, 0U, 0U}), bytes(50707, {1U, 1U, 0U, 0U}),
         ascii(50708, "DMC Native Reader virtual camera"),
@@ -1126,6 +1229,23 @@ void begin_video() {
 
 bool finder_on() noexcept { return choice(Key::FinderMode) == 1; }
 
+bool polarizer_turnable() noexcept { return finder_on() && choice(Key::FilterPolarizer) == 1; }
+
+float turn_polarizer(float radians) noexcept {
+    float angle = g_polarizer.load() + (std::isfinite(radians) ? radians : 0.0F);
+    angle = std::fmod(angle, 3.14159265F);  // half a turn is the same filter
+    if (angle < 0.0F) angle += 3.14159265F;
+    g_polarizer.store(angle);
+    return angle;
+}
+
+float polarizer_angle() noexcept { return g_polarizer.load(); }
+
+void set_polarizer_angle(float radians) noexcept {
+    g_polarizer.store(0.0F);
+    (void)turn_polarizer(radians);
+}
+
 RgbaImage render_view_frame(const Session* session, int width, int height, float yaw, float pitch, float zoom,
                             std::uint32_t render_flags, const ViewControls& controls) {
     if (session == nullptr || !finder_on() || session->uv_gallery) {
@@ -1178,16 +1298,23 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
     }
     if (choice(Key::FinderInfo) == 0) {
         const Exposure e = exposure();
-        const int den = pick(Key::ExposureShutter, kShutterDenominators);
+        const char* shutter = pick(Key::ExposureShutter, kShutters).label;
         const float zoom = capture_zoom(kind, effective_view_zoom(session, view_zoom), width, height);
         const int kelvin = pick(Key::ColourBalance, kKelvin);
         char aperture[16];
         std::snprintf(aperture, sizeof(aperture), "f/%g", static_cast<double>(e.aperture));
         std::string line = std::string(choice(Key::ExposureMode) == 0 ? "P" : "M") + "  ISO " +
-                           std::to_string(e.iso) + "  " + (den == 1 ? std::string("1 s") : "1/" + std::to_string(den)) +
+                           std::to_string(e.iso) + "  " + shutter +
                            "  " + aperture + "  " + std::to_string(static_cast<int>(std::lround(focal_mm(zoom)))) +
                            " mm  " + (kelvin == 0 ? std::string("AWB") : std::to_string(kelvin) + " K") + "  " +
                            kStyles[std::clamp(choice(Key::ColourStyle), 0, count(kStyles) - 1)];
+        if (choice(Key::FilterPolarizer) == 1) {
+            char text[24];
+            float degrees = std::fmod(polarizer_angle() * 57.2957795F, 180.0F);
+            if (degrees < 0.0F) degrees += 180.0F;
+            std::snprintf(text, sizeof(text), "  CPL %.0f\xC2\xB0", static_cast<double>(degrees));
+            line += text;
+        }
         if (depth_of_field_on()) {
             const float focus = pick(Key::LensFocus, kFocusUnits) > 0.0F ? pick(Key::LensFocus, kFocusUnits)
                                                                          : last_focus();

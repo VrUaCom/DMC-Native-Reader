@@ -819,6 +819,21 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_writeCaptureDng(
     } catch (...) { return JNI_FALSE; }
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraPolarizerTurnable(JNIEnv*, jclass) {
+    return dmcresource::spider::camera::polarizer_turnable() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraPolarizer(JNIEnv*, jclass, jfloat turn) {
+    return dmcresource::spider::camera::turn_polarizer(turn);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setCameraPolarizer(JNIEnv*, jclass, jfloat radians) {
+    dmcresource::spider::camera::set_polarizer_angle(radians);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_beginVideo(JNIEnv*, jclass) {
     dmcresource::spider::camera::begin_video();

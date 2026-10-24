@@ -1628,7 +1628,10 @@ public final class MainActivity extends Activity {
     // (spider/camera.h); this shell keeps the chosen options, counts the
     // timer down, saves the files and runs the encoder.
 
-    private static final String PREF_CAMERA = "camera_";
+    // A choice is kept by its option's name, so a dial that gains values
+    // (f/0.95, ISO 25 ...) keeps what was chosen.
+    private static final String PREF_CAMERA = "camera_option_";
+    private static final String PREF_POLARIZER = "camera_polarizer";
     private String[][] cameraRows;
 
     /** The core's camera settings: {id, section, label, start, options...} per row. */
@@ -1643,8 +1646,11 @@ public final class MainActivity extends Activity {
 
     private int cameraChoice(String[] row) {
         final int start = Integer.parseInt(row[3]);
-        final int value = prefs().getInt(PREF_CAMERA + row[0], start);
-        return value >= 0 && value < row.length - 4 ? value : start;
+        final String name = prefs().getString(PREF_CAMERA + row[0], null);
+        if (name != null) {
+            for (int i = 4; i < row.length; ++i) if (row[i].equals(name)) return i - 4;
+        }
+        return start;
     }
 
     private void applyCameraChoices() {
@@ -1652,6 +1658,39 @@ public final class MainActivity extends Activity {
         final int[] choices = new int[rows.length];
         for (int i = 0; i < rows.length; ++i) choices[i] = cameraChoice(rows[i]);
         NativeBridge.setCameraChoices(choices);
+        NativeBridge.setCameraPolarizer(prefs().getFloat(PREF_POLARIZER, 0.0f));
+    }
+
+    /** A long dial (ISO, shutter, megapixels ...) as a slider; the label shows the value. */
+    private LinearLayout sliderRow(String label, String[] names, int selected,
+                                   java.util.function.IntConsumer onPick) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setPadding(0, dp(10), 0, dp(4));
+        final TextView title = new TextView(this);
+        title.setTextColor(0xffc8ccd6);
+        title.setTextSize(14f);
+        title.setText(label + ":  " + names[selected]);
+        block.addView(title);
+        final android.widget.SeekBar slider = new android.widget.SeekBar(this);
+        slider.setMax(names.length - 1);
+        slider.setProgress(selected);
+        slider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar bar, int value, boolean fromUser) {
+                title.setText(label + ":  " + names[value]);
+                if (fromUser) onPick.accept(value);
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar bar) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar bar) { }
+        });
+        block.addView(slider, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        final TextView range = new TextView(this);
+        range.setTextColor(0xff8a90a0);
+        range.setTextSize(12f);
+        range.setText(names[0] + "  …  " + names[names.length - 1]);
+        block.addView(range);
+        return block;
     }
 
     /** The camera's settings window: every setting by section, and the starting values. */
@@ -1660,9 +1699,10 @@ public final class MainActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(12), dp(16), dp(24));
-        content.addView(hint("📷 takes a picture (also the three-finger tap), 🎥 records a video; both show the "
-                + "view without the interface, through this lens and with this look. The viewfinder shows "
-                + "it live, with the frame of the picture or the video."));
+        content.addView(hint("One camera for pictures and videos: 📷 takes a picture (also the three-finger tap), "
+                + "🎥 records a video, both through this lens, in this frame, with this look, without the "
+                + "interface. Camera mode shows it live in the view; there, with the polarizer on, two fingers "
+                + "turn the filter."));
         String section = null;
         for (final String[] row : cameraRows()) {
             if (!row[1].equals(section)) {
@@ -1670,15 +1710,18 @@ public final class MainActivity extends Activity {
                 content.addView(sectionTitle(section));
             }
             final String[] options = java.util.Arrays.copyOfRange(row, 4, row.length);
-            content.addView(choiceRow(row[2], options, cameraChoice(row), i -> {
-                prefs().edit().putInt(PREF_CAMERA + row[0], i).apply();
+            final java.util.function.IntConsumer pick = i -> {
+                prefs().edit().putString(PREF_CAMERA + row[0], options[i]).apply();
                 applyCameraChoices();
                 renderView.renderNow();
-            }));
+            };
+            content.addView(options.length > 12 ? sliderRow(row[2], options, cameraChoice(row), pick)
+                    : choiceRow(row[2], options, cameraChoice(row), pick));
         }
         dialog.dialog = showPanel("Camera: picture and video", content, null, "Starting values", () -> {
             final android.content.SharedPreferences.Editor editor = prefs().edit();
             for (final String[] row : cameraRows()) editor.remove(PREF_CAMERA + row[0]);
+            editor.remove(PREF_POLARIZER);
             editor.apply();
             applyCameraChoices();
             renderView.renderNow();
@@ -4211,6 +4254,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onPause() {
         stopRecording();
+        prefs().edit().putFloat(PREF_POLARIZER, NativeBridge.cameraPolarizer(0.0f)).apply();
         super.onPause();
     }
 

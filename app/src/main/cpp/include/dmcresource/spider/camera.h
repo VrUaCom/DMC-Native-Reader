@@ -20,17 +20,20 @@
 namespace dmcresource::spider::camera {
 
 enum class Key : std::uint8_t {
+    // The one camera both pictures and videos are taken with.
+    FinderMode,
+    CameraShape,
+    FinderGrid,
+    FinderInfo,
     PhotoFormat,
     PhotoQuality,
     PhotoRawData,
     PhotoSize,
     PhotoMegapixels,
-    PhotoAspect,
     PhotoTimer,
     PhotoBurst,
     PhotoSubtitles,
     VideoSize,
-    VideoAspect,
     VideoFps,
     VideoBitrate,
     VideoCodec,
@@ -47,6 +50,8 @@ enum class Key : std::uint8_t {
     LensFocus,
     LensBlades,
     LensBokeh,
+    FilterPolarizer,
+    FilterPolarizerStrength,
     ExposureMode,
     ExposureIso,
     ExposureShutter,
@@ -58,9 +63,6 @@ enum class Key : std::uint8_t {
     ColourContrast,
     ColourSaturation,
     ColourSharpness,
-    FinderMode,
-    FinderGrid,
-    FinderInfo,
     Count,
 };
 
@@ -176,6 +178,15 @@ void begin_video();
                                           float pitch, float zoom, std::uint32_t render_flags,
                                           const ViewControls& controls);
 [[nodiscard]] bool finder_on() noexcept;
+
+// The circular polarizer in front of the lens: in camera mode two fingers
+// turn it (radians, like the ring of a real one). It darkens the polarized
+// light (reflections, glare, the blue of the sky) by sin² of the ring
+// against the light's polarization, which turns slowly across the frame.
+[[nodiscard]] bool polarizer_turnable() noexcept;
+float turn_polarizer(float radians) noexcept;
+[[nodiscard]] float polarizer_angle() noexcept;
+void set_polarizer_angle(float radians) noexcept;
 
 // What the viewfinder draws over a width x height view: the frame of the
 // picture (or of the video while it records), the grid lines in it and the

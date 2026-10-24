@@ -217,6 +217,14 @@ APK verifier.
     - Lenses up to 400 mm.
     - The 2.35:1 shape for pictures and videos.
     - Pictures render and save on a worker thread.
+  - v103:
+    - One camera for pictures and videos: one frame and one camera mode;
+      separate 📷 and 🎥 squares.
+    - f/0.5, f/0.95 and f/1.2.
+    - ISO 25 … 4 000 000 in real steps: thirds of a stop to 102400, then
+      whole stops.
+    - Shutter 30 s … 1/2000 in thirds of a stop.
+    - A circular polarizer turned with two fingers in camera mode.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

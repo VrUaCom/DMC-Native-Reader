@@ -1735,15 +1735,23 @@ public final class DmcRenderView extends View {
                 panY += (cy - multiY) * unit;
                 changed = true;
             }
-            if (enabled(G_TWIST)) {
+            // In camera mode with a polarizer, the twist turns the filter (the core's).
+            final boolean polarizer = NativeBridge.cameraPolarizerTurnable();
+            if (enabled(G_TWIST) || polarizer) {
                 final float angle = (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
                 float delta = angle - twistAngle;
                 if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
                 if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
                 twistAngle = angle;
                 if (Math.abs(delta) > 0.0005f) {
-                    // With a room the model turns in it; without, the view turns.
-                    if ((renderFlags & RENDER_ROOM) != 0) roomYaw -= delta; else yaw -= delta;
+                    if (polarizer) {
+                        NativeBridge.cameraPolarizer(delta);
+                    } else if ((renderFlags & RENDER_ROOM) != 0) {
+                        // With a room the model turns in it; without, the view turns.
+                        roomYaw -= delta;
+                    } else {
+                        yaw -= delta;
+                    }
                     changed = true;
                 }
             }

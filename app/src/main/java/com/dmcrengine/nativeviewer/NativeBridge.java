@@ -277,6 +277,11 @@ public final class NativeBridge {
                                               boolean follow, float dolly, float motionFrame,
                                               java.nio.ByteBuffer buffer);
     public static native void beginVideo();
+    /** True in camera mode with the polarizer on: two fingers turn it. */
+    public static native boolean cameraPolarizerTurnable();
+    /** Turns the polarizer by radians (0 reads it); its angle, 0 .. pi. */
+    public static native float cameraPolarizer(float turn);
+    public static native void setCameraPolarizer(float radians);
     /** A RAW picture (DNG) into the open file fd; developed (or null) gets the developed picture. */
     public static native boolean writeCaptureDng(long handle, int viewWidth, int viewHeight, float yaw, float pitch,
                                                  float zoom, int renderFlags, float panX, float panY, float roomYaw,
