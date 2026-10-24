@@ -77,6 +77,16 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 The three-finger sideways swipe (variants) and the four-finger tap (follow)
 are off in camera mode. ℹ in the camera bar shows all of this in the app.
 
+## The screen's orientation
+
+- Turning the phone keeps everything as it is: the scene, the camera, a
+  playing motion, camera mode and the bars (the activity is not recreated).
+- While the gyroscope or walking is on, the app keeps the orientation it has,
+  because turning the phone aims the camera
+  (`camera::holds_screen_orientation`).
+- 📱 in the camera bar turns the app to the other orientation and keeps it
+  there; holding 📱 lets the phone turn it again.
+
 ## Cutscenes
 
 - Camera mode films a cutscene through its cuts: the cutscene camera keeps

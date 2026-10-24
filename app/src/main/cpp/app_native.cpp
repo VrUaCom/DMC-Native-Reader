@@ -841,6 +841,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraMode(JNIEnv*, jclass) {
     return dmcresource::spider::camera::finder_on() ? JNI_TRUE : JNI_FALSE;
 }
 
+// The screen keeps its orientation (the phone aims the camera).
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraHoldsOrientation(JNIEnv*, jclass) {
+    return dmcresource::spider::camera::holds_screen_orientation() ? JNI_TRUE : JNI_FALSE;
+}
+
 // Whether a cutscene's camera drives the view: camera mode films through it
 // (no free camera, the gyroscope waits) until a finger takes it.
 extern "C" JNIEXPORT jboolean JNICALL

@@ -292,6 +292,14 @@ APK verifier.
       frames): no read back to the CPU and no picture handed over again.
       Frames with lines, markers or bones, videos and pictures still go
       through a picture. A cutscene's fade is drawn by the GPU.
+  - v114:
+    - Turning the phone no longer reopens the scene: the activity takes the
+      orientation change itself, so the session, the camera, the motion and
+      the bars stay as they are, and the view lays itself out again.
+    - While the gyroscope or walking is on, the app keeps its orientation
+      (core `camera::holds_screen_orientation`).
+    - 📱 in the camera bar turns the app to the other orientation and keeps
+      it there; holding 📱 lets the phone turn it again.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

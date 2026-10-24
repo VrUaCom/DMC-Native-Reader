@@ -1766,6 +1766,51 @@ public final class MainActivity extends Activity {
         if (cameraPanel != null) setCameraUi(NativeBridge.cameraMode());
         if (cameraPanel != null) updateGyro();
         if (cameraPanel != null) updateWalk(false);
+        updateScreenOrientation();
+    }
+
+    // The orientation the 📱 button pinned (ActivityInfo), or -1: the phone decides.
+    private int pinnedOrientation = -1;
+
+    /** A pinned orientation, else the current one held while the phone aims the camera, else the sensor's. */
+    private void updateScreenOrientation() {
+        final int want = pinnedOrientation >= 0 ? pinnedOrientation
+                : NativeBridge.cameraHoldsOrientation() ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        if (getRequestedOrientation() != want) setRequestedOrientation(want);
+    }
+
+    /** The 📱 button: the app turns to the other orientation and stays there. */
+    private void rotateScreen() {
+        final boolean landscape = getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        pinnedOrientation = landscape ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+        updateScreenOrientation();
+        notice(landscape ? "📱 Portrait, held; hold the button to let the phone turn the app again"
+                         : "📱 Landscape, held; hold the button to let the phone turn the app again",
+                Toast.LENGTH_SHORT);
+    }
+
+    /** Holding 📱: the phone turns the app again (unless the gyroscope or walking holds it). */
+    private void releaseScreenRotation() {
+        pinnedOrientation = -1;
+        updateScreenOrientation();
+        notice(NativeBridge.cameraHoldsOrientation()
+                        ? "📱 Rotation follows the phone again once the gyroscope and walking are off"
+                        : "📱 Rotation follows the phone", Toast.LENGTH_SHORT);
+    }
+
+    /**
+     * Turning the phone no longer recreates the activity (the manifest takes the
+     * change): the session, the camera and the bars stay as they are; the view
+     * only lays itself out again at the new size.
+     */
+    @Override public void onConfigurationChanged(android.content.res.Configuration config) {
+        super.onConfigurationChanged(config);
+        // The gyroscope's readings are taken against the screen: start again from here.
+        NativeBridge.gyroReset();
+        if (renderView != null) renderView.renderNow();
     }
 
     // ---- Camera mode: the camera's own bar in place of the scene's two
@@ -1850,6 +1895,13 @@ public final class MainActivity extends Activity {
         final Button drone = makeDroneButton();
         drone.setOnClickListener(v -> toggleDrone());
         addToolButton(actions, drone);
+        final Button rotate = makeSquareButton("📱", "Turn the app (hold: follow the phone)", 20f);
+        rotate.setOnClickListener(v -> rotateScreen());
+        rotate.setOnLongClickListener(v -> {
+            releaseScreenRotation();
+            return true;
+        });
+        addToolButton(actions, rotate);
         final Button help = makeSquareButton("ℹ", "Gestures and gyroscope", 20f);
         help.setOnClickListener(v -> showCameraHelp());
         addToolButton(actions, help);
@@ -2208,6 +2260,11 @@ public final class MainActivity extends Activity {
                 + "• Long press — lock the focus where it is (AF lock); again — auto focus\n"
                 + "• Slide along the right edge — the focus ring: up farther, down nearer\n"
                 + "• Volume button — the shutter; hold it — start / stop a video\n\n"
+                + "SCREEN\n"
+                + "• While the gyroscope or walking is on, the app keeps the orientation it has: turning "
+                + "the phone aims the camera, not the screen.\n"
+                + "• 📱 turns the app to the other orientation and keeps it there; hold 📱 to let the phone "
+                + "turn it again.\n\n"
                 + "GYROSCOPE\n"
                 + "• 🧭 in the camera bar turns it on (or 🎛 → Gyroscope).\n"
                 + "• Turn the phone left / right — the camera turns; tilt it up / down — the camera looks "

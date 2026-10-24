@@ -1253,6 +1253,8 @@ bool gyro_active() noexcept { return finder_on() && choice(Key::GyroMode) == 1; 
 
 bool walk_active() noexcept { return finder_on() && choice(Key::WalkMode) == 1; }
 
+bool holds_screen_orientation() noexcept { return gyro_active() || walk_active(); }
+
 bool walk(float yaw_radians, float forward_m, float right_m, float up_m) noexcept {
     if (!walk_active()) return false;
     // A scene unit is a centimetre; the scale makes a room's walk a street's.

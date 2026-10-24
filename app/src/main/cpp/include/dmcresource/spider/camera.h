@@ -203,6 +203,10 @@ void begin_video();
 // Smoothing and sensitivity are the settings'. The phone's roll tilts the
 // picture unless the horizon is locked.
 [[nodiscard]] bool gyro_active() noexcept;
+// The screen keeps its orientation while the phone itself aims the camera
+// (camera mode with the gyroscope or walking on): turning the phone must
+// not turn the app.
+[[nodiscard]] bool holds_screen_orientation() noexcept;
 
 // Walking (ARCore, 6DoF): in camera mode with it on, the phone's own steps
 // move the camera. The shell reads how far the phone moved (metres:

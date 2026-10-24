@@ -286,6 +286,9 @@ public final class NativeBridge {
     /** Camera mode is on: the bottom bars are the camera's. */
     public static native boolean cameraMode();
 
+    /** The screen keeps its orientation: the gyroscope or walking aims the camera. */
+    public static native boolean cameraHoldsOrientation();
+
     /** A cutscene's camera drives the view: camera mode films through it until a finger takes it. */
     public static native boolean cameraFollowsCuts(long handle);
     /** The camera bar's dials: "setting index[,index ...]\ttitle\tvalue". */
