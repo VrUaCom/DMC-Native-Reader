@@ -319,6 +319,10 @@ APK verifier.
     - A cutscene archive's script and name lists show as SCRIPT and NAMES
       (.txt) instead of BIN, and the PAC after a name list shows the names
       of its files (m07_c00_movie.pac read through, CUTSCENES.md).
+  - v119:
+    - A cutscene's effect manifest (`G 105`, `P 228`, ...) shows as FX-IDS,
+      and a PNST after a name list shows its names too (m07_b00.pac read
+      through, CUTSCENES.md).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

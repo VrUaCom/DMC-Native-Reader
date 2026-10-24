@@ -318,6 +318,30 @@ bool looks_like_name_list(std::string_view text) noexcept {
     return fine && ended && names > 0U;
 }
 
+bool looks_like_effect_list(std::string_view text) noexcept {
+    text = text.substr(0, text.find('\0'));
+    if (text.empty() || text.size() > 64U * 1024U) return false;
+    bool ended = false;
+    std::size_t ids = 0U;
+    bool fine = true;
+    each_line(text, [&](std::string_view line) {
+        if (!fine || ended || line.empty() || line.front() == ';') return;
+        if (line == "# End") {
+            ended = true;
+            return;
+        }
+        // A capital letter, blanks, then digits.
+        std::size_t i = 1U;
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+        const bool id = line.size() >= 3U && line[0] >= 'A' && line[0] <= 'Z' && i > 1U && i < line.size() &&
+                        std::all_of(line.begin() + static_cast<std::ptrdiff_t>(i), line.end(),
+                                    [](char c) { return c >= '0' && c <= '9'; });
+        if (id) ++ids;
+        else fine = false;
+    });
+    return fine && ended && ids > 0U;
+}
+
 std::vector<std::string> list_names(std::string_view text) {
     if (!looks_like_name_list(text)) return {};
     return name_list(text.substr(0, text.find('\0')), nullptr);

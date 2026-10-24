@@ -47,9 +47,27 @@ m07_c00_movie.pac (15 120 bytes) is one:
 - The timeline is 12142 frames (12122 + 20), 3 min 22 s at 60 frames a
   second: the length of m07_c00's movie.
 
-In an archive's list, slot 0 shows as SCRIPT and a name list as NAMES (both
-.txt, `demo::looks_like_script`, `demo::looks_like_name_list`), and the
-container after a name list shows the names it holds.
+m07_b00.pac (7 527 088 bytes, 13 slots) is a real-time cutscene of the same
+mission, not m07_c00's:
+
+- Its script names 75 Set files (and 75 Load files), all with the m07_b00_
+  prefix, and slot 2 holds all 75. The kinds are m07_c00's, but the tracks
+  go from 00 to 20 (m07_c00's script has 00 to 31): 33 fewer files.
+- Tracks: 00 the set `st500_3.scm` (a wall hidden by `st500_3_wall.hid`);
+  01-06 `pl100_00`..`pl100_05`, 07 `wp100`, 08 `wp101`; 09-14
+  `pl101_00`..`pl101_05`, 15 `wp103`, 16 `wp105`; 17 `ss500_3_00.scm`;
+  18-20 empty.
+- Clips: Camera 12 (12 `.cam` shots, `cm_c001`..`cm_c013`), Light 47,
+  ScrEfc 19, Message 10, PadVibe 2, Fade 1, Sound 1, Effect 0.
+- Slots 3-12 are name list and container pairs: the models and textures
+  (PNST), 72 motions and cloth (`.mot`, `.clt`), 2 hide animations, the 12
+  cameras, and the effect manifest (`G 105`, `G 3`, `V 7`, `P 228`, ...)
+  with its records (PNST).
+
+In an archive's list, slot 0 shows as SCRIPT, a name list as NAMES and an
+effect manifest as FX-IDS (all .txt; `demo::looks_like_script`,
+`demo::looks_like_name_list`, `demo::looks_like_effect_list`), and the PAC or
+PNST after a name list shows the names it holds.
 
 The cutscene's picture ends with its last Camera or Fade clip (m01_s00:
 frame 5949 of 12455). Pad vibration, subtitles and one effect clip run on

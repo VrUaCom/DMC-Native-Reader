@@ -97,6 +97,7 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         // A cutscene archive's script and the name list of its clip texts.
         if (demo::looks_like_script(text)) return {Format::Unknown, "SCRIPT", "txt"};
         if (demo::looks_like_name_list(text)) return {Format::Unknown, "NAMES", "txt"};
+        if (demo::looks_like_effect_list(text)) return {Format::Unknown, "FX-IDS", "txt"};
     }
     if (bytes != nullptr && size > 0U) {
         try {
@@ -234,7 +235,8 @@ PipelineResult run_pac_module(const NativeModule& module,
             std::vector<std::string> names;
             if (std::string_view{kind.family} == "NAMES") {
                 names = demo::list_names(std::string_view{reinterpret_cast<const char*>(payload), payload_size});
-            } else if (!listed_names.empty() && (kind.format == Format::Pac || kind.format == Format::Demo)) {
+            } else if (!listed_names.empty() && (kind.format == Format::Pac || kind.format == Format::Demo ||
+                                                 kind.format == Format::Pnst)) {
                 std::string joined;
                 for (std::size_t i = 0; i < listed_names.size() && i < 3U; ++i) {
                     joined += (i == 0U ? "" : ", ") + listed_names[i];

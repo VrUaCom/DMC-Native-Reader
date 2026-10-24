@@ -260,6 +260,8 @@ int main() {
         assert(!demo::looks_like_name_list("Camera m99.txt\r\n# End\r\n"));     // a blank in a name
         assert(!demo::looks_like_name_list("# End\r\n"));                          // no names
         assert(!demo::looks_like_name_list(script));
+        assert(demo::looks_like_effect_list("G 105\r\nG 3\r\nP 228\r\nA 34\r\n# End\r\n"));
+        assert(!demo::looks_like_effect_list(names) && !demo::looks_like_name_list("G 105\r\n# End\r\n"));
     }
 
     // ---- opened: no models, no stage, but pad vibration -> a movie's track,

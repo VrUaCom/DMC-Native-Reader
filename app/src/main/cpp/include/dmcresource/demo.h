@@ -146,6 +146,9 @@ struct Clip final {
 [[nodiscard]] bool looks_like_script(std::string_view text) noexcept;
 [[nodiscard]] bool looks_like_name_list(std::string_view text) noexcept;
 [[nodiscard]] std::vector<std::string> list_names(std::string_view text);
+// The effect bank's manifest: "G 105", "P 228", ... (a kind letter and an
+// effect id a line) up to "# End".
+[[nodiscard]] bool looks_like_effect_list(std::string_view text) noexcept;
 [[nodiscard]] std::vector<Clip> parse_clips(std::string_view text);
 
 // ---- the archive ----------------------------------------------------------
