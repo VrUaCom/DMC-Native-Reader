@@ -1936,6 +1936,11 @@ public final class DmcRenderView extends View {
         cameraTripleAngle = angle;
     }
 
+    /** The camera's yaw now (the walk goes the way it faces). */
+    public float viewYaw() {
+        return yaw;
+    }
+
     /** The gyroscope's turn of the camera (radians). */
     public void turnBy(float dYaw, float dPitch) {
         if (session == 0 || staticImagePreview) return;

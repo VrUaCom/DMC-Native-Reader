@@ -49,6 +49,7 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | Long press | AF lock: keep the focus the auto focus found; again — auto |
 | Slide along the right edge | The focus ring: up farther, down nearer, in log steps |
 | Volume button | Shutter; hold it to start / stop a video |
+| Walking (🚶 on) | Your steps, crouching and standing move the camera |
 
 The three-finger sideways swipe (variants) and the four-finger tap (follow)
 are off in camera mode. ℹ in the camera bar shows all of this in the app.
@@ -77,11 +78,39 @@ are off in camera mode. ℹ in the camera bar shows all of this in the app.
   is drawn with the same focal length (`ViewState::tile` with a centred
   projection, so the GPU draws it too), then sampled back turned. Pictures,
   videos and RAW all carry it. The settings line shows GYRO and ROLL.
-- Walking and crouching (6DoF) need ARCore and come later.
+- Walking and crouching (6DoF) are ARCore's (below).
+
+## Walking (ARCore, 6DoF)
+
+- 🚶 in the camera bar, or 🎛 → Walking. The first time, a note explains
+  ARCore (Google Play Services for AR, Google's privacy policy; the camera
+  picture is never shown or kept) and the camera permission is asked. Google
+  Play Services for AR is installed on request. A phone that cannot run
+  ARCore says so; the gyroscope still turns the camera.
+- `ArWalker` runs an ARCore session on its own thread with a 1 × 1 pbuffer
+  GL context, because ARCore writes the camera image to a texture nobody
+  draws. Plane finding and light estimation are off.
+  - Every frame the phone's position (metres, gravity-aligned) is compared
+    with the last. The step is split into forward and right along the
+    ground, as the phone faces, and up.
+  - The core (`camera::walk`) moves the drone's eye by that:
+    `camera_control::walk_eye` moves along the ground the way the camera
+    faces (looking down does not sink it), up along the world's up.
+  - Scale: a scene unit is a centimetre, times the walk scale (0.25 … 20 m
+    of scene per metre walked).
+  - Height: follows you (crouch, stand) or fixed.
+- Walking flies the drone, so it turns fly on, and the sticks keep working.
+  The gyroscope keeps turning the camera. When tracking is lost, the next
+  found pose starts fresh, with no jump.
+- It stops when the app pauses, camera mode is left or walking is turned
+  off.
+- ARCore is an optional dependency (`com.google.ar:core:1.48.0`, the
+  manifest meta-data `com.google.ar.core = optional`, the camera feature not
+  required). The app runs without it.
 
 ## Drone
 
-The fly camera (left stick flies, right stick looks) is the drone: 🚁 in
+The fly camera (left stick flies, right stick looks) is the drone: its button (the drone picture) is in
 the tools and in the camera bar. In camera mode the gyroscope looks around
 from it.
 
@@ -130,6 +159,9 @@ from it.
 | | Horizon | **Locked**, follows the phone |
 | | Sensitivity | 0.5×, **1×**, 1.5×, 2× |
 | | Smoothing | Off, low, **medium**, high |
+| Walking (ARCore) | Walk and crouch | **Off**, On |
+| | A metre walked moves the camera | 0.25, 0.5, **1**, 2, 5, 10, 20 m |
+| | Height | **Follows you**, fixed |
 | Colour | White balance | **As rendered**, 5500, 6500, 7500, 3200, 4000, 5800, 2000, 10000 K |
 | | Picture style | **Standard**, Vivid, Neutral, Monochrome, Sepia, Film, Cinema |
 | | Contrast, saturation | −2 … **0** … +2 |

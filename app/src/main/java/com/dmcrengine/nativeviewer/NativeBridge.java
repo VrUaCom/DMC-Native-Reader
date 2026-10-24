@@ -281,6 +281,10 @@ public final class NativeBridge {
     public static native boolean cameraMode();
     /** The camera bar's dials: "setting index[,index ...]\ttitle\tvalue". */
     public static native String[] cameraDials();
+    /** Walking (ARCore) on in camera mode. */
+    public static native boolean walkActive();
+    /** The phone moved (metres: forward, right along the ground as it faces, up): the drone walks. */
+    public static native boolean walk(float yaw, float forward, float right, float up);
     /** Gyroscope on in camera mode. */
     public static native boolean gyroActive();
     /** A phone reading (heading, elevation, roll; radians) gives the camera's turn {yaw, pitch}. */

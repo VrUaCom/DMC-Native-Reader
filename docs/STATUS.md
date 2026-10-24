@@ -239,8 +239,16 @@ APK verifier.
     - Focus by touch: double tap, AF lock, and the right-edge focus ring.
     - The volume keys are the shutter (hold: video).
     - ℹ explains it all in the app.
-    - ✈ became the 🚁 drone, also in the camera bar.
+    - ✈ became the drone (its own picture), also in the camera bar.
     - [Details](CAMERA_PHOTO_VIDEO.md).
+  - v106: walking with ARCore (6DoF):
+    - 🚶 in the camera bar: steps, crouching and standing move the drone's
+      eye, with a walk scale and the height following you or fixed.
+    - ARCore is optional; the first time there is an ARCore note and the
+      camera permission is asked.
+    - The gyroscope's turns now follow the drone's convention.
+    - The drone buttons show the user's drone picture
+      (`res/drawable-nodpi/ic_drone.png`, 160 px).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

@@ -90,4 +90,9 @@ struct FlyStep final {
 [[nodiscard]] FlyStep fly_tick(float yaw_radians, float pitch_radians, const StickResponse& move,
                                const StickResponse& look, float dt_seconds, float speed) noexcept;
 
+// Walking the fly eye (model units): forward and sideways along the ground
+// as the camera faces (`yaw`; looking down does not sink it), up along the
+// world's up. False when the camera is not flying.
+bool walk_eye(float yaw_radians, float forward, float strafe, float rise) noexcept;
+
 }  // namespace dmcresource::camera

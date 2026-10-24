@@ -67,6 +67,9 @@ enum class Key : std::uint8_t {
     GyroHorizon,
     GyroSensitivity,
     GyroSmoothing,
+    WalkMode,
+    WalkScale,
+    WalkHeight,
     Count,
 };
 
@@ -193,6 +196,14 @@ void begin_video();
 // Smoothing and sensitivity are the settings'. The phone's roll tilts the
 // picture unless the horizon is locked.
 [[nodiscard]] bool gyro_active() noexcept;
+
+// Walking (ARCore, 6DoF): in camera mode with it on, the phone's own steps
+// move the camera. The shell reads how far the phone moved (metres:
+// forward and right along the ground as it faces, up) and the core moves
+// the drone's eye by that, times the walk scale (1 m of the room is so
+// many metres of the scene); the height follows unless it is fixed.
+[[nodiscard]] bool walk_active() noexcept;
+bool walk(float yaw_radians, float forward_m, float right_m, float up_m) noexcept;
 [[nodiscard]] std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexcept;
 void gyro_reset() noexcept;
 

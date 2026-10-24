@@ -180,11 +180,17 @@ public final class MainActivity extends Activity {
     private Button cameraPlayButton;
     private Button cameraRecordButton;
     private Button cameraGyroButton;
+    private Button cameraWalkButton;
     private boolean cameraUi;
     // The phone's turns for the gyroscope (camera mode, gyroscope on).
     private android.hardware.SensorManager sensorManager;
     private boolean gyroListening;
     private boolean volumeHeld;
+    // Walking: ARCore follows the phone's steps (camera mode, walking on).
+    private ArWalker arWalker;
+    private boolean activityResumed;
+    private static final int REQUEST_CAMERA_FOR_WALK = 4710;
+    private static final String PREF_AR_NOTICE = "ar_notice_shown";
     private String cameraDialOpen;  // the open dial's indexes, or null
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
@@ -284,6 +290,14 @@ public final class MainActivity extends Activity {
         button.setEnabled(available);
         button.setAlpha(1.0f);
         button.setVisibility(available ? View.VISIBLE : View.GONE);
+    }
+
+    /** The drone's button: its picture in the square instead of a letter. */
+    private Button makeDroneButton() {
+        final Button button = makeSquareButton("", "Drone: orbit / fly", 18f);
+        final android.graphics.drawable.Drawable drone = getDrawable(R.drawable.ic_drone);
+        if (drone != null) button.setForeground(new android.graphics.drawable.InsetDrawable(drone, dp(6)));
+        return button;
     }
 
     private void syncToggleButton(Button button, boolean available, boolean active) {
@@ -715,7 +729,7 @@ public final class MainActivity extends Activity {
 
         // Camera mode: orbit (turn round the model / stage) or fly (joysticks
         // under the fingers: left moves, right looks). The same button goes back.
-        flyButton = makeSquareButton("\uD83D\uDE81", "Drone: orbit / fly", 18f);
+        flyButton = makeDroneButton();
         flyButton.setOnClickListener(v -> toggleDrone());
         addToolButton(bar, flyButton);
 
@@ -1687,6 +1701,7 @@ public final class MainActivity extends Activity {
         NativeBridge.setCameraPolarizer(prefs().getFloat(PREF_POLARIZER, 0.0f));
         if (cameraPanel != null) setCameraUi(NativeBridge.cameraMode());
         if (cameraPanel != null) updateGyro();
+        if (cameraPanel != null) updateWalk(false);
     }
 
     // ---- Camera mode: the camera's own bar in place of the scene's two
@@ -1750,7 +1765,10 @@ public final class MainActivity extends Activity {
         cameraGyroButton = makeSquareButton("🧭", "Gyroscope: turn the phone to turn the camera", 20f);
         cameraGyroButton.setOnClickListener(v -> toggleGyro());
         addToolButton(actions, cameraGyroButton);
-        final Button drone = makeSquareButton("\uD83D\uDE81", "Drone: orbit / fly", 20f);
+        cameraWalkButton = makeSquareButton("🚶", "Walk: ARCore follows your steps", 20f);
+        cameraWalkButton.setOnClickListener(v -> toggleWalk());
+        addToolButton(actions, cameraWalkButton);
+        final Button drone = makeDroneButton();
         drone.setOnClickListener(v -> toggleDrone());
         addToolButton(actions, drone);
         final Button help = makeSquareButton("ℹ", "Gestures and gyroscope", 20f);
@@ -1779,7 +1797,7 @@ public final class MainActivity extends Activity {
             notice("No drone here", Toast.LENGTH_SHORT);
             return;
         }
-        notice(fly ? "🚁 Drone: left thumb flies (forward / back, sideways), right thumb looks (turn, tilt); "
+        notice(fly ? "Drone: left thumb flies (forward / back, sideways), right thumb looks (turn, tilt); "
                         + "fly forward while looking up or down to climb or descend"
                    : "Orbit camera", Toast.LENGTH_LONG);
         applyResourceUiState();
@@ -1879,6 +1897,11 @@ public final class MainActivity extends Activity {
             cameraGyroButton.setActivated(on);
             cameraGyroButton.setAlpha(on ? 1.0f : 0.55f);
         }
+        if (cameraWalkButton != null) {
+            final boolean on = NativeBridge.walkActive();
+            cameraWalkButton.setActivated(on);
+            cameraWalkButton.setAlpha(on ? 1.0f : 0.55f);
+        }
     }
 
     /** A camera setting one option up or down (by its id), as the dials and gestures turn it. */
@@ -1903,6 +1926,90 @@ public final class MainActivity extends Activity {
             }
         }
         applyCameraChoices();
+    }
+
+    /** Walking on or off (the core's setting); it works in camera mode and flies the drone. */
+    private void toggleWalk() {
+        final boolean on = !NativeBridge.walkActive();
+        if (on && !prefs().getBoolean(PREF_AR_NOTICE, false)) {
+            // ARCore's terms: say what it is and whose it is before it runs.
+            new PanelBuilder().setTitle("Walking with ARCore")
+                    .setMessage("Walking moves the camera by your own steps. It uses Google Play Services for AR "
+                            + "(ARCore), provided by Google LLC and governed by the Google Privacy Policy. "
+                            + "ARCore watches through the phone's camera to follow its position; the picture is "
+                            + "never shown, kept or sent by DMC Native Reader. The camera permission is asked once.")
+                    .setPositiveButton("Walk", (d, w) -> {
+                        prefs().edit().putBoolean(PREF_AR_NOTICE, true).apply();
+                        startWalking();
+                    })
+                    .setNegativeButton("Not now", null)
+                    .show();
+            return;
+        }
+        if (on) startWalking(); else {
+            setCameraOption("walk_mode", 0);
+            notice("Walking off", Toast.LENGTH_SHORT);
+        }
+        updateCameraButtons();
+    }
+
+    private void startWalking() {
+        setCameraOption("walk_mode", 1);
+        updateWalk(true);
+        updateCameraButtons();
+    }
+
+    /** Follows the phone's steps while walking works (camera mode, walking on, the app in front). */
+    private void updateWalk(boolean userAsked) {
+        final boolean want = cameraUi && NativeBridge.walkActive() && activityResumed && session != 0;
+        if (!want) {
+            if (arWalker != null) arWalker.stop();
+            return;
+        }
+        if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (userAsked) requestPermissions(new String[]{android.Manifest.permission.CAMERA}, REQUEST_CAMERA_FOR_WALK);
+            return;
+        }
+        final String unavailable = ArWalker.unavailable(this);
+        if (unavailable != null) {
+            notice(unavailable, Toast.LENGTH_LONG);
+            setCameraOption("walk_mode", 0);
+            updateCameraButtons();
+            return;
+        }
+        // Walking flies the drone: its eye is what the steps move.
+        if (!renderView.isFlyMode()) {
+            if (!renderView.setFlyMode(true)) {
+                notice("Walking needs the drone, and this view has none", Toast.LENGTH_LONG);
+                return;
+            }
+            applyResourceUiState();
+        }
+        if (arWalker == null) {
+            arWalker = new ArWalker(this, new ArWalker.Listener() {
+                @Override public void onStep(float forward, float right, float up) {
+                    if (NativeBridge.walk(renderView.viewYaw(), forward, right, up)) renderView.turnBy(0.0f, 0.0f);
+                }
+
+                @Override public void onTrackingState(String text) {
+                    notice(text, Toast.LENGTH_SHORT);
+                }
+            });
+        }
+        arWalker.start(userAsked);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQUEST_CAMERA_FOR_WALK) return;
+        if (results.length > 0 && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            updateWalk(true);
+        } else {
+            notice("Walking needs the camera (ARCore follows your steps through it)", Toast.LENGTH_LONG);
+            setCameraOption("walk_mode", 0);
+            updateCameraButtons();
+        }
     }
 
     /** The gyroscope on or off (the core's setting); it works in camera mode. */
@@ -2012,9 +2119,19 @@ public final class MainActivity extends Activity {
                 + "• Sensitivity 2× turns the camera twice as far as the phone; Smoothing steadies the hands.\n"
                 + "• Looking straight up or down the turn left / right is held (the heading means nothing there).\n\n"
                 + "DRONE\n"
-                + "• 🚁 (in the camera bar and the tools) flies the camera: the left stick flies, the right "
+                + "• The drone button (in the camera bar and the tools) flies the camera: the left stick flies, the right "
                 + "stick looks; with the gyroscope the phone looks around too.\n\n"
-                + "Walking and crouching to move the camera (ARCore) come later.";
+                + "WALKING (ARCore)\n"
+                + "• 🚶 in the camera bar (or 🎛 → Walking). The first time it says what ARCore is and asks for "
+                + "the camera; Google Play Services for AR may be installed.\n"
+                + "• Walk, step sideways, crouch, stand on tiptoe: the camera does the same in the scene. It "
+                + "flies the drone, so the sticks still work.\n"
+                + "• A metre walked moves the camera 1 m (🎛 → Walking: 0.25 m … 20 m, so a room can cross a "
+                + "street). Height: follows you, or fixed for walking only.\n"
+                + "• Keep the gyroscope on to turn by turning the phone.\n"
+                + "• Move the phone slowly at first and point it at something with detail; in the dark or when "
+                + "moving fast ARCore waits (it says why).\n"
+                + "• ARCore is Google's (Google Privacy Policy); the camera's picture is never shown or kept.";
         new PanelBuilder().setTitle("Camera: gestures and gyroscope").setMessage(text)
                 .setPositiveButton("Close", null).show();
     }
@@ -4692,10 +4809,14 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        activityResumed = true;
         if (cameraPanel != null) updateGyro();
+        if (cameraPanel != null) updateWalk(false);
     }
 
     @Override protected void onPause() {
+        activityResumed = false;
+        if (arWalker != null) arWalker.stop();
         stopGyro();
         stopRecording();
         prefs().edit().putFloat(PREF_POLARIZER, NativeBridge.cameraPolarizer(0.0f)).apply();
@@ -4703,6 +4824,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (arWalker != null) arWalker.close();
         stopRecording();
         stopSound();
         closeAllSessions();

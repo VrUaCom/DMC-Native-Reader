@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "dmcresource/camera_control.h"
 #include "dmcresource/spider/camera.h"
 
 using namespace dmcresource;
@@ -349,7 +350,8 @@ int main() {
 
     // Gyroscope: only in camera mode with it on; the first reading is where
     // the phone stands; then the camera turns by what the phone turned
-    // (right grows the yaw, up lowers the pitch), times the sensitivity.
+    // (as the drone's look stick: right lowers the yaw, up raises the
+    // pitch), times the sensitivity.
     {
         assert(!cam::gyro_active() && cam::gyro_turn(0.0F, 0.0F, 0.0F)[0] == 0.0F);
         choose(cam::Key::FinderMode, 1);
@@ -360,22 +362,22 @@ int main() {
         auto turn = cam::gyro_turn(1.0F, 0.1F, 0.0F);
         assert(turn[0] == 0.0F && turn[1] == 0.0F);
         turn = cam::gyro_turn(1.1F, 0.15F, 0.0F);
-        assert(std::abs(turn[0] - 0.1F) < 1e-5F && std::abs(turn[1] + 0.05F) < 1e-5F);
+        assert(std::abs(turn[0] + 0.1F) < 1e-5F && std::abs(turn[1] - 0.05F) < 1e-5F);
         choose_named(cam::Key::GyroSensitivity, "2\xC3\x97");
         turn = cam::gyro_turn(1.2F, 0.15F, 0.0F);
-        assert(std::abs(turn[0] - 0.2F) < 1e-5F);
+        assert(std::abs(turn[0] + 0.2F) < 1e-5F);
         // Across the wrap of the heading, still a small turn.
         cam::gyro_reset();
         (void)cam::gyro_turn(3.1F, 0.0F, 0.0F);
         turn = cam::gyro_turn(-3.1F, 0.0F, 0.0F);
-        assert(std::abs(turn[0] - 2.0F * (6.2831853F - 6.2F)) < 1e-3F);
+        assert(std::abs(turn[0] + 2.0F * (6.2831853F - 6.2F)) < 1e-3F);
         // Smoothing takes a share of the turn per reading.
         choose_named(cam::Key::GyroSensitivity, "1\xC3\x97");
         choose_named(cam::Key::GyroSmoothing, "Medium");
         cam::gyro_reset();
         (void)cam::gyro_turn(0.0F, 0.0F, 0.0F);
         turn = cam::gyro_turn(0.4F, 0.0F, 0.0F);
-        assert(std::abs(turn[0] - 0.1F) < 1e-5F);
+        assert(std::abs(turn[0] + 0.1F) < 1e-5F);
         // The phone's roll tilts the picture only when the horizon follows it.
         cam::gyro_reset();
         choose_named(cam::Key::GyroSmoothing, "Off");
@@ -385,6 +387,30 @@ int main() {
         assert(std::abs(cam::camera_roll() - 0.25F) < 1e-5F);
         assert(cam::viewfinder(nullptr, 300, 300, 1.0F, false, 0).status.find("ROLL +14") != std::string::npos);
         cam::gyro_reset();
+        cam::reset_choices();
+    }
+
+    // Walking: only in camera mode with it on, and only a flying camera
+    // moves: a metre forward facing +z is 100 scene units along +z (times
+    // the scale); the height follows unless it is fixed.
+    {
+        namespace cc = dmcresource::camera;
+        cc::reset();
+        assert(!cam::walk(0.0F, 1.0F, 0.0F, 0.0F));
+        choose(cam::Key::FinderMode, 1);
+        choose(cam::Key::WalkMode, 1);
+        assert(cam::walk_active() && !cam::walk(0.0F, 1.0F, 0.0F, 0.0F));  // not flying
+        cc::enter_fly({0.0F, 0.0F, 0.0F});
+        assert(cam::walk(0.0F, 1.0F, 0.0F, 0.5F));
+        auto eye = cc::current().eye;
+        assert(std::abs(eye.z - 100.0F) < 1e-3F && std::abs(eye.x) < 1e-3F && std::abs(eye.y - 50.0F) < 1e-3F);
+        choose_named(cam::Key::WalkScale, "10 m");
+        choose(cam::Key::WalkHeight, 1);
+        assert(cam::walk(0.0F, 0.0F, 0.0F, 1.0F));
+        assert(std::abs(cc::current().eye.y - 50.0F) < 1e-3F);  // the height is fixed
+        (void)cam::walk(0.0F, 0.1F, 0.0F, 0.0F);
+        assert(std::abs(cc::current().eye.z - 200.0F) < 1e-2F);
+        cc::reset();
         cam::reset_choices();
     }
 

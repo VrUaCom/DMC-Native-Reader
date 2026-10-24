@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 
+#include "dmcresource/camera_control.h"
 #include "dmcresource/demo_session.h"
 
 namespace dmcresource::spider::camera {
@@ -75,6 +76,7 @@ constexpr Shutter kShutters[] = {
 constexpr int kShutterStart = 33;  // 1/60
 constexpr float kPolarizerStrength[] = {0.5F, 0.75F, 1.0F};
 constexpr float kGyroSensitivity[] = {0.5F, 1.0F, 1.5F, 2.0F};
+constexpr float kWalkScale[] = {0.25F, 0.5F, 1.0F, 2.0F, 5.0F, 10.0F, 20.0F};
 constexpr float kGyroFollow[] = {1.0F, 0.5F, 0.25F, 0.12F};  // the share of a turn taken per reading
 constexpr float kPi = 3.14159265F;
 
@@ -214,6 +216,13 @@ std::vector<Setting> build_settings() {
     add(Key::GyroSensitivity, "gyro_sensitivity", gyro, "Sensitivity", {"0.5\xC3\x97", "1\xC3\x97", "1.5\xC3\x97", "2\xC3\x97"}, 1);
     add(Key::GyroSmoothing, "gyro_smoothing", gyro, "Smoothing (steadies the hands)",
         {"Off", "Low", "Medium", "High"}, 2);
+    const char* walking = "Walking (ARCore)";
+    add(Key::WalkMode, "walk_mode", walking,
+        "Walk and crouch to move the camera (ARCore; it flies the drone)", {"Off", "On"}, 0);
+    add(Key::WalkScale, "walk_scale", walking, "A metre walked moves the camera",
+        {"0.25 m", "0.5 m", "1 m", "2 m", "5 m", "10 m", "20 m"}, 2);
+    add(Key::WalkHeight, "walk_height", walking, "Height",
+        {"Follows you (crouch, stand, climb)", "Fixed (walking only)"}, 0);
     return out;
 }
 
@@ -1146,6 +1155,16 @@ GyroState& gyro_state() {
 
 bool gyro_active() noexcept { return finder_on() && choice(Key::GyroMode) == 1; }
 
+bool walk_active() noexcept { return finder_on() && choice(Key::WalkMode) == 1; }
+
+bool walk(float yaw_radians, float forward_m, float right_m, float up_m) noexcept {
+    if (!walk_active()) return false;
+    // A scene unit is a centimetre; the scale makes a room's walk a street's.
+    const float units = 1000.0F / kUnitMm * pick(Key::WalkScale, kWalkScale);
+    const float rise = choice(Key::WalkHeight) == 0 ? up_m * units : 0.0F;
+    return dmcresource::camera::walk_eye(yaw_radians, forward_m * units, right_m * units, rise);
+}
+
 std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexcept {
     if (!gyro_active() || !std::isfinite(heading) || !std::isfinite(elevation) || !std::isfinite(roll)) {
         return {0.0F, 0.0F};
@@ -1169,8 +1188,9 @@ std::array<float, 2> gyro_turn(float heading, float elevation, float roll) noexc
     g.roll = wrap_angle(g.roll + follow * wrap_angle(roll - g.roll));
     g_roll_phone.store(g.roll);
     const bool steep = std::fabs(g.elevation) > 1.3F;
-    // Turning right grows the view's yaw; looking up lowers its pitch.
-    return {steep ? 0.0F : heading_step * sensitivity, -elevation_step * sensitivity};
+    // As the drone's look stick: turning right lowers the yaw, looking up
+    // raises the pitch.
+    return {steep ? 0.0F : -heading_step * sensitivity, elevation_step * sensitivity};
 }
 
 void gyro_reset() noexcept {
@@ -1590,6 +1610,7 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
                            " mm  " + (kelvin == 0 ? std::string("AWB") : std::to_string(kelvin) + " K") + "  " +
                            kStyles[std::clamp(choice(Key::ColourStyle), 0, count(kStyles) - 1)];
         if (gyro_active()) line += "  GYRO";
+        if (walk_active()) line += "  WALK";
         const float roll_degrees = camera_roll() * 57.2957795F;
         if (std::fabs(roll_degrees) >= 0.5F) {
             char text[24];

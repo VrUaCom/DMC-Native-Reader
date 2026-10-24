@@ -30,6 +30,16 @@ void enter_fly(const Vec3& eye) noexcept {
     g_state.eye = eye;
 }
 
+bool walk_eye(float yaw_radians, float forward, float strafe, float rise) noexcept {
+    if (!std::isfinite(yaw_radians) || !std::isfinite(forward) || !std::isfinite(strafe) || !std::isfinite(rise)) {
+        return false;
+    }
+    const std::lock_guard lock{g_mutex};
+    if (!g_state.fly) return false;
+    g_state.eye = fly_move(g_state.eye, yaw_radians, 0.0F, forward, strafe, rise);
+    return true;
+}
+
 void leave_fly(float yaw_radians, float pitch_radians, float framing_distance) noexcept {
     const std::lock_guard lock{g_mutex};
     if (!g_state.fly) return;

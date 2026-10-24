@@ -846,6 +846,19 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraDials(JNIEnv* env, jclass) {
     } catch (...) { return nullptr; }
 }
 
+// Walking (core camera, ARCore in the shell): the phone's steps move the
+// drone's eye; false when it does not walk.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_walkActive(JNIEnv*, jclass) {
+    return dmcresource::spider::camera::walk_active() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_walk(JNIEnv*, jclass, jfloat yaw, jfloat forward, jfloat right,
+                                                   jfloat up) {
+    return dmcresource::spider::camera::walk(yaw, forward, right, up) ? JNI_TRUE : JNI_FALSE;
+}
+
 // Gyroscope (core camera): active in camera mode with it on; a reading of
 // the phone (heading, elevation, roll) gives the camera's turn {yaw, pitch}.
 extern "C" JNIEXPORT jboolean JNICALL
