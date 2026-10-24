@@ -1695,16 +1695,11 @@ public final class DmcRenderView extends View {
                     if (Math.hypot(x - downX, y - downY) > 8.0f * density) claimCamera();
                     float dx = x - lastX;
                     float dy = y - lastY;
-                    if (flyMode) {
-                        // The free camera turns where it stands; what is under
-                        // the finger follows it.
-                        yaw += dx * 0.008f;
-                        pitch += dy * 0.008f;
-                    } else {
-                        // Grab-and-turn: the surface under the finger follows it.
-                        yaw -= dx * 0.008f;
-                        pitch -= dy * 0.008f;
-                    }
+                    // Orbit: grab-and-turn (the surface under the finger follows
+                    // it). The free camera: the finger aims it (right looks
+                    // right, down looks down).
+                    yaw -= dx * 0.008f;
+                    pitch -= dy * 0.008f;
                     pitch = Math.max(-1.55f, Math.min(1.55f, pitch));
                     renderThrottled(false);
                 }
@@ -1907,11 +1902,8 @@ public final class DmcRenderView extends View {
                 final float vx = velocity.getXVelocity();
                 final float vy = velocity.getYVelocity();
                 if (Math.hypot(vx, vy) > 900.0f * density / 2.5f) {
-                    // The free camera turns the other way round (it stands
-                    // still, the world spins past).
-                    final float sign = flyMode ? -1.0f : 1.0f;
-                    spinYaw = sign * vx * 0.008f;
-                    spinPitch = sign * vy * 0.008f * 0.5f;
+                    spinYaw = vx * 0.008f;
+                    spinPitch = vy * 0.008f * 0.5f;
                     spinLastMs = SystemClock.uptimeMillis();
                     postOnAnimation(spinTick);
                 }

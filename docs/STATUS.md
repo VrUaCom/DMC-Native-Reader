@@ -275,6 +275,11 @@ APK verifier.
     - Horizon "World" is the start; "Screen" is the gimbal.
     - The roll is part of the camera's projection on the CPU and the GPU,
       so a rolled frame is drawn at its own size, and the GPU develops it.
+  - v112:
+    - Camera mode is never kept, so the app and opened files start in the
+      standard view.
+    - One finger aims the free camera (right looks right, down looks
+      down).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

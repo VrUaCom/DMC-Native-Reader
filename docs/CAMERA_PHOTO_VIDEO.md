@@ -10,6 +10,8 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 
 ## Where
 
+- Camera mode is a second mode, never kept: the app and every opened file
+  start in the standard view.
 - **Camera mode:** the 📷 button beside ⋮ (top right) goes in, and the
   same button (or ↩) goes back to the scene. Set the scene up, shoot, go
   back, set it up again. In camera mode the two bottom rows (the motion
@@ -42,8 +44,8 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 
 - In camera mode the camera stands at its own eye: the fly camera without
   the sticks. It does not orbit a point.
-  - One finger turns it where it stands; what is under the finger follows
-    the finger.
+  - One finger aims it where it stands: drag right to look right, down to
+    look down.
   - Pinch zooms. Two fingers move it sideways and up/down. Hold one finger
     and slide another to move it forward/back.
   - The gyroscope and walking turn and move it.

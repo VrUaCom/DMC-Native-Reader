@@ -1703,6 +1703,7 @@ public final class MainActivity extends Activity {
     }
 
     private int cameraChoice(String[] row) {
+        if (row[0].equals(CAMERA_MODE_ID)) return cameraModeOn ? 1 : 0;
         final int start = Integer.parseInt(row[CAMERA_START_AT]);
         final String name = prefs().getString(PREF_CAMERA + row[0], null);
         if (name != null) {
@@ -1711,10 +1712,17 @@ public final class MainActivity extends Activity {
         return start;
     }
 
+    // Camera mode is never kept: the app and every opened file start in the
+    // standard view; the 📷 button (or the setting) turns it on for now.
+    private static final String CAMERA_MODE_ID = "finder_mode";
+    private boolean cameraModeOn;
+
     private void applyCameraChoices() {
         final String[][] rows = cameraRows();
         final int[] choices = new int[rows.length];
-        for (int i = 0; i < rows.length; ++i) choices[i] = cameraChoice(rows[i]);
+        for (int i = 0; i < rows.length; ++i) {
+            choices[i] = rows[i][0].equals(CAMERA_MODE_ID) ? (cameraModeOn ? 1 : 0) : cameraChoice(rows[i]);
+        }
         NativeBridge.setCameraChoices(choices);
         NativeBridge.setCameraPolarizer(prefs().getFloat(PREF_POLARIZER, 0.0f));
         if (cameraPanel != null) setCameraUi(NativeBridge.cameraMode());
@@ -1848,7 +1856,7 @@ public final class MainActivity extends Activity {
     /** Camera mode in or out (the core's setting); the bars follow it. */
     private void toggleCameraMode() {
         final boolean on = !NativeBridge.cameraMode();
-        setCameraOption("finder_mode", on ? 1 : 0);
+        setCameraOption(CAMERA_MODE_ID, on ? 1 : 0);
         renderView.renderNow();
         notice(on ? "📷 Camera mode — the 📷 button above goes back to the scene" : "Scene", Toast.LENGTH_SHORT);
     }
@@ -1960,6 +1968,11 @@ public final class MainActivity extends Activity {
     }
 
     private void setCameraOption(String id, int option) {
+        if (id.equals(CAMERA_MODE_ID)) {
+            cameraModeOn = option == 1;
+            applyCameraChoices();
+            return;
+        }
         for (final String[] row : cameraRows()) {
             if (row[0].equals(id) && option >= 0 && option < row.length - CAMERA_OPTIONS_AT) {
                 prefs().edit().putString(PREF_CAMERA + row[0], row[CAMERA_OPTIONS_AT + option]).apply();
@@ -2402,8 +2415,12 @@ public final class MainActivity extends Activity {
             }
             final String[] options = cameraOptions(row);
             final java.util.function.IntConsumer pick = i -> {
-                prefs().edit().putString(PREF_CAMERA + row[0], options[i]).apply();
-                applyCameraChoices();
+                if (row[0].equals(CAMERA_MODE_ID)) {
+                    setCameraOption(CAMERA_MODE_ID, i);
+                } else {
+                    prefs().edit().putString(PREF_CAMERA + row[0], options[i]).apply();
+                    applyCameraChoices();
+                }
                 renderView.renderNow();
             };
             content.addView(cameraSettingRow(row, options, pick));
