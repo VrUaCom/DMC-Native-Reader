@@ -258,6 +258,12 @@ APK verifier.
       instead of round an orbit point.
     - The drone adds the sticks.
     - Leaving camera mode orbits again with the same picture.
+  - v109: performance work starts
+    ([PERFORMANCE.md](PERFORMANCE.md)):
+    - The benchmark prints each frame stage (core `frame_profile`).
+    - The camera passes run on every core: 1080p went from 212 to 69 ms.
+    - No alpha pass after the GPU read back.
+    - A five-step plan.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

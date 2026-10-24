@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/frame_profile.h"
 #include "dmcresource/texture_reencode.h"
 #include "dmcresource/demo_session.h"
 #include "dmcresource/motion/motion_player.h"
@@ -2469,7 +2470,10 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
     }
     if (!session->renderable) return {};
     PreparedView prepared;
-    prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    {
+        const frame_profile::Scope timed{frame_profile::Stage::Prepare};
+        prepare_view(*session, requested_width, requested_height, yaw, pitch, zoom, render_flags, controls, &prepared);
+    }
     prepared.view.depth_out = depth;
     const Mesh& presented =
         prepared.dynamic_presentation

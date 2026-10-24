@@ -1,0 +1,69 @@
+# Performance: where a frame's time goes, and the plan
+
+## What a frame does now (GPU renderer)
+
+1. The render thread takes the session lock and poses the motion (cloth,
+   cutscene).
+2. `prepare_view`: the camera, the presentation mesh, effects, the room.
+3. `build_gpu_frame`: the model's geometry is written down every frame (the
+   room is cached on the GPU).
+4. GLES draws into an offscreen framebuffer (MSAA resolved).
+5. `glReadPixels` reads the whole frame back. The CPU waits for the GPU here.
+6. The CPU draws the lines, markers and labels into the picture. In camera
+   mode, the photo camera develops it (lens, polarizer, colour, noise).
+7. The pixels are copied to a Java buffer, then into a Bitmap, and Android
+   uploads that Bitmap to the GPU again to show it.
+
+The picture goes GPU → CPU → GPU every frame.
+
+## Measuring (v109)
+
+The core's frame profile (`frame_profile.h`) times every stage: pose,
+prepare, GPU build, GPU draw (submitting), read back (the GPU finishing plus
+the read), CPU raster, overlays, camera, copy out. The benchmark
+(Diagnostics → Benchmark) prints the average per frame under its numbers, and
+it now measures the frame the view draws, the camera's included. Run it on
+the phone and the stages say what to do first.
+
+## Done in v109
+
+- The photo camera's passes run on every core: the curves and colour pass,
+  the lens pass, sharpening (the polarizer and the depth of field already
+  did).
+  - The lens pass shares its bilinear taps between channels (one sample a
+    pixel without fringing).
+  - Sharpening is fixed point.
+  - The polarizer's sines come from row and column tables (the light's angle
+    is a row part plus a column part).
+  - On a 4-core desktop a 1080p frame with style, vignetting, noise at ISO
+    12800, sharpening, distortion, fringing and the polarizer takes 69 ms
+    instead of 212 ms.
+- The GPU read back no longer makes a pass over every pixel to set alpha.
+  Alpha is cleared to 1 and masked out of drawing.
+
+## The plan, in order of gain
+
+1. **Asynchronous read back** (pixel pack buffers with fences, two or three
+   in turn). The CPU reads the frame before last while the GPU draws the
+   next, so the stall at step 5 goes away. It costs one frame of latency.
+   Medium work.
+2. **Pipelining the CPU and the GPU.** `GpuViewFrame` is already a snapshot
+   of everything the GPU needs. One thread poses and prepares frame N+1
+   under the session lock while the GL thread draws frame N from its
+   snapshot. Medium work.
+3. **Skinning on the GPU.** The bone matrices go to the vertex shader, and
+   the model's vertices stay on the GPU instead of being rebuilt and
+   uploaded every frame (step 3). Medium-large work.
+4. **The photo camera as a shader.** The curves, colour, vignetting, noise,
+   polarizer and lens run as a fragment pass on the GPU frame. The depth of
+   field reads the GPU's depth texture instead of drawing the whole frame
+   again in software for its depth, which today is the most expensive part
+   of camera mode with the depth of field on. Large work.
+5. **Showing the frame without a round trip.** GLES draws straight into the
+   view's window surface (SurfaceView or TextureView). The HUD, subtitles
+   and viewfinder are drawn by a Canvas view on top, and the lines and
+   labels move to the GPU. Steps 5 to 7 above disappear. Captures (photo,
+   video, RAW) keep the offscreen path. The largest work and the largest
+   gain, especially at 4K–8K view resolutions.
+
+Each step is measured with the benchmark before and after, on the phone.

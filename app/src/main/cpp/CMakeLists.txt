@@ -148,6 +148,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/demo_session.cpp
     modules/module_demo.cpp
     modules/camera_control.cpp
+    modules/frame_profile.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
     modules/module_scripts.cpp

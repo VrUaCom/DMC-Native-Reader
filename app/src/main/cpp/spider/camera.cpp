@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "dmcresource/camera_control.h"
+#include "dmcresource/frame_profile.h"
 #include "dmcresource/demo_session.h"
 
 namespace dmcresource::spider::camera {
@@ -332,6 +333,22 @@ float noise(std::uint32_t h) noexcept {
     return (static_cast<float>(h & 0xFFFFU) + static_cast<float>(h >> 16U)) / 65535.0F - 1.0F;
 }
 
+// Runs rows [0, height) in bands on the machine's cores.
+template <typename Band>
+void in_bands(int height, Band&& band) {
+    const int threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 16);
+    if (threads == 1 || height < 64) {
+        band(0, height);
+        return;
+    }
+    std::vector<std::thread> workers;
+    const int step = (height + threads - 1) / threads;
+    for (int begin = 0; begin < height; begin += step) {
+        workers.emplace_back([&band, begin, end = std::min(height, begin + step)] { band(begin, end); });
+    }
+    for (auto& worker : workers) worker.join();
+}
+
 // The lens pass: distortion and colour fringing, both radial.
 void lens_pass(RgbaImage* image, float k, float fringe) {
     const int w = image->width;
@@ -340,37 +357,55 @@ void lens_pass(RgbaImage* image, float k, float fringe) {
     const float cx = 0.5F * static_cast<float>(w);
     const float cy = 0.5F * static_cast<float>(h);
     const float half_diagonal = std::sqrt(cx * cx + cy * cy);
-    const auto sample = [&](float x, float y, int channel) {
-        x = std::clamp(x, 0.0F, static_cast<float>(w - 1));
-        y = std::clamp(y, 0.0F, static_cast<float>(h - 1));
+    const float max_x = static_cast<float>(w - 1);
+    const float max_y = static_cast<float>(h - 1);
+    // Bilinear taps of one source point: its four texels and weights, so
+    // the channels that share the point share them.
+    struct Taps final {
+        std::size_t i00, i10, i01, i11;
+        float fx, fy;
+    };
+    const auto taps = [&](float x, float y) {
+        x = std::clamp(x, 0.0F, max_x);
+        y = std::clamp(y, 0.0F, max_y);
         const int x0 = static_cast<int>(x);
         const int y0 = static_cast<int>(y);
         const int x1 = std::min(x0 + 1, w - 1);
         const int y1 = std::min(y0 + 1, h - 1);
-        const float fx = x - static_cast<float>(x0);
-        const float fy = y - static_cast<float>(y0);
-        const auto at = [&](int px, int py) {
-            return static_cast<float>(src[(static_cast<std::size_t>(py) * w + px) * 4U + channel]);
-        };
-        const float top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
-        const float bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
-        return top + (bottom - top) * fy;
+        const std::size_t row0 = static_cast<std::size_t>(y0) * w;
+        const std::size_t row1 = static_cast<std::size_t>(y1) * w;
+        return Taps{(row0 + x0) * 4U, (row0 + x1) * 4U, (row1 + x0) * 4U, (row1 + x1) * 4U,
+                    x - static_cast<float>(x0), y - static_cast<float>(y0)};
     };
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const float dx = (static_cast<float>(x) + 0.5F - cx) / half_diagonal;
+    const auto value = [&](const Taps& t, int c) {
+        const float top = src[t.i00 + c] + (static_cast<float>(src[t.i10 + c]) - src[t.i00 + c]) * t.fx;
+        const float bottom = src[t.i01 + c] + (static_cast<float>(src[t.i11 + c]) - src[t.i01 + c]) * t.fx;
+        return static_cast<std::uint8_t>(std::clamp(top + (bottom - top) * t.fy + 0.5F, 0.0F, 255.0F));
+    };
+    const float inv_k = 1.0F / (1.0F + k);
+    in_bands(h, [&](int row_begin, int row_end) {
+        for (int y = row_begin; y < row_end; ++y) {
             const float dy = (static_cast<float>(y) + 0.5F - cy) / half_diagonal;
-            const float r2 = dx * dx + dy * dy;
-            // The corners stay the corners: the source radius is scaled back.
-            const float scale = (1.0F + k * r2) / (1.0F + k);
-            auto* out = &image->pixels[(static_cast<std::size_t>(y) * w + x) * 4U];
-            for (int c = 0; c < 3; ++c) {
-                const float s = scale * (c == 0 ? 1.0F + fringe : c == 2 ? 1.0F - fringe : 1.0F);
-                const float v = sample(cx + dx * s * half_diagonal - 0.5F, cy + dy * s * half_diagonal - 0.5F, c);
-                out[c] = static_cast<std::uint8_t>(std::clamp(v + 0.5F, 0.0F, 255.0F));
+            for (int x = 0; x < w; ++x) {
+                const float dx = (static_cast<float>(x) + 0.5F - cx) / half_diagonal;
+                // The corners stay the corners: the source radius is scaled back.
+                const float scale = (1.0F + k * (dx * dx + dy * dy)) * inv_k;
+                auto* out = &image->pixels[(static_cast<std::size_t>(y) * w + x) * 4U];
+                const auto point = [&](float s) {
+                    return taps(cx + dx * s * half_diagonal - 0.5F, cy + dy * s * half_diagonal - 0.5F);
+                };
+                const Taps middle = point(scale);
+                out[1] = value(middle, 1);
+                if (fringe == 0.0F) {
+                    out[0] = value(middle, 0);
+                    out[2] = value(middle, 2);
+                } else {
+                    out[0] = value(point(scale * (1.0F + fringe)), 0);
+                    out[2] = value(point(scale * (1.0F - fringe)), 2);
+                }
             }
         }
-    }
+    });
 }
 
 void sharpen(RgbaImage* image, float amount) {
@@ -378,19 +413,22 @@ void sharpen(RgbaImage* image, float amount) {
     const int h = image->height;
     if (w < 3 || h < 3) return;
     const std::vector<std::uint8_t> src = image->pixels;
-    for (int y = 1; y + 1 < h; ++y) {
-        for (int x = 1; x + 1 < w; ++x) {
-            const std::size_t i = (static_cast<std::size_t>(y) * w + x) * 4U;
-            for (int c = 0; c < 3; ++c) {
-                const float centre = src[i + c];
-                const float around = (static_cast<float>(src[i - 4 + c]) + src[i + 4 + c] +
-                                      src[i - static_cast<std::size_t>(w) * 4U + c] +
-                                      src[i + static_cast<std::size_t>(w) * 4U + c]) * 0.25F;
-                image->pixels[i + c] =
-                    static_cast<std::uint8_t>(std::clamp(centre + amount * (centre - around) + 0.5F, 0.0F, 255.0F));
+    // Fixed point: the amount in 1/256 steps, the cross of four in quarters.
+    const int gain = static_cast<int>(std::lround(amount * 256.0F));
+    const std::size_t stride = static_cast<std::size_t>(w) * 4U;
+    in_bands(h, [&](int row_begin, int row_end) {
+        for (int y = std::max(1, row_begin); y < std::min(row_end, h - 1); ++y) {
+            const std::size_t row = static_cast<std::size_t>(y) * stride;
+            for (std::size_t i = row + 4U; i < row + stride - 4U; i += 4U) {
+                for (std::size_t c = 0; c < 3U; ++c) {
+                    const int centre = src[i + c];
+                    const int around4 = src[i - 4U + c] + src[i + 4U + c] + src[i - stride + c] + src[i + stride + c];
+                    const int v = centre + ((gain * (4 * centre - around4)) / 1024);
+                    image->pixels[i + c] = static_cast<std::uint8_t>(std::clamp(v, 0, 255));
+                }
             }
         }
-    }
+    });
 }
 
 std::mutex& blur_mutex() {
@@ -434,21 +472,6 @@ std::string clock_text(int seconds) {
 
 std::atomic<float> g_focus{kInfinity};
 
-// Runs rows [0, height) in bands on the machine's cores.
-template <typename Band>
-void in_bands(int height, Band&& band) {
-    const int threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 16);
-    if (threads == 1 || height < 64) {
-        band(0, height);
-        return;
-    }
-    std::vector<std::thread> workers;
-    const int step = (height + threads - 1) / threads;
-    for (int begin = 0; begin < height; begin += step) {
-        workers.emplace_back([&band, begin, end = std::min(height, begin + step)] { band(begin, end); });
-    }
-    for (auto& worker : workers) worker.join();
-}
 
 // The focus distance: a chosen one, or the middle of the frame (the median
 // of what is drawn there).
@@ -721,8 +744,19 @@ void polarizer_pass(RgbaImage* image) {
         const float t = std::clamp((x - a) / (b - a), 0.0F, 1.0F);
         return t * t * (3.0F - 2.0F * t);
     };
+    // The light's angle is a column part plus a row part: sines by table.
+    std::vector<float> column_sin(static_cast<std::size_t>(w));
+    std::vector<float> column_cos(static_cast<std::size_t>(w));
+    for (int x = 0; x < w; ++x) {
+        const float a = 0.5F * (static_cast<float>(x) / w - 0.5F);
+        column_sin[static_cast<std::size_t>(x)] = std::sin(a);
+        column_cos[static_cast<std::size_t>(x)] = std::cos(a);
+    }
     in_bands(h, [&](int row_begin, int row_end) {
         for (int y = row_begin; y < row_end; ++y) {
+            const float row_angle = ring - 0.3F * (static_cast<float>(y) / h - 0.5F);
+            const float row_sin = std::sin(row_angle);
+            const float row_cos = std::cos(row_angle);
             for (int x = 0; x < w; ++x) {
                 auto* p = &image->pixels[(static_cast<std::size_t>(y) * w + x) * 4U];
                 const float r = p[0] / 255.0F;
@@ -736,9 +770,9 @@ void polarizer_pass(RgbaImage* image) {
                 const float sky = std::clamp((b - std::max(r, g)) / std::max(b, 1.0e-3F), 0.0F, 1.0F) *
                                   smooth(0.25F, 0.7F, b);
                 const float polarized = std::clamp(0.15F + 0.85F * glare + 0.6F * sky, 0.0F, 0.95F);
-                const float light_angle = 0.5F * (static_cast<float>(x) / w - 0.5F) +
-                                          0.3F * (static_cast<float>(y) / h - 0.5F);
-                const float s = std::sin(ring - light_angle);
+                // sin(ring - row part - column part) from the tables.
+                const float s = row_sin * column_cos[static_cast<std::size_t>(x)] -
+                                row_cos * column_sin[static_cast<std::size_t>(x)];
                 const float held = strength * polarized * s * s;
                 // Darker by what is held back, the colour deeper by it.
                 float lr = linear[p[0]] * (1.0F - held);
@@ -762,6 +796,7 @@ void polarizer_pass(RgbaImage* image) {
 // of field, the distortion and the colour fringing (a RAW keeps these).
 void optics(RgbaImage* image, float mm, const std::vector<float>* depth) {
     if (!valid_image(image)) return;
+    const frame_profile::Scope timed{frame_profile::Stage::Camera};
     if (choice(Key::FilterPolarizer) == 1) polarizer_pass(image);
     if (depth != nullptr && depth_of_field_on()) depth_of_field(image, *depth, mm, exposure().aperture);
     const float k = choice(Key::LensDistortion) == 1 ? distortion_k(mm) : 0.0F;
@@ -790,6 +825,7 @@ float noise_sigma() noexcept {
 // the style, vignetting, noise and sharpening (a RAW leaves these to the editor).
 void look(RgbaImage* image, std::uint32_t seed) {
     if (!valid_image(image)) return;
+    const frame_profile::Scope timed{frame_profile::Stage::Camera};
     const int w = image->width;
     const int h = image->height;
     const float scale = static_cast<float>(std::max(w, h)) / 1920.0F;
@@ -832,7 +868,8 @@ void look(RgbaImage* image, std::uint32_t seed) {
     const float cx = 0.5F * static_cast<float>(w);
     const float cy = 0.5F * static_cast<float>(h);
     const float inv_r2 = 1.0F / (cx * cx + cy * cy);
-    for (int y = 0; y < h; ++y) {
+    in_bands(h, [&](int row_begin, int row_end) {
+    for (int y = row_begin; y < row_end; ++y) {
         for (int x = 0; x < w; ++x) {
             auto* p = &image->pixels[(static_cast<std::size_t>(y) * w + x) * 4U];
             float r = curve[0][p[0]];
@@ -883,6 +920,7 @@ void look(RgbaImage* image, std::uint32_t seed) {
             p[2] = static_cast<std::uint8_t>(std::clamp(b + 0.5F, 0.0F, 255.0F));
         }
     }
+    });
     const int sharpness = choice(Key::ColourSharpness);
     if (sharpness > 0) sharpen(image, 0.35F * static_cast<float>(sharpness));
 }

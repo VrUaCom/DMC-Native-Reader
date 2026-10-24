@@ -9,6 +9,7 @@
 // those rules come from Core's GpuViewFrame — the shaders only evaluate them
 // per pixel.
 #include "gles_view_backend.h"
+#include "dmcresource/frame_profile.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -16,6 +17,7 @@
 #include <GLES2/gl2ext.h>
 
 #include <algorithm>
+#include <memory>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
@@ -33,6 +35,7 @@ using dmcresource::GpuBatchKind;
 using dmcresource::GpuScreenVertex;
 using dmcresource::GpuVertex;
 using dmcresource::GpuViewFrame;
+namespace frame_profile = dmcresource::frame_profile;
 using dmcresource::ImagePreview;
 using dmcresource::RgbaImage;
 
@@ -597,6 +600,7 @@ private:
     }
 
     bool draw_current(const GpuViewFrame& frame, RgbaImage& image) {
+        auto draw_timer = std::make_unique<frame_profile::Scope>(frame_profile::Stage::GpuDraw);
         ++frame_number_;
         glGetError();
         if (!ensure_target(frame.width, frame.height, frame.options.msaa_samples)) return false;
@@ -612,7 +616,11 @@ private:
         glClearColor(frame.background[0] / 255.0F, frame.background[1] / 255.0F, frame.background[2] / 255.0F, 1.0F);
         glClearDepthf(1.0F);
         glClearStencil(0);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        // The cleared alpha (1) stays: nothing draws into it, so the pixels
+        // come back opaque without a pass over them.
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
         glUseProgram(mesh_program_);
         glUniform4f(u_.proj, frame.projection[0], frame.projection[1], frame.projection[2], frame.projection[3]);
@@ -751,6 +759,9 @@ private:
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
 
+        // Submitting is done; the read back waits for the GPU to finish.
+        draw_timer.reset();
+        const frame_profile::Scope read_timer{frame_profile::Stage::Readback};
         // Resolve and read back: GL row 0 is image row 0 (the projection
         // flips y), so the rows land top-down as RgbaImage stores them.
         GLuint read_fbo = fbo_;
@@ -768,7 +779,7 @@ private:
         image.pixels.resize(static_cast<std::size_t>(frame.width) * static_cast<std::size_t>(frame.height) * 4U);
         glReadPixels(0, 0, frame.width, frame.height, GL_RGBA, GL_UNSIGNED_BYTE, image.pixels.data());
         glBindFramebuffer(GL_FRAMEBUFFER, 0U);
-        for (std::size_t i = 3U; i < image.pixels.size(); i += 4U) image.pixels[i] = 255U;
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         trim_textures();
         return glGetError() == GL_NO_ERROR;
     }

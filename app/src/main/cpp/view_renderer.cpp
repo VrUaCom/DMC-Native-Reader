@@ -1,4 +1,5 @@
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/frame_profile.h"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/raster_card.h"
@@ -1305,6 +1306,7 @@ struct OverlayPen final {
 // Attack shapes, room HITS and the bone hierarchy over the finished picture
 // (no depth test: they stay visible through the model).
 void draw_overlays(const OverlayPen& pen, const HierarchyOverlay* hierarchy) {
+    const frame_profile::Scope timed{frame_profile::Stage::Overlays};
     const ViewState& view = pen.view;
     for (std::size_t i = 0U; i + 1U < view.overlay_lines.size(); i += 2U) {
         pen.line3(view.overlay_lines[i], view.overlay_lines[i + 1U], kAttackCollisionColor[0], kAttackCollisionColor[1],
@@ -2237,8 +2239,11 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         const auto frame = view_frame(mesh, view, image.width, image.height);
         bool drawn = false;
         try {
-            const auto gpu = build_gpu_frame(mesh, image.width, image.height, view, frame,
+            const auto gpu = [&] {
+                const frame_profile::Scope timed{frame_profile::Stage::GpuBuild};
+                return build_gpu_frame(mesh, image.width, image.height, view, frame,
                                               triangle_texture_slots, textures);
+            }();
             drawn = backend->draw(gpu, image);
         } catch (...) {
             drawn = false;
@@ -2247,6 +2252,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
             // The GPU keeps its depth: the software pass gives the same
             // frame's depth when the photo camera asks for it.
             if (view.depth_out != nullptr) {
+                const frame_profile::Scope timed{frame_profile::Stage::CpuRaster};
                 (void)render_view_software(mesh, image.width, image.height, view, nullptr,
                                            triangle_texture_slots, textures);
             }
@@ -2258,6 +2264,7 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         g_gpu_failures.fetch_add(1U);
     }
     g_cpu_frames.fetch_add(1U);
+    const frame_profile::Scope timed{frame_profile::Stage::CpuRaster};  // overlays included
     return render_view_software(mesh, width, height, view, hierarchy, triangle_texture_slots, textures);
 }
 

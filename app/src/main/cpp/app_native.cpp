@@ -46,6 +46,7 @@
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/view_benchmark.h"
+#include "dmcresource/frame_profile.h"
 #include "android/gles_view_backend.h"
 
 #ifndef DMC_NATIVE_READER_BUILD_SHA
@@ -676,10 +677,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
     Session* session = from_handle(handle);
     if (session == nullptr || buffer == nullptr) return 0;
     try {
+        namespace profile = dmcresource::frame_profile;
         jint status = 1;
-        if (std::isfinite(motion_frame) &&
-            !dmcresource::motion::apply_motion_frame(session, motion_frame)) {
-            status = 2;
+        {
+            const profile::Scope timed{profile::Stage::Pose};
+            if (std::isfinite(motion_frame) && !dmcresource::motion::apply_motion_frame(session, motion_frame)) {
+                status = 2;
+            }
         }
         const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
         // The viewfinder, when it is on, shows the lens and the look.
@@ -693,7 +697,11 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
             static_cast<std::size_t>(capacity) < image.pixels.size()) {
             return 0;
         }
-        std::memcpy(out, image.pixels.data(), image.pixels.size());
+        {
+            const profile::Scope timed{profile::Stage::CopyOut};
+            std::memcpy(out, image.pixels.data(), image.pixels.size());
+        }
+        profile::frame_done();
         return status;
     } catch (...) { return 0; }
 }
@@ -1907,6 +1915,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
         }
         dmcresource::ViewBenchmarkOptions options;
         options.seconds = std::clamp(static_cast<double>(seconds), 1.0, 120.0);
+        dmcresource::frame_profile::reset();
         result = dmcresource::run_view_benchmark(options, [&](int index) {
             // The lock is taken per frame, as the render thread does, so the
             // UI thread is never kept waiting for the whole run.
@@ -1920,16 +1929,22 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
                     const float span = end_frame - loop_start;
                     frame = span > 0.0F ? loop_start + std::fmod(frame - end_frame, span) : end_frame;
                 }
+                const dmcresource::frame_profile::Scope timed{dmcresource::frame_profile::Stage::Pose};
                 (void)dmcresource::motion::apply_motion_frame(session, frame);
             }
-            const auto image = dmcresource::render_session(
+            // The frame the view draws: through the camera when camera mode is on.
+            const auto image = dmcresource::spider::camera::render_view_frame(
                 session, width, height, dmcresource::benchmark_yaw(yaw, index), pitch, zoom,
                 static_cast<std::uint32_t>(render_flags), controls);
             if (image.pixels.empty()) return false;
             out_width = image.width;
             out_height = image.height;
             pixels.resize(image.pixels.size());
-            std::memcpy(pixels.data(), image.pixels.data(), image.pixels.size());
+            {
+                const dmcresource::frame_profile::Scope timed{dmcresource::frame_profile::Stage::CopyOut};
+                std::memcpy(pixels.data(), image.pixels.data(), image.pixels.size());
+            }
+            dmcresource::frame_profile::frame_done();
             return true;
         });
         // Leave the pose where the run started.
@@ -1941,8 +1956,11 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
         result.stopped = true;
     }
     try {
-        const auto text = dmcresource::format_view_benchmark(
+        auto text = dmcresource::format_view_benchmark(
             result, dmcresource::view_renderer_description(), out_width, out_height, to_utf8(env, settings));
+        // Where the time went, stage by stage (warm-up frames included).
+        const auto stages = dmcresource::frame_profile::per_frame_line();
+        if (!stages.empty()) text += "\n" + stages;
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF("Benchmark failed."); }
 }
