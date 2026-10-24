@@ -365,6 +365,11 @@ struct ViewControls final {
     // it instead of the framed model.
     bool has_pivot{};
     Vec3 pivot{};
+    // The photo camera (spider/camera.h): a fixed lens replaces the zoom (the
+    // cutscene camera's too) when > 0, and a picture of another shape than
+    // the view scales it so it frames what the viewfinder shows.
+    float lens_zoom{};
+    float zoom_scale{1.0F};
 };
 
 // World position of the camera of that view (the start of a fly camera).

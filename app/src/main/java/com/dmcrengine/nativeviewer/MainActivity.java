@@ -876,6 +876,7 @@ public final class MainActivity extends Activity {
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
         NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
+        applyCameraChoices();
         NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
                 p.getInt(SET_GPU_ANISOTROPY, 8));
         final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
@@ -1439,8 +1440,8 @@ public final class MainActivity extends Activity {
                     Toast.LENGTH_SHORT);
         }
 
-        @Override public void onScreenshot(Bitmap image) {
-            saveScreenshot(image);
+        @Override public void onTakePicture() {
+            takePicture();
         }
 
         @Override public void onGestureNotice(String text) {
@@ -1623,23 +1624,138 @@ public final class MainActivity extends Activity {
         builder.show();
     }
 
-    /** The ⋮ picture square: the same PNG as the three-finger tap. */
+    // ---- Photo and video camera: the core plans every picture and video
+    // (spider/camera.h); this shell keeps the chosen options, counts the
+    // timer down, saves the files and runs the encoder.
+
+    private static final String PREF_CAMERA = "camera_";
+    private String[][] cameraRows;
+
+    /** The core's camera settings: {id, section, label, start, options...} per row. */
+    private String[][] cameraRows() {
+        if (cameraRows == null) {
+            final String[] rows = NativeBridge.cameraSettings();
+            cameraRows = new String[rows == null ? 0 : rows.length][];
+            for (int i = 0; i < cameraRows.length; ++i) cameraRows[i] = rows[i].split("\t", -1);
+        }
+        return cameraRows;
+    }
+
+    private int cameraChoice(String[] row) {
+        final int start = Integer.parseInt(row[3]);
+        final int value = prefs().getInt(PREF_CAMERA + row[0], start);
+        return value >= 0 && value < row.length - 4 ? value : start;
+    }
+
+    private void applyCameraChoices() {
+        final String[][] rows = cameraRows();
+        final int[] choices = new int[rows.length];
+        for (int i = 0; i < rows.length; ++i) choices[i] = cameraChoice(rows[i]);
+        NativeBridge.setCameraChoices(choices);
+    }
+
+    /** The camera's settings window: every setting by section, and the starting values. */
+    private void showCameraSettings() {
+        final PanelRef dialog = new PanelRef();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(24));
+        content.addView(hint("📷 takes a picture (also the three-finger tap), 🎥 records a video; both show the "
+                + "view without the interface, through this lens and with this look. The viewfinder shows "
+                + "it live, with the frame of the picture or the video."));
+        String section = null;
+        for (final String[] row : cameraRows()) {
+            if (!row[1].equals(section)) {
+                section = row[1];
+                content.addView(sectionTitle(section));
+            }
+            final String[] options = java.util.Arrays.copyOfRange(row, 4, row.length);
+            content.addView(choiceRow(row[2], options, cameraChoice(row), i -> {
+                prefs().edit().putInt(PREF_CAMERA + row[0], i).apply();
+                applyCameraChoices();
+                renderView.renderNow();
+            }));
+        }
+        dialog.dialog = showPanel("Camera: picture and video", content, null, "Starting values", () -> {
+            final android.content.SharedPreferences.Editor editor = prefs().edit();
+            for (final String[] row : cameraRows()) editor.remove(PREF_CAMERA + row[0]);
+            editor.apply();
+            applyCameraChoices();
+            renderView.renderNow();
+            notice("Camera: starting values", Toast.LENGTH_SHORT);
+            showCameraSettings();
+        });
+    }
+
+    private boolean pictureTimerRunning;
+
+    /** The ⋮ picture square and the three-finger tap: as the camera settings say. */
     private void takePicture() {
-        final Bitmap image = renderView.snapshot();
+        if (pictureTimerRunning) return;
+        final int[] view = renderView.captureViewSize();
+        final int[] plan = NativeBridge.cameraPlan(0, view[0], view[1]);
+        if (plan == null) return;
+        final int timer = plan[7];
+        if (timer <= 0) {
+            shoot(plan, Math.max(1, plan[8]));
+            return;
+        }
+        pictureTimerRunning = true;
+        for (int left = timer; left > 0; --left) {
+            final int shown = left;
+            renderView.postDelayed(() -> notice("⏱ " + shown, Toast.LENGTH_SHORT), (timer - left) * 1000L);
+        }
+        renderView.postDelayed(() -> {
+            pictureTimerRunning = false;
+            final int[] now = renderView.captureViewSize();
+            final int[] current = NativeBridge.cameraPlan(0, now[0], now[1]);
+            if (current != null) shoot(current, Math.max(1, current[8]));
+        }, timer * 1000L);
+    }
+
+    /** One picture, then the rest of a burst a quarter second apart. */
+    private void shoot(int[] plan, int left) {
+        final Bitmap image = renderView.capturePhoto(plan);
         if (image == null) {
             notice("Nothing to take a picture of", Toast.LENGTH_SHORT);
             return;
         }
-        saveScreenshot(image);
+        savePicture(image, plan[2], plan[3]);
+        if (left > 1) renderView.postDelayed(() -> shoot(plan, left - 1), 250L);
     }
 
-    /** Starts an MP4 of what the view shows (no sound); the same square stops it. */
+    private long recordingStartMs;
+    private final Runnable recordingClock = new Runnable() {
+        @Override public void run() {
+            if (recorder == null) return;
+            final int seconds = (int) ((android.os.SystemClock.uptimeMillis() - recordingStartMs) / 1000L);
+            if (recordingLimit > 0 && seconds >= recordingLimit) {
+                stopRecording();
+                return;
+            }
+            renderView.setRecordedSeconds(seconds);
+            renderView.postDelayed(this, 1000L);
+        }
+    };
+    private int recordingLimit;
+
+    /** Starts a video as the camera settings say (no sound); the same square stops it. */
     private void startRecording() {
+        final int[] view = renderView.captureViewSize();
+        final int[] plan = NativeBridge.cameraPlan(1, view[0], view[1]);
+        if (plan == null) return;
         try {
-            recorder = ViewRecorder.start(this, renderView.getWidth(), renderView.getHeight(), renderView::drawCapture);
-            notice("\uD83C\uDFA5 Recording — ⋮ ⏹ stops it", Toast.LENGTH_SHORT);
+            NativeBridge.beginVideo();
+            renderView.setRecording(plan[0], plan[1], plan[9] != 0);
+            recorder = ViewRecorder.start(this, plan, renderView::drawCapture);
+            recordingLimit = plan[6];
+            recordingStartMs = android.os.SystemClock.uptimeMillis();
+            renderView.postDelayed(recordingClock, 1000L);
+            notice("🎥 Recording " + plan[0] + "×" + plan[1] + " " + plan[4] + " fps — ⋮ ⏹ stops it",
+                    Toast.LENGTH_SHORT);
         } catch (java.io.IOException | RuntimeException error) {
             recorder = null;
+            renderView.setRecording(0, 0, false);
             notice("Recording failed: " + error.getMessage(), Toast.LENGTH_LONG);
         }
     }
@@ -1648,27 +1764,40 @@ public final class MainActivity extends Activity {
         final ViewRecorder current = recorder;
         recorder = null;
         if (current == null) return;
-        current.stop(saved -> notice(saved != null ? "\uD83C\uDFA5 Saved " + saved : "Recording failed",
+        renderView.removeCallbacks(recordingClock);
+        renderView.setRecording(0, 0, false);
+        current.stop(saved -> notice(saved != null ? "🎥 Saved " + saved : "Recording failed",
                 Toast.LENGTH_LONG));
     }
 
-    /** PNG into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
-    private void saveScreenshot(Bitmap image) {
-        final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
-                .format(new java.util.Date()) + ".png";
+    /**
+     * A picture into Pictures/DMC Native Reader (Android 10+) or the app's picture folder, as
+     * format 0 PNG, 1 JPEG (quality), 2 WebP lossless.
+     */
+    @SuppressWarnings("deprecation")
+    private void savePicture(Bitmap image, int format, int quality) {
+        final String extension = format == 1 ? ".jpg" : format == 2 ? ".webp" : ".png";
+        final String mime = format == 1 ? "image/jpeg" : format == 2 ? "image/webp" : "image/png";
+        final Bitmap.CompressFormat compress = format == 1 ? Bitmap.CompressFormat.JPEG
+                : format == 2 ? (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                        ? Bitmap.CompressFormat.WEBP_LOSSLESS : Bitmap.CompressFormat.WEBP)
+                : Bitmap.CompressFormat.PNG;
+        final int level = format == 1 ? quality : 100;
+        final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US)
+                .format(new java.util.Date()) + extension;
         new Thread(() -> {
             String where = null;
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     final android.content.ContentValues values = new android.content.ContentValues();
                     values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name);
-                    values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png");
+                    values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime);
                     values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DMC Native Reader");
                     final Uri target = getContentResolver().insert(
                             android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
                     if (target != null) {
                         try (OutputStream out = getContentResolver().openOutputStream(target)) {
-                            if (out != null && image.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                            if (out != null && image.compress(compress, level, out)) {
                                 where = "Pictures/DMC Native Reader/" + name;
                             }
                         }
@@ -1678,15 +1807,17 @@ public final class MainActivity extends Activity {
                     if (dir != null && (dir.isDirectory() || dir.mkdirs())) {
                         final File file = new File(dir, name);
                         try (OutputStream out = new java.io.FileOutputStream(file)) {
-                            if (image.compress(Bitmap.CompressFormat.PNG, 100, out)) where = file.getPath();
+                            if (image.compress(compress, level, out)) where = file.getPath();
                         }
                     }
                 }
             } catch (Exception ignored) {
                 where = null;
             }
+            final String size = image.getWidth() + "×" + image.getHeight();
+            image.recycle();
             final String saved = where;
-            runOnUiThread(() -> notice(saved != null ? "📸 Saved " + saved : "Screenshot failed",
+            runOnUiThread(() -> notice(saved != null ? "📸 Saved " + saved + " (" + size + ")" : "Picture failed",
                     Toast.LENGTH_LONG));
         }).start();
     }
@@ -1841,6 +1972,7 @@ public final class MainActivity extends Activity {
             case CompanionMenu.STAGE_OTHER: chooseStagedAssets(REQUEST_STAGE_OTHER, true); break;
             case CompanionMenu.DIAGNOSTICS: showDiagnosticsDialog(); break;
             case CompanionMenu.PHOTO: takePicture(); break;
+            case CompanionMenu.CAMERA_SETTINGS: showCameraSettings(); break;
             case CompanionMenu.VIDEO: if (recorder == null) startRecording(); else stopRecording(); break;
             default: handleOutcome(NativeBridge.runCompanionAction(session, id)); break;
         }

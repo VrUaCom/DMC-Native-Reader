@@ -30,6 +30,7 @@
 #include "dmcresource/camera_control.h"
 #include "dmcresource/demo_session.h"
 #include "dmcresource/spider/collision_report.h"
+#include "dmcresource/spider/camera.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/spider/app_info.h"
 #include "dmcresource/spider/companion_menu.h"
@@ -681,7 +682,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
             status = 2;
         }
         const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
-        const auto image = dmcresource::render_session(
+        // The viewfinder, when it is on, shows the lens and the look.
+        const auto image = dmcresource::spider::camera::render_view_frame(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
         if (image.width != requested_width || image.height != requested_height) return 0;
@@ -694,6 +696,137 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
         std::memcpy(out, image.pixels.data(), image.pixels.size());
         return status;
     } catch (...) { return 0; }
+}
+
+// The photo and video camera (core spider/camera.h). Settings: one row per
+// setting, "id\tsection\tlabel\tstart\toption\toption...".
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraSettings(JNIEnv* env, jclass) {
+    try {
+        const auto& list = dmcresource::spider::camera::settings();
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(list.size()), env->FindClass("java/lang/String"), nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            const auto& s = list[i];
+            std::string row = s.id + "\t" + s.section + "\t" + s.label + "\t" + std::to_string(s.start);
+            for (const auto& option : s.options) row += "\t" + option;
+            jstring text = env->NewStringUTF(row.c_str());
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), text);
+            env->DeleteLocalRef(text);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// The chosen option of every setting, in cameraSettings() order.
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setCameraChoices(JNIEnv* env, jclass, jintArray choices) {
+    try {
+        std::vector<int> values;
+        if (choices != nullptr) {
+            const jsize n = env->GetArrayLength(choices);
+            values.resize(static_cast<std::size_t>(n));
+            env->GetIntArrayRegion(choices, 0, n, reinterpret_cast<jint*>(values.data()));
+        }
+        dmcresource::spider::camera::set_choices(values);
+    } catch (...) {}
+}
+
+// A picture (kind 0) or a video (1) of a view of that size: {width, height,
+// format, quality / bits per second, fps, key frame ms, limit s, timer s,
+// burst, subtitles}.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraPlan(JNIEnv* env, jclass, jint kind, jint view_width,
+                                                         jint view_height) {
+    namespace cam = dmcresource::spider::camera;
+    const auto p = cam::plan(kind == 1 ? cam::Kind::Video : cam::Kind::Photo, view_width, view_height);
+    const jint values[10] = {p.width, p.height, p.format, p.quality, p.fps, p.keyframe_ms,
+                             p.limit_seconds, p.timer_seconds, p.burst, p.subtitles ? 1 : 0};
+    jintArray out = env->NewIntArray(10);
+    if (out != nullptr) env->SetIntArrayRegion(out, 0, 10, values);
+    return out;
+}
+
+// A picture into a bitmap of cameraPlan's size: the view's camera framed for
+// the picture's shape, developed with the settings.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_renderCapture(
+        JNIEnv* env, jclass, jlong handle, jint kind, jint view_width, jint view_height, jfloat yaw,
+        jfloat pitch, jfloat zoom, jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
+        jboolean follow, jfloat dolly, jobject target) {
+    namespace cam = dmcresource::spider::camera;
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return JNI_FALSE;
+    try {
+        const auto image = cam::render_capture(session, kind == 1 ? cam::Kind::Video : cam::Kind::Photo,
+                                               view_width, view_height, yaw, pitch, zoom,
+                                               static_cast<std::uint32_t>(render_flags),
+                                               view_controls(pan_x, pan_y, room_yaw, follow, dolly));
+        return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
+    } catch (...) { return JNI_FALSE; }
+}
+
+// A video frame on the render thread, like renderToBuffer at cameraPlan(1)'s
+// size; the buffer holds width * height * 4 bytes.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_renderVideoFrame(
+        JNIEnv* env, jclass, jlong handle, jint view_width, jint view_height, jfloat yaw, jfloat pitch,
+        jfloat zoom, jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow,
+        jfloat dolly, jfloat motion_frame, jobject buffer) {
+    namespace cam = dmcresource::spider::camera;
+    const SessionLock jni_lock{session_mutex()};
+    Session* session = from_handle(handle);
+    if (session == nullptr || buffer == nullptr) return 0;
+    try {
+        jint status = 1;
+        if (std::isfinite(motion_frame) && !dmcresource::motion::apply_motion_frame(session, motion_frame)) {
+            status = 2;
+        }
+        const auto p = cam::plan(cam::Kind::Video, view_width, view_height);
+        const auto image = cam::render_capture(session, cam::Kind::Video, view_width, view_height, yaw, pitch,
+                                               zoom, static_cast<std::uint32_t>(render_flags),
+                                               view_controls(pan_x, pan_y, room_yaw, follow, dolly));
+        if (image.width != p.width || image.height != p.height) return 0;
+        auto* out = static_cast<std::uint8_t*>(env->GetDirectBufferAddress(buffer));
+        const auto capacity = env->GetDirectBufferCapacity(buffer);
+        if (out == nullptr || capacity < 0 || static_cast<std::size_t>(capacity) < image.pixels.size()) return 0;
+        std::memcpy(out, image.pixels.data(), image.pixels.size());
+        return status;
+    } catch (...) { return 0; }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_beginVideo(JNIEnv*, jclass) {
+    dmcresource::spider::camera::begin_video();
+}
+
+// What the viewfinder draws over the view: {float[] {shown, x, y, w, h,
+// then x0, y0, x1, y1 per grid line}, the settings line}.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_viewfinder(JNIEnv* env, jclass, jlong handle, jint width,
+                                                         jint height, jfloat zoom, jboolean recording,
+                                                         jint seconds) {
+    try {
+        dmcresource::spider::camera::Finder finder;
+        {
+            const SessionLock jni_lock{session_mutex()};
+            finder = dmcresource::spider::camera::viewfinder(from_handle(handle), width, height, zoom,
+                                                              recording == JNI_TRUE, seconds);
+        }
+        std::vector<jfloat> numbers{finder.shown ? 1.0F : 0.0F, finder.frame.x, finder.frame.y,
+                                    finder.frame.width, finder.frame.height};
+        for (const auto& line : finder.lines) numbers.insert(numbers.end(), line.begin(), line.end());
+        jobjectArray out = env->NewObjectArray(2, env->FindClass("java/lang/Object"), nullptr);
+        if (out == nullptr) return nullptr;
+        jfloatArray floats = env->NewFloatArray(static_cast<jsize>(numbers.size()));
+        if (floats == nullptr) return nullptr;
+        env->SetFloatArrayRegion(floats, 0, static_cast<jsize>(numbers.size()), numbers.data());
+        env->SetObjectArrayElement(out, 0, floats);
+        jstring status = env->NewStringUTF(finder.status.c_str());
+        env->SetObjectArrayElement(out, 1, status);
+        return out;
+    } catch (...) { return nullptr; }
 }
 
 // Camera distance (model units) at dolly 0, for the gesture readout; 0 when

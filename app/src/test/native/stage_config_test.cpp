@@ -396,9 +396,11 @@ int main() {
             assert(has_row(act::Companion::StageConfigLoad) && has_row(act::Companion::StageConfigToggle) &&
                    has_row(act::Companion::StageConfigRemove) && has_row(act::Companion::BrowseStagePac));
             assert(!has_row(act::Companion::AddPac));
-            // Squares: settings, gestures. Rows: Open and Diagnostics first
-            // (every file has them), then the stage's; one browser row.
-            assert(companions.shortcuts.size() == 2U && !companions.shortcuts[0].icon.empty());
+            // Squares: settings, gestures, the camera's settings. Rows: Open
+            // and Diagnostics first (every file has them), then the stage's;
+            // one browser row.
+            assert(companions.shortcuts.size() == 3U && !companions.shortcuts[0].icon.empty());
+            assert(companions.shortcuts[2].id == static_cast<int>(act::Companion::CameraSettings));
             assert(companions.rows[0].id == static_cast<int>(act::Companion::OpenFile) &&
                    companions.rows[1].id == static_cast<int>(act::Companion::Diagnostics));
             assert(has_row(act::Companion::StageEffects) && companions.more.empty());

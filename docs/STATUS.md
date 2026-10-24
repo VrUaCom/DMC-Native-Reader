@@ -200,12 +200,21 @@ APK verifier.
 - ✅ UV for a stage (v99): an opened st*.pac has the UV tool; the UV gallery
   shows the stage mesh's UVs per texture (st006: 13 maps, st002: 25).
 - ✅ Picture and video from the ⋮ menu (v99): two squares, 📷 *Take a
-  picture* (the same PNG as the three-finger tap, now with the subtitle) and
-  🎥 *Record a video* (⏹ *Stop recording* while it runs). The video is
-  H.264 MP4 at 30 fps, the long side at most 1280, no sound, saved to
-  Movies/DMC Native Reader (Android 10+; else the app's movie folder). It
-  records the view and its subtitle, not the panels; leaving the app stops
-  it.
+  picture* (the same as the three-finger tap) and 🎥 *Record a video* (⏹
+  *Stop recording* while it runs, no sound; leaving the app stops it).
+- ✅ Photo and video camera (v100, core `spider/camera.h`): 🎛 *Camera
+  settings* in ⋮.
+  - Picture: file, quality, size up to 8K, shape, self-timer, burst.
+  - Video: size up to 4K, shape, frame rate, bit rate, H.264/H.265, key
+    frames, a time limit, motion blur.
+  - Lens: focal length, aperture, vignetting, distortion, fringing.
+  - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
+    noise.
+  - Colour: white balance in kelvin, picture styles, contrast, saturation,
+    sharpness.
+  - A live viewfinder: the frame, a grid and the settings line.
+  - Every setting starts at a value that leaves the picture as rendered.
+  - [Details](CAMERA_PHOTO_VIDEO.md).
   - Resolution adds 2K (2048), 4K (3840), 5K (5120), 6K (6144) and 8K (7680)
     px on the long side. They render larger than the screen, and are shown
     by the software canvas (a bitmap over 100 MB or 4096 px cannot go to the GPU).

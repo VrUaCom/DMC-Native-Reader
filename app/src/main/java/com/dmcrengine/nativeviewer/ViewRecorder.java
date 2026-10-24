@@ -24,9 +24,10 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 /**
- * Records what the view shows into an MP4 (H.264, no sound): Movies/DMC
- * Native Reader on Android 10+, else the app's movie folder. The frames are
- * drawn on the main thread at 30 a second; a worker thread writes them out.
+ * Records the view's camera into an MP4 (no sound) as the core's camera plans
+ * it (size, codec, bit rate, frame rate, key frames): Movies/DMC Native
+ * Reader on Android 10+, else the app's movie folder. The frames are drawn on
+ * the main thread at the frame rate; a worker thread writes them out.
  */
 final class ViewRecorder {
     /** Draws one frame of the view at the given size. */
@@ -34,8 +35,6 @@ final class ViewRecorder {
         void drawCapture(Canvas canvas, int width, int height);
     }
 
-    private static final int FRAME_MS = 33;
-    private static final int LONG_SIDE = 1280;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ContentResolver resolver;
@@ -48,6 +47,7 @@ final class ViewRecorder {
     private final String where;
     private final int width;
     private final int height;
+    private final int frameMs;
     private Thread drain;
     private boolean running;
     private volatile int samples;
@@ -56,12 +56,12 @@ final class ViewRecorder {
         @Override public void run() {
             if (!running) return;
             frame();
-            main.postDelayed(this, FRAME_MS);
+            main.postDelayed(this, frameMs);
         }
     };
 
     private ViewRecorder(ContentResolver resolver, Source source, MediaCodec codec, Surface surface, MediaMuxer muxer,
-                         ParcelFileDescriptor descriptor, Uri uri, String where, int width, int height) {
+                         ParcelFileDescriptor descriptor, Uri uri, String where, int width, int height, int fps) {
         this.resolver = resolver;
         this.source = source;
         this.codec = codec;
@@ -72,14 +72,29 @@ final class ViewRecorder {
         this.where = where;
         this.width = width;
         this.height = height;
+        this.frameMs = Math.max(1, Math.round(1000.0f / Math.max(1, fps)));
     }
 
-    /** Starts a recording of a view this big; throws when the device cannot. */
-    static ViewRecorder start(Context context, int viewWidth, int viewHeight, Source source) throws IOException {
-        // The long side at most 1280, both sides a multiple of 16 (what every encoder takes).
-        final float scale = Math.min(1.0f, (float) LONG_SIDE / Math.max(1, Math.max(viewWidth, viewHeight)));
-        final int width = Math.max(16, Math.round(viewWidth * scale) / 16 * 16);
-        final int height = Math.max(16, Math.round(viewHeight * scale) / 16 * 16);
+    /**
+     * Starts a recording as NativeBridge.cameraPlan(1, ...) says ({width, height, codec, bits per
+     * second, fps, key frame ms, ...}); throws when the device cannot.
+     */
+    static ViewRecorder start(Context context, int[] plan, Source source) throws IOException {
+        final int width = plan[0];
+        final int height = plan[1];
+        final String mime = plan[2] == 1 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
+        final MediaFormat format = MediaFormat.createVideoFormat(mime, width, height);
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, plan[3]);
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, plan[4]);
+        format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, plan[5] / 1000.0f);
+        // An encoder that takes this size, codec and rate, or a clear no.
+        final String encoder = new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                .findEncoderForFormat(format);
+        if (encoder == null) {
+            throw new IOException("this phone has no " + (plan[2] == 1 ? "H.265" : "H.264") + " encoder for "
+                    + width + "\u00d7" + height + " at " + plan[4] + " fps");
+        }
         final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
                 .format(new java.util.Date()) + ".mp4";
         final ContentResolver resolver = context.getContentResolver();
@@ -111,17 +126,12 @@ final class ViewRecorder {
         }
         MediaCodec codec = null;
         try {
-            final MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-            format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-            format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(2_000_000, width * height * 8));
-            format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
-            format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
-            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            codec = MediaCodec.createByCodecName(encoder);
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             final Surface surface = codec.createInputSurface();
             codec.start();
             final ViewRecorder recorder = new ViewRecorder(resolver, source, codec, surface, muxer, descriptor, uri,
-                    where, width, height);
+                    where, width, height, plan[4]);
             recorder.begin();
             return recorder;
         } catch (IOException | RuntimeException error) {

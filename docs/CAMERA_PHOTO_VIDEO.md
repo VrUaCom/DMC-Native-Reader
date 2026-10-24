@@ -1,0 +1,87 @@
+# Photo and video camera
+
+The reader has a photo camera and a video camera for the view: the picture
+without the interface, through a lens and with a look of its own. The core
+owns all of it (`spider/camera.h`, `spider/camera.cpp`): every setting with
+its starting value, the sizes, the framing, the lens, the exposure, the
+colour and the viewfinder. The Android shell keeps the chosen options
+(SharedPreferences `camera_<id>`), lays the settings window out, counts the
+self-timer down, saves the files and runs the encoder (`ViewRecorder`).
+
+## Where
+
+- ⋮ menu squares: 📷 *Take a picture*, 🎥 *Record a video* (⏹ *Stop
+  recording* while it runs), 🎛 *Camera settings* (always there).
+- The three-finger tap takes the same picture as 📷.
+- Pictures go to `Pictures/DMC Native Reader`, videos to `Movies/DMC Native
+  Reader` (Android 10+; older systems: the app's own folders). Videos have no
+  sound.
+
+## Settings (starting value in bold)
+
+| Section | Setting | Options |
+|---|---|---|
+| Picture | File | **PNG**, JPEG, WebP lossless |
+| | JPEG quality | 100, **95**, 90, 85, 75, 60 |
+| | Size (long side) | **As the view**, 1280, 1920, 2560, 3840, 5120, 6144, 7680 (8K) |
+| | Shape | **As the view**, 16:9, 3:2, 4:3, 1:1, 21:9, 9:16, 2:3 |
+| | Self-timer | **Off**, 2, 5, 10 s |
+| | Shots per press | **1**, 3, 5, 10 (a quarter second apart) |
+| | Subtitles in the picture | **Show**, Hide |
+| Video | Size | 720p, **1080p**, 1440p, 2160p (the short side; the long side at most 4096) |
+| | Shape | As the view, **16:9**, 4:3, 1:1, 21:9, 9:16 |
+| | Frame rate | 24, 25, **30**, 50, 60 |
+| | Bit rate | **Auto** (0.12 bit per pixel for H.264, 0.07 for H.265), 4 … 100 Mbit/s |
+| | Codec | **H.264**, H.265 |
+| | Key frame every | 0.5, **1**, 2, 5 s |
+| | Stop after | **No limit**, 15 s, 30 s, 1, 5, 10 min |
+| | Motion blur | **Off**, by the shutter (the frames before blend in) |
+| | Subtitles in the video | **Show**, Hide |
+| Lens | Focal length (full frame) | **As the view (pinch)**, 14 … 200 mm |
+| | Aperture | f/1.4 … **f/4** … f/22 |
+| | Vignetting | **Off**, by the aperture, strong |
+| | Distortion | **Off**, by the focal length (barrel when wide, pincushion when long) |
+| | Colour fringing | **Off**, weak, strong |
+| Exposure | Mode | **Auto** (the rendered picture, moved by the compensation), Manual |
+| | ISO | **Auto**, 50 … 25600 |
+| | Shutter | 1/8000 … **1/60** … 1 s |
+| | Compensation | −3 … **0** … +3 EV |
+| | Highlights | **Clip**, soft roll-off |
+| | Sensor noise | Off, **by the ISO** (none at ISO 100), film grain |
+| Colour | White balance | **As rendered**, 5500, 6500, 7500, 3200, 4000, 5800, 2000, 10000 K |
+| | Picture style | **Standard**, Vivid, Neutral, Monochrome, Sepia, Film, Cinema |
+| | Contrast, saturation | −2 … **0** … +2 |
+| | Sharpness | **Off**, low, medium, high |
+| Viewfinder | Viewfinder in the view | **Off**, On (the lens and the look live, the frame, the grid, the settings line) |
+| | Grid | Off, **thirds**, 4 × 4, golden ratio, centre cross |
+| | Settings line | **Show**, Hide |
+
+The starting values leave the picture exactly as the view renders it.
+
+## How it works
+
+- **Framing.** A capture of another shape than the view is the largest rect
+  of that shape in the view, and is rendered at its own size with the zoom
+  scaled by the view's short side over the frame's short side. It shows
+  exactly what the viewfinder's frame shows. A cutscene's camera is scaled
+  the same way.
+- **Focal length.** The view's zoom 1 is about 22 mm (a vertical half angle
+  of 0.5 rad over 12 mm, half the short side of a full-frame sensor). A fixed
+  focal length replaces the zoom, the cutscene camera's too.
+- **Exposure.** In manual mode, ISO 100 at 1/60 and f/4 is the rendered
+  picture; the gain is ISO/100 × shutter × 60 × (4/N)². Auto ISO picks the
+  ISO that gives a gain of 1 (50 … 25600).
+- **Developing order.** First the lens pass (distortion and fringing, radial,
+  the corners kept). Then the per-channel curves: linear light × exposure ×
+  white balance, the highlights, back to sRGB, the contrast S-curve and the
+  film lift. Then saturation, the style tint, vignetting and noise (stronger
+  in the shadows, a new pattern every frame), then sharpening.
+- **White balance.** The picture counts as daylight (5500 K). A setting T
+  multiplies by rgb(5500) / rgb(T) (black-body colours), normalised to the
+  same brightness.
+- **Video.** While recording, the render thread draws every frame at the
+  video's size through the camera. The view shows it in the frame, and the
+  recorder encodes the latest frame at the frame rate. The encoder is checked
+  first, so a size or codec the phone cannot encode is a clear message.
+
+Not yet: depth of field (needs the renderer's depth), a photo's motion blur.

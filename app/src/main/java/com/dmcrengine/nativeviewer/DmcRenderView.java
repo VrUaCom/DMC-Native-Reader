@@ -59,7 +59,8 @@ public final class DmcRenderView extends View {
         void onStepMotion(int direction);
         void onStepVariant(int direction);
         void onToggleUi();
-        void onScreenshot(Bitmap image);
+        /** The three-finger tap: a picture, as the camera settings say. */
+        void onTakePicture();
         void onGestureNotice(String text);
         /** A native action answered a gesture (a held marker's card, ...). */
         void onActionOutcome(ActionOutcome outcome);
@@ -424,18 +425,27 @@ public final class DmcRenderView extends View {
         }
     }
 
-    /** The picture on screen, for a screenshot. */
-    public Bitmap snapshot() {
+    /** The size the view's frames are rendered at: what the camera's sizes start from. */
+    public int[] captureViewSize() {
+        return new int[]{renderWidth(), renderHeight()};
+    }
+
+    /**
+     * A picture as the core's camera plans it (plan: NativeBridge.cameraPlan(0, ...)): the view's
+     * camera without the interface, framed for the picture's shape and developed with the camera
+     * settings, rendered right here at full quality. A still image is copied as it is.
+     */
+    public Bitmap capturePhoto(int[] plan) {
         if (session == 0 || staticImagePreview) {
             return bitmap == null || bitmap.isRecycled() ? null : bitmap.copy(Bitmap.Config.ARGB_8888, false);
         }
-        // A full-quality frame for the picture, rendered right here.
+        if (plan == null || plan.length < 10) return null;
         try {
-            final Bitmap image = Bitmap.createBitmap(renderWidth(), renderHeight(), Bitmap.Config.ARGB_8888);
-            if (NativeBridge.renderEx(session, image.getWidth(), image.getHeight(), yaw, pitch, zoom,
+            final Bitmap image = Bitmap.createBitmap(plan[0], plan[1], Bitmap.Config.ARGB_8888);
+            if (NativeBridge.renderCapture(session, 0, renderWidth(), renderHeight(), yaw, pitch, zoom,
                     renderFlags | settingsFlags | lineFlags(image.getWidth(), image.getHeight()),
                     panX, panY, roomYaw, follow, dolly, image)) {
-                drawSubtitle(new Canvas(image), image.getWidth(), image.getHeight());
+                if (plan[9] != 0) drawSubtitle(new Canvas(image), image.getWidth(), image.getHeight());
                 return image;
             }
             image.recycle();
@@ -443,6 +453,24 @@ public final class DmcRenderView extends View {
             return null;
         }
         return null;
+    }
+
+    /**
+     * Frames at the video's size while it records (0 x 0 stops): the render thread draws them
+     * through the core camera, the view shows them in the viewfinder's frame.
+     */
+    public void setRecording(int width, int height, boolean subtitles) {
+        videoWidth = Math.max(0, width);
+        videoHeight = Math.max(0, height);
+        videoSubtitles = subtitles;
+        recordedSeconds = 0;
+        renderNow();
+    }
+
+    /** The recording's clock for the viewfinder. */
+    public void setRecordedSeconds(int seconds) {
+        recordedSeconds = seconds;
+        renderNow();
     }
 
     private boolean canUseStaticImagePreview() {
@@ -969,6 +997,12 @@ public final class DmcRenderView extends View {
         boolean preview;
         String subtitle;          // the core's subtitle for this frame (null none)
         float[] subtitleStyle;
+        boolean video;            // a recording's frame, at the video's size
+        int viewWidth, viewHeight;     // the view's render size the camera frames from
+        int screenWidth, screenHeight; // the view on screen, for the viewfinder
+        int recordedSeconds;
+        float[] finder;           // the core's viewfinder for this frame
+        String finderStatus;
     }
 
     // Pixels live in native memory: ByteBuffer.allocateDirect is limited by the
@@ -1060,9 +1094,19 @@ public final class DmcRenderView extends View {
                     target.busy = true;
                 }
                 target.pixels.clear();
-                final int status = NativeBridge.renderToBuffer(request.session, request.width, request.height,
-                        request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
-                        request.roomYaw, request.follow, request.dolly, request.motionFrame, target.pixels);
+                final int status = request.video
+                        ? NativeBridge.renderVideoFrame(request.session, request.viewWidth, request.viewHeight,
+                                request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
+                                request.roomYaw, request.follow, request.dolly, request.motionFrame, target.pixels)
+                        : NativeBridge.renderToBuffer(request.session, request.width, request.height,
+                                request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
+                                request.roomYaw, request.follow, request.dolly, request.motionFrame, target.pixels);
+                final Object[] finder = NativeBridge.viewfinder(request.session, request.screenWidth,
+                        request.screenHeight, request.zoom, request.video, request.recordedSeconds);
+                if (finder != null && finder.length == 2) {
+                    request.finder = (float[]) finder[0];
+                    request.finderStatus = (String) finder[1];
+                }
                 // Read with the frame it belongs to (the render thread holds the session).
                 request.subtitle = NativeBridge.demoSubtitle(request.session);
                 request.subtitleStyle = request.subtitle != null ? NativeBridge.demoSubtitleStyle(request.session) : null;
@@ -1111,6 +1155,8 @@ public final class DmcRenderView extends View {
         releaseFrame(buffer);
         subtitle = request.subtitle;
         subtitleStyle = request.subtitleStyle;
+        finderGeometry = request.finder;
+        finderStatus = request.finderStatus;
         if (status == 2 && motionPlaying) {
             motionPlaying = false;
             removeCallbacks(motionTick);
@@ -1127,9 +1173,17 @@ public final class DmcRenderView extends View {
     private void requestFrame(float motionFrame) {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0 || staticImagePreview) return;
         final FrameRequest request = new FrameRequest();
-        request.preview = fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
-        request.width = request.preview ? Math.max(64, Math.round(getWidth() * previewScale())) : renderWidth();
-        request.height = request.preview ? Math.max(64, Math.round(getHeight() * previewScale())) : renderHeight();
+        request.video = videoWidth > 0 && videoHeight > 0;
+        request.preview = !request.video && fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
+        request.width = request.video ? videoWidth
+                : request.preview ? Math.max(64, Math.round(getWidth() * previewScale())) : renderWidth();
+        request.height = request.video ? videoHeight
+                : request.preview ? Math.max(64, Math.round(getHeight() * previewScale())) : renderHeight();
+        request.viewWidth = renderWidth();
+        request.viewHeight = renderHeight();
+        request.screenWidth = getWidth();
+        request.screenHeight = getHeight();
+        request.recordedSeconds = recordedSeconds;
         request.session = session;
         request.generation = generation;
         request.yaw = yaw;
@@ -1266,6 +1320,50 @@ public final class DmcRenderView extends View {
     private float[] subtitleStyle;
     private final Paint subtitlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
+    // The core's viewfinder over the view: {shown, frame x, y, w, h, grid
+    // lines x0, y0, x1, y1 ...} and its settings line.
+    private float[] finderGeometry;
+    private String finderStatus;
+    private final Paint finderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint finderText = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private int videoWidth;
+    private int videoHeight;
+    private boolean videoSubtitles;
+    private int recordedSeconds;
+
+    private void drawFinder(Canvas canvas) {
+        final float[] f = finderGeometry;
+        if (f == null || f.length < 5 || f[0] == 0.0f) return;
+        final float density = getResources().getDisplayMetrics().density;
+        final float x = f[1], y = f[2], w = f[3], h = f[4];
+        if (videoWidth == 0) {
+            // What the picture leaves out, dimmed.
+            finderPaint.setStyle(Paint.Style.FILL);
+            finderPaint.setColor(0x8c000000);
+            canvas.drawRect(0, 0, getWidth(), y, finderPaint);
+            canvas.drawRect(0, y + h, getWidth(), getHeight(), finderPaint);
+            canvas.drawRect(0, y, x, y + h, finderPaint);
+            canvas.drawRect(x + w, y, getWidth(), y + h, finderPaint);
+        }
+        finderPaint.setStyle(Paint.Style.STROKE);
+        finderPaint.setStrokeWidth(Math.max(1.0f, density));
+        finderPaint.setColor(0x60ffffff);
+        for (int i = 5; i + 3 < f.length; i += 4) canvas.drawLine(f[i], f[i + 1], f[i + 2], f[i + 3], finderPaint);
+        finderPaint.setColor(videoWidth > 0 ? 0xd0ff4040 : 0xc0ffffff);
+        finderPaint.setStrokeWidth(Math.max(1.5f, 1.5f * density));
+        canvas.drawRect(x, y, x + w, y + h, finderPaint);
+        final String status = finderStatus;
+        if (status == null || status.isEmpty()) return;
+        finderText.setTextSize(12.0f * density);
+        finderText.setShadowLayer(3.0f * density, 0, 0, 0xff000000);
+        float line = y + 18.0f * density;
+        for (final String text : status.split("\n")) {
+            finderText.setColor(text.startsWith("\u25cf") ? 0xffff5050 : 0xffffffff);
+            canvas.drawText(text, x + 10.0f * density, line, finderText);
+            line += 16.0f * density;
+        }
+    }
+
     /** The core's subtitle, drawn as it says: centred lines, an outline in its back colour. */
     private void drawSubtitle(Canvas canvas) {
         drawSubtitle(canvas, getWidth(), getHeight());
@@ -1297,6 +1395,13 @@ public final class DmcRenderView extends View {
     public void drawCapture(Canvas canvas, int width, int height) {
         final Bitmap shown = staticImagePreview ? bitmap : (showingPreview ? previewBitmap : bitmap);
         if (shown == null || shown.isRecycled()) return;
+        // A video frame: drawn whole, the subtitle as the camera settings say.
+        if (!staticImagePreview && videoWidth > 0) {
+            if (shown.getWidth() != videoWidth || shown.getHeight() != videoHeight) return;
+            canvas.drawBitmap(shown, null, new android.graphics.Rect(0, 0, width, height), paint);
+            if (videoSubtitles) drawSubtitle(canvas, width, height);
+            return;
+        }
         if (staticImagePreview) {
             final float scale = Math.min((float) width / shown.getWidth(), (float) height / shown.getHeight());
             final float left = (width - shown.getWidth() * scale) * 0.5f;
@@ -1314,9 +1419,18 @@ public final class DmcRenderView extends View {
         if (!staticImagePreview) {
             final Bitmap shown = showingPreview ? previewBitmap : bitmap;
             if (shown == null || shown.isRecycled()) return;
-            canvas.drawBitmap(shown, null,
-                    new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+            final float[] f = finderGeometry;
+            if (videoWidth > 0 && f != null && f.length >= 5 && f[0] != 0.0f
+                    && shown.getWidth() == videoWidth && shown.getHeight() == videoHeight) {
+                // A recording: the video frame in the viewfinder's frame, black around it.
+                canvas.drawColor(0xff000000);
+                canvas.drawBitmap(shown, null, new RectF(f[1], f[2], f[1] + f[3], f[2] + f[4]), paint);
+            } else {
+                canvas.drawBitmap(shown, null,
+                        new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+            }
             drawSubtitle(canvas);
+            drawFinder(canvas);
             hud.draw(canvas);
             if (hud.needsFrame()) postInvalidateOnAnimation();
             return;
@@ -1607,8 +1721,7 @@ public final class DmcRenderView extends View {
                 gestureListener.onStepVariant(mx < 0 ? 1 : -1);
             } else if (enabled(G_SCREENSHOT) && duration < 500 && Math.abs(mx) < 24.0f * density
                     && gestureListener != null) {
-                final Bitmap image = snapshot();
-                if (image != null) gestureListener.onScreenshot(image);
+                gestureListener.onTakePicture();
             }
         } else if (maxPointers == 1) {
             if (edgeStart == EDGE_TOP && dy > 60.0f * density) {

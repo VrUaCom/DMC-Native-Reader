@@ -258,4 +258,26 @@ public final class NativeBridge {
     public static native boolean zoomStep(float touchZoom, float next, boolean settling);
     /** Every finger lifted. */
     public static native void endTouch();
+
+    // Photo and video camera (core spider/camera.h).
+    /** One row per setting: "id\tsection\tlabel\tstart\toption\toption...". */
+    public static native String[] cameraSettings();
+    /** The chosen option of every setting, in cameraSettings() order. */
+    public static native void setCameraChoices(int[] choices);
+    /**
+     * Kind 0 a picture, 1 a video, of a view rendered at that size: {width, height, format,
+     * quality or bits per second, fps, key frame ms, limit s, timer s, burst, subtitles}.
+     */
+    public static native int[] cameraPlan(int kind, int viewWidth, int viewHeight);
+    public static native boolean renderCapture(long handle, int kind, int viewWidth, int viewHeight, float yaw,
+                                               float pitch, float zoom, int renderFlags, float panX, float panY,
+                                               float roomYaw, boolean follow, float dolly, Bitmap target);
+    public static native int renderVideoFrame(long handle, int viewWidth, int viewHeight, float yaw, float pitch,
+                                              float zoom, int renderFlags, float panX, float panY, float roomYaw,
+                                              boolean follow, float dolly, float motionFrame,
+                                              java.nio.ByteBuffer buffer);
+    public static native void beginVideo();
+    /** {float[] {shown, x, y, w, h, grid lines x0, y0, x1, y1 ...}, the settings line}. */
+    public static native Object[] viewfinder(long handle, int width, int height, float zoom, boolean recording,
+                                             int seconds);
 }

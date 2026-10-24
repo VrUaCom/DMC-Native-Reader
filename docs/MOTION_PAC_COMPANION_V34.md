@@ -453,7 +453,8 @@ one of three places (`companion_menu`):
   switches and a cutscene's media: ⚙ Settings, ✋ Gestures, ⌂ room toggle,
   ⇄ next floor spot (while the room shows), 🔊 sound, 🎞 movie, 💬 subtitles,
   🎬 cutscene camera, 💾 Save, then 📷 picture and 🎥 video (⏹ while it
-  records; the stop square stays even with nothing drawable open).
+  records; the stop square stays even with nothing drawable open) and 🎛
+  camera settings ([CAMERA_PHOTO_VIDEO.md](CAMERA_PHOTO_VIDEO.md)).
 - **Rows**: first the ones every file has, always (*Open / replace
   resource*, *Diagnostics / build info*), then the ones that fit what is on
   the screen: a model's tools for a model, the stage tools (stage effects,

@@ -48,6 +48,7 @@ enum class Companion : int {
     // shortcuts: capture what the view shows
     Photo = 26,
     Video = 27,
+    CameraSettings = 28,
 };
 
 // What only the shell knows.

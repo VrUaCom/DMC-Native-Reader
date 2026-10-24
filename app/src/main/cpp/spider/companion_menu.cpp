@@ -66,6 +66,8 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         add(menu.shortcuts, Companion::Video, facts.recording ? "Stop recording" : "Record a video",
             facts.recording ? "\xE2\x8F\xB9" : "\xF0\x9F\x8E\xA5");
     }
+    // The camera's settings: lens, exposure, colour, sizes, viewfinder.
+    add(menu.shortcuts, Companion::CameraSettings, "Camera settings", "\xF0\x9F\x8E\x9B");
 
     // Every file: open another, and the build / log window.
     add(menu.rows, Companion::OpenFile, "Open / replace resource");
