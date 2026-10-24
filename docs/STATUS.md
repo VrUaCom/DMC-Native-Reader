@@ -225,6 +225,11 @@ APK verifier.
       whole stops.
     - Shutter 30 s … 1/2000 in thirds of a stop.
     - A circular polarizer turned with two fingers in camera mode.
+  - v104: camera mode as its own mode:
+    - The 📷 button beside ⋮ goes in and back out.
+    - The two bottom rows become the camera's bar: the core's dials (each
+      opens its settings in place) and the shutter, record, play/pause,
+      settings, reset and back buttons.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

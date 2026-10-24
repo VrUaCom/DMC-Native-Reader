@@ -171,7 +171,16 @@ public final class MainActivity extends Activity {
     private LinearLayout headerBar;
     // Hidden by the top-edge swipe: bars and the visibility each had.
     private boolean uiHidden;
-    private final int[] barVisibility = new int[5];
+    private final int[] barVisibility = new int[6];
+    // Camera mode: the camera's bar in place of the motion strip and tools.
+    private Button cameraModeButton;
+    private LinearLayout cameraPanel;
+    private LinearLayout cameraDialBar;
+    private LinearLayout cameraAdjust;
+    private Button cameraPlayButton;
+    private Button cameraRecordButton;
+    private boolean cameraUi;
+    private String cameraDialOpen;  // the open dial's indexes, or null
     // Archive the root scene was assembled from (re-opened on demand so the
     // per-file browser owns an independent read-only handle).
     private Uri assembledPacUri;
@@ -466,6 +475,12 @@ public final class MainActivity extends Activity {
         header.addView(nonCanonicalBadge, new LinearLayout.LayoutParams(
                 dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
+        // Camera mode on and off: the same button goes back to the scene.
+        cameraModeButton = makeSquareButton("📷", "Camera mode", 22f);
+        cameraModeButton.setOnClickListener(v -> toggleCameraMode());
+        header.addView(cameraModeButton, new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+
         moreButton = makeSquareButton("⋮", "Add or attach DMC resource", 28f);
         moreButton.setOnClickListener(this::showCompanionMenu);
         header.addView(moreButton, new LinearLayout.LayoutParams(
@@ -742,7 +757,9 @@ public final class MainActivity extends Activity {
         root.addView(toolScroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
+        buildCameraPanel(root);
         setContentView(root);
+        setCameraUi(NativeBridge.cameraMode());
         showIdleStatus();
     }
 
@@ -1420,7 +1437,7 @@ public final class MainActivity extends Activity {
         }
 
         @Override public void onToggleUi() {
-            final View[] bars = {headerBar, variantScroll, effectModeScroll, motionScroll, toolScroll};
+            final View[] bars = {headerBar, variantScroll, effectModeScroll, motionScroll, toolScroll, cameraPanel};
             uiHidden = !uiHidden;
             for (int i = 0; i < bars.length; ++i) {
                 if (bars[i] == null) continue;
@@ -1659,6 +1676,212 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < rows.length; ++i) choices[i] = cameraChoice(rows[i]);
         NativeBridge.setCameraChoices(choices);
         NativeBridge.setCameraPolarizer(prefs().getFloat(PREF_POLARIZER, 0.0f));
+        if (cameraPanel != null) setCameraUi(NativeBridge.cameraMode());
+    }
+
+    // ---- Camera mode: the camera's own bar in place of the scene's two
+    // bottom rows; the 📷 button beside ⋮ goes in and back out, so the scene
+    // can be set up, shot, set up again.
+
+    private void buildCameraPanel(LinearLayout root) {
+        cameraPanel = new LinearLayout(this);
+        cameraPanel.setOrientation(LinearLayout.VERTICAL);
+        cameraPanel.setBackgroundColor(0xff111216);
+        cameraPanel.setVisibility(View.GONE);
+
+        final HorizontalScrollView dialScroll = new HorizontalScrollView(this);
+        dialScroll.setHorizontalScrollBarEnabled(false);
+        cameraDialBar = new LinearLayout(this);
+        cameraDialBar.setOrientation(LinearLayout.HORIZONTAL);
+        cameraDialBar.setPadding(dp(8), dp(6), dp(8), dp(2));
+        dialScroll.addView(cameraDialBar, new HorizontalScrollView.LayoutParams(
+                HorizontalScrollView.LayoutParams.WRAP_CONTENT, HorizontalScrollView.LayoutParams.WRAP_CONTENT));
+        cameraPanel.addView(dialScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        cameraAdjust = new LinearLayout(this);
+        cameraAdjust.setOrientation(LinearLayout.VERTICAL);
+        cameraAdjust.setPadding(dp(14), 0, dp(14), dp(4));
+        cameraAdjust.setVisibility(View.GONE);
+        final ScrollView adjustScroll = new ScrollView(this);
+        adjustScroll.addView(cameraAdjust);
+        cameraPanel.addView(adjustScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        final LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+        actions.setPadding(dp(8), dp(4), dp(8), dp(8));
+        final Button settings = makeSquareButton("🎛", "Camera settings", 20f);
+        settings.setOnClickListener(v -> showCameraSettings());
+        addToolButton(actions, settings);
+        cameraPlayButton = makeSquareButton("▶", "Play / pause the scene", 20f);
+        cameraPlayButton.setOnClickListener(v -> toggleCameraPlay());
+        addToolButton(actions, cameraPlayButton);
+        final Button shutter = makeSquareButton("📷", "Take a picture", 28f);
+        shutter.setOnClickListener(v -> takePicture());
+        final LinearLayout.LayoutParams big = new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP + 20), dp(TOOL_SIZE_DP + 20));
+        big.setMarginStart(dp(14));
+        big.setMarginEnd(dp(6));
+        actions.addView(shutter, big);
+        cameraRecordButton = makeSquareButton("🎥", "Record a video", 28f);
+        cameraRecordButton.setOnClickListener(v -> {
+            if (recorder == null) startRecording(); else stopRecording();
+        });
+        final LinearLayout.LayoutParams big2 = new LinearLayout.LayoutParams(
+                dp(TOOL_SIZE_DP + 20), dp(TOOL_SIZE_DP + 20));
+        big2.setMarginStart(dp(6));
+        big2.setMarginEnd(dp(14));
+        actions.addView(cameraRecordButton, big2);
+        final Button reset = makeSquareButton("🔄", "Reset view", 20f);
+        reset.setOnClickListener(v -> renderView.resetView());
+        addToolButton(actions, reset);
+        final Button back = makeSquareButton("↩", "Back to the scene", 20f);
+        back.setOnClickListener(v -> toggleCameraMode());
+        addToolButton(actions, back);
+        cameraPanel.addView(actions, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        root.addView(cameraPanel, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** Camera mode in or out (the core's setting); the bars follow it. */
+    private void toggleCameraMode() {
+        final boolean on = !NativeBridge.cameraMode();
+        for (final String[] row : cameraRows()) {
+            if (row[0].equals("finder_mode")) {
+                prefs().edit().putString(PREF_CAMERA + row[0], row[on ? 5 : 4]).apply();
+            }
+        }
+        applyCameraChoices();
+        renderView.renderNow();
+        notice(on ? "📷 Camera mode — the 📷 button above goes back to the scene" : "Scene", Toast.LENGTH_SHORT);
+    }
+
+    private final Runnable cameraDialTick = new Runnable() {
+        @Override public void run() {
+            if (!cameraUi) return;
+            updateCameraDials();
+            renderView.postDelayed(this, 500L);
+        }
+    };
+
+    private void setCameraUi(boolean on) {
+        final boolean changed = on != cameraUi;
+        cameraUi = on;
+        if (cameraModeButton != null) {
+            cameraModeButton.setActivated(on);
+            cameraModeButton.setTextColor(on ? 0xffff5050 : Color.WHITE);
+        }
+        if (cameraPanel == null) return;
+        cameraPanel.setVisibility(on && !uiHidden ? View.VISIBLE : View.GONE);
+        toolScroll.setVisibility(on || uiHidden ? View.GONE : View.VISIBLE);
+        if (on) {
+            motionScroll.setVisibility(View.GONE);
+            refreshCameraDials();
+            updateCameraButtons();
+            renderView.removeCallbacks(cameraDialTick);
+            renderView.postDelayed(cameraDialTick, 500L);
+        } else if (changed) {
+            cameraDialOpen = null;
+            refreshMotionStrip();
+        }
+    }
+
+    /** The dials as the core lists them; a tapped one opens its settings under the row. */
+    private void refreshCameraDials() {
+        if (cameraDialBar == null) return;
+        cameraDialBar.removeAllViews();
+        final String[] dials = NativeBridge.cameraDials();
+        if (dials == null) return;
+        for (final String dial : dials) {
+            final String[] parts = dial.split("\t", -1);
+            if (parts.length < 3) continue;
+            final TextView chip = new TextView(this);
+            chip.setTag(parts[0]);
+            chip.setGravity(Gravity.CENTER);
+            chip.setTextSize(13f);
+            chip.setPadding(dp(10), dp(4), dp(10), dp(4));
+            chip.setText(parts[1] + "\n" + parts[2]);
+            styleChip(chip, parts[0].equals(cameraDialOpen));
+            chip.setOnClickListener(v -> openCameraDial(parts[0]));
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.setMarginEnd(dp(6));
+            cameraDialBar.addView(chip, params);
+        }
+    }
+
+    /** New values on the dials without rebuilding them (a turned polarizer, a picked option). */
+    private void updateCameraDials() {
+        if (cameraDialBar == null) return;
+        final String[] dials = NativeBridge.cameraDials();
+        if (dials == null || dials.length != cameraDialBar.getChildCount()) {
+            refreshCameraDials();
+            return;
+        }
+        for (int i = 0; i < dials.length; ++i) {
+            final String[] parts = dials[i].split("\t", -1);
+            final TextView chip = (TextView) cameraDialBar.getChildAt(i);
+            if (parts.length < 3) continue;
+            final String text = parts[1] + "\n" + parts[2];
+            if (!text.contentEquals(chip.getText())) chip.setText(text);
+            styleChip(chip, parts[0].equals(cameraDialOpen));
+        }
+        updateCameraButtons();
+    }
+
+    private void updateCameraButtons() {
+        if (cameraPlayButton != null) cameraPlayButton.setText(renderView.isMotionPlaying() ? "⏸" : "▶");
+        if (cameraRecordButton != null) cameraRecordButton.setText(recorder != null ? "⏹" : "🎥");
+    }
+
+    private void openCameraDial(String keys) {
+        if (keys.equals(cameraDialOpen)) {
+            cameraDialOpen = null;
+            cameraAdjust.setVisibility(View.GONE);
+            updateCameraDials();
+            return;
+        }
+        cameraDialOpen = keys;
+        cameraAdjust.removeAllViews();
+        final String[][] rows = cameraRows();
+        for (final String index : keys.split(",")) {
+            final int i;
+            try {
+                i = Integer.parseInt(index);
+            } catch (NumberFormatException error) {
+                continue;
+            }
+            if (i < 0 || i >= rows.length) continue;
+            final String[] row = rows[i];
+            final String[] options = java.util.Arrays.copyOfRange(row, 4, row.length);
+            final java.util.function.IntConsumer pick = k -> {
+                prefs().edit().putString(PREF_CAMERA + row[0], options[k]).apply();
+                applyCameraChoices();
+                renderView.renderNow();
+                updateCameraDials();
+            };
+            cameraAdjust.addView(options.length > 12 ? sliderRow(row[2], options, cameraChoice(row), pick)
+                    : choiceRow(row[2], options, cameraChoice(row), pick));
+        }
+        cameraAdjust.setVisibility(View.VISIBLE);
+        updateCameraDials();
+    }
+
+    /** Play or pause what moves (a motion, a cutscene) from where it stands. */
+    private void toggleCameraPlay() {
+        if (renderView.isMotionPlaying()) {
+            renderView.pauseMotion();
+        } else if (session != 0 && NativeBridge.hasMotion(session)) {
+            if (renderView.motionFrame() > 0.0f) renderView.resumeMotionAt(renderView.motionFrame());
+            else renderView.startMotion();
+        } else {
+            notice("Nothing moves here", Toast.LENGTH_SHORT);
+        }
+        updateCameraButtons();
     }
 
     /** A long dial (ISO, shutter, megapixels ...) as a slider; the label shows the value. */
@@ -2291,7 +2514,7 @@ public final class MainActivity extends Activity {
             motionBar.addView(row, rowParams);
             motionCards.add(row);
         }
-        motionScroll.setVisibility(uiHidden ? View.GONE : View.VISIBLE);
+        motionScroll.setVisibility(uiHidden || cameraUi ? View.GONE : View.VISIBLE);
     }
 
     private void addMotionPackSeparator(int packSlot) {

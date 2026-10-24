@@ -10,6 +10,22 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 
 ## Where
 
+- **Camera mode:** the 📷 button beside ⋮ (top right) goes in, and the
+  same button (or ↩) goes back to the scene. Set the scene up, shoot, go
+  back, set it up again. In camera mode the two bottom rows (the motion
+  strip and the tools) are the camera's bar:
+  - A row of dials from the core (`camera::dials()`), each showing its value
+    the way a camera does: Lens, Aperture, Mode, ISO, Shutter, EV, WB, Frame,
+    Focus, CPL, Style, File.
+  - A tapped dial opens its settings under the row. Long dials (ISO,
+    shutter) are sliders. Focus also opens the focus distance, blades and
+    bokeh; CPL its strength; Style its contrast, saturation and sharpness;
+    File the megapixels and the video size.
+  - The actions: 🎛 settings, ▶/⏸ the scene, the big 📷 shutter and 🎥/⏹
+    record, 🔄 reset view, ↩ back.
+  - Camera mode is the core's setting, so the settings window switches it
+    too.
+
 - ⋮ menu squares: 📷 *Take a picture*, 🎥 *Record a video* (⏹ *Stop
   recording* while it runs), 🎛 *Camera settings* (always there).
 - The three-finger tap takes the same picture as 📷.

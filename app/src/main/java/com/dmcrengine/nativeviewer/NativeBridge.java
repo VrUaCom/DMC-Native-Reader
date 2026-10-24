@@ -277,6 +277,10 @@ public final class NativeBridge {
                                               boolean follow, float dolly, float motionFrame,
                                               java.nio.ByteBuffer buffer);
     public static native void beginVideo();
+    /** Camera mode is on: the bottom bars are the camera's. */
+    public static native boolean cameraMode();
+    /** The camera bar's dials: "setting index[,index ...]\ttitle\tvalue". */
+    public static native String[] cameraDials();
     /** True in camera mode with the polarizer on: two fingers turn it. */
     public static native boolean cameraPolarizerTurnable();
     /** Turns the polarizer by radians (0 reads it); its angle, 0 .. pi. */

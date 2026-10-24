@@ -819,6 +819,33 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_writeCaptureDng(
     } catch (...) { return JNI_FALSE; }
 }
 
+// Camera mode (the core's setting): the shell swaps its bottom bars for the
+// camera's while it is on.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraMode(JNIEnv*, jclass) {
+    return dmcresource::spider::camera::finder_on() ? JNI_TRUE : JNI_FALSE;
+}
+
+// The camera bar's dials: "setting index[,index ...]\ttitle\tvalue" per dial
+// (the first index is the dial's setting, the rest go with it).
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraDials(JNIEnv* env, jclass) {
+    try {
+        const auto dials = dmcresource::spider::camera::dials();
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(dials.size()), env->FindClass("java/lang/String"), nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t i = 0; i < dials.size(); ++i) {
+            std::string keys = std::to_string(static_cast<int>(dials[i].key));
+            for (const auto key : dials[i].with) keys += "," + std::to_string(static_cast<int>(key));
+            const std::string row = keys + "\t" + dials[i].title + "\t" + dials[i].value;
+            jstring text = env->NewStringUTF(row.c_str());
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), text);
+            env->DeleteLocalRef(text);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_cameraPolarizerTurnable(JNIEnv*, jclass) {
     return dmcresource::spider::camera::polarizer_turnable() ? JNI_TRUE : JNI_FALSE;

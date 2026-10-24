@@ -322,6 +322,25 @@ int main() {
         cam::set_polarizer_angle(0.0F);
     }
 
+    // The camera bar's dials name the settings they turn, valued as a
+    // camera shows them.
+    {
+        auto dials = cam::dials();
+        assert(dials.size() >= 10U && dials[0].key == cam::Key::LensFocal && dials[0].value == "Zoom");
+        const auto value_of = [&](cam::Key key) {
+            for (const auto& d : cam::dials()) if (d.key == key) return d.value;
+            return std::string();
+        };
+        assert(value_of(cam::Key::LensAperture) == "f/4" && value_of(cam::Key::ExposureIso) == "Auto");
+        assert(value_of(cam::Key::ExposureShutter) == "1/60" && value_of(cam::Key::ColourBalance) == "AWB");
+        choose_named(cam::Key::ExposureIso, "1600");
+        choose_named(cam::Key::LensFocal, "85 mm");
+        choose_named(cam::Key::ExposureCompensation, "+1");
+        assert(value_of(cam::Key::ExposureIso) == "1600" && value_of(cam::Key::LensFocal) == "85 mm");
+        assert(value_of(cam::Key::ExposureCompensation) == "+1");
+        cam::reset_choices();
+    }
+
     // The viewfinder: off at the start; on, it frames the picture with the
     // thirds and writes the settings; recording frames the video.
     assert(!cam::viewfinder(nullptr, 2400, 1080, 1.0F, false, 0).shown);

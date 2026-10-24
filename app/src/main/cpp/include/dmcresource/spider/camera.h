@@ -179,6 +179,17 @@ void begin_video();
                                           const ViewControls& controls);
 [[nodiscard]] bool finder_on() noexcept;
 
+// The dials of the camera mode's bar, in order: the setting each one turns
+// (and the ones that go with it, shown together when it is opened), its
+// short name and its value as a camera shows it ("ISO 400", "1/60").
+struct Dial final {
+    Key key{};
+    std::string title;
+    std::string value;
+    std::vector<Key> with;
+};
+[[nodiscard]] std::vector<Dial> dials();
+
 // The circular polarizer in front of the lens: in camera mode two fingers
 // turn it (radians, like the ring of a real one). It darkens the polarized
 // light (reflections, glare, the blue of the sky) by sin² of the ring

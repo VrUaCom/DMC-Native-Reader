@@ -1229,6 +1229,47 @@ void begin_video() {
 
 bool finder_on() noexcept { return choice(Key::FinderMode) == 1; }
 
+std::vector<Dial> dials() {
+    std::vector<Dial> out;
+    const auto option = [](Key key) {
+        return settings()[static_cast<std::size_t>(key)].options[static_cast<std::size_t>(
+            std::clamp(choice(key), 0, static_cast<int>(settings()[static_cast<std::size_t>(key)].options.size()) - 1))];
+    };
+    const int mm = pick(Key::LensFocal, kFocalMm);
+    out.push_back({Key::LensFocal, "Lens", mm > 0 ? std::to_string(mm) + " mm" : std::string("Zoom"), {}});
+    out.push_back({Key::LensAperture, "Aperture", option(Key::LensAperture), {}});
+    out.push_back({Key::ExposureMode, "Mode", choice(Key::ExposureMode) == 0 ? "P" : "M",
+                   {Key::ExposureHighlights, Key::ExposureNoise}});
+    const int iso = pick(Key::ExposureIso, kIsos);
+    out.push_back({Key::ExposureIso, "ISO", iso > 0 ? std::to_string(iso) : std::string("Auto"), {}});
+    out.push_back({Key::ExposureShutter, "Shutter", pick(Key::ExposureShutter, kShutters).label, {}});
+    const float ev = pick(Key::ExposureCompensation, kCompensation);
+    char text[24];
+    std::snprintf(text, sizeof(text), ev == 0.0F ? "\xC2\xB1" "0" : "%+g", static_cast<double>(ev));
+    out.push_back({Key::ExposureCompensation, "EV", text, {}});
+    const int kelvin = pick(Key::ColourBalance, kKelvin);
+    out.push_back({Key::ColourBalance, "WB", kelvin == 0 ? std::string("AWB") : std::to_string(kelvin) + " K", {}});
+    out.push_back({Key::CameraShape, "Frame",
+                   choice(Key::CameraShape) == 0 ? std::string("View") : option(Key::CameraShape), {}});
+    std::string focus = "Off";
+    if (depth_of_field_on()) focus = choice(Key::LensFocus) == 0 ? std::string("AF") : option(Key::LensFocus);
+    out.push_back({Key::LensDepthOfField, "Focus", focus, {Key::LensFocus, Key::LensBlades, Key::LensBokeh}});
+    std::string polarizer = "Off";
+    if (choice(Key::FilterPolarizer) == 1) {
+        float degrees = std::fmod(g_polarizer.load() * 57.2957795F, 180.0F);
+        if (degrees < 0.0F) degrees += 180.0F;
+        std::snprintf(text, sizeof(text), "%.0f\xC2\xB0", static_cast<double>(degrees));
+        polarizer = text;
+    }
+    out.push_back({Key::FilterPolarizer, "CPL", polarizer, {Key::FilterPolarizerStrength}});
+    out.push_back({Key::ColourStyle, "Style", option(Key::ColourStyle),
+                   {Key::ColourContrast, Key::ColourSaturation, Key::ColourSharpness}});
+    constexpr const char* formats[] = {"PNG", "JPEG", "WebP", "RAW", "RAW+JPG"};
+    out.push_back({Key::PhotoFormat, "File", formats[std::clamp(choice(Key::PhotoFormat), 0, 4)],
+                   {Key::PhotoMegapixels, Key::PhotoSize, Key::VideoSize, Key::VideoFps}});
+    return out;
+}
+
 bool polarizer_turnable() noexcept { return finder_on() && choice(Key::FilterPolarizer) == 1; }
 
 float turn_polarizer(float radians) noexcept {
