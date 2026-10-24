@@ -796,6 +796,29 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderVideoFrame(
     } catch (...) { return 0; }
 }
 
+// A RAW picture (DNG) into the open file descriptor fd; `developed`, when not
+// null, gets the developed picture (RAW + JPEG; cameraPlan(0)'s size).
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_writeCaptureDng(
+        JNIEnv* env, jclass, jlong handle, jint view_width, jint view_height, jfloat yaw, jfloat pitch, jfloat zoom,
+        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw, jboolean follow, jfloat dolly, jint fd,
+        jobject developed) {
+    namespace cam = dmcresource::spider::camera;
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr || fd < 0) return JNI_FALSE;
+    try {
+        dmcresource::RgbaImage image;
+        const bool ok = cam::capture_raw(session, view_width, view_height, yaw, pitch, zoom,
+                                         static_cast<std::uint32_t>(render_flags),
+                                         view_controls(pan_x, pan_y, room_yaw, follow, dolly), fd,
+                                         developed != nullptr ? &image : nullptr);
+        if (!ok) return JNI_FALSE;
+        if (developed != nullptr && !image_to_bitmap(env, developed, image)) return JNI_FALSE;
+        return JNI_TRUE;
+    } catch (...) { return JNI_FALSE; }
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_beginVideo(JNIEnv*, jclass) {
     dmcresource::spider::camera::begin_video();

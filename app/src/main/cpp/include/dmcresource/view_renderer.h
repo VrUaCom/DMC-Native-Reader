@@ -113,6 +113,16 @@ struct ViewState {
     // When set, filled with each pixel's distance from the camera (infinity
     // where nothing was drawn): the photo camera's depth of field reads it.
     std::vector<float>* depth_out{};
+    // One tile of a picture larger than a render (the photo camera's 124 MP
+    // and more): the focal length of the whole picture's short side, the
+    // whole picture's centre relative to this tile's (pixels), its height.
+    struct Tile {
+        bool on{};
+        float focal_side{};
+        float principal_x{};
+        float principal_y{};
+        int full_height{};
+    } tile{};
     int mesh_line_px{1};
     int collision_line_px{1};
     // Resource-backed EXE effect presentation. The runtime supplies explicit

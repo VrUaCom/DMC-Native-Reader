@@ -211,6 +211,12 @@ APK verifier.
   - Aperture (v101): the f-number, depth of field (focus auto or a
     distance), blade count (bokeh shape), bright bokeh.
   - Picture size by megapixels (v101): 2 … 64 MP in the picture's shape.
+  - v102:
+    - RAW as DNG (linear RGB or a Bayer RGGB mosaic), and RAW + JPEG.
+    - 100, 124, 150 and 200 MP pictures, drawn in tiles of the same camera.
+    - Lenses up to 400 mm.
+    - The 2.35:1 shape for pictures and videos.
+    - Pictures render and save on a worker thread.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

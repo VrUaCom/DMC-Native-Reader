@@ -22,6 +22,7 @@ namespace dmcresource::spider::camera {
 enum class Key : std::uint8_t {
     PhotoFormat,
     PhotoQuality,
+    PhotoRawData,
     PhotoSize,
     PhotoMegapixels,
     PhotoAspect,
@@ -84,7 +85,7 @@ void reset_choices();
 // What a picture (kind Photo) or a video (Video) is, for a view rendered at
 // view_width x view_height.
 enum class Kind : std::uint8_t { Photo = 0, Video = 1 };
-enum class PhotoFormat : std::uint8_t { Png = 0, Jpeg = 1, Webp = 2 };
+enum class PhotoFormat : std::uint8_t { Png = 0, Jpeg = 1, Webp = 2, Dng = 3, DngJpeg = 4 };
 enum class VideoCodec : std::uint8_t { Avc = 0, Hevc = 1 };
 
 struct Plan final {
@@ -150,6 +151,24 @@ void develop(RgbaImage* image, std::uint32_t seed);
                                        float yaw, float pitch, float zoom, std::uint32_t render_flags,
                                        const ViewControls& controls);
 void begin_video();
+
+// A picture of width x height in tiles of at most max_side when it is larger
+// than one render (the whole picture's camera in every tile), with its depth.
+[[nodiscard]] RgbaImage render_large(const Session* session, int width, int height, float yaw, float pitch,
+                                     float zoom, std::uint32_t render_flags, const ViewControls& controls,
+                                     std::vector<float>* depth, int max_side = 8192);
+
+// A RAW picture into the file `fd` as DNG (Adobe's open RAW): the lens's
+// work (depth of field, distortion, fringing, vignetting), the exposure and
+// the sensor noise are in it. The white balance is the neutral, and a
+// developed preview is in the first IFD. The colour, curves, style and
+// sharpening are left to the editor. Linear RGB, or a Bayer RGGB mosaic
+// (PhotoRawData). `developed`, when given, gets the developed picture (RAW + JPEG).
+[[nodiscard]] bool capture_raw(const Session* session, int view_width, int view_height, float yaw, float pitch,
+                               float zoom, std::uint32_t render_flags, const ViewControls& controls, int fd,
+                               RgbaImage* developed);
+[[nodiscard]] bool write_dng(int fd, const RgbaImage& optical, const RgbaImage& preview, bool bayer,
+                             std::uint32_t seed, float focal_length_mm);
 
 // A frame of the view: as before, or through the viewfinder when it is on
 // (the fixed lens, the look developed). No UV gallery goes through it.

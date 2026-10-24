@@ -4,7 +4,13 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <vector>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "dmcresource/spider/camera.h"
 
@@ -135,16 +141,28 @@ int main() {
     assert(image.pixels[0] < 120U && image.pixels[(32U * 65U + 32U) * 4U] == 200U);
     cam::reset_choices();
 
-    // Megapixels in the picture's shape: 12 MP at 4:3 is 4000 x 3000; 64 MP
-    // at 16:9 meets the renderer's 8192 side.
+    // Megapixels in the picture's shape: 12 MP at 4:3 is 4000 x 3000; 124 MP
+    // at 3:2 is past one render (drawn in tiles); 2.35:1 is a scope frame.
     choose(cam::Key::PhotoMegapixels, 4);
     choose(cam::Key::PhotoAspect, 3);
     photo = cam::plan(cam::Kind::Photo, 2400, 1080);
     assert(photo.width == 4000 && photo.height == 3000);
-    choose(cam::Key::PhotoMegapixels, 11);
-    choose(cam::Key::PhotoAspect, 1);
+    choose(cam::Key::PhotoMegapixels, 13);
+    choose(cam::Key::PhotoAspect, 2);
     photo = cam::plan(cam::Kind::Photo, 2400, 1080);
-    assert(photo.width == 8192 && photo.height == 4608);
+    assert(photo.width == 13638 && photo.height == 9092);
+    choose(cam::Key::PhotoMegapixels, 15);  // 200 MP at 2.35:1
+    choose(cam::Key::PhotoAspect, 8);
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 21678 && photo.height == 9224);
+    cam::reset_choices();
+    choose(cam::Key::VideoAspect, 6);       // 2.35:1 video
+    video = cam::plan(cam::Kind::Video, 2400, 1080);
+    assert(video.height == 1072 && video.width == 2528);
+    cam::reset_choices();
+    // A 400 mm lens.
+    choose(cam::Key::LensFocal, 12);
+    assert(std::abs(cam::focal_mm(cam::capture_zoom(cam::Kind::Photo, 1.0F, 2400, 1080)) - 400.0F) < 0.1F);
     cam::reset_choices();
 
     // Depth of field: a far wall behind a near, sharp square. Focused on the
@@ -192,6 +210,41 @@ int main() {
         auto off = scene(&depth);
         cam::develop(&off, 1U, 85.0F, &depth);
         assert(contrast_at(off, 20, 10) == 255);
+    }
+
+    // DNG: a TIFF whose first IFD is the developed preview and whose SubIFD
+    // is the RAW: 16-bit linear RGB (or one Bayer sample a pixel) filling the
+    // file to its end; full scale where the light is full.
+    for (const bool bayer : {false, true}) {
+        const std::string path = std::string(bayer ? "photo_camera_bayer" : "photo_camera_linear") + ".dng";
+        const int fd = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        assert(fd >= 0);
+        auto optical = grey(10, 6, 255U);
+        auto preview = grey(5, 3, 128U);
+        assert(cam::write_dng(fd, optical, preview, bayer, 1U, 50.0F));
+        ::close(fd);
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<std::uint8_t> file((std::istreambuf_iterator<char>(in)), {});
+        std::remove(path.c_str());
+        const auto u16 = [&](std::size_t at) { return static_cast<std::uint32_t>(file[at] | file[at + 1U] << 8U); };
+        const auto u32 = [&](std::size_t at) { return u16(at) | u16(at + 2U) << 16U; };
+        assert(file.size() > 8U && file[0] == 'I' && file[1] == 'I' && u16(2) == 42U);
+        const auto tag = [&](std::uint32_t ifd, std::uint32_t wanted) -> std::uint32_t {
+            for (std::uint32_t i = 0; i < u16(ifd); ++i) {
+                const std::size_t e = ifd + 2U + i * 12U;
+                if (u16(e) == wanted) return u16(e + 2U) == 3U ? u16(e + 8U) : u32(e + 8U);
+            }
+            return 0xFFFFFFFFU;
+        };
+        const std::uint32_t main = u32(4);
+        assert(tag(main, 256) == 5U && tag(main, 50706) != 0xFFFFFFFFU);
+        const std::uint32_t raw = tag(main, 330);
+        assert(tag(raw, 256) == 10U && tag(raw, 257) == 6U);
+        assert(tag(raw, 262) == (bayer ? 32803U : 34892U));
+        const std::uint32_t at = tag(raw, 273);
+        const std::uint32_t count = tag(raw, 279);
+        assert(count == 10U * 6U * (bayer ? 1U : 3U) * 2U && at + count == file.size());
+        assert(u16(at) == 65535U);
     }
 
     // The viewfinder: off at the start; on, it frames the picture with the

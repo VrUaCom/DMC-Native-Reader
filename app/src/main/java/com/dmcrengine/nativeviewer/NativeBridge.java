@@ -277,6 +277,10 @@ public final class NativeBridge {
                                               boolean follow, float dolly, float motionFrame,
                                               java.nio.ByteBuffer buffer);
     public static native void beginVideo();
+    /** A RAW picture (DNG) into the open file fd; developed (or null) gets the developed picture. */
+    public static native boolean writeCaptureDng(long handle, int viewWidth, int viewHeight, float yaw, float pitch,
+                                                 float zoom, int renderFlags, float panX, float panY, float roomYaw,
+                                                 boolean follow, float dolly, int fd, Bitmap developed);
     /** {float[] {shown, x, y, w, h, grid lines x0, y0, x1, y1 ...}, the settings line}. */
     public static native Object[] viewfinder(long handle, int width, int height, float zoom, boolean recording,
                                              int seconds);

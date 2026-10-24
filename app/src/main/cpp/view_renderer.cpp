@@ -51,6 +51,10 @@ struct CameraFrame {
     float focal_px{};
     float pan_x{};  // camera-plane shift in world units
     float pan_y{};
+    // Screen offset of the projection centre from the image centre (pixels):
+    // a tile of a picture larger than one render (ViewState::tile).
+    float principal_x{};
+    float principal_y{};
 };
 
 constexpr float kHalfFovRadians = 0.5F;  // ~29 deg half-FOV; moderate, not fisheye.
@@ -92,8 +96,9 @@ P2 project_in_frame(const CameraFrame& frame, const Vec3& world, float yaw, floa
     const auto r = rotate(local, yaw, pitch);
     const float z_cam = r.z + frame.camera_distance;
     const float inv_z = 1.0F / std::max(z_cam, 1.0e-3F);
-    return {static_cast<float>(width) * 0.5F + zoom * frame.focal_px * (r.x - frame.pan_x) * inv_z,
-           static_cast<float>(height) * 0.5F - zoom * frame.focal_px * (r.y - frame.pan_y) * inv_z, r.z};
+    return {static_cast<float>(width) * 0.5F + frame.principal_x + zoom * frame.focal_px * (r.x - frame.pan_x) * inv_z,
+           static_cast<float>(height) * 0.5F + frame.principal_y - zoom * frame.focal_px * (r.y - frame.pan_y) * inv_z,
+           r.z};
 }
 
 // The camera of a view: framed on the rest pose (or the mesh), then moved by
@@ -104,6 +109,13 @@ CameraFrame view_frame(const Mesh& mesh, const ViewState& view, int width, int h
     auto frame = compute_camera_frame(
         view.framing_vertices.empty() ? std::span<const Vec3>{mesh.vertices} : view.framing_vertices,
         width, height);
+    if (view.tile.on) {
+        // One tile of a larger picture: that picture's focal length, its
+        // centre where it falls in this tile.
+        frame.focal_px = 0.5F * view.tile.focal_side / std::tan(kHalfFovRadians);
+        frame.principal_x = view.tile.principal_x;
+        frame.principal_y = view.tile.principal_y;
+    }
     if (view.fly && std::isfinite(view.fly_eye.x) && std::isfinite(view.fly_eye.y) &&
         std::isfinite(view.fly_eye.z)) {
         const auto basis = camera_basis(view.yaw_radians, view.pitch_radians);
@@ -730,6 +742,9 @@ struct RoomFrame {
     const float focal = zoom * frame.focal_px;
     const float hw = static_cast<float>(width) * 0.5F;
     const float hh = static_cast<float>(height) * 0.5F;
+    // The projection centre on the image (off the middle for a tile).
+    const float cx = hw + frame.principal_x;
+    const float cy = hh + frame.principal_y;
     const float cd = frame.camera_distance;
 
     struct Cv {
@@ -768,13 +783,14 @@ struct RoomFrame {
         const Cv poly[3] = {cam[idx[0]], cam[idx[1]], cam[idx[2]]};
         if (poly[0].z < near_z && poly[1].z < near_z && poly[2].z < near_z) continue;
         // Whole triangle beside the view: skip before any more work.
-        const float lim = 1.2F;
+        const float margin_x = hw * 0.2F;
+        const float margin_y = hh * 0.2F;
         const auto outside = [&](auto&& test) { return test(poly[0]) && test(poly[1]) && test(poly[2]); };
         const bool in_front = poly[0].z >= near_z && poly[1].z >= near_z && poly[2].z >= near_z;
-        if (in_front && (outside([&](const Cv& c) { return c.x * focal > (hw * lim) * c.z; }) ||
-            outside([&](const Cv& c) { return -c.x * focal > (hw * lim) * c.z; }) ||
-            outside([&](const Cv& c) { return c.y * focal > (hh * lim) * c.z; }) ||
-            outside([&](const Cv& c) { return -c.y * focal > (hh * lim) * c.z; }))) {
+        if (in_front && (outside([&](const Cv& c) { return c.x * focal > (2.0F * hw - cx + margin_x) * c.z; }) ||
+            outside([&](const Cv& c) { return -c.x * focal > (cx + margin_x) * c.z; }) ||
+            outside([&](const Cv& c) { return c.y * focal > (cy + margin_y) * c.z; }) ||
+            outside([&](const Cv& c) { return -c.y * focal > (2.0F * hh - cy + margin_y) * c.z; }))) {
             continue;
         }
 
@@ -840,7 +856,7 @@ struct RoomFrame {
         for (int i = 0; i < count; ++i) {
             const auto& c = clipped[i];
             const float iz = 1.0F / c.z;
-            s[i] = {hw + focal * c.x * iz, hh - focal * c.y * iz, iz, (c.u + scroll_u) * iz, (c.v + scroll_v) * iz,
+            s[i] = {cx + focal * c.x * iz, cy - focal * c.y * iz, iz, (c.u + scroll_u) * iz, (c.v + scroll_v) * iz,
                     c.r * iz, c.g * iz, c.b * iz, c.a * iz};
             nearest = std::min(nearest, c.z);
         }
@@ -1155,7 +1171,8 @@ template <class Project>
                 std::isfinite(p1.y) && std::isfinite(p1.z)) {
                 float dx = p1.x - p0.x, dy = p1.y - p0.y;
                 const float len = std::sqrt(dx * dx + dy * dy);
-                const float half = std::max(0.75F, static_cast<float>(image_height) / 720.0F);
+                const float half = std::max(0.75F, static_cast<float>(view.tile.on ? view.tile.full_height : image_height) /
+                                                       720.0F);
                 if (len > 1.0e-4F) {
                     dx = dx / len * half;
                     dy = dy / len * half;
@@ -1267,8 +1284,8 @@ struct OverlayPen final {
     }
     [[nodiscard]] P2 cam_point(const Vec3& c) const {
         const float inv = 1.0F / c.z;
-        return P2{static_cast<float>(image.width) * 0.5F + zoom * frame.focal_px * c.x * inv,
-                  static_cast<float>(image.height) * 0.5F - zoom * frame.focal_px * c.y * inv, c.z};
+        return P2{static_cast<float>(image.width) * 0.5F + frame.principal_x + zoom * frame.focal_px * c.x * inv,
+                  static_cast<float>(image.height) * 0.5F + frame.principal_y - zoom * frame.focal_px * c.y * inv, c.z};
     }
     void line3(const Vec3& world_a, const Vec3& world_b, std::uint8_t r, std::uint8_t g, std::uint8_t bl,
                std::uint8_t alpha, int width, const std::uint8_t* cap_background = nullptr) const {
@@ -1411,7 +1428,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
     // the model center; project_in_frame's divide by z_cam is the actual
     // perspective divide that was missing.
     const auto frame = view_frame(mesh, view, image.width, image.height);
-    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float zoom = std::clamp(view.zoom, 0.05F, 64.0F);
     const float radius = frame.radius;
 
     const auto project = [&](const Vec3& world) -> P2 {
@@ -1525,7 +1542,8 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
     const float model_near = near_plane(view, frame);
     const auto behind_near = [&](const P2& q) { return q.z + cd < model_near; };
     const float focal = zoom * frame.focal_px;
-    const float half_w = static_cast<float>(image.width) * 0.5F, half_h = static_cast<float>(image.height) * 0.5F;
+    const float half_w = static_cast<float>(image.width) * 0.5F + frame.principal_x;
+    const float half_h = static_cast<float>(image.height) * 0.5F + frame.principal_y;
 
     // One vertex of a drawn triangle: camera space, screen, and what is
     // interpolated across it.
@@ -2087,7 +2105,7 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
     out.height = height;
     const auto& bg = kBackgrounds[view.background & 3U];
     out.background = {bg[0], bg[1], bg[2]};
-    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float zoom = std::clamp(view.zoom, 0.05F, 64.0F);
     const float focal = zoom * frame.focal_px;
     out.model_view = camera_matrix(frame, view, false);
     out.camera_distance = frame.camera_distance;
@@ -2206,7 +2224,9 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                       const HierarchyOverlay* hierarchy,
                       const std::vector<std::uint32_t>* triangle_texture_slots,
                       const std::vector<ImagePreview>* textures) {
-    auto* backend = gpu_view_enabled() ? gpu_view_backend() : nullptr;
+    // A tile of a larger picture is drawn here: the GPU frame has no
+    // off-centre projection.
+    auto* backend = gpu_view_enabled() && !view.tile.on ? gpu_view_backend() : nullptr;
     if (backend != nullptr && !view.wireframe && !view.uv_layout && !mesh.vertices.empty() &&
         mesh.indices.size() >= 3U) {
         RgbaImage image;
@@ -2275,7 +2295,7 @@ ViewPick pick_view(const Mesh& mesh, int width, int height, const ViewState& vie
     const int w = std::clamp(width, 1, 8192);
     const int h = std::clamp(height, 1, 8192);
     const auto frame = view_frame(mesh, view, w, h);
-    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float zoom = std::clamp(view.zoom, 0.05F, 64.0F);
     const float focal = zoom * frame.focal_px;
     // Camera-space ray from the eye through the pixel centre.
     const Vec3 dir{(px + 0.5F - static_cast<float>(w) * 0.5F) / focal,
@@ -2382,7 +2402,7 @@ std::vector<HierarchyScreenPoint> project_hierarchy_points(const Mesh& mesh,
     const int clamped_width = std::clamp(width, 1, 8192);
     const int clamped_height = std::clamp(height, 1, 8192);
     const auto frame = view_frame(mesh, view, clamped_width, clamped_height);
-    const float zoom = std::clamp(view.zoom, 0.15F, 8.0F);
+    const float zoom = std::clamp(view.zoom, 0.05F, 64.0F);
 
     out.reserve(hierarchy.points.size());
     for (const auto& point : hierarchy.points) {

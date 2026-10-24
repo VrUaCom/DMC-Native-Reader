@@ -370,6 +370,8 @@ struct ViewControls final {
     // the view scales it so it frames what the viewfinder shows.
     float lens_zoom{};
     float zoom_scale{1.0F};
+    // A tile of a picture larger than one render (view_renderer.h).
+    ViewState::Tile tile{};
 };
 
 // World position of the camera of that view (the start of a fly camera).

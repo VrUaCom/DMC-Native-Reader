@@ -21,16 +21,17 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 
 | Section | Setting | Options |
 |---|---|---|
-| Picture | File | **PNG**, JPEG, WebP lossless |
+| Picture | File | **PNG**, JPEG, WebP lossless, RAW (DNG), RAW (DNG) + JPEG |
 | | JPEG quality | 100, **95**, 90, 85, 75, 60 |
+| | RAW data | **Linear RGB** (every editor), Bayer RGGB (one colour a pixel, like a sensor) |
 | | Size (long side) | **As the view**, 1280, 1920, 2560, 3840, 5120, 6144, 7680 (8K) |
-| | Megapixels (instead of the size) | **By the size**, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64 MP (in the picture's shape; the 8192 side of the renderer caps it) |
-| | Shape | **As the view**, 16:9, 3:2, 4:3, 1:1, 21:9, 9:16, 2:3 |
+| | Megapixels (instead of the size) | **By the size**, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64, 100, 124, 150, 200 MP (in the picture's shape, a side at most 24576) |
+| | Shape | **As the view**, 16:9, 3:2, 4:3, 1:1, 21:9, 9:16, 2:3, 2.35:1 |
 | | Self-timer | **Off**, 2, 5, 10 s |
 | | Shots per press | **1**, 3, 5, 10 (a quarter second apart) |
 | | Subtitles in the picture | **Show**, Hide |
 | Video | Size | 720p, **1080p**, 1440p, 2160p (the short side; the long side at most 4096) |
-| | Shape | As the view, **16:9**, 4:3, 1:1, 21:9, 9:16 |
+| | Shape | As the view, **16:9**, 4:3, 1:1, 21:9, 9:16, 2.35:1 |
 | | Frame rate | 24, 25, **30**, 50, 60 |
 | | Bit rate | **Auto** (0.12 bit per pixel for H.264, 0.07 for H.265), 4 … 100 Mbit/s |
 | | Codec | **H.264**, H.265 |
@@ -38,7 +39,7 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 | | Stop after | **No limit**, 15 s, 30 s, 1, 5, 10 min |
 | | Motion blur | **Off**, by the shutter (the frames before blend in) |
 | | Subtitles in the video | **Show**, Hide |
-| Lens | Focal length (full frame) | **As the view (pinch)**, 14 … 200 mm |
+| Lens | Focal length (full frame) | **As the view (pinch)**, 14, 18, 24, 28, 35, 50, 85, 105, 135, 200, 300, 400 mm |
 | | Vignetting | **Off**, by the aperture, strong |
 | | Distortion | **Off**, by the focal length (barrel when wide, pincushion when long) |
 | | Colour fringing | **Off**, weak, strong |
@@ -100,5 +101,34 @@ The starting values leave the picture exactly as the view renders it.
   one but not the other way round, so a sharp subject keeps its edge. Bright
   bokeh weighs highlights up to 3 times. The viewfinder skips it while the
   view moves. On a 4-core desktop a 4K picture takes about 0.8 s.
+
+- **Past one render (100 MP and more).** A picture with a side over 8192 is
+  drawn in tiles of at most 4096 and put together. Every tile carries the
+  whole picture's focal length and has its projection centre where the
+  picture's centre falls in it (`ViewState::tile`; the software renderer
+  draws tiles, the GPU frame has no off-centre projection). On st002, tiles
+  against one render differ by 0.002 on average. 124 MP takes about 4 s on
+  a 4-core desktop. Pictures are rendered and saved on a worker, one after
+  another. A 124 MP picture needs about 1.5 GB of memory; when it is not
+  there, the app says so.
+- **RAW (DNG).** DNG is Adobe's open RAW. Lightroom, Camera Raw/Photoshop,
+  darktable, RawTherapee, Snapseed and LibRaw open it.
+  - The first IFD is a developed preview (at most 1024 long) for galleries.
+  - The SubIFD holds the RAW: 16-bit linear light × the exposure × the lens's
+    vignetting, plus the sensor noise, clipped at full scale. The depth of
+    field, distortion and fringing are in it.
+  - The white balance is the AsShotNeutral. The camera's colours are linear
+    sRGB (ColorMatrix1 is XYZ D65 → sRGB).
+  - ISO, shutter, f-number and focal length are tagged.
+  - Colour, curves, style and sharpening are left to the editor.
+  - Linear RGB is PhotometricInterpretation LinearRaw. Bayer is a CFA RGGB
+    mosaic for the editor to demosaic.
+  - Checked with LibRaw 0.22: both open, the Bayer pattern is read as RGGB,
+    the white balance comes from the file.
+  - RAW + JPEG writes both from one render.
+- **NEF.** NEF is Nikon's own RAW: sensor data of Nikon cameras with Nikon's
+  maker notes and compression. A file made here would have to pretend to be
+  a Nikon camera, and Lightroom or NX Studio would not open it as one. DNG
+  is the open RAW every editor opens; Nikon's own software is the exception.
 
 Not yet: a photo's motion blur.

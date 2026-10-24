@@ -430,22 +430,56 @@ public final class DmcRenderView extends View {
         return new int[]{renderWidth(), renderHeight()};
     }
 
-    /**
-     * A picture as the core's camera plans it (plan: NativeBridge.cameraPlan(0, ...)): the view's
-     * camera without the interface, framed for the picture's shape and developed with the camera
-     * settings, rendered right here at full quality. A still image is copied as it is.
-     */
-    public Bitmap capturePhoto(int[] plan) {
+    /** What a picture is taken of, read on the UI thread; rendered later on a worker. */
+    public static final class CaptureState {
+        long session;
+        int viewWidth, viewHeight;
+        float yaw, pitch, zoom, panX, panY, roomYaw, dolly;
+        boolean follow;
+        int flags;
+        String subtitle;
+        float[] subtitleStyle;
+        Bitmap still;  // a still image is copied as it is
+    }
+
+    /** The view's camera now, for a picture of plan's size (NativeBridge.cameraPlan(0, ...)). */
+    public CaptureState captureState(int[] plan) {
+        final CaptureState state = new CaptureState();
         if (session == 0 || staticImagePreview) {
-            return bitmap == null || bitmap.isRecycled() ? null : bitmap.copy(Bitmap.Config.ARGB_8888, false);
+            state.still = bitmap == null || bitmap.isRecycled() ? null : bitmap.copy(Bitmap.Config.ARGB_8888, false);
+            return state;
         }
-        if (plan == null || plan.length < 10) return null;
+        state.session = session;
+        state.viewWidth = renderWidth();
+        state.viewHeight = renderHeight();
+        state.yaw = yaw;
+        state.pitch = pitch;
+        state.zoom = zoom;
+        state.panX = panX;
+        state.panY = panY;
+        state.roomYaw = roomYaw;
+        state.dolly = dolly;
+        state.follow = follow;
+        state.flags = renderFlags | settingsFlags | lineFlags(plan[0], plan[1]);
+        state.subtitle = subtitle;
+        state.subtitleStyle = subtitleStyle;
+        return state;
+    }
+
+    /**
+     * A picture as the core's camera plans it: the view's camera without the interface, framed
+     * for the picture's shape and developed with the camera settings (in tiles past one render).
+     * Safe off the UI thread; null when it could not be made (memory).
+     */
+    public static Bitmap renderPhoto(CaptureState state, int[] plan) {
+        if (state.still != null) return state.still;
+        if (state.session == 0 || plan == null || plan.length < 10) return null;
         try {
             final Bitmap image = Bitmap.createBitmap(plan[0], plan[1], Bitmap.Config.ARGB_8888);
-            if (NativeBridge.renderCapture(session, 0, renderWidth(), renderHeight(), yaw, pitch, zoom,
-                    renderFlags | settingsFlags | lineFlags(image.getWidth(), image.getHeight()),
-                    panX, panY, roomYaw, follow, dolly, image)) {
-                if (plan[9] != 0) drawSubtitle(new Canvas(image), image.getWidth(), image.getHeight());
+            if (NativeBridge.renderCapture(state.session, 0, state.viewWidth, state.viewHeight, state.yaw,
+                    state.pitch, state.zoom, state.flags, state.panX, state.panY, state.roomYaw, state.follow,
+                    state.dolly, image)) {
+                if (plan[9] != 0) drawSubtitleOn(new Canvas(image), image.getWidth(), image.getHeight(), state);
                 return image;
             }
             image.recycle();
@@ -453,6 +487,26 @@ public final class DmcRenderView extends View {
             return null;
         }
         return null;
+    }
+
+    /**
+     * A RAW picture (DNG) into the open file fd; developed, when given (plan's size), gets the
+     * developed picture as well (RAW + JPEG).
+     */
+    public static boolean writeRaw(CaptureState state, int fd, Bitmap developed, boolean subtitles) {
+        if (state.session == 0) return false;
+        final boolean ok = NativeBridge.writeCaptureDng(state.session, state.viewWidth, state.viewHeight, state.yaw,
+                state.pitch, state.zoom, state.flags, state.panX, state.panY, state.roomYaw, state.follow,
+                state.dolly, fd, developed);
+        if (ok && developed != null && subtitles && state.subtitle != null) {
+            drawSubtitleOn(new Canvas(developed), developed.getWidth(), developed.getHeight(), state);
+        }
+        return ok;
+    }
+
+    private static void drawSubtitleOn(Canvas canvas, int width, int height, CaptureState state) {
+        drawSubtitleText(canvas, width, height, state.subtitle, state.subtitleStyle,
+                new Paint(Paint.ANTI_ALIAS_FLAG));
     }
 
     /**
@@ -1370,8 +1424,11 @@ public final class DmcRenderView extends View {
     }
 
     private void drawSubtitle(Canvas canvas, int width, int height) {
-        final String text = subtitle;
-        final float[] s = subtitleStyle;
+        drawSubtitleText(canvas, width, height, subtitle, subtitleStyle, subtitlePaint);
+    }
+
+    private static void drawSubtitleText(Canvas canvas, int width, int height, String text, float[] s,
+                                         Paint subtitlePaint) {
         if (text == null || s == null || s.length < 10) return;
         final float size = Math.max(8.0f, s[2] * height);
         final int alpha = Math.round(Math.max(0.0f, Math.min(1.0f, s[3])) * 255.0f);

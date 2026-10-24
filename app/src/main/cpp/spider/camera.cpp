@@ -4,10 +4,13 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <thread>
 #include <utility>
+
+#include <unistd.h>
 
 #include "dmcresource/demo_session.h"
 
@@ -16,7 +19,9 @@ namespace {
 
 constexpr float kTanHalfFov = 0.54630249F;  // tan(0.5): the view's zoom 1
 constexpr float kHalfShortSideMm = 12.0F;   // a full-frame sensor is 36 x 24 mm
-constexpr int kMaxPictureSide = 8192;
+constexpr int kMaxPictureSide = 24576;  // larger than one render: drawn in tiles
+constexpr int kMaxRenderTile = 8192;
+constexpr int kTileSide = 4096;
 constexpr int kMaxVideoSide = 4096;
 
 struct Aspect final {
@@ -25,12 +30,13 @@ struct Aspect final {
     int h;  // 0 x 0: the view's own shape
 };
 constexpr Aspect kPhotoAspects[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"3:2", 3, 2}, {"4:3", 4, 3},
-                                    {"1:1", 1, 1}, {"21:9", 21, 9}, {"9:16", 9, 16}, {"2:3", 2, 3}};
+                                    {"1:1", 1, 1}, {"21:9", 21, 9}, {"9:16", 9, 16}, {"2:3", 2, 3},
+                                    {"2.35:1", 235, 100}};
 constexpr Aspect kVideoAspects[] = {{"As the view", 0, 0}, {"16:9", 16, 9}, {"4:3", 4, 3}, {"1:1", 1, 1},
-                                    {"21:9", 21, 9}, {"9:16", 9, 16}};
+                                    {"21:9", 21, 9}, {"9:16", 9, 16}, {"2.35:1", 235, 100}};
 constexpr int kPhotoQualities[] = {100, 95, 90, 85, 75, 60};
 constexpr int kPhotoLongSides[] = {0, 1280, 1920, 2560, 3840, 5120, 6144, 7680};
-constexpr int kMegapixels[] = {0, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64};
+constexpr int kMegapixels[] = {0, 2, 5, 8, 12, 16, 20, 24, 33, 40, 48, 64, 100, 124, 150, 200};
 constexpr float kInfinity = std::numeric_limits<float>::infinity();
 constexpr float kFocusUnits[] = {0.0F, 50.0F, 100.0F, 200.0F, 300.0F, 500.0F, 1000.0F, 2000.0F, kInfinity};
 constexpr int kBlades[] = {0, 9, 8, 7, 6, 5};
@@ -42,7 +48,7 @@ constexpr int kFps[] = {24, 25, 30, 50, 60};
 constexpr int kMbps[] = {0, 4, 8, 16, 32, 64, 100};
 constexpr int kKeyframeMs[] = {500, 1000, 2000, 5000};
 constexpr int kLimits[] = {0, 15, 30, 60, 300, 600};
-constexpr int kFocalMm[] = {0, 14, 18, 24, 28, 35, 50, 85, 105, 135, 200};
+constexpr int kFocalMm[] = {0, 14, 18, 24, 28, 35, 50, 85, 105, 135, 200, 300, 400};
 constexpr float kApertures[] = {1.4F, 2.0F, 2.8F, 4.0F, 5.6F, 8.0F, 11.0F, 16.0F, 22.0F};
 constexpr int kIsos[] = {0, 50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600};
 constexpr int kShutterDenominators[] = {8000, 4000, 2000, 1000, 500, 250, 125, 60, 30, 15, 8, 4, 2, 1};
@@ -68,13 +74,16 @@ std::vector<Setting> build_settings() {
         return names;
     };
     const char* picture = "Picture";
-    add(Key::PhotoFormat, "photo_format", picture, "File", {"PNG (lossless)", "JPEG", "WebP (lossless)"}, 0);
+    add(Key::PhotoFormat, "photo_format", picture, "File",
+        {"PNG (lossless)", "JPEG", "WebP (lossless)", "RAW (DNG)", "RAW (DNG) + JPEG"}, 0);
     add(Key::PhotoQuality, "photo_quality", picture, "JPEG quality", {"100", "95", "90", "85", "75", "60"}, 1);
+    add(Key::PhotoRawData, "photo_raw_data", picture, "RAW data",
+        {"Linear RGB (every editor)", "Bayer RGGB (like a sensor)"}, 0);
     add(Key::PhotoSize, "photo_size", picture, "Size (long side)",
         {"As the view", "HD 1280", "Full HD 1920", "QHD 2560", "4K 3840", "5K 5120", "6K 6144", "8K 7680"}, 0);
     add(Key::PhotoMegapixels, "photo_megapixels", picture, "Megapixels (instead of the size)",
         {"By the size", "2 MP", "5 MP", "8 MP", "12 MP", "16 MP", "20 MP", "24 MP", "33 MP", "40 MP", "48 MP",
-         "64 MP"},
+         "64 MP", "100 MP", "124 MP", "150 MP", "200 MP"},
         0);
     add(Key::PhotoAspect, "photo_aspect", picture, "Shape", aspects(kPhotoAspects), 0);
     add(Key::PhotoTimer, "photo_timer", picture, "Self-timer", {"Off", "2 s", "5 s", "10 s"}, 0);
@@ -96,7 +105,7 @@ std::vector<Setting> build_settings() {
     const char* lens = "Lens";
     add(Key::LensFocal, "lens_focal", lens, "Focal length (full frame)",
         {"As the view (pinch)", "14 mm", "18 mm", "24 mm", "28 mm", "35 mm", "50 mm", "85 mm", "105 mm",
-         "135 mm", "200 mm"},
+         "135 mm", "200 mm", "300 mm", "400 mm"},
         0);
     add(Key::LensVignette, "lens_vignette", lens, "Vignetting", {"Off", "By the aperture", "Strong"}, 0);
     add(Key::LensDistortion, "lens_distortion", lens, "Distortion", {"Off", "By the focal length"}, 0);
@@ -402,9 +411,9 @@ void depth_of_field(RgbaImage* image, const std::vector<float>& depth, float mm,
     const float px_per_mm = static_cast<float>(std::min(w, h)) / 24.0F;
     const float max_radius = 0.05F * static_cast<float>(std::min(w, h));
     const float k = f * f / aperture;
-    std::vector<float> radius(depth.size(), 0.0F);
-    float widest = 0.0F;
-    for (std::size_t i = 0; i < depth.size(); ++i) {
+    // The circle of confusion's radius (pixels) of a pixel, worked out when
+    // asked: a second full-size buffer would not fit beside 100+ MP.
+    const auto radius_at = [&](std::size_t i) {
         const float z = std::isfinite(depth[i]) ? std::max(depth[i] * kUnitMm, f * 1.05F) : kInfinity;
         float coc = 0.0F;
         if (std::isfinite(s)) {
@@ -412,9 +421,10 @@ void depth_of_field(RgbaImage* image, const std::vector<float>& depth, float mm,
         } else if (std::isfinite(z)) {
             coc = k / z;
         }
-        radius[i] = std::min(max_radius, 0.5F * coc * px_per_mm);
-        widest = std::max(widest, radius[i]);
-    }
+        return std::min(max_radius, 0.5F * coc * px_per_mm);
+    };
+    float widest = 0.0F;
+    for (std::size_t i = 0; i < depth.size(); i += 7U) widest = std::max(widest, radius_at(i));
     if (widest < 0.5F) return;
     // Golden-angle points in the unit disk, pushed out to the blades' polygon.
     constexpr int kTaps = 128;
@@ -437,7 +447,7 @@ void depth_of_field(RgbaImage* image, const std::vector<float>& depth, float mm,
         for (int y = row_begin; y < row_end; ++y) {
             for (int x = 0; x < w; ++x) {
                 const std::size_t p = static_cast<std::size_t>(y) * w + x;
-                const float r = radius[p];
+                const float r = radius_at(p);
                 if (r < 0.5F) continue;
                 const int n = std::clamp(static_cast<int>(r * r * 1.5F) + 4, 4, kTaps);
                 const float zp = depth[p];
@@ -449,7 +459,8 @@ void depth_of_field(RgbaImage* image, const std::vector<float>& depth, float mm,
                     const int qx = std::clamp(x + static_cast<int>(std::lround(dx)), 0, w - 1);
                     const int qy = std::clamp(y + static_cast<int>(std::lround(dy)), 0, h - 1);
                     const std::size_t q = static_cast<std::size_t>(qy) * w + qx;
-                    const float reach = !(depth[q] < zp) ? std::min(radius[q], r) : radius[q];
+                    const float rq = radius_at(q);
+                    const float reach = !(depth[q] < zp) ? std::min(rq, r) : rq;
                     if (reach + 0.5F < std::sqrt(dx * dx + dy * dy)) continue;
                     const auto* c = &src[q * 4U];
                     float weight = 1.0F;
@@ -525,8 +536,10 @@ Plan plan(Kind kind, int view_width, int view_height) noexcept {
         const float fit = std::min(1.0F, static_cast<float>(kMaxPictureSide) / std::max(w, h));
         out.width = even(std::max(64, static_cast<int>(std::lround(w * fit))));
         out.height = even(std::max(64, static_cast<int>(std::lround(h * fit))));
-        out.format = std::clamp(choice(Key::PhotoFormat), 0, 2);
-        out.quality = out.format == static_cast<int>(PhotoFormat::Jpeg) ? pick(Key::PhotoQuality, kPhotoQualities) : 100;
+        out.format = std::clamp(choice(Key::PhotoFormat), 0, 4);
+        const bool jpeg = out.format == static_cast<int>(PhotoFormat::Jpeg) ||
+                          out.format == static_cast<int>(PhotoFormat::DngJpeg);
+        out.quality = jpeg ? pick(Key::PhotoQuality, kPhotoQualities) : 100;
         out.timer_seconds = pick(Key::PhotoTimer, kTimers);
         out.burst = pick(Key::PhotoBurst, kBursts);
         out.subtitles = choice(Key::PhotoSubtitles) == 0;
@@ -601,19 +614,47 @@ Exposure exposure() noexcept {
     return out;
 }
 
-void develop(RgbaImage* image, std::uint32_t seed, float mm, const std::vector<float>* depth) {
-    if (image == nullptr || image->width <= 0 || image->height <= 0 ||
-        image->pixels.size() < static_cast<std::size_t>(image->width) * image->height * 4U) {
-        return;
-    }
-    const int w = image->width;
-    const int h = image->height;
-    // The optics first: what the lens does not focus, then its distortion.
+namespace {
+
+bool valid_image(const RgbaImage* image) noexcept {
+    return image != nullptr && image->width > 0 && image->height > 0 &&
+           image->pixels.size() >= static_cast<std::size_t>(image->width) * image->height * 4U;
+}
+
+// What the lens does to the light: the depth of field, the distortion and
+// the colour fringing (a RAW keeps these).
+void optics(RgbaImage* image, float mm, const std::vector<float>* depth) {
+    if (!valid_image(image)) return;
     if (depth != nullptr && depth_of_field_on()) depth_of_field(image, *depth, mm, exposure().aperture);
-    const float scale = static_cast<float>(std::max(w, h)) / 1920.0F;
     const float k = choice(Key::LensDistortion) == 1 ? distortion_k(mm) : 0.0F;
     const float fringe = choice(Key::LensFringe) == 0 ? 0.0F : (choice(Key::LensFringe) == 1 ? 0.0012F : 0.003F);
     if (k != 0.0F || fringe != 0.0F) lens_pass(image, k, fringe);
+}
+
+float vignette_strength() noexcept {
+    const int vignette_choice = choice(Key::LensVignette);
+    return vignette_choice == 0   ? 0.0F
+           : vignette_choice == 2 ? 0.6F
+                                  : std::clamp(0.62F * std::pow(1.4F / exposure().aperture, 0.8F), 0.04F, 0.6F);
+}
+
+// Sensor noise (8-bit steps) of the ISO the exposure works at.
+float noise_sigma() noexcept {
+    const int noise_choice = choice(Key::ExposureNoise);
+    const int iso = exposure().iso;
+    float sigma = 0.0F;
+    if (noise_choice != 0 && iso > 100) sigma = 1.6F * std::pow(std::log2(static_cast<float>(iso) / 100.0F), 1.3F);
+    if (noise_choice == 2) sigma = std::max(sigma, 5.0F);
+    return sigma;
+}
+
+// What the camera makes of the light: exposure, white balance, the curves,
+// the style, vignetting, noise and sharpening (a RAW leaves these to the editor).
+void look(RgbaImage* image, std::uint32_t seed) {
+    if (!valid_image(image)) return;
+    const int w = image->width;
+    const int h = image->height;
+    const float scale = static_cast<float>(std::max(w, h)) / 1920.0F;
 
     // Exposure, white balance, highlights and contrast are curves per
     // channel; the rest mixes the channels.
@@ -646,15 +687,9 @@ void develop(RgbaImage* image, std::uint32_t seed, float mm, const std::vector<f
             curve[c][v] = static_cast<std::uint8_t>(std::clamp(x * 255.0F + 0.5F, 0.0F, 255.0F));
         }
     }
-    const int vignette_choice = choice(Key::LensVignette);
-    const float vignette = vignette_choice == 0 ? 0.0F
-                           : vignette_choice == 2
-                               ? 0.6F
-                               : std::clamp(0.62F * std::pow(1.4F / e.aperture, 0.8F), 0.04F, 0.6F);
+    const float vignette = vignette_strength();
     const int noise_choice = choice(Key::ExposureNoise);
-    float sigma = 0.0F;
-    if (noise_choice != 0 && e.iso > 100) sigma = 1.6F * std::pow(std::log2(static_cast<float>(e.iso) / 100.0F), 1.3F);
-    if (noise_choice == 2) sigma = std::max(sigma, 5.0F);
+    const float sigma = noise_sigma();
     const int grain = noise_choice == 2 ? std::max(1, static_cast<int>(std::lround(2.0F * scale))) : 1;
     const float cx = 0.5F * static_cast<float>(w);
     const float cy = 0.5F * static_cast<float>(h);
@@ -714,6 +749,13 @@ void develop(RgbaImage* image, std::uint32_t seed, float mm, const std::vector<f
     if (sharpness > 0) sharpen(image, 0.35F * static_cast<float>(sharpness));
 }
 
+}  // namespace
+
+void develop(RgbaImage* image, std::uint32_t seed, float mm, const std::vector<float>* depth) {
+    optics(image, mm, depth);
+    look(image, seed);
+}
+
 bool depth_of_field_on() noexcept { return choice(Key::LensDepthOfField) == 1; }
 
 float last_focus() noexcept { return g_focus.load(); }
@@ -721,6 +763,329 @@ float last_focus() noexcept { return g_focus.load(); }
 void develop(RgbaImage* image, std::uint32_t seed) {
     const float fixed = fixed_lens_zoom();
     develop(image, seed, fixed > 0.0F ? focal_mm(fixed) : 50.0F);
+}
+
+namespace {
+
+// Sizes of `total` split into the fewest pieces of at most `limit` (even
+// pieces, so none is a sliver).
+std::vector<std::pair<int, int>> spans(int total, int limit) {
+    const int count = std::max(1, (total + limit - 1) / limit);
+    std::vector<std::pair<int, int>> out;
+    int begin = 0;
+    for (int i = 0; i < count; ++i) {
+        const int end = static_cast<int>(static_cast<long long>(total) * (i + 1) / count);
+        out.emplace_back(begin, end - begin);
+        begin = end;
+    }
+    return out;
+}
+
+// ---- DNG (Adobe's open RAW, TIFF based) --------------------------------------
+
+struct TiffEntry final {
+    std::uint16_t tag{};
+    std::uint16_t type{};  // 1 BYTE, 2 ASCII, 3 SHORT, 4 LONG, 5 RATIONAL, 10 SRATIONAL
+    std::uint32_t count{};
+    std::vector<std::uint8_t> data;
+};
+
+void put16(std::vector<std::uint8_t>& out, std::uint32_t v) {
+    out.push_back(static_cast<std::uint8_t>(v));
+    out.push_back(static_cast<std::uint8_t>(v >> 8U));
+}
+void put32(std::vector<std::uint8_t>& out, std::uint32_t v) {
+    put16(out, v & 0xFFFFU);
+    put16(out, v >> 16U);
+}
+
+TiffEntry shorts(std::uint16_t tag, std::initializer_list<std::uint32_t> values) {
+    TiffEntry e{tag, 3, static_cast<std::uint32_t>(values.size()), {}};
+    for (const auto v : values) put16(e.data, v);
+    return e;
+}
+TiffEntry longs(std::uint16_t tag, std::initializer_list<std::uint32_t> values) {
+    TiffEntry e{tag, 4, static_cast<std::uint32_t>(values.size()), {}};
+    for (const auto v : values) put32(e.data, v);
+    return e;
+}
+TiffEntry bytes(std::uint16_t tag, std::initializer_list<std::uint8_t> values) {
+    return TiffEntry{tag, 1, static_cast<std::uint32_t>(values.size()), std::vector<std::uint8_t>(values)};
+}
+TiffEntry ascii(std::uint16_t tag, const std::string& text) {
+    TiffEntry e{tag, 2, static_cast<std::uint32_t>(text.size() + 1U), {}};
+    e.data.assign(text.begin(), text.end());
+    e.data.push_back(0U);
+    return e;
+}
+TiffEntry rationals(std::uint16_t tag, bool is_signed, std::initializer_list<double> values) {
+    TiffEntry e{tag, static_cast<std::uint16_t>(is_signed ? 10 : 5), static_cast<std::uint32_t>(values.size()), {}};
+    for (const double v : values) {
+        const std::int32_t den = 10000;
+        const auto num = static_cast<std::int32_t>(std::lround(v * den));
+        put32(e.data, static_cast<std::uint32_t>(num));
+        put32(e.data, static_cast<std::uint32_t>(den));
+    }
+    return e;
+}
+
+std::size_t ifd_size(const std::vector<TiffEntry>& entries) {
+    std::size_t size = 2U + entries.size() * 12U + 4U;
+    for (const auto& e : entries) {
+        if (e.data.size() > 4U) size += (e.data.size() + 1U) & ~std::size_t{1};
+    }
+    return size;
+}
+
+// One IFD at `offset` (entries sorted by tag), its values after it.
+std::vector<std::uint8_t> ifd_bytes(std::vector<TiffEntry> entries, std::uint32_t offset) {
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.tag < b.tag; });
+    std::vector<std::uint8_t> out;
+    std::vector<std::uint8_t> extra;
+    const std::uint32_t extra_at = offset + 2U + static_cast<std::uint32_t>(entries.size()) * 12U + 4U;
+    put16(out, static_cast<std::uint32_t>(entries.size()));
+    for (const auto& e : entries) {
+        put16(out, e.tag);
+        put16(out, e.type);
+        put32(out, e.count);
+        if (e.data.size() <= 4U) {
+            for (std::size_t i = 0; i < 4U; ++i) out.push_back(i < e.data.size() ? e.data[i] : 0U);
+        } else {
+            put32(out, extra_at + static_cast<std::uint32_t>(extra.size()));
+            extra.insert(extra.end(), e.data.begin(), e.data.end());
+            if (extra.size() % 2U != 0U) extra.push_back(0U);
+        }
+    }
+    put32(out, 0U);  // no next IFD
+    out.insert(out.end(), extra.begin(), extra.end());
+    return out;
+}
+
+bool write_all(int fd, const std::uint8_t* data, std::size_t size) {
+    while (size > 0U) {
+        const auto n = ::write(fd, data, size);
+        if (n <= 0) return false;
+        data += n;
+        size -= static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
+// A small developed copy for the gallery: box-sampled to at most 1024 long.
+RgbaImage preview_of(const RgbaImage& image) {
+    const int side = std::max(image.width, image.height);
+    const int step = std::max(1, (side + 1023) / 1024);
+    RgbaImage out;
+    out.width = std::max(1, image.width / step);
+    out.height = std::max(1, image.height / step);
+    out.pixels.assign(static_cast<std::size_t>(out.width) * out.height * 4U, 255U);
+    for (int y = 0; y < out.height; ++y) {
+        for (int x = 0; x < out.width; ++x) {
+            std::uint32_t sum[3] = {0U, 0U, 0U};
+            for (int sy = 0; sy < step; ++sy) {
+                for (int sx = 0; sx < step; ++sx) {
+                    const auto* p = &image.pixels[(static_cast<std::size_t>(y * step + sy) * image.width +
+                                                   static_cast<std::size_t>(x * step + sx)) * 4U];
+                    for (int c = 0; c < 3; ++c) sum[c] += p[c];
+                }
+            }
+            auto* o = &out.pixels[(static_cast<std::size_t>(y) * out.width + x) * 4U];
+            for (int c = 0; c < 3; ++c) o[c] = static_cast<std::uint8_t>(sum[c] / static_cast<std::uint32_t>(step * step));
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+RgbaImage render_large(const Session* session, int width, int height, float yaw, float pitch, float zoom,
+                       std::uint32_t render_flags, const ViewControls& controls, std::vector<float>* depth,
+                       int max_side) {
+    max_side = std::clamp(max_side, 256, kMaxRenderTile);
+    if (width <= max_side && height <= max_side) {
+        return render_session(session, width, height, yaw, pitch, zoom, render_flags, controls, depth);
+    }
+    // Tiles of the same camera: each has the whole picture's focal length
+    // and its centre where the picture's centre falls in it.
+    const int tile_limit = std::min(max_side, kTileSide);
+    RgbaImage out;
+    out.width = width;
+    out.height = height;
+    out.pixels.resize(static_cast<std::size_t>(width) * height * 4U);
+    if (depth != nullptr) depth->assign(static_cast<std::size_t>(width) * height, kInfinity);
+    std::vector<float> tile_depth;
+    for (const auto [ty, th] : spans(height, tile_limit)) {
+        for (const auto [tx, tw] : spans(width, tile_limit)) {
+            ViewControls tiled = controls;
+            tiled.tile.on = true;
+            tiled.tile.focal_side = static_cast<float>(std::min(width, height));
+            tiled.tile.principal_x = 0.5F * static_cast<float>(width) - static_cast<float>(tx) - 0.5F * static_cast<float>(tw);
+            tiled.tile.principal_y = 0.5F * static_cast<float>(height) - static_cast<float>(ty) - 0.5F * static_cast<float>(th);
+            tiled.tile.full_height = height;
+            const auto tile = render_session(session, tw, th, yaw, pitch, zoom, render_flags, tiled,
+                                             depth != nullptr ? &tile_depth : nullptr);
+            if (tile.width != tw || tile.height != th) return {};
+            for (int y = 0; y < th; ++y) {
+                std::memcpy(&out.pixels[(static_cast<std::size_t>(ty + y) * width + tx) * 4U],
+                            &tile.pixels[static_cast<std::size_t>(y) * tw * 4U], static_cast<std::size_t>(tw) * 4U);
+                if (depth != nullptr && tile_depth.size() == static_cast<std::size_t>(tw) * th) {
+                    std::memcpy(&(*depth)[static_cast<std::size_t>(ty + y) * width + tx],
+                                &tile_depth[static_cast<std::size_t>(y) * tw], static_cast<std::size_t>(tw) * sizeof(float));
+                }
+            }
+        }
+    }
+    return out;
+}
+
+bool write_dng(int fd, const RgbaImage& optical, const RgbaImage& preview, bool bayer, std::uint32_t seed,
+               float focal_length_mm) {
+    if (fd < 0 || !valid_image(&optical) || !valid_image(&preview)) return false;
+    const auto w = static_cast<std::uint32_t>(optical.width);
+    const auto h = static_cast<std::uint32_t>(optical.height);
+    const std::uint32_t spp = bayer ? 1U : 3U;
+    const std::uint64_t raw_bytes = static_cast<std::uint64_t>(w) * h * spp * 2U;
+    if (raw_bytes > 0xF0000000ULL) return false;  // TIFF offsets are 32-bit
+    const auto pw = static_cast<std::uint32_t>(preview.width);
+    const auto ph = static_cast<std::uint32_t>(preview.height);
+    const std::uint32_t preview_bytes = pw * ph * 3U;
+    const Exposure e = exposure();
+    // The white balance travels as the neutral the editor divides by.
+    const auto wb = balance_gains();
+    std::array<double, 3> neutral{1.0 / wb[0], 1.0 / wb[1], 1.0 / wb[2]};
+    const double top = std::max({neutral[0], neutral[1], neutral[2]});
+    for (auto& n : neutral) n /= top;
+
+    std::vector<TiffEntry> main{
+        longs(254, {1U}), longs(256, {pw}), longs(257, {ph}), shorts(258, {8U, 8U, 8U}), shorts(259, {1U}),
+        shorts(262, {2U}), ascii(271, "DMC Native Reader"), ascii(272, "Virtual camera"), longs(273, {0U}),
+        shorts(274, {1U}), shorts(277, {3U}), longs(278, {ph}), longs(279, {preview_bytes}), shorts(284, {1U}),
+        ascii(305, "DMC Native Reader"), longs(330, {0U}),
+        rationals(33434, false, {static_cast<double>(e.shutter_seconds)}),
+        rationals(33437, false, {static_cast<double>(e.aperture)}),
+        shorts(34855, {static_cast<std::uint32_t>(std::clamp(e.iso, 1, 65535))}),
+        rationals(37386, false, {static_cast<double>(focal_length_mm)}),
+        bytes(50706, {1U, 4U, 0U, 0U}), bytes(50707, {1U, 1U, 0U, 0U}),
+        ascii(50708, "DMC Native Reader virtual camera"),
+        // XYZ (D65) to the camera's colours, which are linear sRGB.
+        rationals(50721, true, {3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108, 0.0415560, 0.0556434,
+                                -0.2040259, 1.0572252}),
+        rationals(50728, false, {neutral[0], neutral[1], neutral[2]}),
+        rationals(50730, true, {0.0}),
+        shorts(50778, {21U}),
+    };
+    std::vector<TiffEntry> raw{
+        longs(254, {0U}), longs(256, {w}), longs(257, {h}),
+        bayer ? shorts(258, {16U}) : shorts(258, {16U, 16U, 16U}), shorts(259, {1U}),
+        shorts(262, {bayer ? 32803U : 34892U}), longs(273, {0U}), shorts(277, {spp}), longs(278, {h}),
+        longs(279, {static_cast<std::uint32_t>(raw_bytes)}), shorts(284, {1U}),
+        longs(50714, {0U}), longs(50717, {65535U}),
+    };
+    if (bayer) {
+        raw.push_back(shorts(33421, {2U, 2U}));
+        raw.push_back(bytes(33422, {0U, 1U, 1U, 2U}));  // RGGB
+        raw.push_back(bytes(50710, {0U, 1U, 2U}));
+        raw.push_back(shorts(50711, {1U}));
+    }
+    const std::uint32_t main_at = 8U;
+    const auto preview_at = static_cast<std::uint32_t>(main_at + ifd_size(main));
+    const std::uint32_t raw_ifd_at = (preview_at + preview_bytes + 1U) & ~1U;
+    const auto raw_at = static_cast<std::uint32_t>(raw_ifd_at + ifd_size(raw));
+    for (auto& entry : main) {
+        if (entry.tag == 273) entry = longs(273, {preview_at});
+        if (entry.tag == 330) entry = longs(330, {raw_ifd_at});
+    }
+    for (auto& entry : raw) {
+        if (entry.tag == 273) entry = longs(273, {raw_at});
+    }
+
+    std::vector<std::uint8_t> head{'I', 'I', 42U, 0U};
+    put32(head, main_at);
+    const auto main_bytes = ifd_bytes(main, main_at);
+    head.insert(head.end(), main_bytes.begin(), main_bytes.end());
+    if (!write_all(fd, head.data(), head.size())) return false;
+    std::vector<std::uint8_t> row(static_cast<std::size_t>(std::max(pw * 3U, w * spp * 2U)) + 1U);
+    for (std::uint32_t y = 0; y < ph; ++y) {
+        for (std::uint32_t x = 0; x < pw; ++x) {
+            const auto* p = &preview.pixels[(static_cast<std::size_t>(y) * pw + x) * 4U];
+            row[x * 3U] = p[0];
+            row[x * 3U + 1U] = p[1];
+            row[x * 3U + 2U] = p[2];
+        }
+        if (!write_all(fd, row.data(), pw * 3U)) return false;
+    }
+    if ((preview_at + preview_bytes) % 2U != 0U) {
+        const std::uint8_t pad = 0U;
+        if (!write_all(fd, &pad, 1U)) return false;
+    }
+    const auto raw_ifd = ifd_bytes(raw, raw_ifd_at);
+    if (!write_all(fd, raw_ifd.data(), raw_ifd.size())) return false;
+
+    // The sensor's values: linear light times the exposure and the lens's
+    // vignetting, its noise, clipped at full scale. Colour, curves, style and
+    // sharpening are the editor's.
+    std::array<float, 256> linear{};
+    for (int v = 0; v < 256; ++v) linear[static_cast<std::size_t>(v)] = srgb_to_linear(static_cast<float>(v) / 255.0F);
+    const float vignette = vignette_strength();
+    const float sigma = noise_sigma() / 255.0F * 0.5F;
+    const float cx = 0.5F * static_cast<float>(w);
+    const float cy = 0.5F * static_cast<float>(h);
+    const float inv_r2 = 1.0F / (cx * cx + cy * cy);
+    for (std::uint32_t y = 0; y < h; ++y) {
+        auto* out = row.data();
+        for (std::uint32_t x = 0; x < w; ++x) {
+            const auto* p = &optical.pixels[(static_cast<std::size_t>(y) * w + x) * 4U];
+            float light = e.gain;
+            if (vignette > 0.0F) {
+                const float dx = static_cast<float>(x) - cx;
+                const float dy = static_cast<float>(y) - cy;
+                const float rr = (dx * dx + dy * dy) * inv_r2;
+                light *= 1.0F - vignette * rr * std::sqrt(rr);
+            }
+            const auto sample = [&](int c) {
+                float v = linear[p[c]] * light;
+                if (sigma > 0.0F) v += noise(hash(x, y, seed ^ static_cast<std::uint32_t>(c * 0x9E3779B9U))) * sigma;
+                const auto q = static_cast<std::uint32_t>(std::clamp(v, 0.0F, 1.0F) * 65535.0F + 0.5F);
+                *out++ = static_cast<std::uint8_t>(q);
+                *out++ = static_cast<std::uint8_t>(q >> 8U);
+            };
+            if (bayer) {
+                sample((y % 2U == 0U) ? (x % 2U == 0U ? 0 : 1) : (x % 2U == 0U ? 1 : 2));
+            } else {
+                sample(0);
+                sample(1);
+                sample(2);
+            }
+        }
+        if (!write_all(fd, row.data(), static_cast<std::size_t>(w) * spp * 2U)) return false;
+    }
+    return true;
+}
+
+bool capture_raw(const Session* session, int view_width, int view_height, float yaw, float pitch, float zoom,
+                 std::uint32_t render_flags, const ViewControls& controls, int fd, RgbaImage* developed) {
+    if (session == nullptr || session->uv_gallery) return false;
+    const Plan p = plan(Kind::Photo, view_width, view_height);
+    ViewControls framed = controls;
+    frame_controls(Kind::Photo, view_width, view_height, &framed);
+    std::vector<float> depth;
+    auto image = render_large(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                              depth_of_field_on() ? &depth : nullptr);
+    if (!valid_image(&image)) return false;
+    const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
+                                               : effective_view_zoom(session, zoom) * framed.zoom_scale;
+    const float mm = focal_mm(lens);
+    optics(&image, mm, &depth);
+    depth = {};
+    const std::uint32_t seed = g_seed.fetch_add(1U);
+    auto preview = preview_of(image);
+    look(&preview, seed);
+    if (!write_dng(fd, image, preview, choice(Key::PhotoRawData) == 1, seed, mm)) return false;
+    if (developed != nullptr) {
+        look(&image, seed);
+        *developed = std::move(image);
+    }
+    return true;
 }
 
 RgbaImage render_capture(const Session* session, Kind kind, int view_width, int view_height, float yaw,
@@ -733,8 +1098,8 @@ RgbaImage render_capture(const Session* session, Kind kind, int view_width, int 
     ViewControls framed = controls;
     frame_controls(kind, view_width, view_height, &framed);
     std::vector<float> depth;
-    auto image = render_session(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
-                                depth_of_field_on() ? &depth : nullptr);
+    auto image = render_large(session, p.width, p.height, yaw, pitch, zoom, render_flags, framed,
+                              depth_of_field_on() ? &depth : nullptr);
     const float lens = framed.lens_zoom > 0.0F ? framed.lens_zoom
                                                : effective_view_zoom(session, zoom) * framed.zoom_scale;
     develop(&image, g_seed.fetch_add(1U), focal_mm(lens), &depth);
@@ -842,11 +1207,11 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
             line += text;
         }
         if (!recording) {
-            constexpr const char* formats[] = {"PNG", "JPEG", "WebP"};
+            constexpr const char* formats[] = {"PNG", "JPEG", "WebP", "RAW", "RAW+JPEG"};
             char megapixels[24];
             std::snprintf(megapixels, sizeof(megapixels), " %.1f MP",
                           static_cast<double>(p.width) * static_cast<double>(p.height) / 1.0e6);
-            line += "  " + std::string(formats[std::clamp(p.format, 0, 2)]) + " " + std::to_string(p.width) +
+            line += "  " + std::string(formats[std::clamp(p.format, 0, 4)]) + " " + std::to_string(p.width) +
                     "\xC3\x97" + std::to_string(p.height) + megapixels;
         }
         status = status.empty() ? line : status + "\n" + line;

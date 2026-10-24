@@ -1713,14 +1713,22 @@ public final class MainActivity extends Activity {
         }, timer * 1000L);
     }
 
+    // Pictures are rendered and saved one after another off the UI thread
+    // (a 124 MP picture takes seconds).
+    private final java.util.concurrent.ExecutorService captureWorker =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
     /** One picture, then the rest of a burst a quarter second apart. */
     private void shoot(int[] plan, int left) {
-        final Bitmap image = renderView.capturePhoto(plan);
-        if (image == null) {
+        final DmcRenderView.CaptureState state = renderView.captureState(plan);
+        if (state.session == 0 && state.still == null) {
             notice("Nothing to take a picture of", Toast.LENGTH_SHORT);
             return;
         }
-        savePicture(image, plan[2], plan[3]);
+        if ((long) plan[0] * plan[1] > 40_000_000L) {
+            notice("📸 " + plan[0] + "×" + plan[1] + " — a few seconds…", Toast.LENGTH_SHORT);
+        }
+        captureWorker.execute(() -> savePicture(state, plan));
         if (left > 1) renderView.postDelayed(() -> shoot(plan, left - 1), 250L);
     }
 
@@ -1770,56 +1778,135 @@ public final class MainActivity extends Activity {
                 Toast.LENGTH_LONG));
     }
 
-    /**
-     * A picture into Pictures/DMC Native Reader (Android 10+) or the app's picture folder, as
-     * format 0 PNG, 1 JPEG (quality), 2 WebP lossless.
-     */
+    /** A file being written into Pictures/DMC Native Reader (Android 10+) or the app's picture folder. */
+    private static final class PictureFile {
+        Uri uri;
+        File file;
+        ParcelFileDescriptor descriptor;
+        String where;
+    }
+
+    private PictureFile openPicture(String name, String mime) throws java.io.IOException {
+        final PictureFile out = new PictureFile();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            final android.content.ContentValues values = new android.content.ContentValues();
+            values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name);
+            values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime);
+            values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DMC Native Reader");
+            values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 1);
+            out.uri = getContentResolver().insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (out.uri == null) throw new java.io.IOException("no place for the picture");
+            out.descriptor = getContentResolver().openFileDescriptor(out.uri, "w");
+            out.where = "Pictures/DMC Native Reader/" + name;
+        } else {
+            final File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+            if (dir == null || !(dir.isDirectory() || dir.mkdirs())) throw new java.io.IOException("no place for the picture");
+            out.file = new File(dir, name);
+            out.descriptor = ParcelFileDescriptor.open(out.file, ParcelFileDescriptor.MODE_WRITE_ONLY
+                    | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+            out.where = out.file.getPath();
+        }
+        if (out.descriptor == null) {
+            closePicture(out, false);
+            throw new java.io.IOException("no place for the picture");
+        }
+        return out;
+    }
+
+    /** Closes a picture file: shown in the gallery when written, removed when not. */
+    private void closePicture(PictureFile out, boolean written) {
+        try {
+            if (out.descriptor != null) out.descriptor.close();
+        } catch (java.io.IOException ignored) {
+            written = false;
+        }
+        if (out.uri != null) {
+            if (written) {
+                final android.content.ContentValues values = new android.content.ContentValues();
+                values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0);
+                getContentResolver().update(out.uri, values, null, null);
+            } else {
+                getContentResolver().delete(out.uri, null, null);
+            }
+        } else if (!written && out.file != null) {
+            out.file.delete();
+        }
+    }
+
+    /** A bitmap into a picture file: format 0 PNG, 1 JPEG (quality), 2 WebP lossless. */
     @SuppressWarnings("deprecation")
-    private void savePicture(Bitmap image, int format, int quality) {
+    private String writeImage(Bitmap image, String base, int format, int quality) {
         final String extension = format == 1 ? ".jpg" : format == 2 ? ".webp" : ".png";
         final String mime = format == 1 ? "image/jpeg" : format == 2 ? "image/webp" : "image/png";
         final Bitmap.CompressFormat compress = format == 1 ? Bitmap.CompressFormat.JPEG
                 : format == 2 ? (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
                         ? Bitmap.CompressFormat.WEBP_LOSSLESS : Bitmap.CompressFormat.WEBP)
                 : Bitmap.CompressFormat.PNG;
-        final int level = format == 1 ? quality : 100;
-        final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US)
-                .format(new java.util.Date()) + extension;
-        new Thread(() -> {
-            String where = null;
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    final android.content.ContentValues values = new android.content.ContentValues();
-                    values.put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name);
-                    values.put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime);
-                    values.put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/DMC Native Reader");
-                    final Uri target = getContentResolver().insert(
-                            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-                    if (target != null) {
-                        try (OutputStream out = getContentResolver().openOutputStream(target)) {
-                            if (out != null && image.compress(compress, level, out)) {
-                                where = "Pictures/DMC Native Reader/" + name;
-                            }
-                        }
-                    }
-                } else {
-                    final File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
-                    if (dir != null && (dir.isDirectory() || dir.mkdirs())) {
-                        final File file = new File(dir, name);
-                        try (OutputStream out = new java.io.FileOutputStream(file)) {
-                            if (image.compress(compress, level, out)) where = file.getPath();
-                        }
-                    }
-                }
-            } catch (Exception ignored) {
-                where = null;
+        PictureFile out = null;
+        boolean written = false;
+        try {
+            out = openPicture(base + extension, mime);
+            try (OutputStream stream = new FileOutputStream(out.descriptor.getFileDescriptor())) {
+                written = image.compress(compress, format == 1 ? quality : 100, stream);
             }
-            final String size = image.getWidth() + "×" + image.getHeight();
-            image.recycle();
-            final String saved = where;
-            runOnUiThread(() -> notice(saved != null ? "📸 Saved " + saved + " (" + size + ")" : "Picture failed",
-                    Toast.LENGTH_LONG));
-        }).start();
+        } catch (Exception ignored) {
+            written = false;
+        } finally {
+            if (out != null) closePicture(out, written);
+        }
+        return written ? out.where : null;
+    }
+
+    /**
+     * Renders and saves one picture (on the capture worker) as the plan says: PNG, JPEG, WebP,
+     * RAW (DNG), or RAW + JPEG. A still image has no scene to take a RAW of: it is a PNG.
+     */
+    private void savePicture(DmcRenderView.CaptureState state, int[] plan) {
+        final String base = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US)
+                .format(new java.util.Date());
+        final int format = plan[2];
+        String saved = null;
+        String note = plan[0] + "×" + plan[1];
+        if (format >= 3 && state.still == null) {
+            Bitmap developed = null;
+            if (format == 4) {
+                try {
+                    developed = Bitmap.createBitmap(plan[0], plan[1], Bitmap.Config.ARGB_8888);
+                } catch (IllegalArgumentException | OutOfMemoryError error) {
+                    developed = null;
+                }
+            }
+            PictureFile out = null;
+            boolean written = false;
+            try {
+                out = openPicture(base + ".dng", "image/x-adobe-dng");
+                written = DmcRenderView.writeRaw(state, out.descriptor.getFd(), developed, plan[9] != 0);
+            } catch (Exception ignored) {
+                written = false;
+            } finally {
+                if (out != null) closePicture(out, written);
+            }
+            if (written) {
+                saved = out.where;
+                note += " RAW";
+                if (developed != null) {
+                    final String jpeg = writeImage(developed, base, 1, plan[3]);
+                    if (jpeg != null) note += " + JPEG";
+                }
+            }
+            if (developed != null) developed.recycle();
+        } else {
+            final Bitmap image = DmcRenderView.renderPhoto(state, plan);
+            if (image != null) {
+                note = image.getWidth() + "×" + image.getHeight();
+                saved = writeImage(image, base, Math.min(format, 2), plan[3]);
+                image.recycle();
+            }
+        }
+        final String where = saved;
+        final String size = note;
+        runOnUiThread(() -> notice(where != null ? "📸 Saved " + where + " (" + size + ")"
+                : "Picture failed (" + size + ": not enough memory?)", Toast.LENGTH_LONG));
     }
 
     /** Full-screen list of the gestures, each switchable, plus the camera follow. */
