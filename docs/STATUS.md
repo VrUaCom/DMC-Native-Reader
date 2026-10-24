@@ -323,6 +323,12 @@ APK verifier.
     - A cutscene's effect manifest (`G 105`, `P 228`, ...) shows as FX-IDS,
       and a PNST after a name list shows its names too (m07_b00.pac read
       through, CUTSCENES.md).
+  - v120:
+    - ⋮ → Browse .PAC files… for cutscenes: the archive's files as a
+      gallery.
+    - Opening a cutscene's container names its files from the name list
+      before it (Set texts, models, motions, cameras, effect ids); empty
+      clip texts show as EMPTY.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,
