@@ -1384,6 +1384,52 @@ std::vector<EffectShot> active_effects(const Session& session) {
 
 // ---- sound ---------------------------------------------------------------
 
+bool attach_subtitles(Session* session, std::string_view name, std::span<const std::uint8_t> bytes,
+                      std::string* message) {
+    auto* p = player(session);
+    std::string line;
+    bool ok = false;
+    try {
+        auto table = p != nullptr ? messages::parse_table(name, bytes) : std::nullopt;
+        if (p == nullptr) {
+            line = "Not a cutscene";
+        } else if (!table) {
+            line = std::string{name} + " is not a message table";
+        } else {
+            std::size_t clips = 0U, found = 0U;
+            if (const auto* list = p->doc.list("Message")) {
+                for (const auto& clip : list->clips) {
+                    ++clips;
+                    found += table->messages.contains(std::atoi(clip.value("No").c_str())) ? 1U : 0U;
+                }
+            }
+            line = "Subtitles" + (table->language.empty() ? std::string{} : " (" + table->language + ")") + ": " +
+                   std::to_string(found) + " of " + std::to_string(clips) + " messages of this cutscene";
+            p->subtitles = std::make_shared<const messages::Table>(std::move(*table));
+            ok = true;
+        }
+    } catch (...) {
+        line = "Subtitles could not be read";
+    }
+    if (message != nullptr) *message = line;
+    return ok;
+}
+
+std::optional<messages::Shown> subtitle(const Session& session) {
+    const auto* p = player(&session);
+    if (p == nullptr || !p->subtitles) return std::nullopt;
+    const auto* list = p->doc.list("Message");
+    if (list == nullptr) return std::nullopt;
+    const Clip* last = nullptr;
+    for (const auto& clip : list->clips) {
+        if (clip.set_frame <= p->frame && (last == nullptr || clip.set_frame >= last->set_frame)) last = &clip;
+    }
+    if (last == nullptr) return std::nullopt;
+    const auto found = p->subtitles->messages.find(std::atoi(last->value("No").c_str()));
+    if (found == p->subtitles->messages.end()) return std::nullopt;
+    return messages::shown_at(found->second, p->frame - last->set_frame);
+}
+
 bool attach_audio(Session* session, std::string_view name, std::span<const std::uint8_t> bytes, std::string* message) {
     auto* p = player(session);
     std::string line;

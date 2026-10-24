@@ -44,6 +44,7 @@ enum class Companion : int {
     CutsceneCamera = 22,
     CutsceneSound = 23,
     CutsceneMovie = 24,
+    CutsceneSubtitles = 25,
 };
 
 // What only the shell knows.
@@ -74,7 +75,8 @@ struct CompanionMenu final {
 
 // The picked file of a cutscene: a sound (Ogg Vorbis) plays along the
 // timeline (demo_session.h attach_audio), a movie (.wmv) becomes its movie
-// part (attach_movie); the line says from which frame.
+// part (attach_movie), a message table (`*_msg_<lang>.txt`) its subtitles
+// (attach_subtitles); the line says from which frame or how many.
 [[nodiscard]] ActionOutcome load_cutscene_sound(Session* session, std::string_view name, const std::uint8_t* bytes,
                                                 std::size_t size) noexcept;
 

@@ -16,6 +16,7 @@
 
 #include "dmcresource/demo.h"
 #include "dmcresource/demo_session.h"
+#include "dmcresource/messages.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/native_module.h"
@@ -176,7 +177,8 @@ int main() {
     const std::string script =
         "; (# = section)\r\n\r\n# Load\r\nCamera\t\tm99_t00_CameraLoad.txt\r\n\r\n# Set\r\n"
         "Camera\t\tm99_t00_CameraSet.txt\r\nModel\t00\tm99_t00_Model00Set.txt\r\nSound\t\tm99_t00_SoundSet.txt\r\n"
-        "PadVibe\t\tm99_t00_PadVibeSet.txt\r\nFade\t\tm99_t00_FadeSet.txt\r\nScrEfc\t\tm99_t00_ScrEfcSet.txt\r\n# End\r\n";
+        "PadVibe\t\tm99_t00_PadVibeSet.txt\r\nFade\t\tm99_t00_FadeSet.txt\r\nScrEfc\t\tm99_t00_ScrEfcSet.txt\r\n"
+        "Message\t\tm99_t00_MessageSet.txt\r\n# End\r\n";
     // A fade out to black (alpha 128: opaque) from 200 over 60 frames.
     const std::string fade_set =
         "# Clip\r\nSetFrame\t200.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
@@ -188,6 +190,10 @@ int main() {
     const std::string vibe_set =
         "# Clip\r\nSetFrame\t900.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
         "Life\t10\r\nLMotorSt\t200\r\nLMotorEd\t0\r\nSMotorSt\t0\r\nSMotorEd\t0\r\n# End\r\n# End\r\n";
+    // Message 7 from frame 150.
+    const std::string message_set =
+        "# Clip\r\nSetFrame\t150.000000\r\nSkipFrame\t0.000000\r\nCutFrame\t0.000000\r\nClipScale\t1.000000\r\n"
+        "Life\t0\r\nNo\t7\r\n# End\r\n# End\r\n";
     // Depth fog (GFG) over the first 100 frames: clear at 100, orange
     // 0x8050b4ff (bytes R G B A) at half strength (64 of 0x80) at 1100.
     const std::string screen_set =
@@ -196,13 +202,14 @@ int main() {
         "MinColor\t-2147483648\r\nMinAlpha\t0\r\nMaxColor\t-2142194433\r\nMaxAlpha\t64\r\n# End\r\n# End\r\n";
     const auto archive = pac({text(script),
                               text("m99_t00_CameraSet.txt\r\nm99_t00_Model00Set.txt\r\nm99_t00_SoundSet.txt\r\n"
-                                   "m99_t00_PadVibeSet.txt\r\nm99_t00_FadeSet.txt\r\nm99_t00_ScrEfcSet.txt\r\n# End\r\n"),
+                                   "m99_t00_PadVibeSet.txt\r\nm99_t00_FadeSet.txt\r\nm99_t00_ScrEfcSet.txt\r\n"
+                                   "m99_t00_MessageSet.txt\r\n# End\r\n"),
                               pac({text(camera_set), text("# End\r\n"), text(sound_set), text(vibe_set), text(fade_set),
-                                   text(screen_set)}),
+                                   text(screen_set), text(message_set)}),
                               text(";skipped.scm\r\ncm1.cam\r\n# End\r\n"), pac({cam_bytes})});
     assert(demo::looks_like_demo(archive));
     const auto doc = demo::parse_demo(archive);
-    assert(doc && doc->name == "m99_t00" && doc->lists.size() == 6U);
+    assert(doc && doc->name == "m99_t00" && doc->lists.size() == 7U);
     assert(doc->list("Camera") != nullptr && doc->list("Camera")->clips.size() == 2U);
     assert(doc->list("Model", 0) != nullptr && doc->list("Model", 0)->clips.empty());
     assert(doc->members.size() == 1U && doc->members[0].name == "cm1.cam" && doc->camera("cm1.cam") != nullptr);
@@ -256,6 +263,46 @@ int main() {
     assert(motion::apply_motion_frame(opened.get(), 150.0F) && !demo::fog(*opened));
     assert(demo::vibration(*opened, 899.0F) == 0 && demo::vibration(*opened, 905.0F) == 100 &&
            demo::vibration(*opened, 910.0F) == 0);
+    // ---- subtitles: a message table (messages.h) ----
+    {
+        // Comments in Shift-JIS, a Windows-1252 e acute, two lines, a page
+        // cleared after 20 frames and a 10-frame gap, a jump, typed text.
+        const std::string table_text =
+            "# NotRegistered\r\n; \x83\x81\x83\x62\r\n"
+            "# Msg 00007\r\n\t\"<PS 100 421><IT 0><SZ 24>\"\r\n\t\"D\xe9sol\xe9,<BR>second line<WT 20><CL>\"\r\n"
+            "\t\"<WT 10><PS 200 430>page two<WT 30>\"\r\n\t\"<JP 8><FO 0>\"\r\n# End\r\n"
+            "# Msg 00008\r\n\t\"<IT 2><FC 128 64 0>abc<WT 5><NE>\"\r\n# End\r\n# AllEnd\r\n";
+        const std::span<const std::uint8_t> table_bytes{reinterpret_cast<const std::uint8_t*>(table_text.data()),
+                                                        table_text.size()};
+        assert(messages::looks_like_table(table_bytes));
+        const auto table = messages::parse_table("m99_t00_msg_eng.txt", table_bytes);
+        assert(table && table->language == "eng" && table->messages.size() == 2U);
+        const auto& m7 = table->messages.at(7);
+        auto shown = messages::shown_at(m7, 5.0F);
+        assert(shown && shown->lines.size() == 2U && shown->lines[0] == "D\xC3\xA9sol\xC3\xA9," &&
+               shown->lines[1] == "second line" && shown->x == 100.0F && shown->size == 24.0F);
+        assert(!messages::shown_at(m7, 25.0F));                                   // the gap
+        shown = messages::shown_at(m7, 31.0F);
+        assert(shown && shown->lines.size() == 1U && shown->lines[0] == "page two" && shown->x == 200.0F);
+        // Message 8 follows at 60: typed two frames a letter, then held (NE).
+        shown = messages::shown_at(m7, 62.5F);
+        assert(shown && shown->lines[0] == "ab" && shown->front[1] == 64U);
+        assert(messages::shown_at(m7, 1000.0F) && messages::shown_at(m7, 1000.0F)->lines[0] == "abc");
+        assert(!messages::shown_at(table->messages.at(8), -1.0F));
+        const auto look = messages::layout(*messages::shown_at(m7, 5.0F));
+        assert(near(look.centre_x, 0.5F) && near(look.top, 421.0F / 480.0F) && look.front[0] == 255U && look.back[0] == 0U);
+        assert(messages::layout(*shown).front[1] == 127U);
+        assert(!messages::parse_table("x.txt", std::span<const std::uint8_t>{cam_bytes}));
+
+        // On the cutscene: message 7 from its clip at 150, nothing before.
+        std::string line;
+        assert(demo::attach_subtitles(opened.get(), "m99_t00_msg_eng.txt", table_bytes, &line));
+        assert(line == "Subtitles (eng): 1 of 1 messages of this cutscene");
+        assert(motion::apply_motion_frame(opened.get(), 149.0F) && !demo::subtitle(*opened));
+        assert(motion::apply_motion_frame(opened.get(), 155.0F));
+        const auto on = demo::subtitle(*opened);
+        assert(on && on->lines.size() == 2U && on->lines[1] == "second line");
+    }
     // The fade: none before it, half way through it, black after it.
     assert(motion::load_library_motion(opened.get(), 0).ok);
     assert(motion::apply_motion_frame(opened.get(), 100.0F) && demo::fade_at(*opened).amount == 0.0F);

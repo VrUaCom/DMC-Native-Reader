@@ -966,6 +966,8 @@ public final class DmcRenderView extends View {
         int flags;
         boolean follow;
         boolean preview;
+        String subtitle;          // the core's subtitle for this frame (null none)
+        float[] subtitleStyle;
     }
 
     // Pixels live in native memory: ByteBuffer.allocateDirect is limited by the
@@ -1060,6 +1062,9 @@ public final class DmcRenderView extends View {
                 final int status = NativeBridge.renderToBuffer(request.session, request.width, request.height,
                         request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
                         request.roomYaw, request.follow, request.dolly, request.motionFrame, target.pixels);
+                // Read with the frame it belongs to (the render thread holds the session).
+                request.subtitle = NativeBridge.demoSubtitle(request.session);
+                request.subtitleStyle = request.subtitle != null ? NativeBridge.demoSubtitleStyle(request.session) : null;
                 final FrameBuffer done = target;
                 post(() -> present(request, done, status));
             }
@@ -1103,6 +1108,8 @@ public final class DmcRenderView extends View {
             showingPreview = request.preview;
         }
         releaseFrame(buffer);
+        subtitle = request.subtitle;
+        subtitleStyle = request.subtitleStyle;
         if (status == 2 && motionPlaying) {
             motionPlaying = false;
             removeCallbacks(motionTick);
@@ -1254,6 +1261,33 @@ public final class DmcRenderView extends View {
         }
     }
 
+    private String subtitle;
+    private float[] subtitleStyle;
+    private final Paint subtitlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** The core's subtitle, drawn as it says: centred lines, an outline in its back colour. */
+    private void drawSubtitle(Canvas canvas) {
+        final String text = subtitle;
+        final float[] s = subtitleStyle;
+        if (text == null || s == null || s.length < 10) return;
+        final float size = Math.max(8.0f, s[2] * getHeight());
+        final int alpha = Math.round(Math.max(0.0f, Math.min(1.0f, s[3])) * 255.0f);
+        subtitlePaint.setTextSize(size);
+        subtitlePaint.setTextAlign(Paint.Align.CENTER);
+        float y = s[1] * getHeight() + size;
+        final float x = s[0] * getWidth();
+        for (final String line : text.split("\n")) {
+            subtitlePaint.setStyle(Paint.Style.STROKE);
+            subtitlePaint.setStrokeWidth(Math.max(2.0f, size * 0.14f));
+            subtitlePaint.setColor(android.graphics.Color.argb(alpha, (int) s[7], (int) s[8], (int) s[9]));
+            canvas.drawText(line, x, y, subtitlePaint);
+            subtitlePaint.setStyle(Paint.Style.FILL);
+            subtitlePaint.setColor(android.graphics.Color.argb(alpha, (int) s[4], (int) s[5], (int) s[6]));
+            canvas.drawText(line, x, y, subtitlePaint);
+            y += size * 1.2f;
+        }
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         if (!staticImagePreview) {
@@ -1261,6 +1295,7 @@ public final class DmcRenderView extends View {
             if (shown == null || shown.isRecycled()) return;
             canvas.drawBitmap(shown, null,
                     new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+            drawSubtitle(canvas);
             hud.draw(canvas);
             if (hud.needsFrame()) postInvalidateOnAnimation();
             return;

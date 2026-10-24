@@ -142,6 +142,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/module_stage_config.cpp
     modules/sound.cpp
     modules/video.cpp
+    modules/messages.cpp
     modules/module_families.cpp
     modules/demo.cpp
     modules/demo_session.cpp

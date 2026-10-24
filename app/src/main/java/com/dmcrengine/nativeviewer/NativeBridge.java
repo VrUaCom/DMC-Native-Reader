@@ -123,6 +123,10 @@ public final class NativeBridge {
     public static native float[] demoTakeCamera(long handle);
     /** A cutscene's pad vibration at a timeline frame, 0..255 (0 none), chosen by the core. */
     public static native int demoVibration(long handle, float frame);
+    /** A cutscene's subtitle at its current frame (lines joined by newlines), or null. */
+    public static native String demoSubtitle(long handle);
+    /** How to draw it: {centre x, top, size} as fractions of the picture, alpha, front rgb, back rgb; or null. */
+    public static native float[] demoSubtitleStyle(long handle);
     /** A stage's start view, chosen by the core (its spawn point's game camera or floor): {yaw, pitch, zoom}, or null. */
     public static native float[] stageStartView(long handle);
     /** The exported picture's {width, height}, chosen by the core. */

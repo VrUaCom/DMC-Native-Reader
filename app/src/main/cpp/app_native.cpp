@@ -1737,6 +1737,36 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_demoVibration(JNIEnv*, jclass, jlo
     return session != nullptr ? dmcresource::demo::vibration(*session, frame) : 0;
 }
 
+// A cutscene's subtitle at its current frame (core demo::subtitle): its
+// lines joined by newlines, null when none shows.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoSubtitle(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    const auto shown = session != nullptr ? dmcresource::demo::subtitle(*session) : std::nullopt;
+    if (!shown) return nullptr;
+    std::string text;
+    for (const auto& line : shown->lines) {
+        if (!text.empty()) text.push_back('\n');
+        text += line;
+    }
+    return env->NewStringUTF(text.c_str());
+}
+
+// How to draw it (messages::layout): {centre x, top, size} as fractions of
+// the picture, alpha, front r g b, back r g b (0..255); null when none shows.
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_demoSubtitleStyle(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    const auto* session = from_handle(handle);
+    const auto shown = session != nullptr ? dmcresource::demo::subtitle(*session) : std::nullopt;
+    if (!shown) return nullptr;
+    const auto l = dmcresource::messages::layout(*shown);
+    const auto f = [](std::uint8_t v) { return static_cast<float>(v); };
+    return floats(env, {l.centre_x, l.top, l.size, l.alpha, f(l.front[0]), f(l.front[1]), f(l.front[2]),
+                        f(l.back[0]), f(l.back[1]), f(l.back[2])});
+}
+
 // A cutscene's sound (spider companion_menu.h): the picked .ogg as a
 // descriptor; the outcome carries the core's line.
 extern "C" JNIEXPORT jobject JNICALL

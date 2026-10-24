@@ -270,6 +270,28 @@ A taken camera flies from the shot's eye: pinch zooms, the two-finger dolly
 moves it along the view and the two-finger pan across it, scaled to the
 shot's target distance.
 
+### Subtitles (v92)
+
+A cutscene's `Message` clips (`No 100`, life 0) show messages of the
+localization tables beside the game, `<cutscene>_msg_<lang>.txt`
+(`m01_s00_msg_eng.txt`, `_frn`, `_chn`, ...). The ⋮ menu's **Subtitles**
+(the cutscene file picker) loads one (`messages.h`, `demo::attach_subtitles`).
+A table holds `# Msg 00100` blocks of quoted strings with tags (the table's
+own Japanese header explains them): `<PS x y>` position, `<SZ n>` font size,
+`<IT n>` frames a character, `<FC>` / `<BC>` colours (128 = 1.0), `<WT n>`
+wait, `<BR>` new line, `<CL>` new page, `<JP n>` go on with message n,
+`<NE>` stay, `<FI>` / `<FO>` fade, `<AL>` alpha. The time a message shows is
+its own: its waits from the clip's frame (m01_s00's 100: 155 frames from
+1485); the Chinese table splits long lines into pages with `<CL>` and a
+`<WT 30>` gap. Text is UTF-8 (Chinese with a BOM), other bytes Windows-1252;
+the comments are Shift-JIS and skipped. Positions are on a 640 x 480 screen
+(two-line English subtitles start at y 421, size 22); the core hands the
+shell the lines, their top and size as fractions of the picture, the colours
+and alpha (`messages::layout`, JNI `demoSubtitle` / `demoSubtitleStyle`), and
+Android draws them centred with an outline in the back colour (the x of every
+table centres its line for the game's font). Messages 140 / 141 / 180 / 181
+of m01_s00 belong to its movie part and show once the .wmv is attached.
+
 ### Screen effects, pad vibration (v91)
 
 * `ScrEfc` clips `Id GFG` are a depth fog: `StartZ` / `EndZ` camera
@@ -288,10 +310,8 @@ drawn: their meaning is not settled from the data alone.
 
 ## Not yet
 
-Lights and the screen effects above other than the fog, subtitles (Message `No` indexes a text
-table outside the archive: the localization message tables
-`*_msg_<lang>.txt`; m01_s00 uses 100..110 in its picture and 140, 141,
-180, 181 in its movie), pad vibration, and the stream-number-to-file table
+Lights and the screen effects above other than the fog, and the
+stream-number-to-file table
 of the EXE (so the right .ogg and .wmv would be found by themselves). A
 cutscene that
 does not carry its stage (`m01_c00` comments out `st000.scm`: the game uses

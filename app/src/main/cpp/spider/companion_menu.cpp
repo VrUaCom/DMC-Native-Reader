@@ -85,6 +85,10 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     if (demo::is_demo(session) && video::available()) {
         add(menu.rows, Companion::CutsceneMovie, "\xF0\x9F\x8E\x9E Cutscene movie (.wmv)\xE2\x80\xA6");
     }
+    // Its subtitles: the message table of a language beside it.
+    if (demo::is_demo(session)) {
+        add(menu.rows, Companion::CutsceneSubtitles, "\xF0\x9F\x92\xAC Subtitles (*_msg_<lang>.txt)\xE2\x80\xA6");
+    }
     // A cutscene whose camera the user took: back to following its cuts.
     if (demo::is_demo(session) && !demo::director(session)) {
         add(menu.rows, Companion::CutsceneCamera, "\xF0\x9F\x8E\xAC Cutscene camera (follow the cuts)");
@@ -94,7 +98,8 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
 }
 
 ActionOutcome run_companion_action(Session* session, int id) noexcept {
-    if (static_cast<Companion>(id) == Companion::CutsceneSound || static_cast<Companion>(id) == Companion::CutsceneMovie) {
+    const auto picked = static_cast<Companion>(id);
+    if (picked == Companion::CutsceneSound || picked == Companion::CutsceneMovie || picked == Companion::CutsceneSubtitles) {
         ActionOutcome out;
         out.ok = demo::is_demo(session);
         // The same picker: the picked file's bytes decide (load_cutscene_sound).
@@ -118,8 +123,10 @@ ActionOutcome load_cutscene_sound(Session* session, std::string_view name, const
     ActionOutcome out;
     try {
         const std::span<const std::uint8_t> file{bytes, bytes != nullptr ? size : 0U};
-        out.ok = bytes != nullptr && (video::looks_like_asf(file) ? demo::attach_movie(session, name, file, &out.message)
-                                                                   : demo::attach_audio(session, name, file, &out.message));
+        out.ok = bytes != nullptr &&
+                 (video::looks_like_asf(file)          ? demo::attach_movie(session, name, file, &out.message)
+                  : messages::looks_like_table(file) ? demo::attach_subtitles(session, name, file, &out.message)
+                                                     : demo::attach_audio(session, name, file, &out.message));
         if (bytes == nullptr) out.message = std::string{name} + " could not be read";
     } catch (...) {
         out.ok = false;

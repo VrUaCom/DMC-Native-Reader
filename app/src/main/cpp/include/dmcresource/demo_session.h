@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "dmcresource/demo.h"
+#include "dmcresource/messages.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/sound.h"
 
@@ -146,6 +147,9 @@ struct Player final {
     std::shared_ptr<video::Movie> movie;
     std::string movie_name;
     float movie_start{};
+    // The message table the user gave it (`m01_s00_msg_eng.txt`): its
+    // Message clips show their messages as subtitles.
+    std::shared_ptr<const messages::Table> subtitles;
     float frame{};
     bool bound{};
     // The view follows the cutscene camera until the user takes it.
@@ -230,6 +234,16 @@ struct EffectShot final {
 // The line to show comes back in `message`.
 [[nodiscard]] bool attach_audio(Session* session, std::string_view name, std::span<const std::uint8_t> bytes,
                                 std::string* message);
+
+// ---- subtitles -------------------------------------------------------------
+
+// Gives the cutscene a message table (messages.h): its Message clips (`No`)
+// show those messages from their frame. The line says how many it holds.
+[[nodiscard]] bool attach_subtitles(Session* session, std::string_view name, std::span<const std::uint8_t> bytes,
+                                    std::string* message);
+// The subtitle at the current frame: the message of the last Message clip
+// set up to it, while it shows (messages::shown_at); none without a table.
+[[nodiscard]] std::optional<messages::Shown> subtitle(const Session& session);
 struct AudioFormat final {
     std::uint32_t sample_rate{};
     std::uint32_t channels{};
