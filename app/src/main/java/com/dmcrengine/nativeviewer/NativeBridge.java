@@ -219,6 +219,12 @@ public final class NativeBridge {
 
     /** Draws the view on the graphics chip (OpenGL ES 3) when true, else on the CPU. */
     public static native void setGpuRendering(boolean enabled);
+
+    /** The view's window surface the GPU shows frames on (null: none); returns once the old one is let go. */
+    public static native void setPresentSurface(android.view.Surface surface);
+
+    /** Frames of the view straight onto its window (true) or read back into a picture. */
+    public static native void setGpuPresent(boolean enabled);
     /** GPU picture quality: MSAA samples (0 = off), mipmaps, anisotropic filtering (1 = off). */
     public static native void setGpuOptions(int msaaSamples, boolean mipmaps, int anisotropy);
     /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */
@@ -279,6 +285,9 @@ public final class NativeBridge {
     public static native void beginVideo();
     /** Camera mode is on: the bottom bars are the camera's. */
     public static native boolean cameraMode();
+
+    /** A cutscene's camera drives the view: camera mode films through it until a finger takes it. */
+    public static native boolean cameraFollowsCuts(long handle);
     /** The camera bar's dials: "setting index[,index ...]\ttitle\tvalue". */
     public static native String[] cameraDials();
     /** Walking (ARCore) on in camera mode. */

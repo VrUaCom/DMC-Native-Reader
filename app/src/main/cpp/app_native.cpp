@@ -6,6 +6,7 @@
 #include "dmcresource/resource_limits.h"
 
 #include <android/bitmap.h>
+#include <android/native_window_jni.h>
 #include <jni.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -685,12 +686,18 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_renderToBuffer(
                 status = 2;
             }
         }
-        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
+        auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
+        controls.present = true;  // the view's own frame: it may go straight to the window
         // The viewfinder, when it is on, shows the lens and the look.
         const auto image = dmcresource::spider::camera::render_view_frame(
             session, requested_width, requested_height, yaw, pitch, zoom,
             static_cast<std::uint32_t>(render_flags), controls);
         if (image.width != requested_width || image.height != requested_height) return 0;
+        // Shown on the window already (status bit 4): nothing to copy.
+        if (image.pixels.empty()) {
+            profile::frame_done();
+            return status | 4;
+        }
         auto* out = static_cast<std::uint8_t*>(env->GetDirectBufferAddress(buffer));
         const auto capacity = env->GetDirectBufferCapacity(buffer);
         if (out == nullptr || capacity < 0 ||
@@ -832,6 +839,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_writeCaptureDng(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_cameraMode(JNIEnv*, jclass) {
     return dmcresource::spider::camera::finder_on() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Whether a cutscene's camera drives the view: camera mode films through it
+// (no free camera, the gyroscope waits) until a finger takes it.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFollowsCuts(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    return dmcresource::spider::camera::follows_cuts(from_handle(handle)) ? JNI_TRUE : JNI_FALSE;
 }
 
 // The camera bar's dials: "setting index[,index ...]\ttitle\tvalue" per dial
@@ -1821,6 +1836,23 @@ namespace {
 const bool g_gles_backend_installed = (dmcviewer::install_gles_view_backend(), true);
 }  // namespace
 
+// The view's window surface the GPU shows frames on (null: none). Returns
+// once the backend has let go of the one before.
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setPresentSurface(JNIEnv* env, jclass, jobject surface) {
+    (void)g_gles_backend_installed;
+    auto* backend = dmcresource::gpu_view_backend();
+    if (backend == nullptr) return;
+    ANativeWindow* window = surface != nullptr ? ANativeWindow_fromSurface(env, surface) : nullptr;
+    backend->set_window(window);
+}
+
+// Frames straight to the window (Settings -> Graphics), else read back.
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuPresent(JNIEnv*, jclass, jboolean enabled) {
+    dmcresource::set_gpu_present_enabled(enabled == JNI_TRUE);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, jboolean enabled) {
     dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
@@ -1859,7 +1891,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_rendererInfo(JNIEnv* env, jclass) 
         (void)g_gles_backend_installed;
         const auto stats = dmcresource::gpu_view_stats();
         const auto text = dmcresource::view_renderer_description() + "\nFrames: " +
-            std::to_string(stats.gpu_frames) + " GPU, " + std::to_string(stats.cpu_frames) + " CPU" +
+            std::to_string(stats.gpu_frames) + " GPU (" + std::to_string(stats.presented_frames) +
+            " shown straight on the screen), " + std::to_string(stats.cpu_frames) + " CPU" +
             (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "");
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF(""); }

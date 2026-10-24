@@ -165,18 +165,34 @@ struct GpuViewFrame final {
     // The photo camera's development (null: the frame as drawn). The
     // backend sets post->applied when it developed the frame.
     const CameraPost* post{};
+
+    // A cutscene's fade over the drawn scene (rgb 0..255, amount 0..1),
+    // laid before the development.
+    std::array<float, 4> fade{};
+
+    // Show the frame on the backend's window (set_window) instead of
+    // reading it back; the backend sets `presented` when it did, and the
+    // image is then left without pixels.
+    bool present{};
+    mutable bool presented{};
 };
 
 class GpuViewBackend {
 public:
     virtual ~GpuViewBackend() = default;
     // Draws the frame into `image` (width x height RGBA8, rows top-down,
-    // alpha 255). False: the frame is drawn on the CPU instead.
+    // alpha 255; sized by the caller, except for a frame that may be shown
+    // on the window: the backend sizes it when it reads it back). False:
+    // the frame is drawn on the CPU instead.
     [[nodiscard]] virtual bool draw(const GpuViewFrame& frame, RgbaImage& image) = 0;
     // "OpenGL ES 3.2 / Adreno (TM) ...", empty when unavailable.
     [[nodiscard]] virtual std::string describe() = 0;
     // Limits of the chip (zeros when unavailable).
     [[nodiscard]] virtual GpuCapabilities capabilities() { return {}; }
+    // The view's window frames are shown on (Android: an ANativeWindow*
+    // the backend now holds a reference to; nullptr: none). Returns once
+    // the backend has let go of the one before.
+    virtual void set_window(void* window) { (void)window; }
 };
 
 // The process-wide backend (nullptr: software only) and the user switch.
@@ -185,12 +201,16 @@ void set_gpu_view_backend(GpuViewBackend* backend) noexcept;
 void set_gpu_view_enabled(bool enabled) noexcept;
 [[nodiscard]] bool gpu_view_enabled() noexcept;
 void set_gpu_view_options(const GpuViewOptions& options) noexcept;
+// Frames of the view go straight to its window when they can (on by default).
+void set_gpu_present_enabled(bool enabled) noexcept;
+[[nodiscard]] bool gpu_present_enabled() noexcept;
 [[nodiscard]] GpuViewOptions gpu_view_options() noexcept;
 
 struct GpuViewStats final {
     std::uint64_t gpu_frames{};
     std::uint64_t cpu_frames{};      // software frames (any reason)
     std::uint64_t gpu_failures{};    // backend refused a frame
+    std::uint64_t presented_frames{};  // GPU frames shown straight on the window
 };
 [[nodiscard]] GpuViewStats gpu_view_stats() noexcept;
 

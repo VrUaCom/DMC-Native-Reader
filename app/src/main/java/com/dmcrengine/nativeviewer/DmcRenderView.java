@@ -65,6 +65,8 @@ public final class DmcRenderView extends View {
         void onCameraStep(String settingId, int step);
         /** Camera mode: the two-finger tap levels the camera. */
         void onCameraLevel();
+        /** A gesture took a cutscene's camera (its cuts stopped driving the view). */
+        void onCameraTaken();
         void onGestureNotice(String text);
         /** A native action answered a gesture (a held marker's card, ...). */
         void onActionOutcome(ActionOutcome outcome);
@@ -201,6 +203,8 @@ public final class DmcRenderView extends View {
     private final ScaleGestureDetector scaleDetector;
     private final GestureDetector tapDetector;
     private Bitmap bitmap;
+    // The last frame went straight to the window under this view (the GPU).
+    private boolean directShown;
     private long session;
     // DMC3 models face +Z while the camera looks along +Z, so yaw 0 shows the
     // back. Start from a front three-quarter view.
@@ -707,6 +711,7 @@ public final class DmcRenderView extends View {
         hierarchyAvailable = false;
         staticImagePreview = false;
         releaseBitmap();
+        setDirectShown(false);
         invalidate();
         if (session == 0) return;
         if (BlackWidowState.fromNative(NativeBridge.blackWidowState(session)).uvMapView) {
@@ -847,6 +852,7 @@ public final class DmcRenderView extends View {
         panX = 0.0f;
         panY = 0.0f;
         dolly = 0.0f;
+        if (gestureListener != null) post(gestureListener::onCameraTaken);
     }
 
     /** Only the stick is shown: the core puts the knob on the finger, or on the ring past it. */
@@ -1241,8 +1247,17 @@ public final class DmcRenderView extends View {
     }
 
     private void present(FrameRequest request, FrameBuffer buffer, int status) {
+        // Bit 4: the GPU already put the frame on the window under this view.
+        final boolean direct = (status & 4) != 0;
+        status &= 3;
         if (request.generation != generation || status == 0 || staticImagePreview) {
             releaseFrame(buffer);
+            return;
+        }
+        if (direct) {
+            releaseFrame(buffer);
+            setDirectShown(true);
+            frameShown(request, status);
             return;
         }
         // A bitmap over 100 MB, or one the GPU cannot take as a texture, is
@@ -1264,8 +1279,14 @@ public final class DmcRenderView extends View {
             buffer.pixels.rewind();
             target.copyPixelsFromBuffer(buffer.pixels);
             showingPreview = request.preview;
+            setDirectShown(false);
         }
         releaseFrame(buffer);
+        frameShown(request, status);
+    }
+
+    /** What every shown frame brings along: its subtitle, the viewfinder, the end of a motion. */
+    private void frameShown(FrameRequest request, int status) {
         subtitle = request.subtitle;
         subtitleStyle = request.subtitleStyle;
         finderGeometry = request.finder;
@@ -1280,6 +1301,20 @@ public final class DmcRenderView extends View {
             removeCallbacks(fullFrame);
             postDelayed(fullFrame, 150);
         }
+    }
+
+    /** Frames straight on the window under the view: the view's own picture steps aside (transparent). */
+    private void setDirectShown(boolean on) {
+        if (directShown == on) return;
+        directShown = on;
+        setBackgroundColor(on ? 0x00000000 : 0xff121216);
+    }
+
+    /** The window under the view is gone: frames come back as pictures again. */
+    public void presentSurfaceGone() {
+        if (!directShown) return;
+        setDirectShown(false);
+        renderNow();
     }
 
     /** Ask the render thread for a frame; motionFrame NaN keeps the pose. */
@@ -1309,6 +1344,14 @@ public final class DmcRenderView extends View {
         request.roomYaw = roomYaw;
         request.dolly = dolly;
         request.follow = follow;
+        // While a motion plays, every frame shows where it stands: frequent
+        // camera-only requests (the gyroscope, a drag) must not hold it still.
+        if (Float.isNaN(motionFrame) && motionPlaying) {
+            final float now = currentMotionFrame(SystemClock.uptimeMillis());
+            lastMotionFrame = motionEndFrame > 0.0f && motionLoopStartFrame >= motionEndFrame
+                    ? Math.min(now, motionEndFrame) : now;
+            motionFrame = lastMotionFrame;
+        }
         request.motionFrame = motionFrame;
         lastRequestMs = SystemClock.uptimeMillis();
         synchronized (renderLock) {
@@ -1532,6 +1575,14 @@ public final class DmcRenderView extends View {
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (!staticImagePreview && directShown) {
+            // The frame is on the window under the view: only what goes over it.
+            drawSubtitle(canvas);
+            drawFinder(canvas);
+            hud.draw(canvas);
+            if (hud.needsFrame()) postInvalidateOnAnimation();
+            return;
+        }
         if (!staticImagePreview) {
             final Bitmap shown = showingPreview ? previewBitmap : bitmap;
             if (shown == null || shown.isRecycled()) return;

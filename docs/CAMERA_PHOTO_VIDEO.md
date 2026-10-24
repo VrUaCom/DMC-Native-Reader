@@ -77,6 +77,15 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 The three-finger sideways swipe (variants) and the four-finger tap (follow)
 are off in camera mode. ℹ in the camera bar shows all of this in the app.
 
+## Cutscenes
+
+- Camera mode films a cutscene through its cuts: the cutscene camera keeps
+  driving the view (the viewfinder shows CUTS), and the lens, exposure and
+  look apply to it. The free camera and the gyroscope wait meanwhile.
+- A finger takes the camera at the shot's eye; the free camera continues
+  from there. ⋮ → Cutscene camera gives the cuts back.
+- `camera::follows_cuts(session)` is the core's answer the shell asks.
+
 ## Gyroscope (3DoF)
 
 - 🧭 in the camera bar, or 🎛 → Gyroscope. It works in camera mode.

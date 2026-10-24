@@ -398,8 +398,10 @@ public final class MainActivity extends Activity {
                 renderView.isRoomCollisionVisible());
         final boolean flyAvailable = viewTools && blackWidowState.canFly;
         if (!flyAvailable && renderView.isFlyMode()) renderView.setFlyMode(false);
-        // A view opened in camera mode gets the free camera too.
-        if (flyAvailable && cameraUi && !renderView.isFlyMode() && renderView.setFlyMode(true, false)) {
+        // A view opened in camera mode gets the free camera too (a cutscene
+        // whose cuts drive the view keeps them: the mode films through them).
+        if (flyAvailable && cameraUi && !renderView.isFlyMode() && !NativeBridge.cameraFollowsCuts(session)
+                && renderView.setFlyMode(true, false)) {
             applyResourceUiState();
             return;
         }
@@ -568,6 +570,26 @@ public final class MainActivity extends Activity {
 
         FrameLayout viewport = new FrameLayout(this);
         viewportFrame = viewport;
+        // Under the view: the window the GPU shows its frames on; the view
+        // draws its picture over it only for frames that went through one.
+        final android.view.SurfaceView presentSurface = new android.view.SurfaceView(this);
+        presentSurface.getHolder().addCallback(new android.view.SurfaceHolder.Callback() {
+            @Override public void surfaceCreated(android.view.SurfaceHolder holder) {
+                NativeBridge.setPresentSurface(holder.getSurface());
+                if (renderView != null) renderView.renderNow();
+            }
+
+            @Override public void surfaceChanged(android.view.SurfaceHolder holder, int format, int width, int height) {
+                if (renderView != null) renderView.renderNow();
+            }
+
+            @Override public void surfaceDestroyed(android.view.SurfaceHolder holder) {
+                NativeBridge.setPresentSurface(null);
+                if (renderView != null) renderView.presentSurfaceGone();
+            }
+        });
+        viewport.addView(presentSurface, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         renderView = new DmcRenderView(this);
         renderView.setGestureListener(gestureListener);
         viewport.addView(renderView, new FrameLayout.LayoutParams(
@@ -911,10 +933,12 @@ public final class MainActivity extends Activity {
     private static final String SET_GPU_MSAA = "set.gpuMsaa";
     private static final String SET_GPU_MIPMAPS = "set.gpuMipmaps";
     private static final String SET_GPU_ANISOTROPY = "set.gpuAnisotropy";
+    private static final String SET_GPU_PRESENT = "set.gpuPresent";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
         NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
+        NativeBridge.setGpuPresent(p.getBoolean(SET_GPU_PRESENT, true));
         applyCameraChoices();
         NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
                 p.getInt(SET_GPU_ANISOTROPY, 8));
@@ -1191,7 +1215,9 @@ public final class MainActivity extends Activity {
             final int aniso = p.getInt(SET_GPU_ANISOTROPY, 8);
             text.append("MSAA ").append(msaa == 0 ? "off" : msaa + "x")
                     .append(", mipmaps ").append(p.getBoolean(SET_GPU_MIPMAPS, true) ? "on" : "off")
-                    .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x").append(", ");
+                    .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x")
+                    .append(", shown ").append(p.getBoolean(SET_GPU_PRESENT, true) ? "directly" : "through a picture")
+                    .append(", ");
         }
         text.append(p.getBoolean(SET_SMOOTH, false) ? "smooth" : "pixel").append(" textures");
         if (p.getBoolean(SET_UNLIT, false)) text.append(", unlit");
@@ -1273,6 +1299,13 @@ public final class MainActivity extends Activity {
                 + NativeBridge.rendererInfo()
                 + (maxSamples > 0 ? "\nThis chip: anti-aliasing up to " + maxSamples + "x, anisotropic filtering "
                         + (maxAnisotropy > 1 ? "up to " + maxAnisotropy + "x." : "not supported.") : "")));
+        content.addView(choiceRow("Show frames (GPU)", new String[]{"Straight on the screen", "Through a picture"},
+                p.getBoolean(SET_GPU_PRESENT, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_GPU_PRESENT, i == 0).apply(); apply.run(); renderView.renderNow(); }));
+        content.addView(hint("Straight on the screen: the GPU puts the frame on the display itself, without "
+                + "reading it back to the CPU and handing it over again. Frames with lines, markers or bones "
+                + "drawn on them, videos and pictures still go through a picture. Choose \"Through a picture\" "
+                + "if the view stays black or does not change."));
         final int[] msaa = {0, 2, 4, 8};
         content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},
                 indexOf(msaa, p.getInt(SET_GPU_MSAA, 4), 2),
@@ -1485,6 +1518,11 @@ public final class MainActivity extends Activity {
 
         @Override public void onCameraStep(String settingId, int step) {
             stepCameraOption(settingId, step);
+        }
+
+        @Override public void onCameraTaken() {
+            // A finger took a cutscene's camera: camera mode's free camera starts at its eye.
+            freeCamera();
         }
 
         @Override public void onCameraLevel() {
@@ -1850,6 +1888,8 @@ public final class MainActivity extends Activity {
     /** Camera mode's camera: free in space at its own eye (fly without the sticks), when the view has one. */
     private void freeCamera() {
         if (!cameraUi || session == 0 || renderView.isFlyMode() || !blackWidowState.canFly) return;
+        // The cutscene's cuts keep driving the view until a finger takes it.
+        if (NativeBridge.cameraFollowsCuts(session)) return;
         if (renderView.setFlyMode(true, false)) applyResourceUiState();
     }
 
@@ -2109,6 +2149,8 @@ public final class MainActivity extends Activity {
             final float elevation = (float) Math.asin(Math.max(-1.0f, Math.min(1.0f, forwardZ)));
             final float roll = (float) Math.atan2(-rightZ, upZ);
             final float[] turn = NativeBridge.gyroTurn(heading, elevation, roll);
+            // The phone's turns wait while a cutscene's cuts drive the view.
+            if (session != 0 && NativeBridge.cameraFollowsCuts(session)) return;
             if (turn != null && turn.length == 2) renderView.turnBy(turn[0], turn[1]);
         }
 

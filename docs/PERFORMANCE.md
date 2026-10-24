@@ -69,6 +69,38 @@ the phone and the stages say what to do first.
   the lens, the polarizer, sharpening and the depth of field the difference
   stays there (1.2–5.9). The auto focus agrees (870 against 873 units).
 
+## Done in v113: frames straight to the screen (first part of step 5)
+
+- A `SurfaceView` lies under the view. Its window goes to the GLES backend
+  (`GpuViewBackend::set_window`, an `ANativeWindow`), which makes an EGL
+  window surface for it from a configuration that draws into both
+  pbuffers and windows.
+- A view frame asks to be shown (`ViewControls::present`, set only by
+  `renderToBuffer`). The core lets it when nothing is drawn on the CPU
+  after the GPU: no lines, markers, labels or bones, no software depth, no
+  development left to the CPU.
+- The backend then blits the resolved (or developed) frame onto the window,
+  scaled to it and turned upright, and swaps without waiting for the
+  display. The frame comes back with its size and no pixels. JNI answers
+  with status bit 4, and the view only draws what goes over it (HUD,
+  subtitles, viewfinder) on a transparent background.
+- Steps 5 to 7 of the frame are gone for these frames: no `glReadPixels`,
+  no copy into Java, no Bitmap upload.
+- A cutscene's fade is now part of the frame (`ViewState::fade`). The GPU
+  lays it as a quad before the development, and the CPU lays it after its
+  own raster, so both paths fade the scene before the camera develops it.
+- Everything else still reads back: videos (the encoder takes Bitmaps),
+  pictures, RAW, the benchmark, UV views, movies, frames with overlays, and
+  any frame when the window is gone or refuses one.
+- Settings → Graphics → Show frames switches it off.
+- Checked with Mesa (a pbuffer stands in for the window, `PresentStandIn`):
+  at the frame's own size the shown frame equals the read back one exactly,
+  rows the right way up. Scaled to 1920 × 1080 and to 640 × 360 it differs
+  only by the filtering. The GPU fade differs from the CPU fade by 0.15 on
+  m03_b00 (the rasterisers alone: 0.58).
+- Next: the overlays (lines, markers, labels, bones) as GPU passes, so
+  those frames are shown directly too.
+
 ## Testing GPU work off the phone
 
 `android/gles_view_backend.cpp` builds on Linux with Mesa's EGL and GLES
@@ -95,7 +127,8 @@ mean nothing; only the phone's benchmark counts.
    field reads the GPU's depth texture instead of drawing the whole frame
    again in software for its depth, which today is the most expensive part
    of camera mode with the depth of field on. Large work.
-5. **Showing the frame without a round trip.** GLES draws straight into the
+5. **Showing the frame without a round trip** (first part done in v113;
+   the overlays on the GPU are left). GLES draws straight into the
    view's window surface (SurfaceView or TextureView). The HUD, subtitles
    and viewfinder are drawn by a Canvas view on top, and the lines and
    labels move to the GPU. Steps 5 to 7 above disappear. Captures (photo,

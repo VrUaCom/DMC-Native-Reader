@@ -12,11 +12,15 @@
 #include "dmcresource/frame_profile.h"
 
 #include <EGL/egl.h>
+#ifdef __ANDROID__
+#include <android/native_window.h>
+#endif
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <GLES2/gl2ext.h>
 
 #include <algorithm>
+#include <iterator>
 #include <array>
 #include <memory>
 #include <cstddef>
@@ -468,6 +472,13 @@ public:
         return {static_cast<int>(max_samples_), max_anisotropy_};
     }
 
+    void set_window(void* window) override {
+        const std::lock_guard lock{mutex_};
+        drop_window();
+        window_ = window;
+        window_failed_ = false;
+    }
+
 private:
     struct Texture final {
         GLuint id{};
@@ -500,10 +511,21 @@ private:
         };
         EGLConfig config = nullptr;
         EGLint count = 0;
-        if (eglChooseConfig(display_, config_attributes, &config, 1, &count) != EGL_TRUE || count < 1) {
+        // A configuration that also draws into windows, so frames can be
+        // shown straight on the view; else offscreen only.
+        EGLint window_attributes[std::size(config_attributes)];
+        std::copy(std::begin(config_attributes), std::end(config_attributes), window_attributes);
+        window_attributes[3] = EGL_PBUFFER_BIT | EGL_WINDOW_BIT;
+        if (eglChooseConfig(display_, window_attributes, &config, 1, &count) == EGL_TRUE && count >= 1) {
+            window_config_ = true;
+        } else if (eglChooseConfig(display_, config_attributes, &config, 1, &count) != EGL_TRUE || count < 1) {
             failed_ = true;
             return false;
         }
+        config_ = config;
+#ifndef __ANDROID__
+        window_config_ = true;  // the desktop stand-in is a pbuffer
+#endif
         const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
         context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, context_attributes);
         const EGLint surface_attributes[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
@@ -797,7 +819,8 @@ private:
     // The development: the frame (resolved) and its depth, the auto focus
     // when it is asked for, the depth of field, the lens / polarizer / look,
     // sharpening, then the read back of the last.
-    bool develop(const GpuViewFrame& frame, const dmcresource::CameraPost& post, RgbaImage& image) {
+    bool develop(const GpuViewFrame& frame, const dmcresource::CameraPost& post, RgbaImage& image,
+                 GLuint* shown_fbo) {
         const int w = frame.width;
         const int h = frame.height;
         if (static_cast<long long>(w) * h > 4096LL * 4096LL) return false;
@@ -920,6 +943,11 @@ private:
         glBindVertexArray(0);
         glDepthMask(GL_TRUE);
 
+        // Shown on the window: the result stays where it is.
+        if (shown_fbo != nullptr) {
+            *shown_fbo = result_fbo;
+            return glGetError() == GL_NO_ERROR;
+        }
         glBindFramebuffer(GL_READ_FRAMEBUFFER, result_fbo);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         image.width = w;
@@ -1202,17 +1230,53 @@ private:
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
 
+        // 7. A cutscene's fade over everything drawn.
+        if (frame.fade[3] > 0.0F) {
+            const float w = static_cast<float>(frame.width);
+            const float h = static_cast<float>(frame.height);
+            // Halfway into the depth range, so the quad is never clipped.
+            const float z = 0.5F * (frame.near_z + frame.far_z) - frame.camera_distance;
+            const std::array<float, 4> colour{frame.fade[0], frame.fade[1], frame.fade[2],
+                                              std::clamp(frame.fade[3], 0.0F, 1.0F) * 255.0F};
+            const std::array<GpuScreenVertex, 6> quad{{{0.0F, 0.0F, z, 0.0F, 0.0F, colour},
+                                                       {w, 0.0F, z, 0.0F, 0.0F, colour},
+                                                       {w, h, z, 0.0F, 0.0F, colour},
+                                                       {0.0F, 0.0F, z, 0.0F, 0.0F, colour},
+                                                       {w, h, z, 0.0F, 0.0F, colour},
+                                                       {0.0F, h, z, 0.0F, 0.0F, colour}}};
+            glUseProgram(screen_program_);
+            glUniform2f(screen_size_, w, h);
+            glUniform3f(screen_depth_, frame.projection[2], frame.projection[3], frame.camera_distance);
+            glUniform1i(screen_textured_, 0);
+            glBindVertexArray(screen_vao_);
+            glBindBuffer(GL_ARRAY_BUFFER, screen_vbo_);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(sizeof(quad)), quad.data(), GL_STREAM_DRAW);
+            glDisable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
+            glBlendEquation(GL_FUNC_ADD);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glDisable(GL_BLEND);
+            glEnable(GL_DEPTH_TEST);
+            glBindVertexArray(0);
+        }
+
         // Submitting is done; the read back waits for the GPU to finish.
         draw_timer.reset();
         const frame_profile::Scope read_timer{frame_profile::Stage::Readback};
+        const bool show = frame.present && window_ready();
         // The photo camera developed here, on the drawn frame and its depth.
         if (frame.post != nullptr && frame.post->enabled) {
-            const bool developed = develop(frame, *frame.post, image);
+            GLuint shown_fbo = 0U;
+            const bool developed = develop(frame, *frame.post, image, show ? &shown_fbo : nullptr);
             frame.post->applied = developed;
             if (developed) {
+                if (show) frame.presented = present(shown_fbo, frame.width, frame.height);
                 glBindFramebuffer(GL_FRAMEBUFFER, 0U);
                 glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
                 trim_textures();
+                // Not shown after all: read the developed frame back.
+                if (show && !frame.presented) return read_back(shown_fbo, frame.width, frame.height, image);
                 return glGetError() == GL_NO_ERROR;
             }
             glGetError();
@@ -1227,6 +1291,15 @@ private:
                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
             read_fbo = resolve_fbo_;
         }
+        // A development that did not run is the CPU's to do: it needs the pixels.
+        const bool undeveloped = frame.post != nullptr && frame.post->enabled;
+        if (show && !undeveloped && present(read_fbo, frame.width, frame.height)) {
+            frame.presented = true;
+            glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            trim_textures();
+            return glGetError() == GL_NO_ERROR;
+        }
         glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
         image.width = frame.width;
@@ -1239,8 +1312,113 @@ private:
         return glGetError() == GL_NO_ERROR;
     }
 
+    bool read_back(GLuint fbo, int width, int height, RgbaImage& image) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        image.width = width;
+        image.height = height;
+        image.pixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image.pixels.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0U);
+        return glGetError() == GL_NO_ERROR;
+    }
+
+    // ---- Showing frames on the view's window ----------------------------
+
+    // The window's EGL surface, made on the first frame shown on it.
+    bool window_ready() {
+        if (window_ == nullptr || window_failed_ || !window_config_) return false;
+        if (window_surface_ != EGL_NO_SURFACE) return true;
+#ifdef __ANDROID__
+        auto* native = static_cast<ANativeWindow*>(window_);
+        EGLint format = 0;
+        if (eglGetConfigAttrib(display_, config_, EGL_NATIVE_VISUAL_ID, &format) == EGL_TRUE) {
+            ANativeWindow_setBuffersGeometry(native, 0, 0, format);
+        }
+        window_surface_ = eglCreateWindowSurface(display_, config_, native, nullptr);
+#else
+        // Off the phone (the desktop probe): a pbuffer of the given size
+        // stands in for the window, and what is shown is read into it.
+        const auto* stand_in = static_cast<const PresentStandIn*>(window_);
+        const EGLint attributes[] = {EGL_WIDTH, stand_in->width, EGL_HEIGHT, stand_in->height, EGL_NONE};
+        window_surface_ = eglCreatePbufferSurface(display_, config_, attributes);
+#endif
+        if (window_surface_ == EGL_NO_SURFACE) {
+            window_failed_ = true;
+            return false;
+        }
+        // Never wait for the display: the frame waiting on it holds the session.
+        if (eglMakeCurrent(display_, window_surface_, window_surface_, context_) == EGL_TRUE) {
+            eglSwapInterval(display_, 0);
+        }
+        make_current();
+        return true;
+    }
+
+    // The frame in `fbo` (single-sampled, GL row 0 = image row 0) onto the
+    // window, scaled to it and turned upright, then shown.
+    bool present(GLuint fbo, int width, int height) {
+        if (eglMakeCurrent(display_, window_surface_, window_surface_, context_) != EGL_TRUE) {
+            make_current();
+            window_failed_ = true;
+            return false;
+        }
+        EGLint window_width = 0;
+        EGLint window_height = 0;
+        eglQuerySurface(display_, window_surface_, EGL_WIDTH, &window_width);
+        eglQuerySurface(display_, window_surface_, EGL_HEIGHT, &window_height);
+        bool ok = window_width > 0 && window_height > 0;
+        if (ok) {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0U);
+            glDisable(GL_SCISSOR_TEST);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            const bool same = window_width == width && window_height == height;
+            glBlitFramebuffer(0, 0, width, height, 0, window_height, window_width, 0, GL_COLOR_BUFFER_BIT,
+                              same ? GL_NEAREST : GL_LINEAR);
+            ok = glGetError() == GL_NO_ERROR;
+#ifndef __ANDROID__
+            if (ok) {
+                auto* stand_in = static_cast<PresentStandIn*>(window_);
+                stand_in->pixels.resize(static_cast<std::size_t>(window_width) * window_height * 4U);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0U);
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                glReadPixels(0, 0, window_width, window_height, GL_RGBA, GL_UNSIGNED_BYTE, stand_in->pixels.data());
+                ++stand_in->shown;
+            }
+#endif
+            ok = ok && eglSwapBuffers(display_, window_surface_) == EGL_TRUE;
+        }
+        make_current();
+        if (!ok) {
+            // A window gone or refusing frames: back to reading frames back
+            // until the view hands over a new one.
+            drop_surface();
+            window_failed_ = true;
+        }
+        return ok;
+    }
+
+    void drop_surface() {
+        if (window_surface_ != EGL_NO_SURFACE) eglDestroySurface(display_, window_surface_);
+        window_surface_ = EGL_NO_SURFACE;
+    }
+
+    void drop_window() {
+        drop_surface();
+#ifdef __ANDROID__
+        if (window_ != nullptr) ANativeWindow_release(static_cast<ANativeWindow*>(window_));
+#endif
+        window_ = nullptr;
+    }
+
     std::mutex mutex_;
     bool failed_{false};
+    EGLConfig config_{};
+    bool window_config_{false};
+    void* window_{};
+    bool window_failed_{false};
+    EGLSurface window_surface_{EGL_NO_SURFACE};
     // The photo camera's passes and targets (made on first use).
     bool post_tried_{false};
     bool post_ready_{false};

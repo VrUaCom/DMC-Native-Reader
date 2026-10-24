@@ -376,6 +376,9 @@ struct ViewControls final {
     const CameraPost* post{};
     // The camera's roll about its axis (radians).
     float roll{};
+    // The frame may go straight to the view's window (view_renderer.h);
+    // only the view's own frames ask, never a capture.
+    bool present{};
 };
 
 // World position of the camera of that view (the start of a fly camera).

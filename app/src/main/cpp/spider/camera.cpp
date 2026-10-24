@@ -1674,8 +1674,8 @@ RgbaImage render_view_frame(const Session* session, int width, int height, float
         const CameraPost post = make_post(width, height, mm, seed);
         framed.post = &post;
         auto image = render_rolled(session, width, height, yaw, pitch, zoom, render_flags, framed, nullptr);
-        if (post.applied) {
-            take_focus(post);
+        if (post.applied || image.pixels.empty()) {  // developed (and maybe shown) on the GPU
+            if (post.applied) take_focus(post);
             return image;
         }
         framed.post = nullptr;
@@ -1683,13 +1683,19 @@ RgbaImage render_view_frame(const Session* session, int width, int height, float
         return image;
     }
     // On the CPU a frame while the view moves skips the depth of field (it
-    // needs a second, software pass for the depth).
+    // needs a second, software pass for the depth); the development needs
+    // the pixels back.
+    framed.present = false;
     std::vector<float> depth;
     const bool moving = has_render_flag(render_flags, RenderFlag::Preview);
     auto image = render_rolled(session, width, height, yaw, pitch, zoom, render_flags, framed,
                                depth_of_field_on() && !moving ? &depth : nullptr);
     develop(&image, seed, mm, &depth);
     return image;
+}
+
+bool follows_cuts(const Session* session) noexcept {
+    return session != nullptr && demo::director(session);
 }
 
 Finder viewfinder(const Session* session, int width, int height, float view_zoom, bool recording,
@@ -1735,7 +1741,8 @@ Finder viewfinder(const Session* session, int width, int height, float view_zoom
                            "  " + aperture + "  " + std::to_string(static_cast<int>(std::lround(focal_mm(zoom)))) +
                            " mm  " + (kelvin == 0 ? std::string("AWB") : std::to_string(kelvin) + " K") + "  " +
                            kStyles[std::clamp(choice(Key::ColourStyle), 0, count(kStyles) - 1)];
-        if (gyro_active()) line += "  GYRO";
+        if (follows_cuts(session)) line += "  CUTS";
+        else if (gyro_active()) line += "  GYRO";
         if (walk_active()) line += "  WALK";
         const float roll_degrees = camera_roll() * 57.2957795F;
         if (std::fabs(roll_degrees) >= 0.5F) {

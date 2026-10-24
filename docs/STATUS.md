@@ -280,6 +280,18 @@ APK verifier.
       standard view.
     - One finger aims the free camera (right looks right, down looks
       down).
+  - v113:
+    - Camera mode films a cutscene through its own cuts: entering camera
+      mode, the gyroscope and starting the cutscene no longer take its
+      camera away. A finger still takes it, and ⋮ → Cutscene camera gives it
+      back. The viewfinder shows CUTS while the cuts drive the view.
+    - A playing cutscene or motion keeps moving while the gyroscope, a drag
+      or the camera bar ask for frames (those requests carried no frame and
+      held the motion still until camera mode was left).
+    - GPU frames go straight to the screen (Settings → Graphics → Show
+      frames): no read back to the CPU and no picture handed over again.
+      Frames with lines, markers or bones, videos and pictures still go
+      through a picture. A cutscene's fade is drawn by the GPU.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

@@ -2204,6 +2204,11 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     view.tile = controls.tile;
     view.post = controls.post;
     view.roll_radians = std::isfinite(controls.roll) ? controls.roll : 0.0F;
+    view.present = controls.present;
+    if (const auto fade = demo::fade_at(session); fade.amount > 0.0F) {
+        view.fade = {static_cast<float>(fade.r), static_cast<float>(fade.g), static_cast<float>(fade.b),
+                     std::min(fade.amount, 1.0F)};
+    }
     if (std::isfinite(controls.lens_zoom) && controls.lens_zoom > 0.0F) view.zoom = controls.lens_zoom;
     if (std::isfinite(controls.zoom_scale) && controls.zoom_scale > 0.0F && controls.zoom_scale != 1.0F) {
         view.zoom = std::clamp(view.zoom * controls.zoom_scale, 0.05F, 64.0F);
@@ -2481,10 +2486,9 @@ RgbaImage render_session(const Session* session, int requested_width, int reques
         prepared.dynamic_presentation
             ? prepared.presentation_mesh
             : session->render_mesh;
-    auto image = render_view(presented, prepared.width, prepared.height, prepared.view,
-                             prepared.hierarchy, prepared.texture_slots, prepared.textures);
-    demo::apply_fade(*session, &image);  // a cutscene's Fade clips
-    return image;
+    // A cutscene's Fade clips are in prepared.view.fade.
+    return render_view(presented, prepared.width, prepared.height, prepared.view,
+                       prepared.hierarchy, prepared.texture_slots, prepared.textures);
 }
 
 std::optional<Vec3> session_camera_eye(const Session* session, int requested_width, int requested_height,

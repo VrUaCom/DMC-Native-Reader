@@ -187,6 +187,12 @@ void begin_video();
                                           const ViewControls& controls);
 [[nodiscard]] bool finder_on() noexcept;
 
+// Camera mode keeps a cutscene's cuts: while the cutscene's camera drives the
+// view, the mode films through it (no free camera of its own, the phone's
+// turns wait); a finger still takes the camera, and the cutscene camera
+// companion gives it back.
+[[nodiscard]] bool follows_cuts(const Session* session) noexcept;
+
 // ---- Gyroscope, roll and focus by touch (camera mode) ----------------------
 
 // The phone's turns become the camera's while camera mode and the

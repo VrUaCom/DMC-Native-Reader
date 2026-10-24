@@ -120,6 +120,14 @@ struct ViewState {
     std::vector<float>* depth_out{};
     // The photo camera's development for a GPU frame (null: none).
     const CameraPost* post{};
+    // A cutscene's fade over the drawn scene, before the photo camera
+    // develops it: the colour (0..255) and how much of it covers the
+    // picture (0: none).
+    std::array<float, 4> fade{};
+    // Show the frame on the view's window (the GPU backend's, view_gpu.h)
+    // instead of handing its pixels back, when nothing is drawn over it on
+    // the CPU. A shown frame comes back with its size and no pixels.
+    bool present{};
     // One tile of a picture larger than a render (the photo camera's 124 MP
     // and more): the focal length of the whole picture's short side, the
     // whole picture's centre relative to this tile's (pixels), its height.

@@ -1825,6 +1825,27 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
 
 std::atomic<GpuViewBackend*> g_gpu_backend{nullptr};
 std::atomic<bool> g_gpu_enabled{true};
+std::atomic<bool> g_gpu_present{true};
+std::atomic<std::uint64_t> g_presented_frames{0U};
+
+// A cutscene's fade laid over the picture (ViewState::fade).
+void lay_fade(const ViewState& view, RgbaImage* image) {
+    const float amount = view.fade[3];
+    if (!(amount > 0.0F)) return;
+    const float keep = 1.0F - amount;
+    for (std::size_t i = 0; i + 3U < image->pixels.size(); i += 4U) {
+        for (std::size_t c = 0; c < 3U; ++c) {
+            image->pixels[i + c] = static_cast<std::uint8_t>(
+                std::clamp(image->pixels[i + c] * keep + view.fade[c] * amount + 0.5F, 0.0F, 255.0F));
+        }
+    }
+}
+
+// Whether anything is drawn on the CPU over a GPU frame (draw_overlays).
+bool has_overlays(const ViewState& view, const HierarchyOverlay* hierarchy) {
+    return view.overlay_lines.size() >= 2U || view.room_collision_lines.size() >= 2U || !view.marker_lines.empty() ||
+           !view.marker_labels.empty() || (hierarchy != nullptr && hierarchy->available());
+}
 std::atomic<int> g_gpu_msaa{GpuViewOptions{}.msaa_samples};
 std::atomic<bool> g_gpu_mipmaps{GpuViewOptions{}.mipmaps};
 std::atomic<int> g_gpu_anisotropy{GpuViewOptions{}.anisotropy};
@@ -2221,6 +2242,8 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
 void set_gpu_view_backend(GpuViewBackend* backend) noexcept { g_gpu_backend.store(backend); }
 GpuViewBackend* gpu_view_backend() noexcept { return g_gpu_backend.load(); }
 void set_gpu_view_enabled(bool enabled) noexcept { g_gpu_enabled.store(enabled); }
+void set_gpu_present_enabled(bool enabled) noexcept { g_gpu_present.store(enabled); }
+bool gpu_present_enabled() noexcept { return g_gpu_present.load(); }
 bool gpu_view_enabled() noexcept { return g_gpu_enabled.load(); }
 
 void set_gpu_view_options(const GpuViewOptions& options) noexcept {
@@ -2234,7 +2257,7 @@ GpuViewOptions gpu_view_options() noexcept {
 }
 
 GpuViewStats gpu_view_stats() noexcept {
-    return {g_gpu_frames.load(), g_cpu_frames.load(), g_gpu_failures.load()};
+    return {g_gpu_frames.load(), g_cpu_frames.load(), g_gpu_failures.load(), g_presented_frames.load()};
 }
 
 std::string view_renderer_description() {
@@ -2259,18 +2282,33 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
         RgbaImage image;
         image.width = std::clamp(width, 1, 8192);
         image.height = std::clamp(height, 1, 8192);
-        image.pixels.resize(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U);
         const auto frame = view_frame(mesh, view, image.width, image.height);
         bool drawn = false;
+        bool presented = false;
         try {
-            const auto gpu = [&] {
+            auto gpu = [&] {
                 const frame_profile::Scope timed{frame_profile::Stage::GpuBuild};
                 return build_gpu_frame(mesh, image.width, image.height, view, frame,
                                               triangle_texture_slots, textures);
             }();
+            gpu.fade = view.fade;
+            // Straight to the window when nothing is drawn after the GPU.
+            gpu.present = view.present && gpu_present_enabled() && view.depth_out == nullptr &&
+                          !has_overlays(view, hierarchy);
+            // A frame that may be shown needs no buffer unless it is read back.
+            if (!gpu.present) {
+                image.pixels.resize(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U);
+            }
             drawn = backend->draw(gpu, image);
+            presented = drawn && gpu.present && gpu.presented;
         } catch (...) {
             drawn = false;
+        }
+        if (presented) {
+            image.pixels.clear();
+            g_gpu_frames.fetch_add(1U);
+            g_presented_frames.fetch_add(1U);
+            return image;
         }
         if (drawn) {
             // The GPU keeps its depth: the software pass gives the same
@@ -2289,7 +2327,9 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     }
     g_cpu_frames.fetch_add(1U);
     const frame_profile::Scope timed{frame_profile::Stage::CpuRaster};  // overlays included
-    return render_view_software(mesh, width, height, view, hierarchy, triangle_texture_slots, textures);
+    auto image = render_view_software(mesh, width, height, view, hierarchy, triangle_texture_slots, textures);
+    lay_fade(view, &image);
+    return image;
 }
 
 Vec3 view_camera_eye(const Mesh& mesh, int width, int height, const ViewState& view) {

@@ -354,6 +354,8 @@ int main() {
     // pitch), times the sensitivity.
     {
         assert(!cam::gyro_active() && cam::gyro_turn(0.0F, 0.0F, 0.0F)[0] == 0.0F);
+        // No cutscene: camera mode never waits for cuts.
+        assert(!cam::follows_cuts(nullptr));
         choose(cam::Key::FinderMode, 1);
         choose(cam::Key::GyroMode, 1);
         choose_named(cam::Key::GyroSmoothing, "Off");

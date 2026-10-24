@@ -350,6 +350,7 @@ if(ANDROID)
     target_link_libraries(dmcviewer PRIVATE
         DMCNativeReader::Core
         jnigraphics
+        android
         EGL
         GLESv3
     )
