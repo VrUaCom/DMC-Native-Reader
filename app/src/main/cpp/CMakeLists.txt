@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(dmcviewer LANGUAGES CXX)
+project(dmcviewer LANGUAGES C CXX)
 
 # The debug APK is the one people install and try: the software renderer
 # needs optimised native code in every configuration (-O0 runs it 5-10x
@@ -31,6 +31,12 @@ set(DMC_NATIVE_READER_RENGINE_VIEWER_SOURCES
     ${DMC_RENGINE_VENDOR}/src/formats/pac.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/pnst.cpp
     ${DMC_RENGINE_VENDOR}/src/formats/shw.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/hits.cpp
+    # Stage and enemy families read by modules/module_families.cpp.
+    ${DMC_RENGINE_VENDOR}/src/formats/lig2.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/dca.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/stage_txt.cpp
+    ${DMC_RENGINE_VENDOR}/src/formats/so/graph.cpp
 )
 
 # Native Reader language authority is centralized here and remains target-scoped.
@@ -87,7 +93,9 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/mod_attachment_resolver.cpp
     modules/model_texture_binding.cpp
     modules/resource_session.cpp
+    modules/environment_collision.cpp
     modules/session_gallery.cpp
+    modules/view_benchmark.cpp
     modules/session_inspection.cpp
     modules/uv_gallery.cpp
     modules/scene_projection.cpp
@@ -95,6 +103,9 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/module_model.cpp
     modules/module_texture.cpp
     modules/module_evt.cpp
+    modules/dds_bcn.cpp
+    modules/dds_bcn_encode.cpp
+    modules/texture_reencode.cpp
     modules/ptx_framing_compat.cpp
     modules/ptx_runtime_compat.cpp
     modules/texture_companion.cpp
@@ -103,9 +114,12 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/motion/skeleton_rig.cpp
     modules/motion/animated_local.cpp
     modules/motion/motion_clip.cpp
+    modules/motion/effect_runtime.cpp
+    modules/motion/effect_profile_registry.cpp
     modules/motion/motion_player.cpp
     modules/motion/part_attachment.cpp
     modules/motion/cloth_chain.cpp
+    modules/motion/model_cloth.cpp
     modules/motion/uv_scroll.cpp
     modules/motion/motion_script.cpp
     modules/motion/motion_chart.cpp
@@ -115,8 +129,26 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/collision_debug.cpp
     modules/neutral_texture.cpp
     modules/stage_room.cpp
+    modules/module_hits.cpp
     modules/effect_bank.cpp
+    modules/particle_sprt.cpp
+    modules/generator.cpp
+    modules/motion/enemy_effects.cpp
     modules/module_effects.cpp
+    modules/font.cpp
+    modules/module_font.cpp
+    modules/stage_config.cpp
+    modules/stage_markers.cpp
+    modules/module_stage_config.cpp
+    modules/sound.cpp
+    modules/video.cpp
+    modules/messages.cpp
+    modules/module_families.cpp
+    modules/demo.cpp
+    modules/demo_session.cpp
+    modules/module_demo.cpp
+    modules/camera_control.cpp
+    modules/frame_profile.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp
     modules/module_scripts.cpp
@@ -127,6 +159,12 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     spider/model_placement_actions.cpp
     spider/session_compose_actions.cpp
     spider/session_texture_actions.cpp
+    spider/texture_reencode_actions.cpp
+    spider/stage_actions.cpp
+    spider/app_info.cpp
+    spider/companion_menu.cpp
+    spider/collision_report.cpp
+    spider/camera.cpp
     view_renderer.cpp
 )
 
@@ -144,9 +182,96 @@ unset(_dmc_native_reader_core_sources_unique)
 unset(_dmc_native_reader_core_source_count)
 unset(_dmc_native_reader_core_unique_count)
 
+# Ogg Vorbis decoder (third_party/stb_vorbis, public domain), plain C.
+add_library(dmc_native_reader_stb_vorbis STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb_vorbis/stb_vorbis.c
+)
+target_compile_definitions(dmc_native_reader_stb_vorbis PRIVATE STB_VORBIS_NO_STDIO STB_VORBIS_NO_PUSHDATA_API)
+if(MSVC)
+    target_compile_options(dmc_native_reader_stb_vorbis PRIVATE /w)
+else()
+    target_compile_options(dmc_native_reader_stb_vorbis PRIVATE -w)
+endif()
+
+# Movies (the HD release's .wmv: ASF, Windows Media video and audio): a
+# minimal FFmpeg (LGPL 2.1 or later), its signed release tarball fetched at
+# build time and pinned by hash, configured with only the ASF demuxer and
+# the Windows Media decoders and linked statically. third_party/ffmpeg.
+option(DMC_NATIVE_READER_FFMPEG "Decode WMV movies with a minimal FFmpeg" ON)
+set(DMC_NATIVE_READER_FFMPEG_LIBS "")
+if(DMC_NATIVE_READER_FFMPEG AND NOT MSVC)
+    include(ExternalProject)
+    set(DMC_FFMPEG_VERSION 7.1.1)
+    set(DMC_FFMPEG_SHA256 733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1)
+    set(DMC_FFMPEG_INSTALL ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg-install)
+    set(DMC_FFMPEG_CONFIGURE
+        --prefix=${DMC_FFMPEG_INSTALL}
+        --disable-everything --disable-programs --disable-doc --disable-network
+        --disable-autodetect --disable-avdevice --disable-swscale --disable-swresample
+        --disable-postproc --disable-avfilter --disable-debug
+        --enable-static --disable-shared --enable-pic
+        --enable-demuxer=asf
+        --enable-decoder=wmv1,wmv2,wmv3,vc1,msmpeg4v3,wmav1,wmav2,wmapro
+        --enable-parser=vc1
+        --cc=${CMAKE_C_COMPILER}
+    )
+    if(ANDROID)
+        if(ANDROID_ABI STREQUAL "arm64-v8a")
+            set(_dmc_ffmpeg_arch aarch64)
+        elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+            set(_dmc_ffmpeg_arch arm)
+        elseif(ANDROID_ABI STREQUAL "x86_64")
+            set(_dmc_ffmpeg_arch x86_64)
+        else()
+            set(_dmc_ffmpeg_arch x86)
+        endif()
+        list(APPEND DMC_FFMPEG_CONFIGURE
+            --enable-cross-compile --target-os=android --arch=${_dmc_ffmpeg_arch}
+            "--extra-cflags=--target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT}"
+            "--extra-ldflags=--target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT}"
+            --ar=${CMAKE_AR} --ranlib=${CMAKE_RANLIB} --nm=${CMAKE_NM} --strip=${CMAKE_STRIP})
+        if(NOT _dmc_ffmpeg_arch MATCHES "^(aarch64|arm)$")
+            list(APPEND DMC_FFMPEG_CONFIGURE --disable-x86asm)
+        endif()
+    else()
+        list(APPEND DMC_FFMPEG_CONFIGURE --disable-x86asm)
+    endif()
+    find_program(DMC_MAKE NAMES gmake make REQUIRED)
+    set(_dmc_ffmpeg_download_options "")
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+        list(APPEND _dmc_ffmpeg_download_options DOWNLOAD_EXTRACT_TIMESTAMP ON)
+    endif()
+    ExternalProject_Add(dmc_ffmpeg
+        URL https://ffmpeg.org/releases/ffmpeg-${DMC_FFMPEG_VERSION}.tar.xz
+        URL_HASH SHA256=${DMC_FFMPEG_SHA256}
+        ${_dmc_ffmpeg_download_options}
+        PREFIX ${CMAKE_CURRENT_BINARY_DIR}/ffmpeg
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure ${DMC_FFMPEG_CONFIGURE}
+        BUILD_COMMAND ${DMC_MAKE} -j8
+        INSTALL_COMMAND ${DMC_MAKE} install
+        BUILD_BYPRODUCTS
+            ${DMC_FFMPEG_INSTALL}/lib/libavformat.a
+            ${DMC_FFMPEG_INSTALL}/lib/libavcodec.a
+            ${DMC_FFMPEG_INSTALL}/lib/libavutil.a
+    )
+    file(MAKE_DIRECTORY ${DMC_FFMPEG_INSTALL}/include)
+    foreach(_dmc_ffmpeg_lib avformat avcodec avutil)
+        add_library(dmc_ffmpeg_${_dmc_ffmpeg_lib} STATIC IMPORTED)
+        set_target_properties(dmc_ffmpeg_${_dmc_ffmpeg_lib} PROPERTIES
+            IMPORTED_LOCATION ${DMC_FFMPEG_INSTALL}/lib/lib${_dmc_ffmpeg_lib}.a
+            INTERFACE_INCLUDE_DIRECTORIES ${DMC_FFMPEG_INSTALL}/include)
+        add_dependencies(dmc_ffmpeg_${_dmc_ffmpeg_lib} dmc_ffmpeg)
+        list(APPEND DMC_NATIVE_READER_FFMPEG_LIBS dmc_ffmpeg_${_dmc_ffmpeg_lib})
+    endforeach()
+endif()
+
 add_library(dmc_native_reader_core STATIC
     ${DMC_NATIVE_READER_CORE_SOURCES}
 )
+if(DMC_NATIVE_READER_FFMPEG_LIBS)
+    target_compile_definitions(dmc_native_reader_core PRIVATE DMC_NATIVE_READER_FFMPEG=1)
+    target_link_libraries(dmc_native_reader_core PRIVATE ${DMC_NATIVE_READER_FFMPEG_LIBS} m)
+endif()
 add_library(DMCNativeReader::Core ALIAS dmc_native_reader_core)
 
 dmc_native_reader_require_cpp23(dmc_native_reader_core PUBLIC)
@@ -161,6 +286,8 @@ target_link_libraries(dmc_native_reader_core
         DMCRengine::ReaderCore
         dmc_native_reader_rengine_viewer
         Threads::Threads
+    PRIVATE
+        dmc_native_reader_stb_vorbis
 )
 
 target_compile_definitions(dmc_native_reader_core PUBLIC
@@ -176,6 +303,28 @@ set_target_properties(dmc_native_reader_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Diagnostics build identity shared by platform shells only. Best-effort:
+# source archives/non-git builders fall back to "unknown" without failing.
+if(ANDROID OR WIN32)
+    set(DMC_NATIVE_READER_BUILD_SHA "unknown")
+    find_package(Git QUIET)
+    if(GIT_EXECUTABLE)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE _dmc_native_reader_git_sha
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _dmc_native_reader_git_result
+        )
+        if(_dmc_native_reader_git_result EQUAL 0 AND _dmc_native_reader_git_sha)
+            set(DMC_NATIVE_READER_BUILD_SHA "${_dmc_native_reader_git_sha}")
+        endif()
+        unset(_dmc_native_reader_git_sha)
+        unset(_dmc_native_reader_git_result)
+    endif()
+endif()
+
 # Android is deliberately a thin shell. It owns JNI/FD/lifecycle integration
 # and direct Bitmap transport only; application decisions, resource parsing,
 # texture attachment and render contracts stay in DMCNativeReader::Core.
@@ -189,15 +338,24 @@ if(ANDROID)
 
     add_library(dmcviewer SHARED
         app_native.cpp
+        android/gles_view_backend.cpp
     )
 
     dmc_native_reader_require_cpp23(dmcviewer PRIVATE)
 
+    target_compile_definitions(dmcviewer PRIVATE
+        DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
+    )
+
     target_link_libraries(dmcviewer PRIVATE
         DMCNativeReader::Core
         jnigraphics
+        android
+        EGL
+        GLESv3
     )
 
+    target_include_directories(dmcviewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_options(dmcviewer PRIVATE
         -Wall -Wextra -Wpedantic
         -ffunction-sections
@@ -219,27 +377,6 @@ endif()
 # only the window, file dialog and pixel blit. Parsing, inspection and
 # rendering all stay in DMCNativeReader::Core.
 if(WIN32)
-    # Diagnostics build identity (master plan section 5.1.I). Best-effort:
-    # falls back to "unknown" rather than failing the build when git isn't
-    # on PATH or this tree isn't a git checkout (e.g. a source archive).
-    set(DMC_NATIVE_READER_BUILD_SHA "unknown")
-    find_package(Git QUIET)
-    if(GIT_EXECUTABLE)
-        execute_process(
-            COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-            OUTPUT_VARIABLE _dmc_native_reader_git_sha
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
-            RESULT_VARIABLE _dmc_native_reader_git_result
-        )
-        if(_dmc_native_reader_git_result EQUAL 0 AND _dmc_native_reader_git_sha)
-            set(DMC_NATIVE_READER_BUILD_SHA "${_dmc_native_reader_git_sha}")
-        endif()
-        unset(_dmc_native_reader_git_sha)
-        unset(_dmc_native_reader_git_result)
-    endif()
-
     add_executable(dmc_native_reader_win WIN32
         win_shell.cpp
     )
@@ -278,7 +415,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
-        motion_playback pac_assembly player_coat
+        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level bcn_formats gallery_mosaic texture_reencode_action gpu_view_frame view_benchmark fly_camera font stage_config families camera_control demo video photo_camera
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

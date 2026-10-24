@@ -11,6 +11,7 @@
 
 #include "dmcresource/composite_model.h"
 #include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/render_scene.h"
 
 namespace dmcresource {
@@ -343,7 +344,7 @@ enum class LadyControlDomain : std::uint8_t {
 
 enum class LadyEffectiveParent : std::uint8_t {
     BodyJoint = 0,
-    RuntimeBodyRootScaled = 1,  // CEm034+0x43C0, scale source +0x4400
+    RuntimeJointScaled = 1,  // CEm034+0x43C0 = joint13 world * S(+0x4400)
 };
 
 struct LadyPlacementRecord final {
@@ -385,7 +386,7 @@ inline constexpr std::array<LadyComponentContract, 5> kCEm034LadyComponents{{
          {0.0F, 0.0F, -1.6580626964569092F}},
         {13U, {7.199999809265137F, -1.2000000476837158F, 2.700000047683716F},
          {0.0F, -0.1745329201221466F, 0.0F},
-         LadyEffectiveParent::RuntimeBodyRootScaled, 0x43C0U, 0x4400U},
+         LadyEffectiveParent::RuntimeJointScaled, 0x43C0U, 0x4400U},
     }}},
     {4U, 24U, {{
         {14U, {17.0F, -5.0F, -16.0F},
@@ -438,7 +439,7 @@ inline constexpr std::array<LadyDynamicActorContract, 6> kCEm034LadyDynamicActor
 }
 
 // Apply an EXE-confirmed CEm034 placement preset to an assembled persistent
-// component. RuntimeBodyRootScaled is represented exactly in the contract and
+// component. RuntimeJointScaled is represented exactly in the contract and
 // is not approximated as serialized node 13; if the live body-root/scale bridge
 // is unavailable this function returns false instead of guessing.
 bool set_lady_component_preset(Session* session,
@@ -453,7 +454,7 @@ bool set_lady_component_control_domain(Session* session,
                                        LadyControlDomain domain) noexcept;
 
 // Exact CEm034 component3 active-parent scalar (+0x4400). Re-materializes
-// RuntimeBodyRootScaled when component3 is currently ActiveDeployed.
+// RuntimeJointScaled when component3 is currently ActiveDeployed.
 bool set_lady_component_runtime_scale(Session* session,
                                       LadyComponentBinding& binding,
                                       float uniform_scale) noexcept;
@@ -469,7 +470,7 @@ struct LadyRuntimeApplyResult final {
 
 // Apply the recovered CEm034 state-entry baseline/overrides. The binding state
 // is updated even if an exact preview cannot be materialized (currently only
-// component3 ActiveDeployed's RuntimeBodyRootScaled parent).
+// component3 ActiveDeployed's RuntimeJointScaled parent).
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
     Session* session, std::uint16_t state) noexcept;
 
@@ -591,6 +592,26 @@ struct LadyBodyStateScripts final {
         both(4U, 60U);
     }
     return out;
+}
+
+// em034_013 action that the CEm034 entry dispatcher 0x14016A410 starts on the
+// component0 controller (+0x52B0) for `state`. Only the entries that reach
+// 0x14016AA73 do so: states 0x5A..0x5D and 0x64..0x73 (case 0x14016AA3D),
+// 0x7B (0x14016A509) and 0x7C/0x7D (0x14016A52F). That block starts bank 4,
+// action state - 0x53 and clears +0x4020, the enable byte of the slot20 node0
+// CCnsMatrix at +0x4000: component0 then follows its own MOT in actor space.
+// Every other entry keeps (or re-enables) the constraint through 0x1401713F0,
+// which always writes +0x4020 = 1, so no component track runs there.
+// States 0x59/0x61 start the same controller later, from their lane0 signal
+// (0x14016988B); that delayed start is not a state-entry pairing.
+[[nodiscard]] constexpr std::optional<LadyBodyLaneAction>
+lady_component_action_for_state(std::uint16_t state) noexcept {
+    const bool independent = (state >= 0x5AU && state <= 0x5DU) ||
+                             (state >= 0x64U && state <= 0x73U) ||
+                             (state >= 0x7BU && state <= 0x7DU);
+    if (!independent) return std::nullopt;
+    return LadyBodyLaneAction{
+        true, 4U, static_cast<std::uint8_t>(state - 0x53U)};
 }
 
 // Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.

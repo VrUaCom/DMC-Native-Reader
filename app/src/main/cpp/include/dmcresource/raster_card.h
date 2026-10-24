@@ -52,6 +52,12 @@ private:
     std::vector<std::uint8_t> px_;
 };
 
+// The same 5x7 text written into any RGBA8 image (`width` x `height`
+// pixels, rows top-down): overlays print labels on a rendered frame with it.
+// Returns the x after the text.
+int draw_text(std::span<std::uint8_t> rgba, int width, int height, int x, int y, std::string_view s, Rgb c,
+              int scale);
+
 // Card scale for a canvas width (1080 px -> 3).
 [[nodiscard]] int card_scale(int width) noexcept;
 

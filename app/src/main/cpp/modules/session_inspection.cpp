@@ -31,8 +31,9 @@ void append_objects(const InspectionNode& source, InspectionNode& target) {
 void append_uv(const Session& session, InspectionNode& root) {
     root.title = "UV maps";
     std::vector<UvMapSummary> maps;
-    if (session.uv_gallery) {
-        for (const auto& map : session.uv_gallery->maps)
+    const UvGallery* gallery = session.uv_gallery.get();
+    if (gallery != nullptr) {
+        for (const auto& map : gallery->maps)
             maps.push_back({map.texture_slot, map.indices.size() / 3U});
     } else {
         maps = summarize_uv_maps(session.render_mesh, session.render_triangle_texture_slots);
@@ -49,6 +50,22 @@ void append_uv(const Session& session, InspectionNode& root) {
         node.title = "UV / Slot " + std::to_string(map.texture_slot);
         if (session.uv_map_index && *session.uv_map_index == i) node.title += " (selected)";
         count(node, "Triangles", map.triangle_count);
+        if (gallery != nullptr) {
+            const auto& uv = gallery->maps[i];
+            if (uv.texture_width != 0U && uv.texture_height != 0U) {
+                property(node, "Texture", std::to_string(uv.texture_width) + " x " +
+                                              std::to_string(uv.texture_height));
+                property(node, "Proportions", uv_map_proportion(uv));
+            } else {
+                property(node, "Proportions",
+                         "1:1 - no texture bound to this slot; attach the texture to see its proportions");
+            }
+            const auto [export_w, export_h] = uv_map_export_size(uv);
+            property(node, "PNG size", std::to_string(export_w) + " x " + std::to_string(export_h));
+            if (uv.outside_triangles != 0U) {
+                count(node, "Triangles outside 0..1 (tiling)", uv.outside_triangles);
+            }
+        }
         root.children.push_back(std::move(node));
     }
 }

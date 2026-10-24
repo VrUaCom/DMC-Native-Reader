@@ -37,6 +37,7 @@ struct ClipStats final {
     std::size_t tracks{};
     std::size_t compression2_tracks{};
     std::size_t compression3_tracks{};
+    std::size_t raw_tracks{};  // compression 0 / 1 (float keys)
     std::size_t unsupported_tracks{};
 };
 
@@ -45,10 +46,15 @@ struct ClipStats final {
 // never modified.
 class MotionClip final {
 public:
+    // `leading_joints`: a MOT whose channel domain is longer than the
+    // model's joints drives the leading joints (0x140310A80 walks the model's
+    // joint count and consumes one mask per joint; the rest is never read).
+    // Cutscenes play body MOTs on their lighter body variants this way.
     [[nodiscard]] static std::expected<MotionClip, ClipError> bind(
         std::span<const std::byte> mot_bytes,
         const SkeletonRig& rig,
-        std::string* parse_message = nullptr);
+        std::string* parse_message = nullptr,
+        bool leading_joints = false);
 
     // Header +0x0C: end frame of the timeline (corpus-confirmed mirror of +0x14).
     [[nodiscard]] float end_frame() const noexcept { return end_frame_; }
@@ -62,6 +68,9 @@ public:
     // local matrices (node-indexed). Track caches are updated in place so
     // sequential playback stays O(1) per track, like the runtime cache.
     [[nodiscard]] bool evaluate_locals(float frame, std::span<Matrix4f> out_locals) noexcept;
+    // The channels themselves (translation, rotation xyz, scale per node), for
+    // nodes whose local matrix another format builds (SCM scene nodes).
+    [[nodiscard]] bool evaluate_channels(float frame, std::span<JointChannels> out) noexcept;
 
     [[nodiscard]] bool any_non_unit_scale() const noexcept { return saw_non_unit_scale_; }
 
@@ -88,6 +97,20 @@ private:
 // compression 3 (0x1402E8FB0 differs from 0x1402E8C80 only in key stride),
 // value = u16 * q1 / 65535 + q0, strictly linear between keys.
 [[nodiscard]] bool evaluate_compression2_track(
+    const dmc::rengine::formats::mot::TrackRecord& track,
+    float frame,
+    std::int32_t* cached_index,
+    float* out_value) noexcept;
+
+// Compression 0 / 1, float keys (0x1402E9650 cases 0 and 1; the vendored
+// parser keeps their bytes undecoded): an 8-byte track prefix (u16 span, u16
+// key count, u16 compression, i16 time offset), then keys of 8 bytes (u16
+// time | bit 15 mode, u16, f32 value) or 16 (and f32 incoming, outgoing
+// slope). Time = (key & 0x7FFF) + offset. Between keys: linear, or with bit
+// 15 set on the left key the compression-3 Hermite with the keys' slopes
+// (zero for compression 0); held before the first and after the last key.
+// m01_v00's pl101 MOTs are all compression 0.
+[[nodiscard]] bool evaluate_raw_track(
     const dmc::rengine::formats::mot::TrackRecord& track,
     float frame,
     std::int32_t* cached_index,

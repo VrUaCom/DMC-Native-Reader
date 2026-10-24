@@ -39,8 +39,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 72
-        versionName = "1.0.45"
+        versionCode = 119
+        versionName = "1.0.92"
 
         // Do not set -std= or other semantic C++ flags here. Gradle's CMake
         // cppFlags are global to the external native build. Language mode is
@@ -71,4 +71,10 @@ android {
             version = "3.22.1"
         }
     }
+}
+
+dependencies {
+    // ARCore, optional: the camera mode's walking (6DoF). The app runs
+    // without it; walking asks for Google Play Services for AR when turned on.
+    implementation("com.google.ar:core:1.48.0")
 }

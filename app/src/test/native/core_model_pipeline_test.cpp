@@ -7,13 +7,20 @@
 #include "dmcresource/resource_session.h"
 #include "dmcresource/session_inspection.h"
 #include "dmcresource/stage_room.h"
+#include "dmcresource/environment_collision.h"
 #include "dmcresource/inspection_format.h"
+#include "dmcresource/collision_debug.h"
+#include "dmcresource/spider/collision_report.h"
 
+#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -185,6 +192,47 @@ std::vector<std::uint8_t> make_scm() {
     return bytes;
 }
 
+std::vector<std::uint8_t> make_hits() {
+    // One valid HITS cell and one triangle-plane record.  The fixture checks
+    // the environment-collision boundary without assigning surface semantics
+    // to raw flags.
+    std::vector<std::uint8_t> bytes(0x88U, 0U);
+    bytes[0] = 'H'; bytes[1] = 'I'; bytes[2] = 'T'; bytes[3] = 'S';
+    put_u32(bytes, 0x04U, 0x88U);
+    put_f32(bytes, 0x08U, 0.0F);   put_f32(bytes, 0x0CU, 0.0F);   put_f32(bytes, 0x10U, 0.0F);
+    put_f32(bytes, 0x14U, 100.0F); put_f32(bytes, 0x18U, 100.0F); put_f32(bytes, 0x1CU, 100.0F);
+    put_f32(bytes, 0x20U, 100.0F); put_f32(bytes, 0x24U, 100.0F); put_f32(bytes, 0x28U, 100.0F);
+    put_u32(bytes, 0x2CU, 1U); put_u32(bytes, 0x30U, 1U); put_u32(bytes, 0x34U, 1U);
+    put_u32(bytes, 0x38U, 1U); put_u32(bytes, 0x3CU, 0x3CU); put_u32(bytes, 0x40U, 0x48U);
+    put_u32(bytes, 0x44U, 0x40U);  // cell list at file offset 0x48
+    put_u32(bytes, 0x48U, 0U);      // triangle byte offset 0
+    put_u32(bytes, 0x4CU, 0xFFFFFFFFU);
+    put_u32(bytes, 0x50U, 0x12345678U);
+    put_f32(bytes, 0x54U, 0.0F);  put_f32(bytes, 0x58U, 0.0F);  put_f32(bytes, 0x5CU, 0.0F);
+    put_f32(bytes, 0x60U, 10.0F); put_f32(bytes, 0x64U, 0.0F);  put_f32(bytes, 0x68U, 0.0F);
+    put_f32(bytes, 0x6CU, 0.0F);  put_f32(bytes, 0x70U, 0.0F);  put_f32(bytes, 0x74U, 10.0F);
+    put_f32(bytes, 0x78U, 0.0F);  put_f32(bytes, 0x7CU, 1.0F);  put_f32(bytes, 0x80U, 0.0F);
+    put_f32(bytes, 0x84U, 0.0F);
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_stage_pac(const std::vector<std::uint8_t>& scm,
+                                         const std::vector<std::uint8_t>& hits) {
+    // PAC offsets are relative physical slot starts.  Keeping the HITS in a
+    // separate slot exercises the same provenance path as a real stage PAC.
+    constexpr std::size_t scm_offset = 0x10U;
+    constexpr std::size_t hits_offset = 0x1C0U;
+    std::vector<std::uint8_t> bytes(hits_offset + hits.size(), 0U);
+    bytes[0] = 'P'; bytes[1] = 'A'; bytes[2] = 'C'; bytes[3] = 0U;
+    put_u32(bytes, 0x04U, 2U);
+    put_u32(bytes, 0x08U, static_cast<std::uint32_t>(scm_offset));
+    put_u32(bytes, 0x0CU, static_cast<std::uint32_t>(hits_offset));
+    assert(scm.size() == hits_offset - scm_offset);
+    std::copy(scm.begin(), scm.end(), bytes.begin() + static_cast<std::ptrdiff_t>(scm_offset));
+    std::copy(hits.begin(), hits.end(), bytes.begin() + static_cast<std::ptrdiff_t>(hits_offset));
+    return bytes;
+}
+
 bool trace_contains(const dmcresource::PipelineResult& result,
                     std::string_view id) {
     for (const auto& module : result.modules) {
@@ -274,6 +322,186 @@ int main() {
     assert(has_capability(mod_result.capabilities,
                           ResourceCapability::UvCoordinates));
 
+    const auto hits = make_hits();
+    const auto hits_result = run_decode_pipeline(
+        "stage.hits", hits.data(), hits.size());
+    assert(hits_result.accepted && hits_result.renderable);  // drawn as a 3D surface
+    assert(hits_result.scene.meshes.size() == 1U && hits_result.scene.meshes[0].mesh.indices.size() == 3U);
+    assert(hits_result.probe.format == Format::Hits);
+    assert(hits_result.inspection.format == "HITS");
+    assert(has_capability(hits_result.capabilities, ResourceCapability::Collision));
+    const auto collision = dmcresource::environment_collision::parse(
+        "slot_0003.hits", 3U,
+        std::span<const std::uint8_t>{hits.data(), hits.size()});
+    assert(collision && collision->resource_slot == 3U && collision->triangles.size() == 1U);
+    assert(collision->cell_reference_count == 1U);
+    assert(dmcresource::environment_collision::debug_lines(*collision).size() == 6U);
+
+    // Stage collision queries (0x14005E880 segment test and the Reader's
+    // character proxy) on a floor y = 0 and a wall x = 100 facing -x.
+    {
+        namespace ec = dmcresource::environment_collision;
+        using dmcresource::Vec3;
+        ec::Source source;
+        source.bounds_min = {-500.0F, -10.0F, -500.0F};
+        source.bounds_max = {500.0F, 500.0F, 500.0F};
+        // Floor (normal +y, plane y = 0), two triangles.
+        source.triangles.push_back({0U, {-500.0F, 0.0F, -500.0F}, {-500.0F, 0.0F, 500.0F},
+                                    {500.0F, 0.0F, 500.0F}, {0.0F, 1.0F, 0.0F}, 0.0F});
+        source.triangles.push_back({0U, {-500.0F, 0.0F, -500.0F}, {500.0F, 0.0F, 500.0F},
+                                    {500.0F, 0.0F, -500.0F}, {0.0F, 1.0F, 0.0F}, 0.0F});
+        // Wall x = 100 (normal -x: n.p + d = 0 with d = 100), category 0x0002.
+        source.triangles.push_back({0x00020000U, {100.0F, 0.0F, -500.0F}, {100.0F, 500.0F, -500.0F},
+                                    {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
+        source.triangles.push_back({0x00020000U, {100.0F, 500.0F, -500.0F}, {100.0F, 500.0F, 500.0F},
+                                    {100.0F, 0.0F, 500.0F}, {-1.0F, 0.0F, 0.0F}, 100.0F});
+
+        // Kinds: one per distinct flags value, ascending; floors/walls counted.
+        {
+            const auto kinds = ec::kinds(source);
+            assert(kinds.size() == 2U && kinds[0].flags == 0U && kinds[0].count == 2U &&
+                   kinds[0].floors == 2U && kinds[1].flags == 0x00020000U && kinds[1].walls == 2U);
+            const auto line_kinds = ec::debug_line_kinds(source, kinds);
+            assert(line_kinds.size() == 12U && line_kinds[0] == 0U && line_kinds[6] == 1U);
+            // Colours follow the flags, the same in every file: the type byte,
+            // or the category (st000..st006's invisible walls 0x1806 white
+            // whatever their type byte); an unknown category a fixed colour.
+            assert(dmcresource::collision_color_class(0x01U) == 1U && dmcresource::collision_color_class(0x0CU) == 12U &&
+                   dmcresource::collision_color_class(0x30U) == 15U);
+            assert(dmcresource::collision_color_class(0x18060001U) == 18U &&
+                   dmcresource::collision_color_class(0x18060002U) == 18U &&
+                   dmcresource::collision_class_color(18U) == (std::array<std::uint8_t, 3>{255U, 255U, 255U}));
+            const auto unknown = dmcresource::collision_color_class(0x00020000U);
+            assert(unknown >= 20U && unknown < dmcresource::kCollisionClassCount &&
+                   unknown == dmcresource::collision_color_class(0x00020005U));
+            assert(dmcresource::collision_class_color(1U) != dmcresource::collision_class_color(2U));
+            assert(dmcresource::collision_class_name(1U) == "type 0x01" &&
+                   dmcresource::collision_class_name(18U) == "category 0x1806");
+        }
+
+        // Nearest hit wins: a diagonal shot meets the wall before the floor.
+        const auto wall = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, -100.0F, 0.0F});
+        assert(wall && wall->triangle >= 2U);
+        assert(std::fabs(wall->point.x - 100.0F) < 1.0e-3F && std::fabs(wall->point.y) < 1.0e-3F + 1.0F);
+        assert(std::fabs(wall->fraction - 0.5F) < 1.0e-4F);
+        // A category mask skips the wall records.
+        const auto masked = ec::segment_hit(source, {0.0F, 100.0F, 0.0F}, {200.0F, 50.0F, 0.0F}, 0x0002U);
+        assert(!masked);
+        const auto floor = ec::segment_hit(source, {0.0F, 50.0F, 0.0F}, {0.0F, -50.0F, 0.0F});
+        assert(floor && std::fabs(floor->point.y) < 1.0e-4F && floor->normal.y == 1.0F);
+        assert(!ec::segment_hit(source, {0.0F, 50.0F, 0.0F}, {50.0F, 60.0F, 0.0F}));
+
+        // The sphere stops `radius` short of the wall and slides along it.
+        const auto slid = ec::slide_sphere(source, {0.0F, 90.0F, 0.0F}, {300.0F, 90.0F, 40.0F}, 50.0F);
+        assert(std::fabs(slid.x - 50.0F) < 0.5F && std::fabs(slid.z - 40.0F) < 0.5F);
+        const auto free_move = ec::slide_sphere(source, {0.0F, 90.0F, 0.0F}, {-200.0F, 90.0F, 0.0F}, 50.0F);
+        assert(std::fabs(free_move.x + 200.0F) < 1.0e-3F);
+        const auto height = ec::floor_below(source, {10.0F, 90.0F, 10.0F}, 1000.0F);
+        assert(height && std::fabs(*height) < 1.0e-4F);
+        assert(!ec::floor_below(source, {10.0F, -5.0F, 10.0F}, 1000.0F));
+
+        // Room <-> model placement round trip (view_renderer's room pass).
+        namespace room = dmcresource::stage_room;
+        const room::Placement placement{{10.0F, 2.0F, -4.0F}, 0.7F, {3.0F, -1.0F, 5.0F}};
+        const Vec3 p{123.0F, 45.0F, -67.0F};
+        const auto back = room::model_to_room(placement, room::room_to_model(placement, p));
+        assert(std::fabs(back.x - p.x) < 1.0e-3F && std::fabs(back.y - p.y) < 1.0e-3F &&
+               std::fabs(back.z - p.z) < 1.0e-3F);
+
+        // The collision reports (long press on the collision tools): the
+        // HITS shown, its sources, then a group a kind in its drawing colour.
+        {
+            namespace act = dmcresource::spider::actions;
+            dmcresource::Session hits_view;
+            hits_view.hits = std::make_shared<const ec::Source>(source);
+            const auto report = act::stage_collision_report(&hits_view);
+            assert(report.title == "Stage collision (HITS)" && report.groups.size() == 3U);
+            assert(report.summary.find("4 records (2 floors, 2 walls, 0 ceilings) in 2 kinds") != std::string::npos);
+            assert(!report.groups[0].coloured && report.groups[0].lines.size() == 1U);
+            assert(report.groups[1].coloured && report.groups[1].colour == dmcresource::collision_class_color(0U) &&
+                   report.groups[1].heading == "Type 0x00 \xC2\xB7 2 records" &&
+                   report.groups[1].lines[0] == "2 floors, 0 walls, 0 ceilings");
+            assert(report.groups[2].heading.find("Other category") == 0U &&
+                   report.groups[2].lines[1].find("flags 0x00020000") == 0U &&
+                   report.groups[2].lines[2].find("objects of type mask 0x02") != std::string::npos);
+            assert(act::shown_hits_kinds(&hits_view).size() == 2U);
+            assert(act::stage_collision_report(nullptr).groups.empty());
+
+            // Hitboxes: two shapes, two attacks used (an empty mask is not).
+            auto binding = std::make_shared<dmcresource::collision::CollisionBinding>();
+            binding->name = "pl000";
+            binding->node_count = 10U;
+            dmcresource::collision::Shape sphere;
+            sphere.type = 2U;
+            sphere.radius = 30.0F;
+            dmcresource::collision::Shape box;
+            box.type = 3U;
+            box.size = {10.0F, 20.0F, 5.0F};
+            binding->shapes = {sphere, box};
+            binding->attacks = {{1U, 3U, 0U}, {0U, 3U, 0U}, {3U, 4U, 1U}};
+            dmcresource::Session fighter;
+            fighter.collision = binding;
+            const auto attacks = act::attack_collision_report(&fighter);
+            assert(attacks.summary.find("2 attacks used of 3 entries, 2 shapes") != std::string::npos);
+            assert(attacks.groups.size() == 3U && attacks.groups[0].heading == "Shapes" &&
+                   attacks.groups[0].colour == dmcresource::kAttackCollisionColor);
+            assert(attacks.groups[1].heading == "Target layers 1 \xC2\xB7 1 attack" &&
+                   attacks.groups[1].lines[0] == "attack 0: bone 3, sphere #0, radius 30.0");
+            assert(attacks.groups[2].heading == "Target layers 1 + 2 \xC2\xB7 1 attack");
+        }
+
+        // Layout states (st006's sets, comments in Shift-JIS): the entrance
+        // ice and its broken demo variant, a DUMMY shard parked to the side,
+        // a plain object. Intact: 0 and 3; broken: 1 and 3.
+        {
+            const std::string layout =
+                "# GAME\n"
+                "# SET 100 STAY\t\t;\x93\xfc\x8c\xfb\x95\x58\n\tmodel 0\n\tpos 0 0 0\n"
+                "# SET 101 STAY\t\t;\x93\xfc\x8c\xfb\x95\x58\x89\xf3\x82\xea\n\tmodel 1\n\tpos 0 0 0\n"
+                "# SET 106 DUMMY\t;\n\tmodel 6\n\tpos 5000 0 0\n"
+                "# SET 109 STAY\n\tmodel 9\n\tpos 0 0 0\n"
+                "# SET 300 SE\n\tpos 1 2 3\n"
+                "# GAME_END\n";
+            assert((room::layout_sets_shown(layout, false) == std::vector<std::size_t>{0U, 3U}));
+            assert((room::layout_sets_shown(layout, true) == std::vector<std::size_t>{1U, 3U}));
+            // A broken note with nothing before it at its place is a plain object.
+            const std::string lone = "# GAME\n# SET 1 STAY ;\x89\xf3\x82\xea\n\tmodel 2\n\tpos 5 0 0\n# GAME_END\n";
+            assert((room::layout_sets_shown(lone, false) == std::vector<std::size_t>{0U}));
+        }
+        // A stage's start view: without a spawn it looks at the floor's
+        // middle from behind (+z ahead) and above; a spawn facing -x would
+        // put the camera behind the wall at x = 100, so it turns round to
+        // the open side.
+        room::Room stage_room;
+        stage_room.collision_sources.push_back(source);
+        const auto middle = room::start_view(stage_room, std::nullopt);
+        assert(middle && !middle->from_spawn && std::fabs(middle->target.x) < 1.0F &&
+               std::fabs(middle->target.z) < 1.0F && middle->target.y > 50.0F && middle->target.y < 200.0F);
+        assert(middle->eye.z < -100.0F && std::fabs(middle->eye.x) < 1.0F && middle->eye.y > middle->target.y);
+        // The middle of all the collision stands on the main floor, not on a
+        // small ledge above it (the floors' mean height is near 0).
+        {
+            room::Room ledged;
+            auto with_ledge = source;
+            with_ledge.triangles.push_back({0U, {-50.0F, 300.0F, -50.0F}, {-50.0F, 300.0F, 50.0F},
+                                            {50.0F, 300.0F, 50.0F}, {0.0F, 1.0F, 0.0F}, -300.0F});
+            ledged.collision_sources.push_back(with_ledge);
+            const auto on_floor = room::start_view(ledged, std::nullopt);
+            assert(on_floor && on_floor->target.y > 50.0F && on_floor->target.y < 200.0F);
+        }
+        const auto spawned = room::start_view(stage_room, room::Spawn{{50.0F, 0.0F, 0.0F}, 270.0F, true});
+        assert(spawned && spawned->from_spawn && std::fabs(spawned->target.x - 50.0F) < 1.0e-3F);
+        assert(spawned->eye.x < 100.0F && !ec::segment_hit(source, spawned->target, spawned->eye));
+        // Framing: the session's box is centred on the target and the view
+        // looks from the eye at it.
+        dmcresource::Session framed;
+        const auto angles = room::frame_start(&framed, *middle);
+        assert(angles && framed.render_mesh.vertices.size() == 8U);
+        const auto& box = framed.render_mesh.vertices;
+        assert(std::fabs((box.front().y + box.back().y) * 0.5F - middle->target.y) < 1.0e-3F);
+        assert(std::fabs((*angles)[0]) < 1.0e-3F && (*angles)[1] < -0.1F);
+    }
+
     // Both canonical adapters must preserve slots through render materialization
     // and expose the native companion action (including MOD's nonzero slot 5).
     for (const auto* result : {&scm_result, &mod_result}) {
@@ -303,6 +531,13 @@ int main() {
         const auto built = room::build_room("sample.scm", scm.data(), scm.size());
         assert(built && built->pieces == 1U && built->mesh.indices.size() == 3U);
         assert(built->triangle_texture_slots.size() == 1U && !built->spots.empty());
+        const auto stage_pac = make_stage_pac(scm, hits);
+        const auto built_stage = room::build_room("stage.pac", stage_pac.data(), stage_pac.size());
+        assert(built_stage && built_stage->pieces == 1U);
+        assert(built_stage->collision_sources.size() == 1U);
+        assert(built_stage->collision_sources[0].resource_slot == 1U);
+        assert(built_stage->collision_sources[0].triangles.size() == 1U);
+        assert(built_stage->collision_lines.size() == 6U);
         const auto stage = dmcresource::open_session("sample.scm", scm.data(), scm.size());
         const auto model = dmcresource::open_session("sample.mod", mod.data(), mod.size());
         assert(stage && room::is_stage_session(*stage) && model && !room::is_stage_session(*model));
@@ -368,6 +603,88 @@ int main() {
             look.room_yaw = 0.8F;
             const auto after = dmcresource::render_view(square, 96, 96, look);
             assert(before.pixels != after.pixels);
+        }
+
+        // A soft-alpha texture also holds opaque texels: a triangle flagged
+        // translucent still draws them (a distant tower's walls), and the
+        // wireframe view outlines the room's meshes.
+        {
+            dmcresource::Mesh wall;
+            wall.vertices = {{-300, 0, 400}, {300, 0, 400}, {300, 500, 400}, {-300, 500, 400}};
+            wall.uv0 = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+            wall.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ImagePreview solid;
+            solid.width = 2U;
+            solid.height = 2U;
+            solid.rgba8.assign(16U, 255U);  // opaque white
+            const std::vector<std::uint32_t> slots(2U, 0U);
+            const std::vector<dmcresource::ImagePreview> textures{solid};
+            const std::vector<std::uint8_t> soft(2U, 1U);  // flagged translucent
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = 0.0F;
+            const auto bare = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            look.room_mesh = &wall;
+            look.room_texture_slots = &slots;
+            look.room_textures = &textures;
+            look.room_translucent_triangles = &soft;
+            const auto drawn = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lit = 0U;
+            for (std::size_t o = 0U; o < drawn.pixels.size(); o += 4U) {
+                if (drawn.pixels[o] != bare.pixels[o]) ++lit;
+            }
+            assert(lit > 96U * 96U / 8U);
+            look.wireframe = true;
+            look.room_wire_main = true;
+            const auto wired = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lines = 0U;
+            for (std::size_t o = 0U; o < wired.pixels.size(); o += 4U) {
+                if (wired.pixels[o] > 120U && wired.pixels[o + 2U] > 200U) ++lines;
+            }
+            assert(lines > 20U);
+            // The backdrop opacity of the room lines: 0 hides them, more is brighter.
+            {
+                dmcresource::ViewState backdrop = look;
+                backdrop.room_wire_main = false;
+                backdrop.mesh_line_px = 1;
+                const auto total = [&](float opacity) {
+                    backdrop.room_wire_opacity = opacity;
+                    const auto image = dmcresource::render_view(model->render_mesh, 96, 96, backdrop);
+                    std::uint64_t sum = 0U;
+                    for (std::size_t o = 2U; o < image.pixels.size(); o += 4U) sum += image.pixels[o];
+                    return sum;
+                };
+                const auto hidden = total(0.0F), faint = total(0.3F), solid = total(1.0F);
+                assert(hidden < faint && faint < solid);
+            }
+            // A wider mesh line covers more pixels.
+            look.mesh_line_px = 4;
+            const auto thick = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t thick_lines = 0U;
+            for (std::size_t o = 0U; o < thick.pixels.size(); o += 4U) {
+                if (thick.pixels[o] > 120U && thick.pixels[o + 2U] > 200U) ++thick_lines;
+            }
+            assert(thick_lines > lines * 2U);
+        }
+
+        // Room normals are not trusted: a wall whose vertex normals point away
+        // from the camera is still drawn (whole far buildings did this).
+        {
+            dmcresource::Mesh wall;
+            wall.vertices = {{-300, 0, 400}, {300, 0, 400}, {300, 500, 400}, {-300, 500, 400}};
+            wall.normal0.assign(4U, {0.0F, 0.0F, 1.0F});  // away from the camera at z < 400
+            wall.indices = {0, 1, 2, 0, 2, 3};
+            dmcresource::ViewState look;
+            look.yaw_radians = 0.0F;
+            look.pitch_radians = 0.0F;
+            const auto bare = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            look.room_mesh = &wall;
+            const auto drawn = dmcresource::render_view(model->render_mesh, 96, 96, look);
+            std::size_t lit = 0U;
+            for (std::size_t o = 0U; o < drawn.pixels.size(); o += 4U) {
+                if (drawn.pixels[o] != bare.pixels[o]) ++lit;
+            }
+            assert(lit > 96U * 96U / 8U);
         }
 
         // Settings bits: background 2 (light) fills the corner.

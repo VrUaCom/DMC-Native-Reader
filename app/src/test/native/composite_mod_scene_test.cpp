@@ -244,6 +244,16 @@ int main() {
     assert(!widow::has_state(state, widow::StateFlag::TextureCompanionAttached));
     assert(!widow::has_state(state, widow::StateFlag::CanExportPng));
 
+    for (int index = 0; index < 4; ++index) {
+        const auto part_state = session_composite_part_state(composite.get(), index);
+        assert(part_state.has_value());
+        assert(part_state->asset_id ==
+               composite->composite_parts[static_cast<std::size_t>(index)].asset_id);
+        assert(part_state->instance_id ==
+               composite->composite_parts[static_cast<std::size_t>(index)].instance_id);
+        assert(!part_state->texture_companion_attached);
+    }
+
     // A broken top-level slot projection disables merged UV actions without
     // destroying explicit per-part PTX attachability from retained source scenes.
     composite->render_triangle_texture_slots[2] =
@@ -263,6 +273,13 @@ int main() {
     assert(composite->texture_companion_attached);
     for (const auto& part : composite->composite_parts) {
         assert(part.texture_companion_attached);
+    }
+    for (int index = 0; index < 4; ++index) {
+        const auto part_state = session_composite_part_state(composite.get(), index);
+        assert(part_state.has_value());
+        assert(part_state->texture_companion_attached);
+        const auto description = describe_composite_part_state(composite.get(), index);
+        assert(description.find("PTX=attached") != std::string::npos);
     }
     const std::vector<std::uint32_t> expected_shared_bank_slots{1U, 0U, 2U, 3U, 2U};
     assert(composite->render_triangle_texture_slots == expected_shared_bank_slots);

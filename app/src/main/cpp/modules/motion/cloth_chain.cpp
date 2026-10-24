@@ -95,6 +95,28 @@ bool looks_like_clt(std::string_view text) {
     return head.find("ClothNo") != std::string_view::npos;
 }
 
+std::shared_ptr<ClothState> make_cloth_state(std::size_t node_count, std::string_view clt_text) {
+    auto blocks = parse_clt(clt_text);
+    if (blocks.empty() || node_count == 0U) return nullptr;
+    auto state = std::make_shared<ClothState>();
+    state->params = blocks.front();
+    state->blocks = std::move(blocks);
+    state->sim.assign(node_count, {});
+    state->velocity.assign(node_count, {});
+    state->axis_by_node.assign(node_count, -1);
+    state->block_by_node.assign(node_count, 0U);
+    std::size_t simulated = 0U;
+    for (std::size_t b = 0U; b < state->blocks.size() && b < 255U; ++b) {
+        for (const auto& bone : state->blocks[b].bones) {
+            if (bone.node >= node_count || bone.node == 0U) continue;
+            if (state->axis_by_node[bone.node] < 0) ++simulated;
+            state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
+            state->block_by_node[bone.node] = static_cast<std::uint8_t>(b);
+        }
+    }
+    return simulated == 0U ? nullptr : state;
+}
+
 std::vector<ClothParams> parse_clt(std::string_view text) {
     std::vector<ClothParams> out;
     if (text.empty() || text.front() != ';') return out;

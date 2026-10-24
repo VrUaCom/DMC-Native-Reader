@@ -1401,7 +1401,10 @@ void HandleDroppedFiles(HWND hwnd, const std::vector<std::wstring>& paths) {
 }
 
 void ExportPngDialog(HWND hwnd) {
-    if (g_state.rgba.width <= 0) return;
+    // A UV map exports at its texture's proportions and resolution, chosen
+    // by the core, not at the viewport's size.
+    const bool uv_leaf = g_state.session && IsUvLeaf(*g_state.session);
+    if (g_state.rgba.width <= 0 && !uv_leaf) return;
     wchar_t path[MAX_PATH] = L"";
     wcsncpy_s(path, (g_state.title + L".png").c_str(), MAX_PATH - 1);
     OPENFILENAMEW ofn{};
@@ -1413,7 +1416,8 @@ void ExportPngDialog(HWND hwnd) {
     ofn.Flags = OFN_OVERWRITEPROMPT;
     ofn.lpstrDefExt = L"png";
     if (!GetSaveFileNameW(&ofn)) return;
-    const bool ok = SavePng(path, g_state.rgba);
+    const bool ok = uv_leaf ? SavePng(path, dmcresource::render_uv_map_export(g_state.session.get()))
+                            : SavePng(path, g_state.rgba);
     MessageBoxW(hwnd, ok ? L"PNG saved." : L"Could not export PNG.", L"DMC Native Reader",
                MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
 }
@@ -1467,17 +1471,26 @@ void ExportAllChildrenDialog(HWND hwnd) {
             dmcresource::session_child_title(g_state.session.get(), static_cast<int>(i));
         RgbaImage image;
         dmcresource::ImagePreview scratch;
-        const auto* preview = dmcresource::session_child_preview(
-            g_state.session.get(), static_cast<int>(i), &scratch);
-        if (preview != nullptr && preview->available()) {
-            image.width = static_cast<int>(preview->width);
-            image.height = static_cast<int>(preview->height);
-            image.pixels = preview->rgba8;
-        } else {
-            auto child =
-                dmcresource::open_session_child(g_state.session.get(), static_cast<int>(i));
-            if (!child || !child->renderable) continue;
-            image = dmcresource::render_session(child.get(), 1024, 1024, 0.65f, -0.45f, 1.0f, 0);
+        // UV maps export full size in their texture's proportions; the gallery
+        // preview of a UV map is only its 256-pixel tile.
+        if (g_state.session->uv_gallery) {
+            if (auto map = dmcresource::open_session_child(g_state.session.get(), static_cast<int>(i))) {
+                image = dmcresource::render_uv_map_export(map.get());
+            }
+        }
+        if (image.width <= 0) {
+            const auto* preview = dmcresource::session_child_preview(
+                g_state.session.get(), static_cast<int>(i), &scratch);
+            if (preview != nullptr && preview->available()) {
+                image.width = static_cast<int>(preview->width);
+                image.height = static_cast<int>(preview->height);
+                image.pixels = preview->rgba8;
+            } else {
+                auto child =
+                    dmcresource::open_session_child(g_state.session.get(), static_cast<int>(i));
+                if (!child || !child->renderable) continue;
+                image = dmcresource::render_session(child.get(), 1024, 1024, 0.65f, -0.45f, 1.0f, 0);
+            }
         }
         if (image.width <= 0 || image.height <= 0) continue;
         const std::wstring filename =

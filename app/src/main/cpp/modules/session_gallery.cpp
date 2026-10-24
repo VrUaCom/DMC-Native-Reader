@@ -1,11 +1,16 @@
 #include "dmcresource/resource_session.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cstring>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "dmcresource/raster_card.h"
+#include "dmcresource/stage_room.h"
 
 namespace dmcresource {
 namespace {
@@ -13,6 +18,17 @@ bool valid_child(const Session* session, int index) noexcept {
     return index >= 0 && static_cast<std::size_t>(index) < session_child_count(session);
 }
 constexpr std::uint32_t kThumbnailSize = 256U;
+
+// A UV tile in the texture's proportions, its longer side kThumbnailSize.
+std::pair<std::uint32_t, std::uint32_t> uv_thumbnail_size(const UvMap& map) noexcept {
+    if (map.texture_width == 0U || map.texture_height == 0U) return {kThumbnailSize, kThumbnailSize};
+    const auto longer = std::max(map.texture_width, map.texture_height);
+    const auto scale = [&](std::uint32_t side) {
+        return std::max<std::uint32_t>(
+            1U, static_cast<std::uint32_t>(static_cast<std::uint64_t>(side) * kThumbnailSize / longer));
+    };
+    return {scale(map.texture_width), scale(map.texture_height)};
+}
 
 ImagePreview square_thumbnail(const ImagePreview& source) {
     if (!source.available()) return {};
@@ -73,6 +89,95 @@ ImagePreview square_thumbnail(const ImagePreview& source) {
     return out;
 }
 
+// Draws `source` fitted (aspect kept) and centred in the cell, composited
+// over the cell background.
+void blit_fit(ImagePreview* out, std::uint32_t cell_x, std::uint32_t cell_y,
+              std::uint32_t cell, const ImagePreview& source) {
+    std::uint32_t draw_w = cell;
+    std::uint32_t draw_h = cell;
+    if (source.width >= source.height) {
+        draw_h = std::max<std::uint32_t>(
+            1U, static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(source.height) * cell / source.width));
+    } else {
+        draw_w = std::max<std::uint32_t>(
+            1U, static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(source.width) * cell / source.height));
+    }
+    const auto ox = cell_x + (cell - draw_w) / 2U;
+    const auto oy = cell_y + (cell - draw_h) / 2U;
+    for (std::uint32_t y = 0U; y < draw_h; ++y) {
+        const auto sy = std::min<std::uint32_t>(
+            source.height - 1U,
+            static_cast<std::uint32_t>(static_cast<std::uint64_t>(y) * source.height / draw_h));
+        for (std::uint32_t x = 0U; x < draw_w; ++x) {
+            const auto sx = std::min<std::uint32_t>(
+                source.width - 1U,
+                static_cast<std::uint32_t>(static_cast<std::uint64_t>(x) * source.width / draw_w));
+            const auto* s = source.rgba8.data() +
+                (static_cast<std::size_t>(sy) * source.width + sx) * 4U;
+            auto* d = out->rgba8.data() +
+                (static_cast<std::size_t>(oy + y) * out->width + ox + x) * 4U;
+            const std::uint32_t a = s[3];
+            for (std::size_t c = 0U; c < 3U; ++c) {
+                d[c] = static_cast<std::uint8_t>((s[c] * a + d[c] * (255U - a) + 127U) / 255U);
+            }
+            d[3] = 255U;
+        }
+    }
+}
+
+// Gallery tile for a resource whose children are images (a PTX with its DDS
+// textures, an effect bank, ...): one image fills the tile; two to four sit
+// in a 2x2 grid (unused cells stay empty); five or more show three images
+// and "+N" for the rest in the fourth cell.
+ImagePreview image_mosaic(const Session& opened) {
+    std::vector<const ImagePreview*> images;
+    std::size_t image_children = 0U;
+    for (const auto& child : opened.children) {
+        const bool image = child.image_preview.available() ||
+            has_capability(child.capabilities, ResourceCapability::ImagePreview);
+        if (!image) continue;
+        ++image_children;
+        if (child.image_preview.available() && images.size() < 4U) {
+            images.push_back(&child.image_preview);
+        }
+    }
+    if (images.empty()) return {};
+
+    raster::Canvas canvas(static_cast<int>(kThumbnailSize), static_cast<int>(kThumbnailSize));
+    if (image_children == 1U) {
+        auto out = canvas.take();
+        blit_fit(&out, 0U, 0U, kThumbnailSize, *images.front());
+        return out;
+    }
+    constexpr std::uint32_t kGap = 4U;
+    constexpr std::uint32_t kCell = (kThumbnailSize - kGap) / 2U;
+    const bool overflow = image_children > 4U;
+    const std::size_t shown = std::min<std::size_t>(images.size(), overflow ? 3U : 4U);
+    for (std::uint32_t i = 0U; i < 4U; ++i) {
+        const auto x = (i % 2U) * (kCell + kGap);
+        const auto y = (i / 2U) * (kCell + kGap);
+        canvas.fill(static_cast<int>(x), static_cast<int>(y),
+                    static_cast<int>(x + kCell), static_cast<int>(y + kCell), raster::kPanel);
+    }
+    if (overflow) {
+        const auto label = "+" + std::to_string(image_children - 3U);
+        constexpr int kScale = 5;
+        const int cx = static_cast<int>(kCell + kGap + kCell / 2U);
+        const int cy = static_cast<int>(kCell + kGap + kCell / 2U);
+        canvas.text(cx - raster::Canvas::text_width(label, kScale) / 2, cy - 7 * kScale / 2,
+                    label, raster::kLabel, kScale);
+    }
+    auto out = canvas.take();
+    for (std::size_t i = 0U; i < shown; ++i) {
+        const auto x = static_cast<std::uint32_t>(i % 2U) * (kCell + kGap);
+        const auto y = static_cast<std::uint32_t>(i / 2U) * (kCell + kGap);
+        blit_fit(&out, x, y, kCell, *images[i]);
+    }
+    return out;
+}
+
 ImagePreview square_thumbnail(RgbaImage image) {
     if (image.width <= 0 || image.height <= 0) return {};
     ImagePreview source{
@@ -112,6 +217,14 @@ const ImagePreview* materialize_child_thumbnail(
         return scratch->available() ? scratch : nullptr;
     }
 
+    // Children that are images (PTX textures, effect bank sprites): show the
+    // images themselves rather than the evidence card.
+    try {
+        *scratch = image_mosaic(*opened);
+        if (scratch->available()) return scratch;
+    } catch (...) {
+    }
+
     // A nested container may deliberately have children and therefore no
     // standalone image of its own. Its inspection document is still useful in
     // the gallery: show the same evidence card/byte surface the reader uses for
@@ -131,9 +244,23 @@ const ImagePreview* materialize_child_thumbnail(
 std::unique_ptr<Session> open_uv_gallery(const Session* model) {
     using namespace spider::black_widow;
     if (!has_state(black_widow_state(model), StateFlag::CanShowUv)) return nullptr;
-    auto gallery = std::make_shared<UvGallery>(build_uv_gallery(
-        model->render_mesh, model->render_triangle_texture_slots));
+    // A stage scene's maps come from its merged room (the session's own mesh
+    // is only its framing box).
+    const bool stage = model->stage != nullptr && model->stage->mesh.has_uv0();
+    const auto& mesh = stage ? model->stage->mesh : model->render_mesh;
+    const auto& slots = stage ? model->stage->triangle_texture_slots : model->render_triangle_texture_slots;
+    const auto& textures = stage ? model->stage->textures : model->attached_textures;
+    auto gallery = std::make_shared<UvGallery>(build_uv_gallery(mesh, slots));
     if (gallery->maps.empty()) return nullptr;
+    // Each layout takes the proportions of the texture painted on it: the
+    // render bank's texture at the triangles' slot.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> texture_sizes;
+    texture_sizes.reserve(textures.size());
+    for (const auto& texture : textures) {
+        texture_sizes.emplace_back(texture.available() ? texture.width : 0U,
+                                   texture.available() ? texture.height : 0U);
+    }
+    bind_uv_texture_sizes(*gallery, texture_sizes);
     auto session = std::make_unique<Session>();
     session->uv_gallery = std::move(gallery);
     session->capabilities = capability(ResourceCapability::ChildResources) |
@@ -154,13 +281,16 @@ std::string session_child_title(const Session* session, int index) {
     if (!session->uv_gallery) return session->children[index].title;
     const auto& map = session->uv_gallery->maps[index];
     return "UV · Slot " + std::to_string(map.texture_slot) + " · " +
+           uv_map_proportion(map) + " · " +
            std::to_string(map.indices.size() / 3U) + " triangles";
 }
 
 std::pair<std::uint32_t, std::uint32_t> session_child_preview_size(
     const Session* session, int index) noexcept {
     if (!valid_child(session, index)) return {};
-    if (session->uv_gallery) return {kThumbnailSize, kThumbnailSize};
+    if (session->uv_gallery) {
+        return uv_thumbnail_size(session->uv_gallery->maps[static_cast<std::size_t>(index)]);
+    }
 
     const auto& child = session->children[static_cast<std::size_t>(index)];
     if (child.image_preview.available()) {
@@ -200,8 +330,11 @@ const ImagePreview* session_child_preview(
     }
     if (!scratch) return nullptr;
     const auto& gallery = *session->uv_gallery;
-    auto image = render_uv_map(gallery.coordinates, gallery.maps[index].indices,
-                               kThumbnailSize, kThumbnailSize, 1.0F);
+    const auto& map = gallery.maps[static_cast<std::size_t>(index)];
+    const auto [thumb_w, thumb_h] = uv_thumbnail_size(map);
+    auto image = render_uv_map(gallery.coordinates, map.indices,
+                               static_cast<int>(thumb_w), static_cast<int>(thumb_h), 1.0F,
+                               map.texture_width, map.texture_height);
     *scratch = {static_cast<std::uint32_t>(image.width),
                 static_cast<std::uint32_t>(image.height), std::move(image.pixels)};
     return scratch;
@@ -209,7 +342,27 @@ const ImagePreview* session_child_preview(
 
 std::unique_ptr<Session> open_session_child(const Session* parent, int index) {
     if (!valid_child(parent, index)) return nullptr;
-    if (!parent->uv_gallery) return session_from_child(parent->children[index]);
+    if (!parent->uv_gallery) {
+        const auto& child = parent->children[static_cast<std::size_t>(index)];
+        auto session = session_from_child(child);
+        // A texture-bearing child of a PAC that kept its bytes remembers its
+        // container, so the Spider re-encode rebuilds the whole PAC.
+        if (session && session->source_bytes && parent->source_bytes &&
+            parent->source_bytes->size() >= 4U &&
+            std::memcmp(parent->source_bytes->data(), "PAC\0", 4U) == 0 &&
+            child.id.rfind("slot-", 0U) == 0U) {
+            int slot = -1;
+            const auto* first = child.id.data() + 5U;
+            const auto* last = child.id.data() + child.id.size();
+            const auto [ptr, ec] = std::from_chars(first, last, slot);
+            if (ec == std::errc{} && ptr == last && slot >= 0) {
+                session->container_source = parent->source_bytes;
+                session->container_name = parent->source_name;
+                session->container_slot = slot;
+            }
+        }
+        return session;
+    }
     auto session = std::make_unique<Session>();
     session->uv_gallery = parent->uv_gallery;
     session->uv_map_index = static_cast<std::size_t>(index);

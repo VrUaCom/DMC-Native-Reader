@@ -48,8 +48,9 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     const bool complete_binding = can_render && has_texture_bindings &&
         model_texture_binding::can_attach_texture_companion(
             *session.render_mesh, session.triangle_texture_slots);
-    const bool can_show_uv = complete_binding &&
-        has_capability(session.capabilities, ResourceCapability::UvCoordinates);
+    // A model's UV maps, or a stage scene's (its merged room mesh).
+    const bool can_show_uv = (complete_binding &&
+        has_capability(session.capabilities, ResourceCapability::UvCoordinates)) || session.stage_uv;
     const bool child_browser_mode =
         has_child_resources && !can_render && !can_preview_image && !session.uv_map_view;
     const bool texture_companion_attachable =
@@ -84,10 +85,27 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
            texture_companion_attachable && session.texture_companion_attached);
 
     set_if(&state, StateFlag::UvMapView, session.uv_map_view);
-    set_if(&state, StateFlag::CanInspectUv, session.uv_data_available);
+    set_if(&state, StateFlag::CanInspectUv, session.uv_data_available || session.stage_uv);
     set_if(&state, StateFlag::CanInspectMeshes, session.object_count != 0U);
     set_if(&state, StateFlag::CanInspectHierarchy, session.hierarchy_node_count != 0U);
     set_if(&state, StateFlag::CanExportPng, session.png_export_available);
+    set_if(&state, StateFlag::CanReencodeTextures, session.texture_reencode_available);
+    set_if(&state, StateFlag::CanSaveSource, session.authored_source_available);
+    set_if(&state, StateFlag::ReencodeRebuildsContainer,
+           session.texture_reencode_available && session.reencode_rebuilds_container);
+    const bool stage_config = session.stage_drawn && !session.uv_map_view;
+    set_if(&state, StateFlag::CanLoadStageConfig, stage_config);
+    set_if(&state, StateFlag::StageConfigLoaded, stage_config && session.stage_config_loaded);
+    set_if(&state, StateFlag::StageMarkersShown,
+           stage_config && session.stage_config_loaded && session.stage_markers_visible);
+    set_if(&state, StateFlag::CanPlaySound, session.sound_count != 0U);
+    const bool view_tools = !session.uv_map_view;
+    set_if(&state, StateFlag::CanShowShadows, view_tools && session.shadow_bindings);
+    set_if(&state, StateFlag::CanShowHitboxes, view_tools && session.hitboxes);
+    set_if(&state, StateFlag::CanShowStageCollision, view_tools && session.stage_collision);
+    set_if(&state, StateFlag::CanFly, view_tools && session.fly_space);
+    set_if(&state, StateFlag::CanBreakRoom, view_tools && session.breakable);
+    set_if(&state, StateFlag::RoomBroken, view_tools && session.breakable && session.broken);
     set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
     set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;
