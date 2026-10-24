@@ -437,9 +437,16 @@ it showed every model and stage mirrored. It now negates X before the camera
 rotation, for positions and normals (rengine
 `dmc3-coordinate-handedness-2026-09-24.md`).
 
-The ⋮ menu (v95) opens in the app's one panel window (`showPanel`, the same
-as Info and Diagnostics: a title bar with an optional square action, the
-content scrolling under it, Close at the bottom). The core puts each item in
+Every window of the app is one window (v96, `PanelBuilder` in
+MainActivity): a title bar with an optional square action, then the
+message, a view and the items scrolling under it, the buttons at the
+bottom (Close when none is given). Info, the ⋮ menu, Diagnostics, Settings,
+Gestures, a marker's card, the core's menus, the export / texture format /
+composite part / placement choices, confirmations and the benchmark all
+open in it; a list's row picks and closes it, a single-choice list marks
+◉ / ○ and stays open.
+
+The ⋮ menu (v95) opens in that window. The core puts each item in
 one of three places (`companion_menu`):
 
 - **Squares** (a long press names one; they wrap into rows): the quick

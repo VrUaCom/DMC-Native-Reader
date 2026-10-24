@@ -298,7 +298,8 @@ of m01_s00 belong to its movie part and show once the .wmv is attached.
   distances, `MinColor` / `MaxColor` (u32, bytes R G B A) and `MinAlpha` /
   `MaxAlpha` (0x80 = 1.0) at them, linear between and held beyond
   (`demo::fog`; the renderer blends the drawn surfaces, effects stay over
-  it). `Type` 0 / 1 is not told apart.
+  it; the GPU pass does it in its mesh shader from v96, the software pass
+  from its depth buffer). `Type` 0 / 1 is not told apart.
 * `PadVibe` clips pulse the phone (`demo::vibration`, JNI `demoVibration`):
   the large motor eased from `LMotorSt` to `LMotorEd` over the clip, the
   small motor (`SMotorSt` / `SMotorEd`, 0 or 1) at least 96 of 255.

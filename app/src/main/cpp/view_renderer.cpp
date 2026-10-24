@@ -2052,6 +2052,14 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
     out.smooth_model = view.smooth_textures;
     out.smooth_room = true;
     out.model = build_model_geometry(mesh, view, triangle_texture_slots, textures, frame.radius);
+    if (view.fog.enabled) {
+        const auto& f = view.fog;
+        out.fog = {.enabled = true, .start = f.start, .end = f.end,
+                   .near_colour = {f.near_colour[0] / 255.0F, f.near_colour[1] / 255.0F, f.near_colour[2] / 255.0F,
+                                   f.near_alpha},
+                   .far_colour = {f.far_colour[0] / 255.0F, f.far_colour[1] / 255.0F, f.far_colour[2] / 255.0F,
+                                  f.far_alpha}};
+    }
 
     float far_z = frame.camera_distance + frame.radius;
     for (const auto& v : mesh.vertices) far_z = std::max(far_z, camera_z(out.model_view, v));

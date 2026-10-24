@@ -148,6 +148,18 @@ struct GpuViewFrame final {
     std::vector<Vec3> shadow;
 
     std::vector<GpuScreenQuad> effects;
+
+    // Depth fog (ViewState::Fog): the surfaces blend toward `near_colour`
+    // (rgb 0..1, alpha) at camera distance `start` and toward `far_colour`
+    // at `end`; effects are not fogged.
+    struct Fog final {
+        bool enabled{};
+        float start{};
+        float end{};
+        std::array<float, 4> near_colour{};
+        std::array<float, 4> far_colour{};
+    };
+    Fog fog{};
 };
 
 class GpuViewBackend {

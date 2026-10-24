@@ -89,8 +89,21 @@ uniform int u_colored;
 uniform int u_translucent;
 uniform float u_radius;
 uniform vec4 u_solid;
+uniform float u_cd;
+uniform vec4 u_fog;       // x on, y start, z end (camera distance)
+uniform vec4 u_fog_near;  // rgb, alpha at start
+uniform vec4 u_fog_far;   // rgb, alpha at end
 out vec4 o;
+// The depth fog's colour (rgb) and weight (a) at this surface.
+vec4 fog_at() {
+    if (u_fog.x < 0.5) return vec4(0.0);
+    float z = v_z + u_cd;
+    float span = u_fog.z - u_fog.y;
+    float t = span > 1.0e-3 ? clamp((z - u_fog.y) / span, 0.0, 1.0) : (z >= u_fog.z ? 1.0 : 0.0);
+    return vec4(mix(u_fog_near.rgb, u_fog_far.rgb, t), clamp(mix(u_fog_near.a, u_fog_far.a, t), 0.0, 1.0));
+}
 void main() {
+    vec4 fog = fog_at();
     if (u_mode == 5) { o = u_solid; return; }
     if (u_mode == 6) { o = vec4(0.45, 0.45, 0.45, 1.0); return; }
     if (u_mode <= 1) {
@@ -104,6 +117,8 @@ void main() {
         if (u_colored == 1) t = min(t * v_color, vec4(1.0));
         t.rgb = min(t.rgb * v_light, vec3(1.0));
         if (t.a < 0.5 / 255.0) discard;
+        // An added (mode 1) surface fades under the fog, a drawn one takes its colour.
+        t.rgb = u_mode == 1 ? t.rgb * (1.0 - fog.a) : mix(t.rgb, fog.rgb, fog.a);
         o = t;
         return;
     }
@@ -122,10 +137,10 @@ void main() {
     if (u_mode == 4) {
         float k = t.a;
         if (u_colored == 1) k *= min(1.0, v_color.a);
-        o = vec4(c * k, 1.0);
+        o = vec4(c * k * (1.0 - fog.a), 1.0);
         return;
     }
-    o = vec4(min(c, vec3(1.0)), u_mode == 3 ? t.a : 1.0);
+    o = vec4(mix(min(c, vec3(1.0)), fog.rgb, fog.a), u_mode == 3 ? t.a : 1.0);
 }
 )";
 
@@ -246,6 +261,7 @@ private:
     struct Uniforms final {
         GLint view{}, proj{}, cd{}, room{}, light{}, scroll{}, depth_bias{};
         GLint tex{}, textured{}, mode{}, colored{}, translucent{}, radius{}, solid{};
+        GLint fog{}, fog_near{}, fog_far{};
     };
 
     bool initialize() {
@@ -318,6 +334,9 @@ private:
         u_.colored = at("u_colored");
         u_.translucent = at("u_translucent");
         u_.radius = at("u_radius");
+        u_.fog = at("u_fog");
+        u_.fog_near = at("u_fog_near");
+        u_.fog_far = at("u_fog_far");
         u_.solid = at("u_solid");
         screen_size_ = glGetUniformLocation(screen_program_, "u_size");
         screen_depth_ = glGetUniformLocation(screen_program_, "u_depth");
@@ -599,6 +618,10 @@ private:
         glUniform4f(u_.proj, frame.projection[0], frame.projection[1], frame.projection[2], frame.projection[3]);
         glUniform1f(u_.cd, frame.camera_distance);
         glUniform1f(u_.radius, std::max(frame.radius, 1.0e-4F));
+        const auto& fog = frame.fog;
+        glUniform4f(u_.fog, fog.enabled ? 1.0F : 0.0F, fog.start, fog.end, 0.0F);
+        glUniform4f(u_.fog_near, fog.near_colour[0], fog.near_colour[1], fog.near_colour[2], fog.near_colour[3]);
+        glUniform4f(u_.fog_far, fog.far_colour[0], fog.far_colour[1], fog.far_colour[2], fog.far_colour[3]);
         glUniform1i(u_.tex, 0);
         glUniform1f(u_.depth_bias, 0.0F);
         glEnable(GL_DEPTH_TEST);

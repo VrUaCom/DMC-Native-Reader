@@ -1106,7 +1106,7 @@ public final class MainActivity extends Activity {
         progress.setTextSize(15f);
         progress.setPadding(dp(20), dp(16), dp(20), dp(8));
         progress.setText("Drawing frames as fast as possible for 10 seconds…\nKeep the app open.");
-        final AlertDialog running = new AlertDialog.Builder(this)
+        final AlertDialog running = new PanelBuilder()
                 .setTitle("Benchmark")
                 .setView(progress)
                 .setCancelable(false)
@@ -1136,7 +1136,7 @@ public final class MainActivity extends Activity {
         text.setText(all.toString());
         final android.widget.ScrollView scroll = new android.widget.ScrollView(this);
         scroll.addView(text);
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Benchmark results")
                 .setView(scroll)
                 .setPositiveButton("Run again", (d, w) -> runBenchmark())
@@ -1152,28 +1152,14 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
-    /** Full-screen settings window: render quality, animation, room. */
+    /** The settings window (the app's one window): render quality, animation, room. */
     private void showSettingsDialog() {
-        final android.app.Dialog dialog = new android.app.Dialog(this,
-                android.R.style.Theme_DeviceDefault_NoActionBar);
+        final PanelRef dialog = new PanelRef();
         final android.content.SharedPreferences p = prefs();
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(12), dp(16), dp(24));
 
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("Settings");
-        title.setTextSize(22f);
-        title.setTextColor(0xffffffff);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        Button close = makeSquareButton("✕", "Close settings", 20f);
-        close.setOnClickListener(v -> dialog.dismiss());
-        header.addView(close, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
-        content.addView(header);
 
         final Runnable apply = this::applyViewerSettings;
         content.addView(sectionTitle("Graphics"));
@@ -1331,16 +1317,7 @@ public final class MainActivity extends Activity {
         }
         content.addView(effectsActions);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(content);
-        LinearLayout frame = new LinearLayout(this);
-        frame.setOrientation(LinearLayout.VERTICAL);
-        frame.setBackgroundColor(0xff16171c);
-        applySystemBarInsets(frame);
-        frame.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT));
-        dialog.setContentView(frame);
-        dialog.show();
+        dialog.dialog = showPanel("Settings", content, null, null, null);
     }
 
     // ---- Gestures (DmcRenderView): the activity side and the Gestures window.
@@ -1472,7 +1449,7 @@ public final class MainActivity extends Activity {
     /** A menu the core wrote: its title, line and items; the picked item's id goes back. */
     private void showNativeMenu(NativeMenu menu, java.util.function.IntConsumer onPick) {
         if (menu == null || menu.ids.length == 0) return;
-        final AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(menu.title);
+        final PanelBuilder builder = new PanelBuilder().setTitle(menu.title);
         if (menu.message.isEmpty()) {
             builder.setItems(menu.labels, (d, which) -> onPick.accept(menu.ids[which]));
         } else {
@@ -1565,7 +1542,7 @@ public final class MainActivity extends Activity {
             body.append(card.names[i]).append(": ").append(card.values[i]);
         }
         final boolean[] answered = {false};
-        final AlertDialog.Builder builder = new AlertDialog.Builder(this)
+        final PanelBuilder builder = new PanelBuilder()
                 .setTitle(card.title)
                 .setMessage(body.toString());
         final NativeMenu buttons = card.actions;
@@ -1628,25 +1605,11 @@ public final class MainActivity extends Activity {
 
     /** Full-screen list of the gestures, each switchable, plus the camera follow. */
     private void showGesturesDialog() {
-        final android.app.Dialog dialog = new android.app.Dialog(this,
-                android.R.style.Theme_DeviceDefault_NoActionBar);
+        final PanelRef dialog = new PanelRef();
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(12), dp(16), dp(24));
 
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = new TextView(this);
-        title.setText("Gestures");
-        title.setTextSize(22f);
-        title.setTextColor(0xffffffff);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        Button close = makeSquareButton("✕", "Close gestures", 20f);
-        close.setOnClickListener(v -> dialog.dismiss());
-        header.addView(close, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
-        content.addView(header);
 
         TextView always = new TextView(this);
         always.setTextColor(0xffc8ccd6);
@@ -1687,16 +1650,7 @@ public final class MainActivity extends Activity {
             }));
         }
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(content);
-        LinearLayout frame = new LinearLayout(this);
-        frame.setOrientation(LinearLayout.VERTICAL);
-        frame.setBackgroundColor(0xff16171c);
-        applySystemBarInsets(frame);
-        frame.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT));
-        dialog.setContentView(frame);
-        dialog.show();
+        dialog.dialog = showPanel("Gestures", content, null, null, null);
     }
 
     /** The ⋮ menu in the app's panel window: square shortcuts (settings first) in rows, then actions. */
@@ -2301,40 +2255,167 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * The app's one panel window (Info, the ⋮ menu, Diagnostics): a title bar
-     * with an optional square action, the content scrolling below it, Close
-     * (and an optional extra button) at the bottom.
+     * The app's one window. Every dialog is built here: a title bar (with an
+     * optional square action), then the message, a view and the items, all
+     * scrolling, and the buttons at the bottom (Close when none is given).
+     * It takes AlertDialog.Builder's calls, so each window only says what it
+     * holds.
      */
+    final class PanelBuilder {
+        private CharSequence title = "";
+        private Button action;
+        private CharSequence message;
+        private boolean monospace;
+        private View view;
+        private CharSequence[] items;
+        private android.content.DialogInterface.OnClickListener itemClick;
+        private final CharSequence[] labels = new CharSequence[3];  // positive, neutral, negative
+        private final android.content.DialogInterface.OnClickListener[] clicks =
+                new android.content.DialogInterface.OnClickListener[3];
+        private boolean cancelable = true;
+        private android.content.DialogInterface.OnDismissListener dismissed;
+        private CharSequence[] choices;  // one of them picked, the window stays
+        private int chosen = -1;
+        private android.content.DialogInterface.OnClickListener choiceClick;
+
+        PanelBuilder setTitle(CharSequence value) { title = value == null ? "" : value; return this; }
+        PanelBuilder setAction(Button value) { action = value; return this; }
+        PanelBuilder setMessage(CharSequence value) { message = value; return this; }
+        PanelBuilder setMonospace(boolean value) { monospace = value; return this; }
+        PanelBuilder setView(View value) { view = value; return this; }
+        PanelBuilder setItems(CharSequence[] values, android.content.DialogInterface.OnClickListener click) {
+            items = values;
+            itemClick = click;
+            return this;
+        }
+        PanelBuilder setPositiveButton(CharSequence label, android.content.DialogInterface.OnClickListener click) {
+            labels[0] = label; clicks[0] = click; return this;
+        }
+        PanelBuilder setNeutralButton(CharSequence label, android.content.DialogInterface.OnClickListener click) {
+            labels[1] = label; clicks[1] = click; return this;
+        }
+        PanelBuilder setNegativeButton(CharSequence label, android.content.DialogInterface.OnClickListener click) {
+            labels[2] = label; clicks[2] = click; return this;
+        }
+        PanelBuilder setPositiveButton(int label, android.content.DialogInterface.OnClickListener click) {
+            return setPositiveButton(getString(label), click);
+        }
+        PanelBuilder setNegativeButton(int label, android.content.DialogInterface.OnClickListener click) {
+            return setNegativeButton(getString(label), click);
+        }
+        PanelBuilder setSingleChoiceItems(CharSequence[] values, int selected,
+                                          android.content.DialogInterface.OnClickListener click) {
+            choices = values;
+            chosen = selected;
+            choiceClick = click;
+            return this;
+        }
+        PanelBuilder setCancelable(boolean value) { cancelable = value; return this; }
+        PanelBuilder setOnDismissListener(android.content.DialogInterface.OnDismissListener value) {
+            dismissed = value;
+            return this;
+        }
+
+        AlertDialog show() {
+            LinearLayout body = new LinearLayout(MainActivity.this);
+            body.setOrientation(LinearLayout.VERTICAL);
+            if (message != null && message.length() > 0) {
+                TextView text = new TextView(MainActivity.this);
+                text.setText(message);
+                text.setTextColor(Color.WHITE);
+                text.setTextSize(monospace ? 13f : 15f);
+                if (monospace) text.setTypeface(Typeface.MONOSPACE);
+                text.setTextIsSelectable(true);
+                text.setPadding(dp(16), dp(12), dp(16), dp(12));
+                body.addView(text);
+            }
+            if (view != null) {
+                if (view.getParent() instanceof android.view.ViewGroup) {
+                    ((android.view.ViewGroup) view.getParent()).removeView(view);
+                }
+                body.addView(view);
+            }
+            final AlertDialog[] built = new AlertDialog[1];
+            for (int k = 0; items != null && k < items.length; ++k) {
+                final int which = k;
+                TextView row = menuRow(String.valueOf(items[k]), 0xffe8eaf0, v -> {
+                    if (built[0] != null) built[0].dismiss();
+                    if (itemClick != null) itemClick.onClick(built[0], which);
+                });
+                row.setPadding(dp(16), dp(12), dp(16), dp(12));
+                body.addView(row);
+            }
+            final java.util.List<TextView> choiceRows = new java.util.ArrayList<>();
+            for (int k = 0; choices != null && k < choices.length; ++k) {
+                final int which = k;
+                TextView row = menuRow((k == chosen ? "\u25c9 " : "\u25cb ") + choices[k], 0xffe8eaf0, null);
+                row.setPadding(dp(16), dp(10), dp(16), dp(10));
+                row.setOnClickListener(v -> {
+                    chosen = which;
+                    for (int r = 0; r < choiceRows.size(); ++r) {
+                        choiceRows.get(r).setText((r == which ? "\u25c9 " : "\u25cb ") + choices[r]);
+                    }
+                    if (choiceClick != null) choiceClick.onClick(built[0], which);
+                });
+                choiceRows.add(row);
+                body.addView(row);
+            }
+            ScrollView scroll = new ScrollView(MainActivity.this);
+            scroll.setBackgroundColor(0xff141418);
+            scroll.addView(body, new ScrollView.LayoutParams(
+                    ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+
+            LinearLayout bar = new LinearLayout(MainActivity.this);
+            bar.setOrientation(LinearLayout.HORIZONTAL);
+            bar.setGravity(Gravity.CENTER_VERTICAL);
+            bar.setPadding(dp(16), dp(6), dp(8), dp(6));
+            bar.setBackgroundColor(0xff3a3a3e);
+            bar.setMinimumHeight(dp(60));
+            TextView heading = new TextView(MainActivity.this);
+            heading.setText(title);
+            heading.setTextColor(Color.WHITE);
+            heading.setTextSize(18f);
+            heading.setSingleLine(true);
+            heading.setEllipsize(TextUtils.TruncateAt.END);
+            bar.addView(heading, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            if (action != null) {
+                if (action.getParent() instanceof android.view.ViewGroup) {
+                    ((android.view.ViewGroup) action.getParent()).removeView(action);
+                }
+                bar.addView(action, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            }
+
+            AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this)
+                    .setCustomTitle(bar)
+                    .setView(scroll)
+                    .setCancelable(cancelable);
+            final boolean any = labels[0] != null || labels[1] != null || labels[2] != null;
+            if (!any) {
+                builder.setPositiveButton("Close", null);
+            } else {
+                if (labels[0] != null) builder.setPositiveButton(labels[0], clicks[0]);
+                if (labels[1] != null) builder.setNeutralButton(labels[1], clicks[1]);
+                if (labels[2] != null) builder.setNegativeButton(labels[2], clicks[2]);
+            }
+            if (dismissed != null) builder.setOnDismissListener(dismissed);
+            built[0] = builder.show();
+            return built[0];
+        }
+    }
+
+    /** A dismiss handle for a window whose content is built before it shows. */
+    private static final class PanelRef {
+        AlertDialog dialog;
+        void dismiss() { if (dialog != null) dialog.dismiss(); }
+    }
+
+    /** The one window with a content view (Info, the ⋮ menu, Diagnostics, Settings, Gestures). */
     private AlertDialog showPanel(CharSequence title, View content, Button action,
                                   String extraLabel, Runnable extra) {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(0xff141418);
-        scroll.addView(content, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout dialogTitle = new LinearLayout(this);
-        dialogTitle.setOrientation(LinearLayout.HORIZONTAL);
-        dialogTitle.setGravity(Gravity.CENTER_VERTICAL);
-        dialogTitle.setPadding(dp(16), dp(6), dp(8), dp(6));
-        dialogTitle.setBackgroundColor(0xff3a3a3e);
-        dialogTitle.setMinimumHeight(dp(60));
-
-        TextView heading = new TextView(this);
-        heading.setText(title);
-        heading.setTextColor(Color.WHITE);
-        heading.setTextSize(18f);
-        heading.setSingleLine(true);
-        heading.setEllipsize(TextUtils.TruncateAt.END);
-        dialogTitle.addView(heading, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        if (action != null) dialogTitle.addView(action, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
-                .setCustomTitle(dialogTitle)
-                .setView(scroll)
-                .setPositiveButton("Close", null);
-        if (extraLabel != null && extra != null) builder.setNeutralButton(extraLabel, (d, w) -> extra.run());
+        PanelBuilder builder = new PanelBuilder().setTitle(title).setView(content).setAction(action);
+        if (extraLabel != null && extra != null) {
+            builder.setPositiveButton("Close", null).setNeutralButton(extraLabel, (d, w) -> extra.run());
+        }
         return builder.show();
     }
 
@@ -2345,7 +2426,7 @@ public final class MainActivity extends Activity {
                 "Plain text (.txt)",
                 "JSON (.json)"
         };
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Download info")
                 .setItems(choices, (dialog, which) -> launchInfoExport(snapshot, which))
                 .setNegativeButton(android.R.string.cancel, null)
@@ -2449,7 +2530,7 @@ public final class MainActivity extends Activity {
         final android.widget.CheckBox dx10 = new android.widget.CheckBox(this);
         dx10.setText("Always write the DX10 header");
         dx10.setPadding(dp(8), dp(4), dp(8), dp(4));
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle(blackWidowState.reencodeRebuildsContainer
                         ? "Texture format (whole .PAC)" : "Texture format")
                 .setItems(labels, (dialog, which) -> runTextureReencode(
@@ -2663,7 +2744,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmClearDiagnosticsLog() {
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Clear diagnostics log?")
                 .setMessage("This removes only the private diagnostics history. Resources and sessions are unchanged.")
                 .setPositiveButton("Clear", (dialog, which) -> {
@@ -2729,7 +2810,7 @@ public final class MainActivity extends Activity {
                     : state;
         }
 
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Composite MOD parts")
                 .setItems(rows, (dialog, which) ->
                         showCompositePartActions(which))
@@ -2741,7 +2822,7 @@ public final class MainActivity extends Activity {
         final String state = NativeBridge.compositePartState(session, partIndex);
         final String title = compositePartLabel(partIndex);
         if (partIndex <= 0) {
-            new AlertDialog.Builder(this)
+            new PanelBuilder()
                     .setTitle(title)
                     .setMessage(state == null || state.isEmpty()
                             ? "State unavailable"
@@ -2756,7 +2837,7 @@ public final class MainActivity extends Activity {
                 "Reset to source coordinates",
                 "Show native state"
         };
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle(title)
                 .setItems(actions, (dialog, which) -> {
                     if (which == 0) {
@@ -2764,7 +2845,7 @@ public final class MainActivity extends Activity {
                     } else if (which == 1) {
                         resetCompositePartPlacement(partIndex);
                     } else {
-                        new AlertDialog.Builder(this)
+                        new PanelBuilder()
                                 .setTitle(title)
                                 .setMessage(state == null || state.isEmpty()
                                         ? "State unavailable"
@@ -2802,7 +2883,7 @@ public final class MainActivity extends Activity {
             children[index - 1] = compositePartLabel(index);
         }
 
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Choose MOD part to place")
                 .setItems(children, (dialog, which) ->
                         showHostJointDialog(which + 1))
@@ -2839,7 +2920,7 @@ public final class MainActivity extends Activity {
         final String hostName = compositePartLabel(hostPartIndex);
         final String childName = compositePartLabel(childPartIndex);
 
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Place " + childName + " on " + hostName)
                 .setSingleChoiceItems(joints, selected[0],
                         (dialog, which) -> selected[0] = which)
@@ -2878,7 +2959,7 @@ public final class MainActivity extends Activity {
             children[index - 1] = compositePartLabel(index);
         }
 
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Reset MOD part placement")
                 .setItems(children, (dialog, which) -> {
                     final int childPartIndex = which + 1;
@@ -2917,7 +2998,7 @@ public final class MainActivity extends Activity {
                     ? "MOD part " + (index + 1)
                     : name;
         }
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("Attach PTX texture")
                 .setItems(names, (dialog, which) ->
                         choosePtxCompanion(which == 0 ? -1 : which - 1))
@@ -3263,7 +3344,7 @@ public final class MainActivity extends Activity {
     private void showNonCanonicalNotes() {
         final String notes = nonCanonicalNotes();
         if (notes.isEmpty()) return;
-        new AlertDialog.Builder(this)
+        new PanelBuilder()
                 .setTitle("▲ Shown, not canonical")
                 .setMessage("This view is displayed, but part of it was not read the canonical "
                         + "way the game data is specified:\n\n" + notes)
