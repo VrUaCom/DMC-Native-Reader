@@ -77,6 +77,20 @@ self-timer down, saves the files and runs the encoder (`ViewRecorder`).
 The three-finger sideways swipe (variants) and the four-finger tap (follow)
 are off in camera mode. ℹ in the camera bar shows all of this in the app.
 
+## Auto and Manual exposure
+
+- **Auto** keeps the brightness as rendered, as a camera's automatic modes
+  do; only the compensation (EV) moves it. The ISO still adds its noise, and
+  the aperture its depth of field (when that is on), but the picture's
+  brightness does not change.
+- **Manual** (M): ISO 100 at 1/60 and f/4 is the rendered picture; every
+  stop of ISO, shutter or aperture doubles or halves the light. ISO 400 is
+  two stops brighter, 1/250 two stops darker, f/2 two stops brighter.
+- Turning the ISO, the shutter or the aperture in Auto goes to Manual
+  (`camera::follow_up`). An Auto ISO becomes 100 then, so the picture starts
+  where it was and the dial that was turned moves it; a notice says so. Mode
+  → Auto goes back.
+
 ## The screen's orientation
 
 - Turning the phone keeps everything as it is: the scene, the camera, a
@@ -194,7 +208,7 @@ from it.
 | | Bokeh highlights | **Soft**, bright |
 | Filter | Polarizer | **Off**, On (circular; in camera mode two fingers turn it) |
 | | Polarizer strength | Weak, **medium**, strong |
-| Exposure | Mode | **Auto** (the rendered picture, moved by the compensation), Manual |
+| Exposure | Mode | **Auto** (the rendered picture, moved by the compensation), Manual (turning the ISO, shutter or aperture in Auto goes here) |
 | | ISO | **Auto**, then thirds of a stop 25, 32, 40, 50 … 102400, then whole stops 204800, 409600, 819200, 1638400, 3276800, 4000000 (a slider) |
 | | Shutter | Thirds of a stop 30", 25", 20" … 1", 0.8" … 1/4 … **1/60** … 1/2000 (a slider) |
 | | Compensation | −3 … **0** … +3 EV |

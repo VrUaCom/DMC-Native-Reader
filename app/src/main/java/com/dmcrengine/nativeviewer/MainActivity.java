@@ -1730,6 +1730,37 @@ public final class MainActivity extends Activity {
         return java.util.Arrays.copyOfRange(row, CAMERA_OPTIONS_AT, row.length);
     }
 
+    /**
+     * Keeps a camera setting's option chosen by hand, and what the core says goes with it (in Auto,
+     * turning the ISO, the shutter or the aperture goes to Manual); the caller applies the choices.
+     */
+    private void storeCameraOption(String[] row, int option) {
+        final String[] options = cameraOptions(row);
+        if (option < 0 || option >= options.length) return;
+        final String[][] rows = cameraRows();
+        final android.content.SharedPreferences.Editor editor = prefs().edit();
+        editor.putString(PREF_CAMERA + row[0], options[option]);
+        int index = -1;
+        for (int i = 0; i < rows.length; ++i) if (rows[i][0].equals(row[0])) index = i;
+        final String[] more = index >= 0 ? NativeBridge.cameraFollowUps(index, option) : null;
+        if (more != null && more.length > 0) {
+            for (int k = 1; k < more.length; ++k) {
+                final String[] pair = more[k].split("\t");
+                if (pair.length != 2) continue;
+                try {
+                    final int at = Integer.parseInt(pair[0]);
+                    final int choice = Integer.parseInt(pair[1]);
+                    final String[] other = at >= 0 && at < rows.length ? cameraOptions(rows[at]) : new String[0];
+                    if (choice >= 0 && choice < other.length) editor.putString(PREF_CAMERA + rows[at][0], other[choice]);
+                } catch (NumberFormatException ignored) {
+                    // A malformed row changes nothing.
+                }
+            }
+            if (!more[0].isEmpty()) notice(more[0], Toast.LENGTH_LONG);
+        }
+        editor.apply();
+    }
+
     /** The core's camera settings: {id, section, label, hint, start, options...} per row. */
     private String[][] cameraRows() {
         if (cameraRows == null) {
@@ -2050,10 +2081,10 @@ public final class MainActivity extends Activity {
             if (!row[0].equals(id)) continue;
             final int count = row.length - CAMERA_OPTIONS_AT;
             final int next = Math.max(0, Math.min(count - 1, cameraChoice(row) + step));
-            prefs().edit().putString(PREF_CAMERA + row[0], row[CAMERA_OPTIONS_AT + next]).apply();
+            notice(row[2] + ": " + row[CAMERA_OPTIONS_AT + next], Toast.LENGTH_SHORT);
+            storeCameraOption(row, next);
             applyCameraChoices();
             renderView.renderNow();
-            notice(row[2] + ": " + row[CAMERA_OPTIONS_AT + next], Toast.LENGTH_SHORT);
             updateCameraDials();
             return;
         }
@@ -2066,9 +2097,7 @@ public final class MainActivity extends Activity {
             return;
         }
         for (final String[] row : cameraRows()) {
-            if (row[0].equals(id) && option >= 0 && option < row.length - CAMERA_OPTIONS_AT) {
-                prefs().edit().putString(PREF_CAMERA + row[0], row[CAMERA_OPTIONS_AT + option]).apply();
-            }
+            if (row[0].equals(id)) storeCameraOption(row, option);
         }
         applyCameraChoices();
     }
@@ -2348,7 +2377,7 @@ public final class MainActivity extends Activity {
             final String[] row = rows[i];
             final String[] options = cameraOptions(row);
             final java.util.function.IntConsumer pick = k -> {
-                prefs().edit().putString(PREF_CAMERA + row[0], options[k]).apply();
+                storeCameraOption(row, k);
                 applyCameraChoices();
                 renderView.renderNow();
                 updateCameraDials();
@@ -2517,7 +2546,7 @@ public final class MainActivity extends Activity {
                 if (row[0].equals(CAMERA_MODE_ID)) {
                     setCameraOption(CAMERA_MODE_ID, i);
                 } else {
-                    prefs().edit().putString(PREF_CAMERA + row[0], options[i]).apply();
+                    storeCameraOption(row, i);
                     applyCameraChoices();
                 }
                 renderView.renderNow();

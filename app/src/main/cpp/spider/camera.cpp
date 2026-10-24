@@ -182,7 +182,8 @@ std::vector<Setting> build_settings() {
     add(Key::FilterPolarizerStrength, "filter_polarizer_strength", filter, "Polarizer strength", "",
         {"Weak", "Medium", "Strong"}, 1);
     const char* exposure = "Exposure";
-    add(Key::ExposureMode, "exposure_mode", exposure, "Mode", "Manual: the ISO, shutter and aperture count",
+    add(Key::ExposureMode, "exposure_mode", exposure, "Mode",
+        "Auto keeps the brightness; in Manual the ISO, shutter and aperture set it (turning one goes there)",
         {"Auto", "Manual"}, 0);
     {
         std::vector<std::string> names;
@@ -720,6 +721,26 @@ Exposure exposure() noexcept {
     out.iso = chosen_iso > 0 ? chosen_iso
                              : static_cast<int>(std::clamp(std::lround(100.0 / light), 25L, 4000000L));
     out.gain = static_cast<float>(out.iso) / 100.0F * light * compensation;
+    return out;
+}
+
+FollowUp follow_up(Key key, int option) {
+    FollowUp out;
+    const bool exposure_key = key == Key::ExposureIso || key == Key::ExposureShutter || key == Key::LensAperture;
+    if (!exposure_key || choice(Key::ExposureMode) != 0) return out;
+    out.changes.push_back({Key::ExposureMode, 1});
+    if (key != Key::ExposureIso && pick(Key::ExposureIso, kIsos) == 0) {
+        const auto* at = std::find(std::begin(kIsos), std::end(kIsos), 100);
+        out.changes.push_back({Key::ExposureIso, static_cast<int>(at - std::begin(kIsos))});
+    }
+    if (key == Key::ExposureIso && option == 0) {
+        // Auto ISO in Manual keeps the brightness too: say what still counts.
+        out.message = "Manual exposure: the shutter and the aperture set the ISO (Auto); choose an ISO to set "
+                      "the brightness. Mode \xE2\x86\x92 Auto goes back";
+    } else {
+        out.message = "Manual exposure: the ISO, the shutter and the aperture now set the brightness, as on a "
+                      "camera's M. Mode \xE2\x86\x92 Auto goes back";
+    }
     return out;
 }
 

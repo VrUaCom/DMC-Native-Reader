@@ -354,6 +354,24 @@ int main() {
     // pitch), times the sensitivity.
     {
         assert(!cam::gyro_active() && cam::gyro_turn(0.0F, 0.0F, 0.0F)[0] == 0.0F);
+        // Turning the ISO, shutter or aperture in Auto goes to Manual (an
+        // Auto ISO becomes 100 unless the ISO is turned); nothing else does.
+        cam::reset_choices();
+        {
+            const auto shutter = cam::follow_up(cam::Key::ExposureShutter, 3);
+            assert(shutter.changes.size() == 2U && shutter.changes[0].key == cam::Key::ExposureMode &&
+                   shutter.changes[0].option == 1 && shutter.changes[1].key == cam::Key::ExposureIso &&
+                   cam::settings()[static_cast<std::size_t>(cam::Key::ExposureIso)]
+                           .options[static_cast<std::size_t>(shutter.changes[1].option)] == "100" &&
+                   !shutter.message.empty());
+            const auto iso = cam::follow_up(cam::Key::ExposureIso, 13);
+            assert(iso.changes.size() == 1U && iso.changes[0].key == cam::Key::ExposureMode);
+            assert(cam::follow_up(cam::Key::LensAperture, 2).changes.size() == 2U);
+            assert(cam::follow_up(cam::Key::ColourStyle, 1).changes.empty());
+            choose(cam::Key::ExposureMode, 1);
+            assert(cam::follow_up(cam::Key::ExposureShutter, 3).changes.empty());
+            cam::reset_choices();
+        }
         // No cutscene: camera mode never waits for cuts.
         assert(!cam::follows_cuts(nullptr));
         assert(!cam::holds_screen_orientation());

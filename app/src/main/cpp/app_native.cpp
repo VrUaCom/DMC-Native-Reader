@@ -841,6 +841,30 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraMode(JNIEnv*, jclass) {
     return dmcresource::spider::camera::finder_on() ? JNI_TRUE : JNI_FALSE;
 }
 
+// What else turning setting `index` to `option` changes: {message,
+// "index\toption", ...} (empty: nothing).
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFollowUps(JNIEnv* env, jclass, jint index, jint option) {
+    try {
+        namespace cam = dmcresource::spider::camera;
+        if (index < 0 || index >= static_cast<jint>(cam::Key::Count)) return nullptr;
+        const auto follow = cam::follow_up(static_cast<cam::Key>(index), option);
+        if (follow.changes.empty()) return nullptr;
+        std::vector<std::string> rows{follow.message};
+        for (const auto& change : follow.changes) {
+            rows.push_back(std::to_string(static_cast<int>(change.key)) + "\t" + std::to_string(change.option));
+        }
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(rows.size()), env->FindClass("java/lang/String"), nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            jstring text = env->NewStringUTF(rows[i].c_str());
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), text);
+            env->DeleteLocalRef(text);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
 // The screen keeps its orientation (the phone aims the camera).
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_cameraHoldsOrientation(JNIEnv*, jclass) {

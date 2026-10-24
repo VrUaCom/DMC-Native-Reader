@@ -300,6 +300,11 @@ APK verifier.
       (core `camera::holds_screen_orientation`).
     - 📱 in the camera bar turns the app to the other orientation and keeps
       it there; holding 📱 lets the phone turn it again.
+  - v115:
+    - Turning the ISO, the shutter or the aperture in Auto exposure goes to
+      Manual, where they set the brightness (Auto keeps it, so they barely
+      changed the picture). An Auto ISO becomes 100 so the picture starts
+      where it was.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

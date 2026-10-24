@@ -131,6 +131,23 @@ struct Rect final {
 // Full-frame equivalent focal length (mm) of a zoom for a frame of that shape.
 [[nodiscard]] float focal_mm(float capture_zoom) noexcept;
 
+// What else changes when a setting is turned by hand to `option`, and the
+// line that says so. In Auto the camera keeps the brightness itself, so the
+// ISO, the shutter and the aperture would change little (the ISO's noise,
+// the aperture's depth of field): turning one of them goes to Manual, where
+// they set the brightness as on a camera's M dial. Manual starts from the
+// same picture (ISO 100 at 1/60 and f/4 is the rendered one), so an Auto ISO
+// becomes 100 unless the ISO itself is turned.
+struct FollowUp final {
+    struct Change final {
+        Key key{};
+        int option{};
+    };
+    std::vector<Change> changes;
+    std::string message;
+};
+[[nodiscard]] FollowUp follow_up(Key key, int option);
+
 // Exposure the settings give: the gain over the rendered picture and the ISO
 // the sensor works at (an automatic ISO is worked out in manual mode).
 struct Exposure final {

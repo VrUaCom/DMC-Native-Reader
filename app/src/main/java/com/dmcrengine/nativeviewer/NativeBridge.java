@@ -289,6 +289,9 @@ public final class NativeBridge {
     /** The screen keeps its orientation: the gyroscope or walking aims the camera. */
     public static native boolean cameraHoldsOrientation();
 
+    /** What else turning setting `index` to `option` changes: {message, "index\toption", ...}, or null. */
+    public static native String[] cameraFollowUps(int index, int option);
+
     /** A cutscene's camera drives the view: camera mode films through it until a finger takes it. */
     public static native boolean cameraFollowsCuts(long handle);
     /** The camera bar's dials: "setting index[,index ...]\ttitle\tvalue". */
