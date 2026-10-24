@@ -59,6 +59,13 @@ mission, not m07_c00's:
   18-20 empty.
 - Clips: Camera 12 (12 `.cam` shots, `cm_c001`..`cm_c013`), Light 47,
   ScrEfc 19, Message 10, PadVibe 2, Fade 1, Sound 1, Effect 0.
+- Every file its Set texts name (116: models, textures, motions, cloth,
+  hide animations, cameras) is in its name lists under the very same name,
+  case included (`PL101_0x.ptx`), and every name in the lists is used.
+- It is not m07_c00's scene: its subtitles are 1700-1709 (m07_c00's
+  1800-1813) and it lasts 4168 frames, 69 s (m07_c00: 12142). m07_c00's
+  models are named only in its own Model Set texts, which its movie track
+  does not carry.
 - Slots 3-12 are name list and container pairs: the models and textures
   (PNST), 72 motions and cloth (`.mot`, `.clt`), 2 hide animations, the 12
   cameras, and the effect manifest (`G 105`, `G 3`, `V 7`, `P 228`, ...)

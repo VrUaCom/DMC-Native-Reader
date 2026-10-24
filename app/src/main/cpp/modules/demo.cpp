@@ -297,32 +297,31 @@ bool looks_like_script(std::string_view text) noexcept {
            text.find("# Set") != std::string_view::npos;
 }
 
-bool looks_like_name_list(std::string_view text) noexcept {
-    text = text.substr(0, text.find('\0'));
-    if (text.empty() || text.size() > 64U * 1024U) return false;
-    bool ended = false;
-    std::size_t names = 0U;
-    bool fine = true;
-    each_line(text, [&](std::string_view line) {
-        if (!fine || ended || line.empty() || line.front() == ';') return;
-        if (line == "# End") {
-            ended = true;
-            return;
-        }
-        // A file name: printable, no blanks, with an extension.
-        const bool name = line.size() <= 96U && line.find('.') != std::string_view::npos &&
-                          std::all_of(line.begin(), line.end(), [](char c) { return c > ' ' && c < 127; });
-        if (name) ++names;
-        else fine = false;
-    });
-    return fine && ended && names > 0U;
+namespace {
+
+// A file name of a name list: printable, no blanks, with an extension.
+[[nodiscard]] bool is_file_name(std::string_view line) noexcept {
+    return line.size() <= 96U && line.find('.') != std::string_view::npos &&
+           std::all_of(line.begin(), line.end(), [](char c) { return c > ' ' && c < 127; });
 }
 
-bool looks_like_effect_list(std::string_view text) noexcept {
+// An effect id of the bank's manifest: a capital letter, blanks, digits ("G 105").
+[[nodiscard]] bool is_effect_id(std::string_view line) noexcept {
+    std::size_t i = 1U;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+    return line.size() >= 3U && line[0] >= 'A' && line[0] <= 'Z' && i > 1U && i < line.size() &&
+           std::all_of(line.begin() + static_cast<std::ptrdiff_t>(i), line.end(),
+                       [](char c) { return c >= '0' && c <= '9'; });
+}
+
+// A list of the archive (name_list's lines up to "# End", ";" lines
+// commented out) whose every entry passes `entry`.
+template <typename Entry>
+[[nodiscard]] bool looks_like_list(std::string_view text, Entry&& entry) noexcept {
     text = text.substr(0, text.find('\0'));
     if (text.empty() || text.size() > 64U * 1024U) return false;
     bool ended = false;
-    std::size_t ids = 0U;
+    std::size_t entries = 0U;
     bool fine = true;
     each_line(text, [&](std::string_view line) {
         if (!fine || ended || line.empty() || line.front() == ';') return;
@@ -330,17 +329,17 @@ bool looks_like_effect_list(std::string_view text) noexcept {
             ended = true;
             return;
         }
-        // A capital letter, blanks, then digits.
-        std::size_t i = 1U;
-        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
-        const bool id = line.size() >= 3U && line[0] >= 'A' && line[0] <= 'Z' && i > 1U && i < line.size() &&
-                        std::all_of(line.begin() + static_cast<std::ptrdiff_t>(i), line.end(),
-                                    [](char c) { return c >= '0' && c <= '9'; });
-        if (id) ++ids;
+        if (entry(line)) ++entries;
         else fine = false;
     });
-    return fine && ended && ids > 0U;
+    return fine && ended && entries > 0U;
 }
+
+}  // namespace
+
+bool looks_like_name_list(std::string_view text) noexcept { return looks_like_list(text, is_file_name); }
+
+bool looks_like_effect_list(std::string_view text) noexcept { return looks_like_list(text, is_effect_id); }
 
 std::vector<std::string> effect_ids(std::string_view text) {
     if (!looks_like_effect_list(text)) return {};
@@ -441,8 +440,7 @@ bool looks_like_demo(std::span<const std::uint8_t> bytes) noexcept {
         const auto top = slots(bytes);
         if (!top || top->size() < 3U || (*top)[0].second == 0U) return false;
         const auto script = text_of(bytes.subspan((*top)[0].first, (*top)[0].second));
-        return !script.empty() && script.front() == ';' && script.find("# Load") != std::string_view::npos &&
-               script.find("# Set") != std::string_view::npos && script.find("Set.txt") != std::string_view::npos;
+        return looks_like_script(script) && script.find("Set.txt") != std::string_view::npos;
     } catch (...) {
         return false;
     }
@@ -501,8 +499,7 @@ std::optional<Document> parse_demo(std::span<const std::uint8_t> bytes) {
         const auto base = (*top)[i + 1U].first;
         // The effect bank: its files are named by effect id ("G 48", "V 287").
         const bool effects = !names.empty() && std::all_of(names.begin(), names.end(), [](const std::string& n) {
-            return n.size() >= 3U && n[0] >= 'A' && n[0] <= 'Z' && n[1] == ' ' &&
-                   std::all_of(n.begin() + 2, n.end(), [](char c) { return c >= '0' && c <= '9'; });
+            return is_effect_id(n);
         });
         if (effects) {
             doc.effect_bank_offset = base;
