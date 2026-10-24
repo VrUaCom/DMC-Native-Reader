@@ -1699,29 +1699,24 @@ public final class MainActivity extends Activity {
         dialog.show();
     }
 
-    /** The ⋮ menu: square shortcuts (settings first) in rows, then actions; it scrolls when long. */
+    /** The ⋮ menu in the app's panel window: square shortcuts (settings first) in rows, then actions. */
     private void showCompanionMenu(View anchor) {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackgroundColor(0xff23252c);
-        panel.setPadding(dp(8), dp(8), dp(8), dp(8));
-        final android.widget.ScrollView scroller = new android.widget.ScrollView(this);
-        scroller.setBackgroundColor(0xff23252c);
-        scroller.addView(panel);
-        final android.widget.PopupWindow popup = new android.widget.PopupWindow(scroller,
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true);
-        popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff23252c));
-        popup.setOutsideTouchable(true);
-        popup.setElevation(dp(8));
-
         // The core decides the items and names them; this shell lays them out
         // and runs the platform step of the picked id.
         final CompanionMenu menu = NativeBridge.companionMenu(session, isRootScene(),
                 assembledPacUri != null, stagePacUri != null, roomLoaded, roomShown());
         if (menu == null) return;
-        // Squares in rows as wide as the screen allows (a long press names one).
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(12), dp(12), dp(12), dp(12));
+        final AlertDialog[] shown = new AlertDialog[1];
+        final java.util.function.IntConsumer pick = id -> {
+            if (shown[0] != null) shown[0].dismiss();
+            runCompanion(id);
+        };
+        // Squares in rows as wide as the window allows (a long press names one).
         final int screenWidth = getResources().getDisplayMetrics().widthPixels;
-        final int perRow = Math.max(3, Math.min(6, (screenWidth - dp(64)) / dp(TOOL_SIZE_DP + 6)));
+        final int perRow = Math.max(3, Math.min(6, (screenWidth - dp(96)) / dp(TOOL_SIZE_DP + 6)));
         LinearLayout icons = null;
         for (int i = 0; menu.shortcuts != null && i < menu.shortcuts.ids.length; ++i) {
             if (i % perRow == 0) {
@@ -1737,7 +1732,7 @@ public final class MainActivity extends Activity {
             final Button button = makeSquareButton(glyph, menu.shortcuts.labels[i], 22f);
             button.setTooltipText(menu.shortcuts.labels[i]);
             if (menu.isDimmed(id)) button.setAlpha(0.5f);
-            button.setOnClickListener(v -> { popup.dismiss(); runCompanion(id); });
+            button.setOnClickListener(v -> pick.accept(id));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
             params.setMarginEnd(dp(6));
             icons.addView(button, params);
@@ -1748,18 +1743,11 @@ public final class MainActivity extends Activity {
             row.setText(menu.rows.labels[i]);
             row.setTextSize(16f);
             row.setTextColor(0xffe8eaf0);
-            row.setPadding(dp(8), dp(12), dp(16), dp(12));
-            row.setOnClickListener(v -> { popup.dismiss(); runCompanion(id); });
+            row.setPadding(dp(4), dp(12), dp(16), dp(12));
+            row.setOnClickListener(v -> pick.accept(id));
             panel.addView(row);
         }
-        // No taller than the room below the anchor: the rest scrolls.
-        final int[] at = new int[2];
-        anchor.getLocationOnScreen(at);
-        final int below = getResources().getDisplayMetrics().heightPixels - (at[1] + anchor.getHeight()) - dp(16);
-        panel.measure(View.MeasureSpec.makeMeasureSpec(screenWidth, View.MeasureSpec.AT_MOST),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        if (below > dp(120) && panel.getMeasuredHeight() > below) popup.setHeight(below);
-        popup.showAsDropDown(anchor);
+        shown[0] = showPanel(titleView.getText(), panel, null, null, null);
     }
 
     /** A ⋮ item: the core's own actions go back to it; the rest are platform steps. */
@@ -2272,18 +2260,33 @@ public final class MainActivity extends Activity {
         final String snapshot = text == null || text.isEmpty()
                 ? "No resource information available."
                 : text;
+        Button download = makeSquareButton("\u21e9", "Download inspection report", 24f);
+        download.setOnClickListener(v -> chooseInfoExport(snapshot));
+        showPanel(titleView.getText(), panelText(snapshot, 13f), download, null, null);
+    }
 
+    /** Selectable monospace text for a panel. */
+    private TextView panelText(String text, float size) {
         TextView details = new TextView(this);
-        details.setText(snapshot);
+        details.setText(text);
         details.setTextColor(Color.WHITE);
-        details.setTextSize(13f);
+        details.setTextSize(size);
         details.setTypeface(Typeface.MONOSPACE);
         details.setTextIsSelectable(true);
         details.setPadding(dp(16), dp(12), dp(16), dp(20));
+        return details;
+    }
 
+    /**
+     * The app's one panel window (Info, the ⋮ menu, Diagnostics): a title bar
+     * with an optional square action, the content scrolling below it, Close
+     * (and an optional extra button) at the bottom.
+     */
+    private AlertDialog showPanel(CharSequence title, View content, Button action,
+                                  String extraLabel, Runnable extra) {
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(0xff141418);
-        scroll.addView(details, new ScrollView.LayoutParams(
+        scroll.addView(content, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
@@ -2292,25 +2295,24 @@ public final class MainActivity extends Activity {
         dialogTitle.setGravity(Gravity.CENTER_VERTICAL);
         dialogTitle.setPadding(dp(16), dp(6), dp(8), dp(6));
         dialogTitle.setBackgroundColor(0xff3a3a3e);
+        dialogTitle.setMinimumHeight(dp(60));
 
         TextView heading = new TextView(this);
-        heading.setText(titleView.getText());
+        heading.setText(title);
         heading.setTextColor(Color.WHITE);
         heading.setTextSize(18f);
         heading.setSingleLine(true);
         heading.setEllipsize(TextUtils.TruncateAt.END);
         dialogTitle.addView(heading, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        if (action != null) dialogTitle.addView(action, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
-        Button download = makeSquareButton("\u21e9", "Download inspection report", 24f);
-        download.setOnClickListener(v -> chooseInfoExport(snapshot));
-        dialogTitle.addView(download, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setCustomTitle(dialogTitle)
                 .setView(scroll)
-                .setPositiveButton("Close", null)
-                .show();
+                .setPositiveButton("Close", null);
+        if (extraLabel != null && extra != null) builder.setNeutralButton(extraLabel, (d, w) -> extra.run());
+        return builder.show();
     }
 
     private void chooseInfoExport(String snapshot) {
@@ -2592,29 +2594,14 @@ public final class MainActivity extends Activity {
                 .append("\n\n")
                 .append(readDiagnosticsPreview());
 
-        TextView details = new TextView(this);
-        details.setText(text.toString());
-        details.setTextColor(Color.WHITE);
-        details.setTextSize(12f);
-        details.setTypeface(Typeface.MONOSPACE);
-        details.setTextIsSelectable(true);
-        details.setPadding(dp(16), dp(12), dp(16), dp(20));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(0xff141418);
-        scroll.addView(details, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT));
-
-        new AlertDialog.Builder(this)
-                .setTitle("Diagnostics / build info")
-                .setView(scroll)
-                .setPositiveButton("Close", null)
-                .setNegativeButton("Export…", (dialog, which) ->
-                        chooseDiagnosticsExportDestination())
-                .setNeutralButton("Clear log", (dialog, which) ->
-                        confirmClearDiagnosticsLog())
-                .show();
+        final AlertDialog[] shown = new AlertDialog[1];
+        Button export = makeSquareButton("\u21e9", "Export diagnostics", 24f);
+        export.setOnClickListener(v -> {
+            if (shown[0] != null) shown[0].dismiss();
+            chooseDiagnosticsExportDestination();
+        });
+        shown[0] = showPanel("Diagnostics / build info", panelText(text.toString(), 12f), export,
+                "Clear log", this::confirmClearDiagnosticsLog);
     }
 
     private void chooseDiagnosticsExportDestination() {

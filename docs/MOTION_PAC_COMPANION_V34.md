@@ -441,8 +441,11 @@ The ⋮ menu opens with square shortcuts: ⚙ Settings, ✋ Gestures, 📂 Open,
 then the room toggle and *next floor spot* when a room is loaded (the spot
 only while it shows), a cutscene's 🔊 sound, 🎞 movie, 💬 subtitles and 🎬
 camera, 💾 Save and 🛠 Diagnostics. They wrap into rows as wide as the
-screen allows; a long press names one. The actions follow below them, and
-the whole menu scrolls when it is taller than the screen (v93).
+screen allows; a long press names one. The actions follow below them. The
+menu opens in the app's one panel window (`showPanel`, v94), the same as
+Info and Diagnostics: a title bar with an optional square action (Info's ⇩
+report, Diagnostics' ⇩ export), the content scrolling under it, Close at
+the bottom.
 
 The core offers what fits what is on the screen (`companion_menu`): a
 cutscene gets no model parts, placements, PTX or companions to add; a model
