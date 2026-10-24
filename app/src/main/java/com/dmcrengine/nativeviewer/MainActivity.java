@@ -934,11 +934,13 @@ public final class MainActivity extends Activity {
     private static final String SET_GPU_MIPMAPS = "set.gpuMipmaps";
     private static final String SET_GPU_ANISOTROPY = "set.gpuAnisotropy";
     private static final String SET_GPU_PRESENT = "set.gpuPresent";
+    private static final String SET_DMC3_SHADERS = "set.dmc3Shaders";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
         NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
         NativeBridge.setGpuPresent(p.getBoolean(SET_GPU_PRESENT, true));
+        NativeBridge.setDmc3Shaders(p.getBoolean(SET_DMC3_SHADERS, true));
         applyCameraChoices();
         NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
                 p.getInt(SET_GPU_ANISOTROPY, 8));
@@ -1217,6 +1219,7 @@ public final class MainActivity extends Activity {
                     .append(", mipmaps ").append(p.getBoolean(SET_GPU_MIPMAPS, true) ? "on" : "off")
                     .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x")
                     .append(", shown ").append(p.getBoolean(SET_GPU_PRESENT, true) ? "directly" : "through a picture")
+                    .append(", shaders ").append(p.getBoolean(SET_DMC3_SHADERS, true) ? "DMC3" : "Reader")
                     .append(", ");
         }
         text.append(p.getBoolean(SET_SMOOTH, false) ? "smooth" : "pixel").append(" textures");
@@ -1306,6 +1309,13 @@ public final class MainActivity extends Activity {
                 + "reading it back to the CPU and handing it over again. Frames with lines, markers or bones "
                 + "drawn on them, videos and pictures still go through a picture. Choose \"Through a picture\" "
                 + "if the view stays black or does not change."));
+        content.addView(choiceRow("Shaders (GPU)", new String[]{"DMC3 (the game's)", "Reader's own"},
+                p.getBoolean(SET_DMC3_SHADERS, true) ? 0 : 1,
+                i -> { p.edit().putBoolean(SET_DMC3_SHADERS, i == 0).apply(); apply.run(); renderView.renderNow(); }));
+        content.addView(hint("DMC3: our own shaders that behave like the game's (67 of them, docs/SHADERS.md) draw "
+                + "what the game has a shader for: textured models and stages lit by their vertex colours, "
+                + "with the game's fog. The rest, and every frame with \"Reader's own\", uses the Reader's "
+                + "shaders. Info under Renderer says which ones the last frame used."));
         final int[] msaa = {0, 2, 4, 8};
         content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},
                 indexOf(msaa, p.getInt(SET_GPU_MSAA, 4), 2),

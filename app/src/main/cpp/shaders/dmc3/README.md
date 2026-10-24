@@ -14,5 +14,8 @@ with OpenGL ES 3.0 (Mesa).
   fog, edges, copies, the movie frame).
 - Attribute locations, varyings, the alpha test and the fog rule are in
   CONVENTIONS.md.
-- Not wired into the renderer yet; GlesViewBackend still uses its own
-  shaders.
+- Built into the core as text (CMake embeds every file here);
+  `dmcresource::dmc3` names them, and the GPU backend compiles all of them
+  and draws with them where the core's `dmc3_draw()` picks one. The map of
+  our names to the game's, and what the Reader draws with which, is
+  docs/SHADERS.md.

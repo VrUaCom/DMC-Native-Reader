@@ -329,10 +329,17 @@ APK verifier.
     - Opening a cutscene's container names its files from the name list
       before it (Set texts, models, motions, cameras, effect ids); empty
       clip texts show as EMPTY.
-  - Shaders (no version, not in the renderer yet): 67 GLSL ES shaders of
-    our own that behave like the HD port's, written clean-room from
-    behaviour specifications (`docs/cleanroom/`,
-    `app/src/main/cpp/android/shaders/dmc3/`).
+  - Shaders: 67 GLSL ES shaders of our own that behave like the HD
+    port's, written clean-room from behaviour specifications
+    (`docs/cleanroom/`, `app/src/main/cpp/shaders/dmc3/`).
+  - v121:
+    - The 67 DMC3 shaders are in the Reader: the core holds them with the
+      game's names (`dmcresource::dmc3`, docs/SHADERS.md), the GPU compiles
+      all of them, and draws models and vertex-coloured stages with the
+      game's (dmc3_mod, dmc3_efm, dmc3_stg and tex_col_mod2, with fog). The
+      picture stays as before; fog follows the game's curve.
+    - Settings → Graphics → Shaders (GPU): DMC3 or the Reader's own; the
+      Renderer info lists the shaders of the last frame.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

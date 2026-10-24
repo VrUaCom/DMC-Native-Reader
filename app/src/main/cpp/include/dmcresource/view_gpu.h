@@ -10,6 +10,7 @@
 #include "dmcresource/mesh.h"
 #include "dmcresource/render_scene.h"
 #include "dmcresource/camera_post.h"
+#include "dmcresource/dmc3_shaders.h"
 
 // GPU view rendering: render_view's triangle passes on the graphics chip.
 //
@@ -187,12 +188,58 @@ struct GpuViewFrame final {
     };
     Overlay overlay;
 
+    // The DMC3 shaders (dmc3_shaders.h, dmc3_draw): when enabled, a batch
+    // the game has a shader for is drawn with it instead of the Reader's
+    // own; everything else keeps the Reader's shaders.
+    struct Dmc3 final {
+        bool enabled{};
+        bool fog{};                          // the fog variants
+        std::array<float, 3> fog_colour{};   // rgb 0..1
+        // Fog amount (1 none, 0 all) = clamp(x + y / camera distance): the
+        // PS2 curve, through the Reader fog's amounts at its start and end.
+        std::array<float, 2> fog_coeffs{1.0F, 0.0F};
+        float model_fog{1.0F};               // the model's amount, at the framing centre
+        // The Reader's camera light (two-sided) in model coordinates, for
+        // model_lit's light rig.
+        std::array<float, 3> light_direction{};
+    };
+    Dmc3 dmc3{};
+
     // Show the frame on the backend's window (set_window) instead of
     // reading it back; the backend sets `presented` when it did, and the
     // image is then left without pixels.
     bool present{};
     mutable bool presented{};
 };
+
+// The passes of the frame a mesh batch is drawn in.
+enum class GpuPass : std::uint8_t {
+    room_opaque,  // 1. opaque room texels
+    model,        // 3. the model
+    room_soft,    // 4. soft room texels
+    room_layered, // 4. room light shafts (added / subtracted)
+};
+
+// How a batch is drawn with the DMC3 shaders: the pair, the alpha test and
+// the light rig. vertex == none: with the Reader's own shaders. The rules are
+// Core's (dmc3_draw); the backend sets the uniforms CONVENTIONS.md names.
+struct GpuDmc3Draw final {
+    dmc3::Shader vertex{dmc3::Shader::none};
+    dmc3::Shader fragment{dmc3::Shader::none};
+    dmc3::AlphaFunc alpha_func{dmc3::AlphaFunc::off};
+    float alpha_ref{};
+    std::array<float, 3> fog_colour{};  // black for added / subtracted surfaces
+    float fog_amount{1.0F};             // model: the part's amount
+    // Model: u_light_directions / u_light_colours (column-major), u_part_colour
+    // rgb and u_part_alpha. Stage: u_ambient, no point lights.
+    std::array<float, 16> light_directions{};
+    std::array<float, 16> light_colours{};
+    float part_colour{0.5F};
+    float part_alpha{0.5F};
+    float ambient{1.0F};
+    [[nodiscard]] bool drawn() const noexcept { return vertex != dmc3::Shader::none; }
+};
+[[nodiscard]] GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept;
 
 class GpuViewBackend {
 public:
@@ -222,6 +269,9 @@ void set_gpu_view_options(const GpuViewOptions& options) noexcept;
 void set_gpu_present_enabled(bool enabled) noexcept;
 [[nodiscard]] bool gpu_present_enabled() noexcept;
 [[nodiscard]] GpuViewOptions gpu_view_options() noexcept;
+// Draw with the DMC3 shaders where the game has one (on by default).
+void set_dmc3_shaders_enabled(bool enabled) noexcept;
+[[nodiscard]] bool dmc3_shaders_enabled() noexcept;
 
 struct GpuViewStats final {
     std::uint64_t gpu_frames{};
@@ -229,6 +279,22 @@ struct GpuViewStats final {
     std::uint64_t gpu_failures{};    // backend refused a frame
     std::uint64_t presented_frames{};  // GPU frames shown straight on the window
 };
+
+// What the backend did with the DMC3 shaders: how many compiled when it
+// started, and the batches of the last frame drawn with them.
+struct GpuShaderStats final {
+    int compiled{};
+    int failed{};
+    std::string first_failure;  // "name: log"
+    std::uint64_t dmc3_batches{};    // last frame
+    std::uint64_t reader_batches{};  // last frame, with the Reader's shaders
+    std::vector<dmc3::Shader> used;  // last frame, each shader once
+};
+void set_gpu_shader_stats(GpuShaderStats stats);
+[[nodiscard]] GpuShaderStats gpu_shader_stats();
+// "DMC3 shaders: 67 of 67 compiled; last frame: 24 batches with them
+// (effect_model_lit.vert = dmc3_efm, ...), 21 with the Reader's" (Info).
+[[nodiscard]] std::string dmc3_shader_report();
 [[nodiscard]] GpuViewStats gpu_view_stats() noexcept;
 
 // What draws the next frame: "GPU: <backend>" or "CPU (software)".

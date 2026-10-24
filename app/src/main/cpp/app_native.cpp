@@ -1889,6 +1889,11 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuPresent(JNIEnv*, jclass, jbo
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setDmc3Shaders(JNIEnv*, jclass, jboolean enabled) {
+    dmcresource::set_dmc3_shaders_enabled(enabled == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, jboolean enabled) {
     dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
 }
@@ -1928,7 +1933,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_rendererInfo(JNIEnv* env, jclass) 
         const auto text = dmcresource::view_renderer_description() + "\nFrames: " +
             std::to_string(stats.gpu_frames) + " GPU (" + std::to_string(stats.presented_frames) +
             " shown straight on the screen), " + std::to_string(stats.cpu_frames) + " CPU" +
-            (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "");
+            (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "") +
+            "\n" + dmcresource::dmc3_shader_report();
         return env->NewStringUTF(text.c_str());
     } catch (...) { return env->NewStringUTF(""); }
 }

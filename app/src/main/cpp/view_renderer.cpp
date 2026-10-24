@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <cmath>
@@ -579,8 +580,8 @@ RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
 // accumulated per vertex (area weighted, oriented by the source normals when
 // the mesh has them) and shared between coincident vertices whose source
 // normals agree, so strip seams are smooth and authored hard edges stay hard.
-// Light: two-sided, from the camera, up-left.
-[[nodiscard]] std::vector<float> vertex_light(const Mesh& mesh, float yaw, float pitch, float radius) {
+// Unit normals in model coordinates; zero where a vertex has none.
+[[nodiscard]] std::vector<Vec3> vertex_normals(const Mesh& mesh, float radius) {
     const std::size_t n = mesh.vertices.size();
     std::vector<Vec3> acc(n);
     const bool source = mesh.has_normal0();
@@ -632,16 +633,50 @@ RgbaImage make_canvas(int width, int height, std::uint8_t background = 0U) {
             }
         }
     }
-    std::vector<float> out(n, 0.9F);
-    constexpr float lx = -0.30F, ly = 0.45F, lz = -0.84F;
+    std::vector<Vec3> out(n);
     for (std::size_t v = 0U; v < n; ++v) {
         const auto& a = acc[group[v]];
         const float len = std::sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
-        if (!(len > 1.0e-20F)) continue;
-        const auto r = rotate({a.x / len, a.y / len, a.z / len}, yaw, pitch);
-        out[v] = std::fabs(r.x * lx + r.y * ly + r.z * lz);
+        if (len > 1.0e-20F) out[v] = {a.x / len, a.y / len, a.z / len};
     }
     return out;
+}
+
+// The camera light: up-left, in camera coordinates.
+constexpr float kLightX = -0.30F, kLightY = 0.45F, kLightZ = -0.84F;
+// The light of a vertex without a normal.
+constexpr float kNormalLessLight = 0.9F;
+
+// rotate()'s inverse (it is orthogonal): camera to model coordinates.
+[[nodiscard]] Vec3 unrotate(const P3& camera, float yaw, float pitch) noexcept {
+    const float cy = std::cos(yaw), sy = std::sin(yaw);
+    const float cp = std::cos(pitch), sp = std::sin(pitch);
+    const float y = cp * camera.y + sp * camera.z;
+    const float z1 = -sp * camera.y + cp * camera.z;
+    const float x = cy * camera.x - sy * z1;
+    const float z = sy * camera.x + cy * z1;
+    return {-x, y, z};
+}
+
+// The camera light's direction in model coordinates.
+[[nodiscard]] Vec3 model_light_direction(float yaw, float pitch) noexcept {
+    return unrotate({kLightX, kLightY, kLightZ}, yaw, pitch);
+}
+
+// Light: two-sided, from the camera, up-left.
+[[nodiscard]] std::vector<float> vertex_light(const std::vector<Vec3>& normals, float yaw, float pitch) {
+    std::vector<float> out(normals.size(), kNormalLessLight);
+    for (std::size_t v = 0U; v < normals.size(); ++v) {
+        const auto& a = normals[v];
+        if (a.x == 0.0F && a.y == 0.0F && a.z == 0.0F) continue;
+        const auto r = rotate(a, yaw, pitch);
+        out[v] = std::fabs(r.x * kLightX + r.y * kLightY + r.z * kLightZ);
+    }
+    return out;
+}
+
+[[nodiscard]] std::vector<float> vertex_light(const Mesh& mesh, float yaw, float pitch, float radius) {
+    return vertex_light(vertex_normals(mesh, radius), yaw, pitch);
 }
 
 }  // namespace
@@ -1937,7 +1972,37 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
 std::atomic<GpuViewBackend*> g_gpu_backend{nullptr};
 std::atomic<bool> g_gpu_enabled{true};
 std::atomic<bool> g_gpu_present{true};
+std::atomic<bool> g_dmc3_shaders{true};
 std::atomic<std::uint64_t> g_presented_frames{0U};
+std::mutex g_shader_stats_mutex;
+GpuShaderStats g_shader_stats;
+
+// The DMC3 shaders' fog and light for the frame (GpuViewFrame::Dmc3). Their
+// fog has one colour: the far one when the near end has no fog (its colour
+// then hardly shows); a fog that changes colour otherwise keeps the Reader's
+// shaders.
+GpuViewFrame::Dmc3 dmc3_frame(const ViewState& view, float camera_distance) {
+    GpuViewFrame::Dmc3 out;
+    out.enabled = dmc3_shaders_enabled();
+    const Vec3 l = model_light_direction(view.yaw_radians, view.pitch_radians);
+    out.light_direction = {l.x, l.y, l.z};
+    const auto& f = view.fog;
+    if (!out.enabled || !f.enabled) return out;
+    const float start = f.start, end = f.end;
+    if ((f.near_colour != f.far_colour && f.near_alpha > 0.0F) || !(start > 1.0e-3F) || !(end - start > 1.0e-3F)) {
+        out.enabled = false;
+        return out;
+    }
+    // Through amount 1 - alpha at the start and at the end.
+    const float at_start = 1.0F - std::clamp(f.near_alpha, 0.0F, 1.0F);
+    const float at_end = 1.0F - std::clamp(f.far_alpha, 0.0F, 1.0F);
+    const float y = (at_start - at_end) / (1.0F / start - 1.0F / end);
+    out.fog = true;
+    out.fog_colour = {f.far_colour[0] / 255.0F, f.far_colour[1] / 255.0F, f.far_colour[2] / 255.0F};
+    out.fog_coeffs = {at_start - y / start, y};
+    out.model_fog = std::clamp(out.fog_coeffs[0] + out.fog_coeffs[1] / std::max(camera_distance, 1.0e-3F), 0.0F, 1.0F);
+    return out;
+}
 
 // A cutscene's fade laid over the picture (ViewState::fade).
 void lay_fade(const ViewState& view, RgbaImage* image) {
@@ -2019,8 +2084,14 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
     GpuGeometry out;
     const bool textured = textures != nullptr && triangle_texture_slots != nullptr && mesh.has_uv0() &&
         mesh.indices.size() % 3U == 0U && triangle_texture_slots->size() == mesh.indices.size() / 3U;
-    const auto lights = view.unlit ? std::vector<float>{}
-                                   : vertex_light(mesh, view.yaw_radians, view.pitch_radians, radius);
+    // Normals for the DMC3 model shaders, which light the vertices
+    // themselves: a vertex without one gets the light's direction at the
+    // length that gives it the same light.
+    const auto normals = view.unlit ? std::vector<Vec3>{} : vertex_normals(mesh, radius);
+    const auto lights = view.unlit ? std::vector<float>{} : vertex_light(normals, view.yaw_radians, view.pitch_radians);
+    const Vec3 light_direction = model_light_direction(view.yaw_radians, view.pitch_radians);
+    const Vec3 normal_less{light_direction.x * kNormalLessLight, light_direction.y * kNormalLessLight,
+                           light_direction.z * kNormalLessLight};
     const bool colored = mesh.has_color0();
     const bool uv = mesh.has_uv0();
     const auto n = mesh.vertices.size();
@@ -2095,6 +2166,13 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
                 }
                 if (colored) v.rgba = mesh.color0[i];
                 v.light = lights.empty() ? 0.0F : lights[i];
+                if (!normals.empty()) {
+                    const auto& nm = normals[i];
+                    const bool none = nm.x == 0.0F && nm.y == 0.0F && nm.z == 0.0F;
+                    v.nx = none ? normal_less.x : nm.x;
+                    v.ny = none ? normal_less.y : nm.y;
+                    v.nz = none ? normal_less.z : nm.z;
+                }
                 out.vertices.push_back(v);
             }
         }
@@ -2271,6 +2349,7 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
     out.smooth_model = view.smooth_textures;
     out.smooth_room = true;
     out.model = build_model_geometry(mesh, view, triangle_texture_slots, textures, frame.radius);
+    out.dmc3 = dmc3_frame(view, frame.camera_distance);
     if (view.fog.enabled) {
         const auto& f = view.fog;
         out.fog = {.enabled = true, .start = f.start, .end = f.end,
@@ -2356,6 +2435,101 @@ void set_gpu_view_enabled(bool enabled) noexcept { g_gpu_enabled.store(enabled);
 void set_gpu_present_enabled(bool enabled) noexcept { g_gpu_present.store(enabled); }
 bool gpu_present_enabled() noexcept { return g_gpu_present.load(); }
 bool gpu_view_enabled() noexcept { return g_gpu_enabled.load(); }
+void set_dmc3_shaders_enabled(bool enabled) noexcept { g_dmc3_shaders.store(enabled); }
+bool dmc3_shaders_enabled() noexcept { return g_dmc3_shaders.load(); }
+
+void set_gpu_shader_stats(GpuShaderStats stats) {
+    const std::lock_guard lock{g_shader_stats_mutex};
+    g_shader_stats = std::move(stats);
+}
+
+GpuShaderStats gpu_shader_stats() {
+    const std::lock_guard lock{g_shader_stats_mutex};
+    return g_shader_stats;
+}
+
+std::string dmc3_shader_report() {
+    const auto stats = gpu_shader_stats();
+    const auto total = dmc3::shaders().size();
+    std::string text = "DMC3 shaders: ";
+    if (!dmc3_shaders_enabled()) text += "off; ";
+    if (stats.compiled + stats.failed == 0) {
+        text += std::to_string(total) + " in the library, not compiled yet (no GPU frame)";
+        return text;
+    }
+    text += std::to_string(stats.compiled) + " of " + std::to_string(total) + " compiled";
+    if (stats.failed != 0) text += " (first failure: " + stats.first_failure + ")";
+    text += "; last frame: " + std::to_string(stats.dmc3_batches) + " batches with them";
+    if (!stats.used.empty()) {
+        text += " (";
+        for (std::size_t i = 0U; i < stats.used.size(); ++i) {
+            const auto* entry = dmc3::info(stats.used[i]);
+            if (entry == nullptr) continue;
+            if (i != 0U) text += ", ";
+            text += std::string(entry->name) + " = " + entry->dmc3_name;
+        }
+        text += ")";
+    }
+    text += ", " + std::to_string(stats.reader_batches) + " with the Reader's";
+    return text;
+}
+
+// Which DMC3 shaders draw which batch: one rule a pass, the place to change
+// when a batch should be drawn with another of them (docs/SHADERS.md).
+GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept {
+    using dmc3::AlphaFunc;
+    using dmc3::Shader;
+    GpuDmc3Draw out;
+    const auto& d = frame.dmc3;
+    // Untextured surfaces are the Reader's grey preview; the game has none.
+    if (!d.enabled || batch.texture == nullptr) return out;
+    const bool layered = batch.kind == GpuBatchKind::model_additive || batch.kind == GpuBatchKind::model_subtractive;
+    if (pass == GpuPass::model) {
+        // Characters (dmc3_mod) and, with vertex colours, effect models
+        // (dmc3_efm): one bone (the vertices come posed), the camera light
+        // as their light rig, texel x colour x 2 (tex_col_mod2).
+        out.vertex = batch.colored ? Shader::effect_model_lit_vert : Shader::model_lit_vert;
+        out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
+        out.alpha_func = AlphaFunc::greater_equal;
+        out.alpha_ref = 0.5F / 255.0F;
+        if (!layered && d.fog) out.fog_colour = d.fog_colour;
+        out.fog_amount = d.model_fog;
+        // Two lights along the camera light, one each way (two-sided), and
+        // the constant term; model_lit divides the colours by 128.
+        const auto& l = d.light_direction;
+        for (int k = 0; k < 3; ++k) {
+            out.light_directions[static_cast<std::size_t>(k * 4)] = l[static_cast<std::size_t>(k)];
+            out.light_directions[static_cast<std::size_t>(k * 4 + 1)] = -l[static_cast<std::size_t>(k)];
+        }
+        out.light_directions[15] = 1.0F;
+        const float unit = batch.colored ? 1.0F : 128.0F;
+        for (int k = 0; k < 3; ++k) {
+            out.light_colours[static_cast<std::size_t>(k)] = batch.light_gain * unit;
+            out.light_colours[static_cast<std::size_t>(4 + k)] = batch.light_gain * unit;
+            out.light_colours[static_cast<std::size_t>(12 + k)] = batch.light_base * unit;
+        }
+        return out;
+    }
+    // The stage (dmc3_stg): its vertex colours carry the light, so only rooms
+    // drawn with them and no Reader light; light shafts weight by the vertex
+    // alpha, which the stage shader does not read, and stay the Reader's.
+    if (pass == GpuPass::room_layered || !batch.colored || batch.light_base != 1.0F || batch.light_gain != 0.0F) {
+        return out;
+    }
+    out.vertex = d.fog ? Shader::stage_lit_fog_vert : Shader::stage_lit_vert;
+    out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
+    if (d.fog) out.fog_colour = d.fog_colour;
+    // 0x80 is 1: ambient x colour / 255 x 2 = colour / 128.
+    out.ambient = 255.0F / 256.0F;
+    if (pass == GpuPass::room_opaque) {
+        out.alpha_func = AlphaFunc::greater_equal;
+        out.alpha_ref = (batch.translucent ? 239.5F : 31.5F) / 255.0F;
+    } else {
+        out.alpha_func = AlphaFunc::less;
+        out.alpha_ref = 239.5F / 255.0F;
+    }
+    return out;
+}
 
 void set_gpu_view_options(const GpuViewOptions& options) noexcept {
     g_gpu_msaa.store(std::clamp(options.msaa_samples, 0, 16));

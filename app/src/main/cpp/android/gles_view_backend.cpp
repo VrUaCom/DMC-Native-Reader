@@ -414,6 +414,36 @@ GLuint compile(GLenum type, const char* source) {
     return shader;
 }
 
+// A shader object, or 0 with the driver's log in `log`.
+GLuint compile_logged(GLenum type, const char* source, std::string& log) {
+    const GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok == GL_TRUE) return shader;
+    GLint length = 0;
+    glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
+    log.assign(static_cast<std::size_t>(std::max(length, 1)), '\0');
+    glGetShaderInfoLog(shader, length, nullptr, log.data());
+    while (!log.empty() && (log.back() == '\0' || log.back() == '\n')) log.pop_back();
+    glDeleteShader(shader);
+    return 0U;
+}
+
+// camera = view * p; clip = (p0 x, p1 y, p2 z + p3, z) as one matrix
+// (column-major), for the DMC3 shaders' u_view_projection.
+std::array<float, 16> view_projection(const std::array<float, 16>& view, const std::array<float, 4>& p) noexcept {
+    std::array<float, 16> m{};
+    for (std::size_t c = 0U; c < 4U; ++c) {
+        m[c * 4U + 0U] = p[0] * view[c * 4U + 0U];
+        m[c * 4U + 1U] = p[1] * view[c * 4U + 1U];
+        m[c * 4U + 2U] = p[2] * view[c * 4U + 2U] + p[3] * view[c * 4U + 3U];
+        m[c * 4U + 3U] = view[c * 4U + 2U];
+    }
+    return m;
+}
+
 GLuint link(const char* vertex, const char* fragment) {
     const GLuint vs = compile(GL_VERTEX_SHADER, vertex);
     const GLuint fs = compile(GL_FRAGMENT_SHADER, fragment);
@@ -595,6 +625,11 @@ private:
         mesh_layout(model_vao_, model_vbo_);
         mesh_layout(room_vao_, room_vbo_);
         mesh_layout(aux_vao_, aux_vbo_);
+        glGenVertexArrays(1, &model_dmc3_vao_);
+        glGenVertexArrays(1, &room_dmc3_vao_);
+        dmc3_layout(model_dmc3_vao_, model_vbo_, true);
+        dmc3_layout(room_dmc3_vao_, room_vbo_, false);
+        compile_dmc3_shaders();
         glBindVertexArray(screen_vao_);
         glBindBuffer(GL_ARRAY_BUFFER, screen_vbo_);
         constexpr auto stride = static_cast<GLsizei>(sizeof(GpuScreenVertex));
@@ -648,6 +683,141 @@ private:
         glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride,
                               reinterpret_cast<const void*>(offsetof(GpuVertex, light)));
         glBindVertexArray(0);
+    }
+
+    // The DMC3 shaders' inputs (CONVENTIONS.md) on the same vertices:
+    // 0 position, 1 normal, 2 uv, 3 colour (0..1 for the models, 0..255 for
+    // the stage); the bones and weights are constants (dmc3_constants).
+    static void dmc3_layout(GLuint vao, GLuint vbo, bool unit_colour) {
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        constexpr auto stride = static_cast<GLsizei>(sizeof(GpuVertex));
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<const void*>(offsetof(GpuVertex, x)));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<const void*>(offsetof(GpuVertex, nx)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<const void*>(offsetof(GpuVertex, u)));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, unit_colour ? GL_TRUE : GL_FALSE, stride,
+                              reinterpret_cast<const void*>(offsetof(GpuVertex, rgba)));
+        glBindVertexArray(0);
+    }
+
+    // The vertices come posed: every one follows bone 0 (rows 0..3, the
+    // identity) alone; no per-vertex fog.
+    static void dmc3_constants() {
+        glVertexAttribI4i(4, 0, 0, 0, 0);
+        glVertexAttrib4f(5, 31.0F, 0.0F, 0.0F, 1.0F);
+        glVertexAttrib4f(6, 1.0F, 0.0F, 0.0F, 1.0F);
+    }
+
+    // All of them once, when the context is made: the count goes to the
+    // Info screen, and a pair is linked when a frame first needs it.
+    void compile_dmc3_shaders() {
+        dmcresource::GpuShaderStats stats;
+        for (const auto& entry : dmcresource::dmc3::shaders()) {
+            const auto text = dmcresource::dmc3::source(entry.id);
+            std::string log = text.empty() ? "no source in this build" : "";
+            GLuint shader = 0U;
+            if (!text.empty()) {
+                const std::string source(text);
+                shader = compile_logged(entry.stage == dmcresource::dmc3::ShaderStage::vertex ? GL_VERTEX_SHADER
+                                                                                             : GL_FRAGMENT_SHADER,
+                                        source.c_str(), log);
+            }
+            dmc3_objects_[static_cast<std::size_t>(entry.id)] = shader;
+            if (shader != 0U) {
+                ++stats.compiled;
+            } else {
+                ++stats.failed;
+                if (stats.first_failure.empty()) stats.first_failure = std::string(entry.name) + ": " + log;
+            }
+        }
+        dmc3_compiled_ = stats.compiled;
+        dmc3_failed_ = stats.failed;
+        dmc3_first_failure_ = stats.first_failure;
+        dmcresource::set_gpu_shader_stats(std::move(stats));
+    }
+
+    // Uniform locations of a DMC3 pair (-1 where the pair has none).
+    struct Dmc3Program final {
+        GLuint id{};
+        GLint view_projection{}, world_view_projection{}, screen_scale{}, screen_offset{}, bone_rows{};
+        GLint light_directions{}, light_colours{}, part_colour{}, part_alpha{}, uv_scroll{}, uv_scale{};
+        GLint fog_colour{}, fog_coeffs{}, light_x{}, light_y{}, light_z{}, light_falloff{}, light_colour{};
+        GLint ambient{}, texture{}, alpha_test{}, alpha_func{}, alpha_ref{};
+    };
+
+    const Dmc3Program* dmc3_program(dmcresource::dmc3::Shader vertex, dmcresource::dmc3::Shader fragment) {
+        const auto key = static_cast<std::uint32_t>(vertex) << 8U | static_cast<std::uint32_t>(fragment);
+        if (const auto it = dmc3_programs_.find(key); it != dmc3_programs_.end()) {
+            return it->second.id != 0U ? &it->second : nullptr;
+        }
+        Dmc3Program program;
+        const auto vs = static_cast<std::size_t>(vertex);
+        const auto fs = static_cast<std::size_t>(fragment);
+        if (vs < dmc3_objects_.size() && fs < dmc3_objects_.size() && dmc3_objects_[vs] != 0U &&
+            dmc3_objects_[fs] != 0U) {
+            const GLuint id = glCreateProgram();
+            glAttachShader(id, dmc3_objects_[vs]);
+            glAttachShader(id, dmc3_objects_[fs]);
+            glLinkProgram(id);
+            glDetachShader(id, dmc3_objects_[vs]);
+            glDetachShader(id, dmc3_objects_[fs]);
+            GLint ok = GL_FALSE;
+            glGetProgramiv(id, GL_LINK_STATUS, &ok);
+            if (ok == GL_TRUE) {
+                program.id = id;
+            } else {
+                glDeleteProgram(id);
+            }
+        }
+        if (program.id != 0U) {
+            const auto at = [&program](const char* name) { return glGetUniformLocation(program.id, name); };
+            program.view_projection = at("u_view_projection");
+            program.world_view_projection = at("u_world_view_projection");
+            program.screen_scale = at("u_screen_scale");
+            program.screen_offset = at("u_screen_offset");
+            program.bone_rows = at("u_bone_rows");
+            program.light_directions = at("u_light_directions");
+            program.light_colours = at("u_light_colours");
+            program.part_colour = at("u_part_colour");
+            program.part_alpha = at("u_part_alpha");
+            program.uv_scroll = at("u_uv_scroll");
+            program.uv_scale = at("u_uv_scale");
+            program.fog_colour = at("u_fog_colour");
+            program.fog_coeffs = at("u_fog_coeffs");
+            program.light_x = at("u_light_x");
+            program.light_y = at("u_light_y");
+            program.light_z = at("u_light_z");
+            program.light_falloff = at("u_light_falloff");
+            program.light_colour = at("u_light_colour");
+            program.ambient = at("u_ambient");
+            program.texture = at("u_texture");
+            program.alpha_test = at("u_alpha_test");
+            program.alpha_func = at("u_alpha_func");
+            program.alpha_ref = at("u_alpha_ref");
+            // What never changes: bone 0 the identity, no screen mapping,
+            // the Reader's 0..1 coordinates (x 4096 undoes the fixed point),
+            // no point lights, texture unit 0.
+            glUseProgram(program.id);
+            static constexpr float kIdentityRows[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            glUniform4fv(program.bone_rows, 4, kIdentityRows);
+            glUniform4f(program.screen_scale, 1.0F, 1.0F, 1.0F, 1.0F);
+            glUniform4f(program.screen_offset, 0.0F, 0.0F, 0.0F, 0.0F);
+            glUniform2f(program.uv_scale, 4096.0F, 4096.0F);
+            glUniform4f(program.light_x, 0.0F, 0.0F, 0.0F, 0.0F);
+            glUniform4f(program.light_y, 0.0F, 0.0F, 0.0F, 0.0F);
+            glUniform4f(program.light_z, 0.0F, 0.0F, 0.0F, 0.0F);
+            glUniform4f(program.light_falloff, 0.0F, 0.0F, 0.0F, 0.0F);
+            static constexpr float kNoLights[16] = {};
+            glUniform4fv(program.light_colour, 4, kNoLights);
+            glUniform1i(program.texture, 0);
+        }
+        const auto [it, inserted] = dmc3_programs_.emplace(key, program);
+        (void)inserted;
+        return it->second.id != 0U ? &it->second : nullptr;
     }
 
     // Mipmaps and anisotropy from the Graphics settings, set when they change.
@@ -1059,6 +1229,82 @@ private:
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(batch.first), static_cast<GLsizei>(batch.count));
     }
 
+    // A mesh batch in its pass: with the DMC3 pair Core chose for it
+    // (dmc3_draw), else with the Reader's shader in `mode`. The Reader's
+    // program and `reader_vao` are bound again when the batch leaves them.
+    void draw_mesh_batch(const GpuBatch& batch, dmcresource::GpuPass pass, int mode, bool smooth,
+                         const GpuViewFrame& frame, GLuint reader_vao, GLuint dmc3_vao,
+                         const std::array<float, 16>& view) {
+        const auto d = dmcresource::dmc3_draw(batch, pass, frame);
+        const Dmc3Program* program = d.drawn() ? dmc3_program(d.vertex, d.fragment) : nullptr;
+        if (program == nullptr) {
+            if (in_dmc3_) {
+                glUseProgram(mesh_program_);
+                glBindVertexArray(reader_vao);
+                in_dmc3_ = false;
+            }
+            ++reader_batches_;
+            draw_batch(batch, mode, smooth, frame);
+            return;
+        }
+        if (!in_dmc3_) {
+            glBindVertexArray(dmc3_vao);
+            dmc3_constants();
+            in_dmc3_ = true;
+        }
+        glUseProgram(program->id);
+        const auto vp = view_projection(view, frame.projection);
+        glUniformMatrix4fv(program->view_projection, 1, GL_FALSE, vp.data());
+        glUniformMatrix4fv(program->world_view_projection, 1, GL_FALSE, vp.data());
+        glUniformMatrix4fv(program->light_directions, 1, GL_FALSE, d.light_directions.data());
+        glUniformMatrix4fv(program->light_colours, 1, GL_FALSE, d.light_colours.data());
+        glUniform4f(program->part_colour, d.part_colour, d.part_colour, d.part_colour, d.fog_amount);
+        glUniform1f(program->part_alpha, d.part_alpha);
+        glUniform3f(program->ambient, d.ambient, d.ambient, d.ambient);
+        glUniform3f(program->fog_colour, d.fog_colour[0], d.fog_colour[1], d.fog_colour[2]);
+        glUniform2f(program->fog_coeffs, frame.dmc3.fog_coeffs[0], frame.dmc3.fog_coeffs[1]);
+        glUniform1i(program->alpha_test, d.alpha_func == dmcresource::dmc3::AlphaFunc::off ? 0 : 1);
+        glUniform1i(program->alpha_func, static_cast<GLint>(d.alpha_func));
+        glUniform1f(program->alpha_ref, d.alpha_ref);
+        float su = 0.0F, sv = 0.0F;
+        if (batch.scroll_slot != dmcresource::kNoTextureSlot) {
+            for (const auto& s : frame.room_scrolls) {
+                if (s.slot == batch.scroll_slot) {
+                    su = s.u;
+                    sv = s.v;
+                    break;
+                }
+            }
+        }
+        // u_uv_scroll is in the shaders' fixed point (1/4096).
+        glUniform2f(program->uv_scroll, su * 4096.0F, sv * 4096.0F);
+        bind_texture(-1, batch.texture, smooth);
+        glDrawArrays(GL_TRIANGLES, static_cast<GLint>(batch.first), static_cast<GLsizei>(batch.count));
+        ++dmc3_batches_;
+        used_[static_cast<std::size_t>(d.vertex)] = true;
+        used_[static_cast<std::size_t>(d.fragment)] = true;
+    }
+
+    // Back to the Reader's program after a run of DMC3 batches.
+    void leave_dmc3() {
+        if (!in_dmc3_) return;
+        glUseProgram(mesh_program_);
+        in_dmc3_ = false;
+    }
+
+    void publish_shader_stats() {
+        dmcresource::GpuShaderStats stats;
+        stats.compiled = dmc3_compiled_;
+        stats.failed = dmc3_failed_;
+        stats.first_failure = dmc3_first_failure_;
+        stats.dmc3_batches = dmc3_batches_;
+        stats.reader_batches = reader_batches_;
+        for (std::size_t i = 0U; i < used_.size(); ++i) {
+            if (used_[i]) stats.used.push_back(static_cast<dmcresource::dmc3::Shader>(i));
+        }
+        dmcresource::set_gpu_shader_stats(std::move(stats));
+    }
+
     void upload_aux(const std::vector<dmcresource::Vec3>& points) {
         std::vector<GpuVertex> vertices(points.size());
         for (std::size_t i = 0U; i < points.size(); ++i) {
@@ -1094,6 +1340,10 @@ private:
         // come back opaque without a pass over them.
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
+        in_dmc3_ = false;
+        dmc3_batches_ = 0U;
+        reader_batches_ = 0U;
+        used_.fill(false);
         glUseProgram(mesh_program_);
         glUniform4f(u_.proj, frame.projection[0], frame.projection[1], frame.projection[2], frame.projection[3]);
         glUniform1f(u_.cd, frame.camera_distance);
@@ -1128,8 +1378,11 @@ private:
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
             for (const auto& batch : room_batches_) {
-                if (batch.kind == GpuBatchKind::room) draw_batch(batch, 2, frame.smooth_room, frame);
+                if (batch.kind != GpuBatchKind::room) continue;
+                draw_mesh_batch(batch, dmcresource::GpuPass::room_opaque, 2, frame.smooth_room, frame, room_vao_,
+                                room_dmc3_vao_, frame.room_view);
             }
+            leave_dmc3();
         }
 
         // 2. Plain floor.
@@ -1158,8 +1411,10 @@ private:
                 const bool layered = batch.kind != GpuBatchKind::model;
                 glDepthMask(layered ? GL_FALSE : GL_TRUE);
                 set_blend(batch.kind, !layered);
-                draw_batch(batch, layered ? 1 : 0, frame.smooth_model, frame);
+                draw_mesh_batch(batch, dmcresource::GpuPass::model, layered ? 1 : 0, frame.smooth_model, frame,
+                                model_vao_, model_dmc3_vao_, frame.model_view);
             }
+            leave_dmc3();
         }
 
         // 4. Soft room texels, then light shafts.
@@ -1171,13 +1426,16 @@ private:
             for (const auto& batch : room_batches_) {
                 if (batch.kind != GpuBatchKind::room || !batch.translucent) continue;
                 set_blend(batch.kind, true);
-                draw_batch(batch, 3, frame.smooth_room, frame);
+                draw_mesh_batch(batch, dmcresource::GpuPass::room_soft, 3, frame.smooth_room, frame, room_vao_,
+                                room_dmc3_vao_, frame.room_view);
             }
             for (const auto& batch : room_batches_) {
                 if (batch.kind == GpuBatchKind::room) continue;
                 set_blend(batch.kind, true);
-                draw_batch(batch, 4, frame.smooth_room, frame);
+                draw_mesh_batch(batch, dmcresource::GpuPass::room_layered, 4, frame.smooth_room, frame, room_vao_,
+                                room_dmc3_vao_, frame.room_view);
             }
+            leave_dmc3();
         }
 
         // 5. Shadow footprint: darkens what is visible there once per pixel.
@@ -1262,6 +1520,7 @@ private:
             glBindVertexArray(0);
         }
 
+        publish_shader_stats();
         // Submitting is done; the read back waits for the GPU to finish.
         draw_timer.reset();
         const frame_profile::Scope read_timer{frame_profile::Stage::Readback};
@@ -1508,6 +1767,15 @@ private:
     GLint screen_size_{}, screen_depth_{}, screen_tex_{}, screen_textured_{};
     GLuint model_vbo_{}, room_vbo_{}, aux_vbo_{}, screen_vbo_{};
     GLuint model_vao_{}, room_vao_{}, aux_vao_{}, screen_vao_{};
+    // The DMC3 shaders: compiled objects by Shader, linked pairs, this frame.
+    GLuint model_dmc3_vao_{}, room_dmc3_vao_{};
+    std::array<GLuint, static_cast<std::size_t>(dmcresource::dmc3::Shader::count)> dmc3_objects_{};
+    std::unordered_map<std::uint32_t, Dmc3Program> dmc3_programs_;
+    int dmc3_compiled_{}, dmc3_failed_{};
+    std::string dmc3_first_failure_;
+    bool in_dmc3_{false};
+    std::uint64_t dmc3_batches_{}, reader_batches_{};
+    std::array<bool, static_cast<std::size_t>(dmcresource::dmc3::Shader::count)> used_{};
     GLuint nearest_{}, smooth_{};
     GLint max_samples_{0}, max_target_{4096}, max_texture_{4096};
     float max_anisotropy_{0.0F};

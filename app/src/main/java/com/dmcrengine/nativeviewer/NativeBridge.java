@@ -225,6 +225,9 @@ public final class NativeBridge {
 
     /** Frames of the view straight onto its window (true) or read back into a picture. */
     public static native void setGpuPresent(boolean enabled);
+
+    /** Draw with the DMC3 (game) shaders where the game has one; the core picks them. */
+    public static native void setDmc3Shaders(boolean enabled);
     /** GPU picture quality: MSAA samples (0 = off), mipmaps, anisotropic filtering (1 = off). */
     public static native void setGpuOptions(int msaaSamples, boolean mipmaps, int anisotropy);
     /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */

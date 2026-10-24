@@ -114,4 +114,4 @@ less-equal, greater, not-equal, greater-equal; anything else passes.
 - The cutscenes' screen effects (ScrEfc clips) and the fog table as passes.
 
 Our own shaders with this behaviour, written clean-room from specifications
-(no source text): `docs/cleanroom/`, `app/src/main/cpp/android/shaders/dmc3/`.
+(no source text): `docs/cleanroom/`, `app/src/main/cpp/shaders/dmc3/`.
