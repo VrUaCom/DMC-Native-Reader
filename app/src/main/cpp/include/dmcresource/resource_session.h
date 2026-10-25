@@ -425,6 +425,7 @@ struct EffectChoice final {
     Source source{};
     float frames{};   // one play, in game frames (60 a second)
     int parts{};      // a V's entries
+    std::string bank; // the archive the bank came with
 };
 [[nodiscard]] std::vector<EffectChoice> effect_choices(const Session* session);
 // Starts `choice` on the view, from its first frame, looping (false: it is

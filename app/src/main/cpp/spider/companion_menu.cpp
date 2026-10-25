@@ -110,7 +110,7 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     }
     // The stage tools, wherever a stage is around.
     if (root && stage_around && !cutscene) {
-        add(stage_rows, Companion::StageEffects, "Stage effects (st*_effect.pac)\xE2\x80\xA6");
+        add(stage_rows, Companion::StageEffects, "Effect bank (st*_effect.pac, static_effect.pac)\xE2\x80\xA6");
     }
     if (stage_around && has(widow::StateFlag::CanLoadStageConfig)) {
         const bool loaded = has(widow::StateFlag::StageConfigLoaded);

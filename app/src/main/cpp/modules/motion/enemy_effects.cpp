@@ -15,26 +15,59 @@
 namespace dmcresource::motion {
 namespace {
 
-// Emulated CComEm000 commands (update / start pairs of vtable 0x1404C6A18)
-// whose frame gate falls inside the played action's MOT (em000.pac slot 35):
-//   slot 193 / 0x14006B190: action 62 (MOT 55, 109 frames) code 3 at 40, 50
-//   slot 235 / 0x14006B900: action 66 (MOT 60, 124) code 3 at 30
-//   slots 189, 191 / 0x14006AE00, 0x14006AA70: action 68 (MOT 46, 60) at 40, 50
-//   slot 229 / 0x140066F10: action 82 (MOT 62, 124) at 76
-//   slot 231 / 0x140067120: action 84 (MOT 64, 300) at 180
-//   slot 237 / 0x14006B520: action 85 (MOT 65, 232) at 100, then action 87
-//                           (MOT 47, 142) at 30
-// Gates past the MOT end (slot 207: action 68 at 100 / 110; slot 233: action
-// 87 at 170) are left out: they fire only if the frame runs past the end.
-constexpr std::array<EnemyAttackEvent, 9> kEm000AttackEvents{{
-    {0U, 62U, 40.0F, 3U}, {0U, 62U, 50.0F, 3U},
-    {0U, 66U, 30.0F, 3U},
-    {0U, 68U, 40.0F, 3U}, {0U, 68U, 50.0F, 3U},
-    {0U, 82U, 76.0F, 3U},
-    {0U, 84U, 180.0F, 3U},
-    {0U, 85U, 100.0F, 3U},
-    {0U, 87U, 30.0F, 3U},
-}};
+// Generated from dmc3.exe (tools/research/em000_events.py).
+struct HandlerRow final {
+    std::uint8_t code;
+    std::uint8_t type_1a;  // enemy type 0x1A takes another path for a few codes
+    char kind;
+    std::uint16_t id;
+    std::uint8_t place;
+    std::uint8_t joint;
+    std::uint8_t mode;
+    float scale;
+};
+constexpr HandlerRow kHandlerRows[] = {
+#define EM000_HANDLER_ROW(code, type_1a, kind, id, place, joint, mode, scale) \
+    {code, type_1a, kind, id, place, joint, mode, scale},
+#include "em000_events.inc"
+#undef EM000_HANDLER_ROW
+};
+
+struct CommandEvent final {
+    std::uint8_t table;    // 1: interface slot +0x20, 2: +0x28
+    std::uint8_t command;
+    float frame;
+    std::uint8_t code;
+};
+constexpr CommandEvent kCommandEvents[] = {
+#define EM000_COMMAND_EVENT(table, command, frame, code) {table, command, frame, code},
+#include "em000_events.inc"
+#undef EM000_COMMAND_EVENT
+};
+
+// Each class's command tables: (bank, action) for table 1, then table 2.
+inline constexpr std::size_t kTableEntries = 128U;
+struct ClassTables final {
+    std::string_view name;
+    std::array<std::array<std::uint8_t, 2>, 2U * kTableEntries> pairs;
+};
+constexpr ClassTables kClassTables[] = {
+#define EM000_CLASS_TABLES(name, ...) {name, {{__VA_ARGS__}}},
+#include "em000_events.inc"
+#undef EM000_CLASS_TABLES
+};
+
+[[nodiscard]] const std::vector<EnemyEventSpawn>& event_spawns() {
+    static const auto spawns = [] {
+        std::vector<EnemyEventSpawn> out;
+        for (const auto& r : kHandlerRows) {
+            if (r.type_1a != 0U) continue;
+            out.push_back({r.code, r.kind, r.id, static_cast<EventPlace>(r.place), r.joint, r.mode, r.scale});
+        }
+        return out;
+    }();
+    return spawns;
+}
 
 [[nodiscard]] bool has_stem(std::string_view name, std::string_view stem) noexcept {
     if (name.size() < stem.size()) return false;
@@ -76,26 +109,29 @@ constexpr std::array<EnemyAttackEvent, 9> kEm000AttackEvents{{
 
 // Death state 0x140095E85 (CEm000; the other classes have copies): on entry
 // codes 0x69 and 0xC8, then the timer obj+0x2EFC (+= dt) sends 0xCA + 0xCB at
-// 5, 0xC9 at 10, 0xCD at 15, 0xCC at 20 and 0xCE at 25. Spawns per code from
-// the emulated handler (no-player path, enemy type != 0x1A).
-constexpr std::array<EnemyDeathSpawn, 28> kEm000DeathSpawns{{
-    {0.0F, 0x69U, 'V', 132U, 9U, 0U},
-    {0.0F, 0xC8U, 'V', 315U, 4U, 0U}, {0.0F, 0xC8U, 'P', 32U, 5U, 1U}, {0.0F, 0xC8U, 'P', 32U, 21U, 1U},
-    {5.0F, 0xCAU, 'V', 317U, 7U, 0U}, {5.0F, 0xCAU, 'V', 317U, 8U, 0U}, {5.0F, 0xCAU, 'P', 32U, 7U, 1U},
-    {5.0F, 0xCAU, 'P', 32U, 8U, 1U}, {5.0F, 0xCAU, 'P', 32U, 9U, 1U},
-    {5.0F, 0xCBU, 'V', 318U, 11U, 0U}, {5.0F, 0xCBU, 'V', 318U, 12U, 0U}, {5.0F, 0xCBU, 'P', 32U, 11U, 1U},
-    {5.0F, 0xCBU, 'P', 32U, 12U, 1U}, {5.0F, 0xCBU, 'P', 32U, 13U, 1U},
-    {10.0F, 0xC9U, 'V', 316U, 3U, 0U}, {10.0F, 0xC9U, 'P', 32U, 4U, 1U}, {10.0F, 0xC9U, 'P', 32U, 3U, 1U},
-    {10.0F, 0xC9U, 'P', 32U, 6U, 1U}, {10.0F, 0xC9U, 'P', 32U, 10U, 1U},
-    {15.0F, 0xCDU, 'P', 32U, 2U, 1U},
-    {20.0F, 0xCCU, 'V', 319U, 1U, 0U}, {20.0F, 0xCCU, 'P', 32U, 14U, 1U}, {20.0F, 0xCCU, 'P', 32U, 15U, 1U},
-    {20.0F, 0xCCU, 'P', 32U, 18U, 1U},
-    {25.0F, 0xCEU, 'P', 32U, 16U, 1U}, {25.0F, 0xCEU, 'P', 32U, 19U, 1U},
-    {25.0F, 0xCEU, 'P', 32U, 17U, 1U}, {25.0F, 0xCEU, 'P', 32U, 20U, 1U},
+// 5, 0xC9 at 10, 0xCD at 15, 0xCC at 20 and 0xCE at 25. Each code's spawns are
+// the handler's.
+struct DeathCode final {
+    float tick;
+    std::uint8_t code;
+};
+constexpr std::array<DeathCode, 8> kDeathSchedule{{
+    {0.0F, 0x69U}, {0.0F, 0xC8U}, {5.0F, 0xCAU}, {5.0F, 0xCBU},
+    {10.0F, 0xC9U}, {15.0F, 0xCDU}, {20.0F, 0xCCU}, {25.0F, 0xCEU},
 }};
 
-[[nodiscard]] constexpr const std::array<EnemyDeathSpawn, 28>& death_table() noexcept {
-    return kEm000DeathSpawns;
+[[nodiscard]] const std::vector<EnemyDeathSpawn>& death_table() {
+    static const auto table = [] {
+        std::vector<EnemyDeathSpawn> out;
+        for (const auto& step : kDeathSchedule) {
+            for (const auto& s : event_spawns()) {
+                if (s.code != step.code || s.place != EventPlace::joint) continue;
+                out.push_back({step.tick, s.code, s.kind, s.id, s.joint, s.mode});
+            }
+        }
+        return out;
+    }();
+    return table;
 }
 
 // Spawned records follow their joint for as long as they can live.
@@ -104,10 +140,10 @@ constexpr float kFollowTicks = 90.0F;
 // Spawn once per (actor, index); later steps update the spawned instance.
 // actor_events() holds only the current step, so the bridge keeps the
 // instances it created in the session.
-void emit_joint_event(Session& session, std::uint8_t actor, std::size_t index,
+void emit_joint_event(Session& session, std::uint8_t actor, std::size_t index, std::size_t state,
                       float spawn_frame, float frame, const Matrix4& world) {
     auto& runtime = *session.effect_runtime;
-    const auto key = (static_cast<std::uint32_t>(actor) << 16U) | static_cast<std::uint32_t>(index);
+    const auto key = (static_cast<std::uint32_t>(actor) << 16U) | static_cast<std::uint32_t>(index & 0xFFFFU);
     auto& spawned = session.enemy_effect_actors;
     if (session.enemy_effect_generation != runtime.reset_count()) {
         spawned.clear();
@@ -117,7 +153,7 @@ void emit_joint_event(Session& session, std::uint8_t actor, std::size_t index,
                                  [key](const auto& entry) { return entry.first == key; });
     DynamicActorEvent out;
     out.actor = actor;
-    out.actor_state = static_cast<std::uint16_t>(index);
+    out.actor_state = static_cast<std::uint16_t>(state);
     out.world = world;
     out.world_authoritative = true;
     out.spawn_matrix = world;
@@ -141,17 +177,34 @@ constexpr std::array<const char*, 1> kEm000ClassEvents{{"Death"}};
 
 }  // namespace
 
-std::span<const EnemyAttackEvent> em000_attack_events() noexcept {
-    return kEm000AttackEvents;
+std::span<const EnemyEventSpawn> em000_event_spawns() noexcept { return event_spawns(); }
+
+std::span<const EnemyAttackEvent> em000_command_events(std::string_view enemy_class) noexcept {
+    static const auto per_class = [] {
+        std::array<std::vector<EnemyAttackEvent>, std::size(kClassTables)> out;
+        for (std::size_t c = 0U; c < std::size(kClassTables); ++c) {
+            const auto& pairs = kClassTables[c].pairs;
+            for (const auto& e : kCommandEvents) {
+                const std::size_t at = (e.table == 2U ? kTableEntries : 0U) + e.command;
+                if (e.command >= kTableEntries || at >= pairs.size()) continue;
+                out[c].push_back({pairs[at][0], pairs[at][1], e.frame, e.code});
+            }
+        }
+        return out;
+    }();
+    for (std::size_t c = 0U; c < std::size(kClassTables); ++c) {
+        if (kClassTables[c].name == enemy_class) return per_class[c];
+    }
+    return {};
 }
+
+std::span<const EnemyAttackEvent> em000_attack_events() noexcept { return em000_command_events("CEm000"); }
 
 std::span<const EnemyDeathSpawn> em000_death_spawns() noexcept { return death_table(); }
 
 std::span<const EffectBinding> em000_effect_bindings() noexcept {
-    // Handler 0x1401C3130 case 3: 0x1402E7AB0(1, 42, scaled matrix, 0, 0x10)
-    // and 0x1402E7AB0(3, 42, ...); both get +0xC8 = obj+0x6D8[1]->+0x110
-    // (body joint 1) and +0xD4 = 1. They end through their own records (E42
-    // lives 23 ticks). Death spawns: one binding per schedule entry.
+    // One binding per handler spawn (state: its row of em000_event_spawns),
+    // then one per death spawn. All end through their own records.
     static const auto bindings = [] {
         std::vector<EffectBinding> out;
         const auto make = [](std::uint8_t actor, char kind, std::uint16_t id, std::uint16_t state) {
@@ -160,8 +213,10 @@ std::span<const EffectBinding> em000_effect_bindings() noexcept {
                                  EffectLifetimeRule::EffectCallback, EvidenceStatus::EXE_CONFIRMED,
                                  std::span<const EffectChildRef>{}, 0U};
         };
-        out.push_back(make(kEm000WeaponActor, 'E', 42U, 0xFFFFU));
-        out.push_back(make(kEm000WeaponActor, 'V', 42U, 0xFFFFU));
+        const auto& spawns = event_spawns();
+        for (std::size_t i = 0U; i < spawns.size(); ++i) {
+            out.push_back(make(kEm000WeaponActor, spawns[i].kind, spawns[i].id, static_cast<std::uint16_t>(i)));
+        }
         const auto& death = death_table();
         for (std::size_t i = 0U; i < death.size(); ++i) {
             out.push_back(make(kEm000DeathActor, death[i].kind, death[i].id, static_cast<std::uint16_t>(i)));
@@ -190,12 +245,28 @@ void em000_bridge_step(Session* session, float frame) noexcept {
         session->enemy_script_frame = frame;
         const auto action = current_script_action(session);
         if (!action.has_value() || action->script_slot != kEm000ScriptSlot) return;
-        if (const auto world = body_joint_effect_world(*session, kEm000AttackJoint, 1U, 2.0F)) {
-            for_each_em000_event(action->bank, action->action, -1.0F, frame,
-                                 [&](std::size_t index, const EnemyAttackEvent& event) {
-                emit_joint_event(*session, kEm000WeaponActor, index, event.frame, frame, *world);
-            });
-        }
+        // Every event of the playing action up to this frame, each spawn of
+        // its code where the handler puts it (the enemy's origin for the
+        // actor and given positions; joints past the body are skipped).
+        const auto& spawns = event_spawns();
+        for_each_em000_event(action->bank, action->action, -1.0F, frame,
+                             [&](std::size_t index, const EnemyAttackEvent& event) {
+            for (std::size_t row = 0U; row < spawns.size(); ++row) {
+                const auto& s = spawns[row];
+                if (s.code != event.code) continue;
+                std::optional<Matrix4> world;
+                if (s.place == EventPlace::joint) {
+                    world = body_joint_effect_world(*session, s.joint, s.mode, s.scale);
+                } else {
+                    Matrix4 origin;
+                    origin.values = {s.scale, 0.0F, 0.0F, 0.0F, 0.0F, s.scale, 0.0F, 0.0F,
+                                     0.0F, 0.0F, s.scale, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F};
+                    world = origin;
+                }
+                if (!world.has_value()) continue;
+                emit_joint_event(*session, kEm000WeaponActor, index * 256U + row, row, event.frame, frame, *world);
+            }
+        }, session->enemy_class);
         if (!session->enemy_death_start.has_value()) return;
         const float start = *session->enemy_death_start;
         if (frame < start) {  // the motion wrapped or restarted
@@ -208,7 +279,7 @@ void em000_bridge_step(Session* session, float frame) noexcept {
             if (frame < spawn_frame) continue;
             const auto world = body_joint_effect_world(*session, death[i].joint, death[i].mode, 1.0F);
             if (!world.has_value()) continue;
-            emit_joint_event(*session, kEm000DeathActor, i, spawn_frame, frame, *world);
+            emit_joint_event(*session, kEm000DeathActor, i, i, spawn_frame, frame, *world);
         }
     } catch (...) {
     }

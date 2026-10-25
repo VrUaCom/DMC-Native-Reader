@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 
 #include "dmcresource/motion/effect_runtime.h"
 
@@ -18,10 +19,14 @@ struct Session;
 // joint array obj+0x6D8, which the body model bind 0x14030F850 fills with its
 // joints (entry k +0x110 = body joint k world): code 3 spawns E42 and V42,
 // scaled x2, following body joint 1 by position only (+0xC8 / +0xD4 = 1).
-// The (action, frame) pairs come from emulated runs of every command of
-// CComEm000; the death schedule from the death state 0x140095E85. Reverse
-// notes: dmc-rengine-cpp docs/research/dmc3-em000-attack-effects-2026-10-01.md
-// and dmc3-effect-triggers-2026-10-01.md.
+// Every code, not only 3: tools/research/em000_events.py runs the handler for
+// each code and every command of CComEm000 (update slot 2k+1, start 2k+2) in
+// an emulator and writes em000_events.inc: what each code spawns and where,
+// and which (command, frame, code) each command sends; commands become
+// (bank, action) through each class's tables (table 2: interface slot
+// +0x28). The death schedule is from the death state 0x140095E85. Reverse
+// notes: dmc-rengine-cpp docs/research/dmc3-em000-attack-effects-2026-10-01.md,
+// dmc3-effect-triggers-2026-10-01.md; docs/research/dmc3-em000-events-v123.md.
 namespace dmcresource::motion {
 
 struct EnemyAttackEvent final {
@@ -44,12 +49,36 @@ struct EnemyDeathSpawn final {
     std::uint8_t mode{};
 };
 
-inline constexpr std::uint8_t kEm000WeaponActor = 0x20U;  // code 3 (body joint 1)
+// Where the event handler puts a spawn: on body joint `joint` (mode 0 its
+// world, 1 its position only), at the enemy's position (and yaw), or at the
+// position the event came with (the enemy's own for the commands).
+enum class EventPlace : std::uint8_t { joint = 0, actor = 1, given = 2 };
+
+// One spawn of the event handler 0x1401C3130 for `code` (enemy type other
+// than 0x1A), generated from the emulated handler (em000_events.inc).
+struct EnemyEventSpawn final {
+    std::uint8_t code{};
+    char kind{};
+    std::uint16_t id{};
+    EventPlace place{};
+    std::uint8_t joint{};
+    std::uint8_t mode{};
+    float scale{1.0F};  // uniform scale of the spawn matrix (code 3: 2)
+};
+
+inline constexpr std::uint8_t kEm000WeaponActor = 0x20U;  // the event spawns (state: spawn row)
 inline constexpr std::uint8_t kEm000DeathActor = 0x21U;
 inline constexpr std::uint8_t kEm000AttackJoint = 1U;
 inline constexpr std::uint32_t kEm000ScriptSlot = 38U;
 inline constexpr std::uint32_t kEm000EffectSlot = 41U;
 
+// Every spawn the handler makes, by code.
+[[nodiscard]] std::span<const EnemyEventSpawn> em000_event_spawns() noexcept;
+// The events every CComEm000 command sends while its action plays, as
+// (bank, action) of `enemy_class` (CEm000..CEm004: each has its command
+// tables); empty for another class.
+[[nodiscard]] std::span<const EnemyAttackEvent> em000_command_events(std::string_view enemy_class) noexcept;
+// CEm000's.
 [[nodiscard]] std::span<const EnemyAttackEvent> em000_attack_events() noexcept;
 [[nodiscard]] std::span<const EffectBinding> em000_effect_bindings() noexcept;
 [[nodiscard]] bool em000_profile_matches(const dmcresource::Session* session) noexcept;
@@ -64,8 +93,9 @@ inline constexpr std::uint32_t kEm000EffectSlot = 41U;
 
 // Events of `action` whose frame lies in (from, to]; `from` < 0 includes frame 0.
 template <class Fn>
-void for_each_em000_event(std::size_t bank, std::size_t action, float from, float to, Fn&& fn) {
-    const auto events = em000_attack_events();
+void for_each_em000_event(std::size_t bank, std::size_t action, float from, float to, Fn&& fn,
+                          std::string_view enemy_class = "CEm000") {
+    const auto events = em000_command_events(enemy_class);
     for (std::size_t i = 0U; i < events.size(); ++i) {
         const auto& e = events[i];
         if (e.bank != bank || e.action != action) continue;

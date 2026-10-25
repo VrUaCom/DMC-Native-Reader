@@ -239,8 +239,12 @@ std::string effect_title(const EffectChoice& choice) {
     char seconds[32];
     std::snprintf(seconds, sizeof(seconds), " \xC2\xB7 %.1f s", static_cast<double>(choice.frames) / 60.0);
     title += seconds;
-    if (choice.source == EffectChoice::Source::stage) title += " \xC2\xB7 stage bank";
-    if (choice.source == EffectChoice::Source::cutscene) title += " \xC2\xB7 cutscene bank";
+    // A bank that did not come with the file itself: which one.
+    if (choice.source != EffectChoice::Source::own) {
+        title += " \xC2\xB7 " + (choice.bank.empty() ? std::string(choice.source == EffectChoice::Source::stage
+                                                                     ? "stage bank" : "cutscene bank")
+                                                       : choice.bank);
+    }
     const auto owners = effect_sites::owners(choice.kind, choice.id);
     if (!owners.empty()) {
         title += " \xC2\xB7 in the game: ";

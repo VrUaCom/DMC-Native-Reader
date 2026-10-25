@@ -2500,6 +2500,7 @@ std::vector<EffectChoice> effect_choices(const Session* session) {
                     choice.id = record.id;
                     choice.slot = bank.resource_slot;
                     choice.source = source;
+                    choice.bank = host.archive_name;
                     choice.frames = effect_extent(host, kind, record.id, bank.resource_slot, 0);
                     if (kind == 'V') {
                         if (const auto composite = effect_bank::composite_record(record)) {
