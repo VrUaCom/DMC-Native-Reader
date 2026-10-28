@@ -248,7 +248,7 @@ their caller. The caller's bits (1, 2, 0x10) are not traced yet.
   - vtable `0x1404E32C8` at `+0x00`;
   - `0x1404E3118` at `+0x40`;
   - `0x1404E3108` at `+0x58`;
-  - the same value at `+0x70` and at `+0xC90`.
+  - the same value at `+0x70` (`+0xC90` gets 0, not a vtable).
 
   Its other members get vtables `0x1404E3268`, `0x1404E3280` and
   `0x1404E3298`.
@@ -256,3 +256,34 @@ their caller. The caller's bits (1, 2, 0x10) are not traced yet.
   is proven by the constructor (vtable `0x1404E32C8`), not by the offset.
   The methods of owner B are the slots of vtable `0x1404E32C8`, which can be
   read from `.rdata` with its RTTI name.
+
+### Owner B holds two lists laid out like the selector's
+
+The rest of constructor `0x14023EEF0` (`0x14023EF29..0x14023EFD0`):
+
+| Owner B | Written | Same place relative to `+0x40` |
+| --- | --- | --- |
+| +0x40 | vtable `0x1404E3118` | +0x00 |
+| +0x58 | vtable `0x1404E3108` | +0x18 |
+| +0x60, +0x68 | 0 | +0x20, +0x28 |
+| +0x70 | vtable `0x1404E3108` | +0x30 |
+| +0x78, +0x80 | 0 | +0x38, +0x40 |
+| +0xB0 | 0 | +0x70 |
+
+- **Two lists of 0x18 bytes.** `+0x58` and `+0x70` each hold a vtable and
+  two pointers (first, last), 0x18 apart.
+- **They line up with the selector.** Taking `mgr = owner B + 0x40`:
+  - main list `[mgr+0x20]` is the first-pointer of the list at `+0x58`;
+  - secondary list `[mgr+0x38]` is the first-pointer of the list at
+    `+0x70`;
+  - the single light `[mgr+0x70]` is owner `+0xB0`, which is zeroed too.
+
+  The subobject at `+0x40` has its own vtable, `0x1404E3118`.
+- **Hypothesis.** The light manager (or its base) is the subobject of
+  owner B at `+0x40`, and the same owner holds `CLightStatic` at `+0x1D80`.
+  This is a structural match only, not proven.
+- **What would prove it:**
+  - the RTTI of `0x1404E3118`;
+  - a call of `0x1402EE560` whose `rcx` is owner B `+ 0x40`;
+  - a store of an entry address (owner `+0x26A8 + 0x20·k`) into
+    `+0x60`/`+0x68`/`+0x78`/`+0x80` or into another node's `+0x08`/`+0x10`.
