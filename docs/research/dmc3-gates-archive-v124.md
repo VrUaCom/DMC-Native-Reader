@@ -220,3 +220,39 @@ their caller. The caller's bits (1, 2, 0x10) are not traced yet.
   shadow direction. This is not proven: the class of `0x14031FA80` is not
   identified.
 - **`CDrawSCM`** walks both lists.
+
+### Gate 46 v0.5: `0x14022D710 → 0x140058F40` is not LIG2
+
+- **`0x140058F40` is not a LIG2 consumer.** It is a 0x58-byte initializer
+  with no loops and no calls:
+  - it sets `+0xC8 = 1`;
+  - it zeroes `+0xBC`, `+0xD8`, `+0xE0`, `+0xE8`, `+0xF4`, `+0x100`,
+    `+0x108` and `+0x10C`;
+  - it writes `1.0f` to `+0xEC` and `+0xFC`;
+  - it returns `rcx`.
+
+  It has 17 callers. Its neighbours `0x140058FA0` and `0x140058FB0` read and
+  clear bytes of five-channel tables at `+0x108`. The motion script
+  interpreter `0x140058FE0` follows them. So it initializes a motion-side
+  object.
+- **`0x14022D710` is a constructor of another class.** It calls the base
+  constructor `0x140227650`, then writes three vtables:
+  - `0x1404E1970` at `+0x00`;
+  - `0x1404E19F0` at `+0x60`;
+  - `0x1404E1AE8` at `+0xD0`.
+
+  Its `+0x1D80` member is what `0x140058F40` initializes.
+- **The class that holds LIG2 at `+0x1D80`** is the one built by
+  `0x14023EEF0`. That constructor calls `0x14023ECB0` on `this+0x1D80`, and
+  writes:
+  - vtable `0x1404E32C8` at `+0x00`;
+  - `0x1404E3118` at `+0x40`;
+  - `0x1404E3108` at `+0x58`;
+  - the same value at `+0x70` and at `+0xC90`.
+
+  Its other members get vtables `0x1404E3268`, `0x1404E3280` and
+  `0x1404E3298`.
+- **So the same offset `+0x1D80` belongs to different classes.** An owner
+  is proven by the constructor (vtable `0x1404E32C8`), not by the offset.
+  The methods of owner B are the slots of vtable `0x1404E32C8`, which can be
+  read from `.rdata` with its RTTI name.
