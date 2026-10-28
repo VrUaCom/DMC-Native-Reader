@@ -1,5 +1,10 @@
 # Spec: game light records, top-four selection, light matrices
 
+Revision 2: sections 2 and 4 changed (flag bit 2 with mask bit 0x10; the
+selection is an insertion into four slots in list order, not a sort), and
+the manager's single light was added (section 4b). Update the module and
+its tests to this revision; keep every rule not changed here.
+
 Write `app/src/main/cpp/include/dmcresource/game_lights.h` and
 `app/src/main/cpp/modules/game_lights.cpp` (namespace
 `dmcresource::game_lights`, C++23, no third-party headers), and the test
@@ -66,12 +71,18 @@ A record is a candidate when all of these hold:
 3. `type` is 0 or 1;
 4. the list's mask bit is set: `main` needs `mask & 4`, `secondary` needs
    `mask & 8`;
-5. its low mode is allowed. Take `f = flags`. For the secondary list, first
-   clear bit 3 (`f &= 0xF7`). Then `low = f & ~4u` (clear bit 2):
-   - `low == 1` → needs `mask & 3`;
-   - `low == 2` → needs `mask & 2`;
-   - `low == 3` → needs `mask & 1`;
-   - any other `low` → never.
+5. its flags allow it. Take `f = flags`. For the secondary list, first
+   clear bit 3 (`f &= 0xF7`). The record passes when **either** of these
+   holds:
+   - **(a)** `f & 4` and `mask & 0x10`;
+   - **(b)** its low mode allows it, with `low = f & ~4u` (clear bit 2):
+     - `low == 1` → needs `mask & 3`;
+     - `low == 2` → needs `mask & 2`;
+     - `low == 3` → needs `mask & 1`;
+     - any other `low` → (b) does not hold.
+
+   Rules 1–3 are the Reader's: records the module cannot score are left
+   out. Rules 4–5 are the game's.
 
 ## 3. Score
 
@@ -83,10 +94,37 @@ For a candidate and a query point `q`:
 
 A candidate whose score is `<= 0` is dropped.
 
-## 4. Top four
+## 4. Top four: insertion into four slots
 
-Sort the remaining candidates by score, highest first. Among equal scores,
-the record with the **higher index comes first**. Keep at most four.
+There are four slots, in order 0 (best) to 3. Each starts empty with
+score 0. The candidates are visited in **list order**, which for a light
+table is record index 0, 1, ..., 47. For each candidate with score `s`:
+
+1. If `s` is **not strictly greater** than slot 3's score, skip it.
+2. Otherwise put it in slot 3, replacing what was there.
+3. Then, from slot 3 upwards: while the slot above has a score `<=` the
+   moved light's score, swap them.
+
+Consequences, which the tests must check separately:
+- A candidate with score `<= 0` never enters, because empty slots score 0.
+- Among lights already kept, a **later** one with an equal score moves
+  **above** an earlier one.
+- With more than four equal scores, the **first four** visited are kept and
+  later ones are skipped. For five equal scores at indices 0..4, the result
+  is indices 3, 2, 1, 0.
+
+`count` is the number of slots holding a light.
+
+## 4b. The manager's single light
+
+`select_lights` takes an optional extra record (`const LightRecord* single`,
+default null). When it is given and `mask & 2`, after both of the above:
+
+- score it as in section 3, with no eligibility test;
+- move slots 0..2 down to 1..3 (the light in slot 3 is dropped);
+- put it in slot 0, whatever its score.
+
+If it then holds a light, it counts in `count`.
 
 ## 5. Light matrices
 
@@ -99,12 +137,13 @@ struct SelectedLights {
     std::array<float, 16> lv{};                   // 4 rows of 4: vector
 };
 SelectedLights select_lights(const LightTable& table, std::array<float, 3> query,
-                             unsigned mask, ListKind list = ListKind::main) noexcept;
+                             unsigned mask, ListKind list = ListKind::main,
+                             const LightRecord* single = nullptr) noexcept;
 ```
 
 `enum class ListKind : std::uint8_t { main, secondary };`
 
-For each kept light in slot `i` (rows `4i .. 4i+3`):
+For each slot `i` holding a light (rows `4i .. 4i+3`), in slot order:
 
 - `lc` row = `(rgb[0], rgb[1], rgb[2], w)` as floats, with `w = falloff`
   for type 0 and `1` for type 1;
@@ -131,13 +170,24 @@ Build tables in memory (a helper writes the bytes):
   record rejects the table; a non-finite value in an inactive (all zero)
   record cannot occur. `find_light_table` finds a table placed at offset
   0x40 of a larger buffer.
-- Eligibility: each `low` value with masks 1, 2, 3, 4, 5, 6, 7, 11; flag
-  bit 2 is ignored (flags 7 behaves like 3); a secondary record with flags
-  `0x0B` behaves like 3; main needs mask bit 4 and secondary bit 8; type 2
-  and a colour modifier are never selected.
+- Eligibility: each `low` value with masks 1, 2, 3, 4, 5, 6, 7, 11, and the
+  same masks with 0x10 added.
+  - Flags 4 (low 0) pass only with mask bit 0x10.
+  - Flags 7 pass where 3 passes, and also with 0x10.
+  - A secondary record with flags `0x0B` behaves like 3, and `0x08` never
+    passes (its bit 3 is cleared, and bit 2 is not set).
+  - Main needs mask bit 4 and secondary bit 8.
+  - Type 2 and a colour modifier are never selected.
 - Score: type 0 at distance 10 with falloff 0.005 → 0.5; at distance 20 →
   dropped; type 1 → 1.
-- Ordering: five candidates; the top four are in score order; equal scores
-  put the higher index first.
+- Ordering:
+  - five candidates with distinct scores come out in score order;
+  - two equal scores put the later index first;
+  - five equal scores keep indices 3, 2, 1, 0 (index 4 is skipped);
+  - a candidate equal to the fourth score is skipped, one above it enters.
+- Single light:
+  - with mask & 2 it is slot 0 even with a lower score, and the old slot 3
+    is dropped;
+  - without mask & 2, or when null, nothing changes.
 - Matrices: the `lc` and `lv` rows of a type 0 and a type 1 light, exactly
   as in section 5; unused rows are zero.

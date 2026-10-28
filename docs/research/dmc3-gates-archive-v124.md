@@ -200,3 +200,23 @@ entries: links at +0x08/+0x10, record at +0x18.
 - **Mask & 2 adds the manager's single light.** The record of node
   `[mgr+0x70]` is scored and put in the first slot. The other slots move
   down and the last one is dropped.
+
+### Who calls the selector, and with which list bits
+
+The five calls of `0x1402EE560` add these bits to a mask that comes from
+their caller. The caller's bits (1, 2, 0x10) are not traced yet.
+
+| Call site | Function | Mask | Seed (`r9`) |
+| --- | --- | --- | --- |
+| `0x1402FC7CD` | `0x1402FC720` | caller's \| 4 | none |
+| `0x1402FD140` | `0x1402FD040` (`CDrawSCM`) | caller's \| 4 \| 8 | none |
+| `0x1402FD485` | `0x1402FD370` | caller's \| 8 | object + 0x300 (the four slots kept from before) |
+| `0x1402FD4AD` | `0x1402FD370` | caller's \| 8 \| 4 | none |
+| `0x14031FB02` | `0x14031FA80` | 0x1C (4 \| 8 \| 0x10) | none |
+
+- **`0x14031FA80`.** It asks only for flag-4 lights (low bits 0, bit
+  0x10). In LIG2 those are the black records (st000 `(1000, 3000, −5000)`,
+  st001 `(5000, 2500, 0)`). A light direction with no colour suggests a
+  shadow direction. This is not proven: the class of `0x14031FA80` is not
+  identified.
+- **`CDrawSCM`** walks both lists.
