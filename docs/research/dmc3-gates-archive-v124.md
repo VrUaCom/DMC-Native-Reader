@@ -134,3 +134,69 @@ pointer to record `k` (`+0x28 + 0x30·k`).
   (stride 0x20 from `+0x928`, pointer at `+0x18`) or calls through vtable
   `0x1404E3128`. Reaching `0x1402EE560`'s source lists from there would
   prove (or rule out) LIG2 → `CLightMgr`.
+
+## Gate 46: the light lists `0x1402EE560` walks
+
+Gate 46 v0.1 identified the classes from RTTI:
+
+| Vtable | Class |
+| --- | --- |
+| `0x1404E3128` | `CLightStatic`, the LIG2 object |
+| `0x1404E3238` | `CSceneGame` |
+| `0x1404E31C8` | `CGameW` |
+
+`CLightStatic` has one slot: `0x14023FCA0`, its scalar deleting
+destructor. It destroys the 48 entries at `+0x928` and frees 0xF28 bytes
+(the object's size).
+
+### The entries are list nodes
+
+The entry constructor `0x1400F7FF0` builds each 0x20-byte entry as:
+
+| Offset | Content |
+| --- | --- |
+| +0x00 | vtable `0x1404D02B8` (base `0x1404D02A8`, set by the destructor `0x1400F8310`) |
+| +0x08 | a link, set to zero |
+| +0x10 | a link, set to zero |
+| +0x18 | the record pointer (`CLightStatic` constructor) |
+
+### The selector (`rcx` = manager, `rdx` = query, `r8d` = mask, `r9` = optional seed)
+
+It walks lists of exactly these nodes:
+
+- **Main list.** Only when mask & 4. Head `[mgr+0x20]`; each node's record
+  is `[node+0x18]`; next is `[node+0x10]`.
+- **Secondary list.** Only when mask & 8. Head `[mgr+0x38]`, with the same
+  node layout. The record's flags are taken `& 0xF7` first.
+
+So the nodes the selector walks have the same layout as `CLightStatic`'s
+entries: links at +0x08/+0x10, record at +0x18.
+
+**Not proven yet:** the code that links `CLightStatic` entries into
+`mgr+0x20` / `+0x38`. That store is the missing step of LIG2 → light lists.
+
+### Corrections to the Gate 22 rules (from `0x1402EE660..0x1402EE6B3`)
+
+- **Flag bit 2 (value 4) is not ignored.** With mask & 0x10, a record whose
+  flags have bit 2 is a candidate whatever its low mode. The low mode
+  (flags & ~4) can only add to that:
+  - 1 → mask & 3;
+  - 2 → mask & 2;
+  - 3 → mask & 1.
+
+  The LIG2 records with flags 4 (black, low mode 0) are therefore picked
+  when mask & 0x10.
+- **Ties at the fourth slot.** The output is four 0x30-byte slots at
+  `mgr+0x80`, `+0xB0`, `+0xE0` and `+0x110`, score at +0x20. They are seeded
+  from `r9` (0xC0 bytes) or zeroed.
+  - A new candidate is scored into the last slot only if its score is
+    **greater** than the last slot's.
+  - It then bubbles up while the slot above scores `<=` it.
+  - With more than four equal scores, the **first four in list order** are
+    kept, later ones ahead of earlier ones. They are not the highest record
+    indices.
+  - The list order is the linking order, which is not proven to be the
+    record order.
+- **Mask & 2 adds the manager's single light.** The record of node
+  `[mgr+0x70]` is scored and put in the first slot. The other slots move
+  down and the last one is dropped.
