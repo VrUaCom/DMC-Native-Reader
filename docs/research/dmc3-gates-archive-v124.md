@@ -487,3 +487,70 @@ Still open:
 - whether node `[m+0xFA]` matches the Reader's model centre;
 - how the stage shader's point lights (`u_light_x/y/z`, falloff) are
   filled: `0x1402FC850` writes directions, not positions.
+
+## Gate 48: the stage path (`stage_lit`'s point lights)
+
+### The callers and their masks (the masks are fields of the drawn object)
+
+| Function | Does | Arguments |
+| --- | --- | --- |
+| `0x140089900` (holder `X`) | sets `X+0x573 = 1` | jumps to `0x1402FC670(X+0x50, [0x140C90E38], mask = byte [X+0x572])` |
+| `0x14008B5D0` | unless `X+0x570`, runs every frame | `0x1402FD2B0(X+0x50, [0x140C90E38], seeded = ([X+0x573] == 1), mask = byte [X+0x572])` |
+| `0x14008B500` (holder `Y`, models) | unless `Y+0x740` | `0x1402FD040(Y+0x80, [0x140C90E38], mask = dword [Y+0x744])` |
+
+`[0x140C90E38]` is the global `CLightMgr` pointer. `0x1402D58B0` also
+writes its `+0x70`, the single light.
+
+### `0x1402FC670` / `0x1402FD2B0`: one call per object of the model
+
+- **The objects.** Count `[m+0xE8]` (u16), records of 0x3C0 bytes at
+  `[m+0x100]`. Each object's node is `byte [obj+0x0E]`, and its matrix is
+  `[m+0x188] + 0x40·node`.
+- **Static lights.** `0x1402FC670` calls `0x1402FC720(obj, mgr, matrix,
+  mask)` once. That stores the static lights at `obj+0x300` (Gate 48 v0.1).
+- **Every frame.** `0x1402FD2B0` calls `0x1402FD370(obj, mgr, matrix,
+  !seeded, mask)`.
+
+### `0x1402FD370(obj, mgr, matrix, full, mask)`
+
+1. **Query.** `q` = the matrix's translation, with w = 1.
+2. **Inverse rotation.** `M = transpose(matrix)` (`0x140031240`), then
+   `M[0..2].w = 0`: the rotation's inverse, with no translation.
+3. **Selection.**
+   - seeded (`full == 0`): `0x1402EE560(mgr, q, mask|8, seed = obj+0x300)`,
+     i.e. the static lights plus the dynamic list;
+   - otherwise: `0x1402EE560(mgr, q, mask|8|4, null)`.
+4. **Light positions.** `Lv` = the four slots' `+0x00` rows, transformed by
+   `M` (`0x140030E40`). This gives the light positions in the object's
+   **local** space, relative to the node's origin.
+5. **Colours.** `Lc` = the slots' `+0x10` rows.
+6. **Packing.** `0x1402FCED0(obj, Lc, Lv_local)`.
+7. **Ambient.** `0x1402FA6D0(obj, mgr+0x50)` when `mask == 1` exactly,
+   otherwise `0x1402FA6D0(obj, mgr+0x60)`. This is the opposite test from
+   the models, where `mask == 2` picks `+0x60`.
+
+### `0x1402FCED0(obj, Lc, Lv)`: the buffer `B = [obj + 0x50 + 8·k]`
+
+- **Colours.** `B+0xB0..+0xEF`: the four `Lc` rows, each through
+  `0x1400311E0(row, row, K)`:
+  - xyz are multiplied by `K = float [0x14035D558]`;
+  - w is kept, by the `andps` mask at `0x1405D9F30`.
+  - **K is in `.rdata`; not read yet.**
+- **Positions.** `B+0xF0..+0x12F`: the four `Lv` rows, then transposed.
+  The rows become the shader's `u_light_x`, `u_light_y`, `u_light_z` and
+  `u_light_falloff`.
+- **All four lights are used** (the model uses three).
+- **Falloff = `Lv.w`.** That is the record's `+0x1C` (aux) for type 0, and
+  0 for type 1. It is not the `+0x20` falloff the selector ranks with.
+
+### `0x1402FA6D0(obj, ambient)`
+
+`B+0x140 = *ambient`, copied as is: no K, no scaling.
+
+### Open
+
+- **The value of `K`** (`[0x14035D558]`, 31 references) and the mask at
+  `0x1405D9F30`.
+- **The ambient's units in the stage shader.** It is copied raw (0..255),
+  while the colours get K.
+- **Who sets the object masks** `X+0x572` and `Y+0x744`.
