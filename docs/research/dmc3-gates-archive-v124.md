@@ -90,3 +90,47 @@ The rules were written clean-room (`docs/cleanroom/specs-v124/`):
     - st002: only Dante changes, tinted by the violet light nearby. Its
       rooms have no vertex colours and keep the Reader's shaders.
     - st006 has no point lights.
+
+## Gates 44–45, checked against our disassembly
+
+Gates 44–45 traced the switch at `0x1402AA2FE`: `lea rcx, [rdi+0x940]`,
+then `call 0x140089DE0`, which returns `rcx + 0x80`. Read further:
+
+- **`0x140089DE0` is not a light function.** It is the body
+  `lea rax, [rcx+0x80]; ret`, called from 2 695 sites. The linker folded
+  every identical "address of the member at +0x80" accessor into it, so
+  its callers say nothing about lights.
+- **What the branch does.** The function `0x1402AA2B0` is a step machine
+  on `this+0x09` (steps 0..12). The branch at `0x1402AA300` calls
+  `0x1402F7350(model, 1)` and `0x1402F7350(model, 2)` on the model at
+  `this+0x940` (+0x80). Then it advances the step.
+- **`0x1402F7350(model, i)`.** If `i < model+0xE8` (u16, object count),
+  it clears bit 0 of the first word of object `i`. Objects are
+  `model+0x100 + i·0x380`, the MOD runtime objects. It hides object `i`.
+  - `0x1402F74E0` sets the same bit (show).
+  - `0x1402F73A0` clears `model+0xE0` bit 0 and loops over every object
+    (hide all).
+- **So the scene's `+0x940` is a model** whose objects 1 and 2 are hidden
+  at that step. It is not LIG2. The match with the LIG2 object's `+0x940`
+  is a coincidence.
+
+### The LIG2 object itself (constructor `0x14023ECB0`)
+
+| Offset | Content |
+| --- | --- |
+| +0x00 | vtable `0x1404E3128` |
+| +0x08 | `LIG2` |
+| +0x28 | the 0x900 bytes of records (48 × 0x30) |
+| +0x928 | 48 entries of 0x20 bytes, built by `0x140345B24` (constructor `0x1400F7FF0`, destructor `0x1400F8310`) |
+
+Each entry `k` holds at its `+0x18` (object `+0x940 + 0x20·k`) the
+pointer to record `k` (`+0x28 + 0x30·k`).
+
+- **Who builds it.** It is constructed into `this+0x4078` by `0x14023EA50`
+  and into `this+0x1D80` by `0x14023EEF0` (two different owners). The
+  vtable is also written at `0x14023F616`, `0x14023F75D`, `0x14023F957` and
+  `0x14023FCB9`.
+- **Next lead for the binding.** Find the code that walks the entries
+  (stride 0x20 from `+0x928`, pointer at `+0x18`) or calls through vtable
+  `0x1404E3128`. Reaching `0x1402EE560`'s source lists from there would
+  prove (or rule out) LIG2 → `CLightMgr`.
