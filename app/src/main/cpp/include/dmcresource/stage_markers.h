@@ -81,6 +81,8 @@ struct StageConfig final {
     std::vector<Member> members;
     std::vector<Marker> markers;
     float extent{1.0F};  // the markers' horizontal span, for drawing sizes
+    // Its light table (LIG2, a member of the archive), null when none.
+    std::shared_ptr<const game_lights::LightTable> lights;
 };
 
 // Reads a stNNNcfg.pac (nested PACs to depth 3) or a single member; nullptr
@@ -124,6 +126,10 @@ struct PlacedEffect final {
 // from those files and the cutscene clips; none without a configuration of
 // this stage.
 [[nodiscard]] std::optional<ViewState::Fog> stage_fog(std::string_view stage_name);
+
+// The stage's light table from its configuration (LIG2, game_lights.h);
+// null without a configuration of this stage or when it has none.
+[[nodiscard]] std::shared_ptr<const game_lights::LightTable> stage_lights(std::string_view stage_name);
 
 // The 3D drawing of the markers in room coordinates: spawn and placement
 // points as posts with a foot cross and a heading arrow, zones as boxes

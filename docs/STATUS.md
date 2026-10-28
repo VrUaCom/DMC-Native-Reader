@@ -354,6 +354,16 @@ APK verifier.
       an emulator (research dmc3-em000-events-v123.md).
     - ⋮ → Effect bank (st*_effect.pac, static_effect.pac): any effect bank
       joins the Effects list; each row names its bank.
+  - v124 (from the Rengine gates archive, written clean-room from two
+    specifications in `docs/cleanroom/specs-v124/`):
+    - Object material: every MOD and SCM object passes its nearest-filter
+      flag and part alpha (128/255, or 1 above 0x80) to the GPU batches
+      (`game_material.h`).
+    - Settings → Graphics → Stage lights (experimental): the stage
+      configuration's LIG2 table lights the DMC3 stage shader (four point
+      lights) and the models' rig, through the game's choice of the four
+      lights (`game_lights.h`). Off by default; that LIG2 is the game's
+      live light source is not proven (research dmc3-gates-archive-v124.md).
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

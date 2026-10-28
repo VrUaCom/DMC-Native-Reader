@@ -947,12 +947,14 @@ public final class MainActivity extends Activity {
     private static final String SET_GPU_ANISOTROPY = "set.gpuAnisotropy";
     private static final String SET_GPU_PRESENT = "set.gpuPresent";
     private static final String SET_DMC3_SHADERS = "set.dmc3Shaders";
+    private static final String SET_GAME_LIGHTS = "set.gameLights";
 
     private void applyViewerSettings() {
         final android.content.SharedPreferences p = prefs();
         NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
         NativeBridge.setGpuPresent(p.getBoolean(SET_GPU_PRESENT, true));
         NativeBridge.setDmc3Shaders(p.getBoolean(SET_DMC3_SHADERS, true));
+        NativeBridge.setGameLights(p.getBoolean(SET_GAME_LIGHTS, false));
         applyCameraChoices();
         NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
                 p.getInt(SET_GPU_ANISOTROPY, 8));
@@ -1232,6 +1234,7 @@ public final class MainActivity extends Activity {
                     .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x")
                     .append(", shown ").append(p.getBoolean(SET_GPU_PRESENT, true) ? "directly" : "through a picture")
                     .append(", shaders ").append(p.getBoolean(SET_DMC3_SHADERS, true) ? "DMC3" : "Reader")
+                    .append(p.getBoolean(SET_GAME_LIGHTS, false) ? " with the stage's lights" : "")
                     .append(", ");
         }
         text.append(p.getBoolean(SET_SMOOTH, false) ? "smooth" : "pixel").append(" textures");
@@ -1328,6 +1331,13 @@ public final class MainActivity extends Activity {
                 + "what the game has a shader for: textured models and stages lit by their vertex colours, "
                 + "with the game's fog. The rest, and every frame with \"Reader's own\", uses the Reader's "
                 + "shaders. Info under Renderer says which ones the last frame used."));
+        content.addView(choiceRow("Stage lights (DMC3 shaders, experimental)", new String[]{"Off", "On"},
+                p.getBoolean(SET_GAME_LIGHTS, false) ? 1 : 0,
+                i -> { p.edit().putBoolean(SET_GAME_LIGHTS, i == 1).apply(); apply.run(); renderView.renderNow(); }));
+        content.addView(hint("On: the light table of the stage's configuration (stNNNcfg.pac, LIG2) lights the "
+                + "stage and the models, through the game's choice of the four nearest lights. That this table "
+                + "is the game's live light source is not proven yet, so the picture is a candidate, not the "
+                + "game's. Needs the configuration loaded (⋮ → Stage config (stNNNcfg.pac))."));
         final int[] msaa = {0, 2, 4, 8};
         content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},
                 indexOf(msaa, p.getInt(SET_GPU_MSAA, 4), 2),

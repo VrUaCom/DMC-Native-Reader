@@ -24,9 +24,9 @@ The test `dmc3_shaders` keeps this page and the table in step.
 
 | Reader draws | Vertex shader | Fragment shader | Notes |
 | --- | --- | --- | --- |
-| Textured model, no vertex colours | `model_lit.vert` (dmc3_mod) | `texture_modulate[_fog].frag` (tex_col_mod2[_fog]) | The vertices arrive posed, so every vertex follows bone 0, the identity. The light rig is the Reader's camera light: two opposite lights and a constant term. Fog is one amount for the model, taken at its centre, as the game does per part. |
+| Textured model, no vertex colours | `model_lit.vert` (dmc3_mod) | `texture_modulate[_fog].frag` (tex_col_mod2[_fog]) | The vertices arrive posed, so every vertex follows bone 0, the identity. The light rig is the Reader's camera light: two opposite lights and a constant term. With Stage lights on it is the stage's instead: up to three of its LIG2 lights, the game's top four for the model's centre, plus a constant term (both model shaders). Part alpha: the object's (128/255, or 1 above 0x80; `game_material.h`). Fog is one amount for the model, taken at its centre, as the game does per part. |
 | Textured model with vertex colours | `effect_model_lit.vert` (dmc3_efm) | `texture_modulate[_fog].frag` | Alpha is the texel's; the game's shader ignores the vertex alpha. |
-| Stage lit by its vertex colours: opaque texels | `stage_lit[_fog].vert` (dmc3_stg[_fog]) | `texture_modulate[_fog].frag` | Alpha test ≥ 31.5/255, or ≥ 239.5/255 on soft-alpha textures. No point lights; the ambient makes 0x80 equal 1. |
+| Stage lit by its vertex colours: opaque texels | `stage_lit[_fog].vert` (dmc3_stg[_fog]) | `texture_modulate[_fog].frag` | Alpha test ≥ 31.5/255, or ≥ 239.5/255 on soft-alpha textures. The ambient makes 0x80 equal 1. Point lights only with Stage lights on: the four of the stage configuration's LIG2 table nearest the framing centre (`game_lights.h`). |
 | The same: soft texels | `stage_lit[_fog].vert` | `texture_modulate[_fog].frag` | Alpha test < 239.5/255, blended. |
 | Added and subtracted models | as above | as above | Fog colour is black, so they fade into the fog. |
 

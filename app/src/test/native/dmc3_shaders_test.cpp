@@ -94,7 +94,23 @@ void choices() {
     assert(d.light_directions[4] == 0.6F && d.light_directions[5] == -0.6F && d.light_directions[15] == 1.0F);
     assert(std::fabs(d.light_colours[0] - 0.42F * 128.0F) < 1.0e-3F);
     assert(std::fabs(d.light_colours[12] - 0.72F * 128.0F) < 1.0e-3F);
-    assert(d.part_colour == 0.5F && d.part_alpha == 0.5F);
+    // The object's part alpha (game_material.h): 128/255, or 1 above 0x80.
+    assert(d.part_colour == 0.5F && d.part_alpha == 128.0F / 255.0F);
+    auto overridden = model;
+    overridden.part_alpha = 1.0F;
+    assert(dmc3_draw(overridden, GpuPass::model, frame_with(true, false)).part_alpha == 1.0F);
+
+    // The stage's lights (stage_lights_frame): one row and colour column
+    // per light, the constant term; coloured effect models keep theirs.
+    auto lit = frame_with(true, false);
+    lit.dmc3.model_light_count = 2;
+    lit.dmc3.model_light_directions = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, -1.0F, 0.0F, 0.0F, 0.0F};
+    lit.dmc3.model_light_colours = {240.0F, 144.0F, 104.0F, 20.0F, 45.0F, 50.0F, 0.0F, 0.0F, 0.0F};
+    d = dmc3_draw(model, GpuPass::model, lit);
+    assert(d.light_directions[0] == 1.0F && d.light_directions[9] == -1.0F && d.light_directions[15] == 1.0F);
+    assert(d.light_directions[4] == 0.0F && d.light_directions[1] == 0.0F);
+    assert(d.light_colours[0] == 240.0F && d.light_colours[5] == 45.0F && d.light_colours[8] == 0.0F);
+    assert(std::fabs(d.light_colours[12] - 0.45F * 128.0F) < 1.0e-3F);
 
     // With fog: the fog variant, the frame's colour, the model's amount.
     d = dmc3_draw(model, GpuPass::model, frame_with(true, true));
@@ -134,6 +150,14 @@ void choices() {
            1.0e-6F);
     d = dmc3_draw(room, GpuPass::room_soft, frame_with(true, false));
     assert(d.vertex == Shader::stage_lit_vert && d.alpha_func == AlphaFunc::less);
+    assert(d.light_colour[0] == 0.0F && d.light_falloff[0] == 0.0F);
+    auto lights = frame_with(true, false);
+    lights.dmc3.stage_light_count = 1;
+    lights.dmc3.stage_light_x = {450.0F, 0.0F, 0.0F, 0.0F};
+    lights.dmc3.stage_light_falloff = {1.0e-6F, 0.0F, 0.0F, 0.0F};
+    lights.dmc3.stage_light_colour[0] = 0.5F;
+    d = dmc3_draw(room, GpuPass::room_soft, lights);
+    assert(d.light_x[0] == 450.0F && d.light_falloff[0] == 1.0e-6F && d.light_colour[0] == 0.5F);
 
     // Light shafts and stages the Reader lights itself keep its shaders.
     auto shaft = room;

@@ -1210,7 +1210,7 @@ private:
     }
 
     void draw_batch(const GpuBatch& batch, int mode, bool smooth, const GpuViewFrame& frame) {
-        bind_texture(u_.textured, batch.texture, smooth);
+        bind_texture(u_.textured, batch.texture, smooth && !batch.nearest);
         glUniform1i(u_.mode, mode);
         glUniform1i(u_.colored, batch.colored ? 1 : 0);
         glUniform1i(u_.translucent, batch.translucent ? 1 : 0);
@@ -1261,6 +1261,11 @@ private:
         glUniform4f(program->part_colour, d.part_colour, d.part_colour, d.part_colour, d.fog_amount);
         glUniform1f(program->part_alpha, d.part_alpha);
         glUniform3f(program->ambient, d.ambient, d.ambient, d.ambient);
+        glUniform4fv(program->light_x, 1, d.light_x.data());
+        glUniform4fv(program->light_y, 1, d.light_y.data());
+        glUniform4fv(program->light_z, 1, d.light_z.data());
+        glUniform4fv(program->light_falloff, 1, d.light_falloff.data());
+        glUniform4fv(program->light_colour, 4, d.light_colour.data());
         glUniform3f(program->fog_colour, d.fog_colour[0], d.fog_colour[1], d.fog_colour[2]);
         glUniform2f(program->fog_coeffs, frame.dmc3.fog_coeffs[0], frame.dmc3.fog_coeffs[1]);
         glUniform1i(program->alpha_test, d.alpha_func == dmcresource::dmc3::AlphaFunc::off ? 0 : 1);
@@ -1278,7 +1283,7 @@ private:
         }
         // u_uv_scroll is in the shaders' fixed point (1/4096).
         glUniform2f(program->uv_scroll, su * 4096.0F, sv * 4096.0F);
-        bind_texture(-1, batch.texture, smooth);
+        bind_texture(-1, batch.texture, smooth && !batch.nearest);
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(batch.first), static_cast<GLsizei>(batch.count));
         ++dmc3_batches_;
         used_[static_cast<std::size_t>(d.vertex)] = true;

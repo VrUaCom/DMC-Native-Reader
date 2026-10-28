@@ -2418,6 +2418,11 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
         } else if (out->room != nullptr) {
             if (const auto fog = stage_markers::stage_fog(out->room->name)) view.fog = *fog;
         }
+        if (session.stage != nullptr) {
+            view.stage_lights = stage_markers::stage_lights(session.stage->name);
+        } else if (out->room != nullptr) {
+            view.stage_lights = stage_markers::stage_lights(out->room->name);
+        }
     }
     // Attack collision shapes on the current pose (debug meshes at000-at003).
     if (!view.uv_layout && session.collision != nullptr && has_render_flag(flags, RenderFlag::Collision)) {

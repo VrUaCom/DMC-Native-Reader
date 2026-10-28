@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "dmcresource/camera_post.h"
+#include "dmcresource/game_lights.h"
+#include <memory>
 #include <span>
 
 #include "dmcresource/image_preview.h"
@@ -112,6 +114,10 @@ struct ViewState {
         float far_alpha{};
     };
     Fog fog{};
+    // The light table (LIG2) of the configuration of the stage or room
+    // drawn; the DMC3 shaders light with it when the stage lights are on
+    // (set_game_lights_enabled). Null: none.
+    std::shared_ptr<const game_lights::LightTable> stage_lights;
     // The camera turned about its own axis (radians; positive clockwise,
     // the picture turning the other way): the photo camera's roll.
     float roll_radians{};

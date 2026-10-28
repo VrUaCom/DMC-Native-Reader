@@ -1,5 +1,6 @@
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/frame_profile.h"
+#include "dmcresource/game_material.h"
 #include "dmcresource/matrix_ops.h"
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/raster_card.h"
@@ -919,7 +920,7 @@ struct RoomFrame {
         const float light = colored && !neutral ? 1.0F : (neutral ? 0.45F + 0.55F * facing : 0.7F + 0.3F * facing);
         const bool translucent = soft != nullptr && (*soft)[t / 3U] != 0U && !neutral;
         // Additive / subtractive geometry (light shafts): the vertex blend channel.
-        const std::uint8_t blend_mode = rm.has_blend0() && !neutral ? rm.blend0[idx[0]] : 0U;
+        const std::uint8_t blend_mode = rm.has_blend0() && !neutral ? game_material::material_blend(rm.blend0[idx[0]]) : 0U;
         const bool blended = blend_mode == 2U || blend_mode == 3U;
         // Scrolling textures (the sky's clouds): an offset by the room clock.
         float scroll_u = 0.0F, scroll_v = 0.0F;
@@ -1766,7 +1767,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
                 }
             }
 
-            const std::uint8_t blend_mode = mesh.has_blend0() ? mesh.blend0[ia] : 0U;
+            const std::uint8_t blend_mode = mesh.has_blend0() ? game_material::material_blend(mesh.blend0[ia]) : 0U;
             const ImagePreview* texture = nullptr;
             if (textured) {
                 const auto slot = (*triangle_texture_slots)[t / 3U];
@@ -1973,6 +1974,70 @@ std::atomic<GpuViewBackend*> g_gpu_backend{nullptr};
 std::atomic<bool> g_gpu_enabled{true};
 std::atomic<bool> g_gpu_present{true};
 std::atomic<bool> g_dmc3_shaders{true};
+std::atomic<bool> g_game_lights{false};
+
+// The stage's lights (game_lights.h). Masks of the main list: the stage
+// takes the point lights (low mode 3 and 1), the models every kind. A
+// stage light's colour is scaled so a vertex facing it at its best distance
+// gets about its colour (the shader's facing is not normalised: the reach
+// times the room normal, the sum of three vertex normals). Calibrated by
+// eye: the game's own scale is not known.
+constexpr unsigned kStageLightMask = 4U | 1U;
+constexpr unsigned kModelLightMask = 4U | 2U | 1U;
+constexpr float kRoomNormalLength = 3.0F;
+constexpr float kStageLightGain = 1.25F;
+constexpr float kModelLightAmbient = 0.45F;  // the rig's constant term, 1 = 128
+
+// A point of the frame (model space) in room coordinates: room_place undone.
+Vec3 room_unplace(const ViewState& view, const Vec3& p) {
+    const float c = std::cos(view.room_yaw), s = std::sin(view.room_yaw);
+    const float x = p.x - view.room_offset.x - view.room_pivot.x;
+    const float z = p.z - view.room_offset.z - view.room_pivot.z;
+    return {c * x - s * z + view.room_pivot.x, p.y - view.room_offset.y, s * x + c * z + view.room_pivot.z};
+}
+
+// The stage's lights for the frame: the four the game would pick for the
+// framing centre (the stage) and for the model's centre (its rig).
+void stage_lights_frame(const ViewState& view, const Vec3& centre, const Vec3& model_centre,
+                        GpuViewFrame::Dmc3& out) {
+    if (!g_game_lights.load() || view.stage_lights == nullptr) return;
+    const auto& table = *view.stage_lights;
+    const Vec3 q = room_unplace(view, centre);
+    const auto stage = game_lights::select_lights(table, {q.x, q.y, q.z}, kStageLightMask);
+    for (int i = 0; i < stage.count; ++i) {
+        const auto& record = table.records[static_cast<std::size_t>(stage.index[static_cast<std::size_t>(i)])];
+        const auto row = static_cast<std::size_t>(i * 4);
+        const auto k = static_cast<std::size_t>(i);
+        const float dx = stage.lv[row], dy = stage.lv[row + 1U], dz = stage.lv[row + 2U];
+        out.stage_light_x[k] = q.x + dx;
+        out.stage_light_y[k] = q.y + dy;
+        out.stage_light_z[k] = q.z + dz;
+        const bool point = record.type == 0U && record.falloff > 0.0F;
+        out.stage_light_falloff[k] = point ? record.falloff : 0.0F;
+        const float reach = point ? 1.0F / std::sqrt(record.falloff) : std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float scale = kStageLightGain / (255.0F * std::max(reach, 1.0F) * kRoomNormalLength);
+        for (std::size_t c = 0U; c < 3U; ++c) out.stage_light_colour[row + c] = record.rgb[c] * scale;
+    }
+    out.stage_light_count = stage.count;
+    const Vec3 m = room_unplace(view, model_centre);
+    const auto model = game_lights::select_lights(table, {m.x, m.y, m.z}, kModelLightMask);
+    int used = 0;
+    for (int i = 0; i < model.count && used < 3; ++i) {
+        const auto row = static_cast<std::size_t>(i * 4);
+        const auto& record = table.records[static_cast<std::size_t>(model.index[static_cast<std::size_t>(i)])];
+        const Vec3 d = room_turn(view, {model.lv[row], model.lv[row + 1U], model.lv[row + 2U]});
+        const float length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (!(length > 0.0F)) continue;
+        const auto at = static_cast<std::size_t>(used * 3);
+        out.model_light_directions[at] = d.x / length;
+        out.model_light_directions[at + 1U] = d.y / length;
+        out.model_light_directions[at + 2U] = d.z / length;
+        const float weight = model.score[static_cast<std::size_t>(i)];
+        for (std::size_t c = 0U; c < 3U; ++c) out.model_light_colours[at + c] = record.rgb[c] * weight;
+        ++used;
+    }
+    out.model_light_count = used;
+}
 std::atomic<std::uint64_t> g_presented_frames{0U};
 std::mutex g_shader_stats_mutex;
 GpuShaderStats g_shader_stats;
@@ -1981,11 +2046,13 @@ GpuShaderStats g_shader_stats;
 // fog has one colour: the far one when the near end has no fog (its colour
 // then hardly shows); a fog that changes colour otherwise keeps the Reader's
 // shaders.
-GpuViewFrame::Dmc3 dmc3_frame(const ViewState& view, float camera_distance) {
+GpuViewFrame::Dmc3 dmc3_frame(const ViewState& view, float camera_distance, const Vec3& centre,
+                              const Vec3& model_centre) {
     GpuViewFrame::Dmc3 out;
     out.enabled = dmc3_shaders_enabled();
     const Vec3 l = model_light_direction(view.yaw_radians, view.pitch_radians);
     out.light_direction = {l.x, l.y, l.z};
+    if (out.enabled) stage_lights_frame(view, centre, model_centre, out);
     const auto& f = view.fog;
     if (!out.enabled || !f.enabled) return out;
     const float start = f.start, end = f.end;
@@ -2105,7 +2172,8 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
     for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
         const auto ia = mesh.indices[t];
         if (ia >= n || mesh.indices[t + 1U] >= n || mesh.indices[t + 2U] >= n) continue;
-        const std::uint8_t blend_mode = mesh.has_blend0() ? mesh.blend0[ia] : 0U;
+        const std::uint8_t material = mesh.has_blend0() ? mesh.blend0[ia] : 0U;
+        const std::uint8_t blend_mode = game_material::material_blend(material);
         const ImagePreview* texture = nullptr;
         if (textured) {
             const auto slot = (*triangle_texture_slots)[t / 3U];
@@ -2128,9 +2196,12 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
         key.colored = colored && texture != nullptr;
         key.light_base = lit ? (neutral ? 0.45F : 0.72F) : 1.0F;
         key.light_gain = lit ? (neutral ? 0.85F : 0.42F) : 0.0F;
+        key.nearest = game_material::material_nearest(material);
+        key.part_alpha = game_material::material_part_alpha(material);
         const auto same = [&key](const GpuBatch& b) {
             return b.texture == key.texture && b.kind == key.kind && b.colored == key.colored &&
-                   b.light_base == key.light_base && b.light_gain == key.light_gain;
+                   b.light_base == key.light_base && b.light_gain == key.light_gain && b.nearest == key.nearest &&
+                   b.part_alpha == key.part_alpha;
         };
         if (buckets.empty() || !same(buckets[last].batch)) {
             last = buckets.size();
@@ -2226,16 +2297,22 @@ GpuGeometry build_room_geometry(const ViewState& view) {
         key.light_base = key.colored ? 1.0F : (neutral ? 0.45F : 0.7F);
         key.light_gain = key.colored ? 0.0F : (neutral ? 0.55F : 0.3F);
         key.translucent = soft != nullptr && (*soft)[t / 3U] != 0U && !neutral;
-        const std::uint8_t blend = rm.has_blend0() && !neutral ? rm.blend0[i0] : 0U;
+        const std::uint8_t material = rm.has_blend0() && !neutral ? rm.blend0[i0] : 0U;
+        const std::uint8_t blend = game_material::material_blend(material);
         key.kind = blend == 2U ? GpuBatchKind::room_additive
             : blend == 3U      ? GpuBatchKind::room_subtractive
                                : GpuBatchKind::room;
         key.scroll_slot = textured ? slot : kNoTextureSlot;
+        key.nearest = game_material::material_nearest(material);
+        key.part_alpha = game_material::material_part_alpha(material);
         const auto [tex_it, tex_new] =
             texture_ids.try_emplace(texture, static_cast<std::uint32_t>(texture_ids.size()));
         (void)tex_new;
         const int light_class = key.colored ? 0 : (neutral ? 1 : 2);
-        const std::uint64_t k = (static_cast<std::uint64_t>(tex_it->second) << 40U) ^
+        // Bits: texture 42.., material (nearest, alpha) 40..41, scroll slot
+        // 8..39, kind 4..7, translucent 3, light class 0..1.
+        const std::uint64_t k = (static_cast<std::uint64_t>(tex_it->second) << 42U) ^
+            (static_cast<std::uint64_t>((material >> 4U) & 3U) << 40U) ^
             (static_cast<std::uint64_t>(key.scroll_slot) << 8U) ^
             (static_cast<std::uint64_t>(key.kind) << 4U) ^ (static_cast<std::uint64_t>(key.translucent) << 3U) ^
             static_cast<std::uint64_t>(light_class);
@@ -2349,7 +2426,18 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
     out.smooth_model = view.smooth_textures;
     out.smooth_room = true;
     out.model = build_model_geometry(mesh, view, triangle_texture_slots, textures, frame.radius);
-    out.dmc3 = dmc3_frame(view, frame.camera_distance);
+    Vec3 model_centre = frame.center;
+    if (!mesh.vertices.empty()) {
+        Vec3 sum{};
+        for (const auto& v : mesh.vertices) {
+            sum.x += v.x;
+            sum.y += v.y;
+            sum.z += v.z;
+        }
+        const float inv = 1.0F / static_cast<float>(mesh.vertices.size());
+        model_centre = {sum.x * inv, sum.y * inv, sum.z * inv};
+    }
+    out.dmc3 = dmc3_frame(view, frame.camera_distance, frame.center, model_centre);
     if (view.fog.enabled) {
         const auto& f = view.fog;
         out.fog = {.enabled = true, .start = f.start, .end = f.end,
@@ -2436,6 +2524,8 @@ void set_gpu_present_enabled(bool enabled) noexcept { g_gpu_present.store(enable
 bool gpu_present_enabled() noexcept { return g_gpu_present.load(); }
 bool gpu_view_enabled() noexcept { return g_gpu_enabled.load(); }
 void set_dmc3_shaders_enabled(bool enabled) noexcept { g_dmc3_shaders.store(enabled); }
+void set_game_lights_enabled(bool enabled) noexcept { g_game_lights.store(enabled); }
+bool game_lights_enabled() noexcept { return g_game_lights.load(); }
 bool dmc3_shaders_enabled() noexcept { return g_dmc3_shaders.load(); }
 
 void set_gpu_shader_stats(GpuShaderStats stats) {
@@ -2483,6 +2573,8 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
     const auto& d = frame.dmc3;
     // Untextured surfaces are the Reader's grey preview; the game has none.
     if (!d.enabled || batch.texture == nullptr) return out;
+    // The object's part alpha (MDL_PARTS_COLOR_PKT alpha; game_material.h).
+    out.part_alpha = batch.part_alpha;
     const bool layered = batch.kind == GpuBatchKind::model_additive || batch.kind == GpuBatchKind::model_subtractive;
     if (pass == GpuPass::model) {
         // Characters (dmc3_mod) and, with vertex colours, effect models
@@ -2508,6 +2600,22 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
             out.light_colours[static_cast<std::size_t>(4 + k)] = batch.light_gain * unit;
             out.light_colours[static_cast<std::size_t>(12 + k)] = batch.light_base * unit;
         }
+        // The stage's lights instead (all but added / subtracted surfaces):
+        // a row and a colour column each, and the constant term.
+        if (d.model_light_count > 0 && !layered) {
+            const float scale = unit / 128.0F;
+            out.light_directions = {};
+            out.light_colours = {};
+            for (int i = 0; i < d.model_light_count; ++i) {
+                for (int c = 0; c < 3; ++c) {
+                    const auto at = static_cast<std::size_t>(i * 3 + c);
+                    out.light_directions[static_cast<std::size_t>(c * 4 + i)] = d.model_light_directions[at];
+                    out.light_colours[static_cast<std::size_t>(i * 4 + c)] = d.model_light_colours[at] * scale;
+                }
+            }
+            out.light_directions[15] = 1.0F;
+            for (std::size_t c = 0U; c < 3U; ++c) out.light_colours[12U + c] = kModelLightAmbient * unit;
+        }
         return out;
     }
     // The stage (dmc3_stg): its vertex colours carry the light, so only rooms
@@ -2521,6 +2629,13 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
     if (d.fog) out.fog_colour = d.fog_colour;
     // 0x80 is 1: ambient x colour / 255 x 2 = colour / 128.
     out.ambient = 255.0F / 256.0F;
+    if (d.stage_light_count > 0) {
+        out.light_x = d.stage_light_x;
+        out.light_y = d.stage_light_y;
+        out.light_z = d.stage_light_z;
+        out.light_falloff = d.stage_light_falloff;
+        out.light_colour = d.stage_light_colour;
+    }
     if (pass == GpuPass::room_opaque) {
         out.alpha_func = AlphaFunc::greater_equal;
         out.alpha_ref = (batch.translucent ? 239.5F : 31.5F) / 255.0F;

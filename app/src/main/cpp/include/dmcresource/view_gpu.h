@@ -57,6 +57,10 @@ struct GpuBatch final {
     float light_base{1.0F};
     float light_gain{0.0F};
     std::uint32_t scroll_slot{kNoTextureSlot};  // room texture slot (scrolls)
+    // The object's material (game_material.h): point sampling, and the
+    // part alpha the DMC3 shaders draw with (128/255, or 1 above 0x80).
+    bool nearest{};
+    float part_alpha{128.0F / 255.0F};
 };
 
 struct GpuGeometry final {
@@ -202,6 +206,16 @@ struct GpuViewFrame final {
         // The Reader's camera light (two-sided) in model coordinates, for
         // model_lit's light rig.
         std::array<float, 3> light_direction{};
+        // The stage's lights (ViewState::stage_lights, when
+        // game_lights_enabled): the four stage_lit draws with (room
+        // coordinates; colours per unit of facing), and up to three for the
+        // model's rig (unit directions in model coordinates; 128 = 1).
+        int stage_light_count{};
+        std::array<float, 4> stage_light_x{}, stage_light_y{}, stage_light_z{}, stage_light_falloff{};
+        std::array<float, 16> stage_light_colour{};
+        int model_light_count{};
+        std::array<float, 9> model_light_directions{};
+        std::array<float, 9> model_light_colours{};
     };
     Dmc3 dmc3{};
 
@@ -235,8 +249,11 @@ struct GpuDmc3Draw final {
     std::array<float, 16> light_directions{};
     std::array<float, 16> light_colours{};
     float part_colour{0.5F};
-    float part_alpha{0.5F};
+    float part_alpha{128.0F / 255.0F};
     float ambient{1.0F};
+    // Stage: u_light_x / _y / _z / _falloff and u_light_colour[4].
+    std::array<float, 4> light_x{}, light_y{}, light_z{}, light_falloff{};
+    std::array<float, 16> light_colour{};
     [[nodiscard]] bool drawn() const noexcept { return vertex != dmc3::Shader::none; }
 };
 [[nodiscard]] GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept;
@@ -272,6 +289,11 @@ void set_gpu_present_enabled(bool enabled) noexcept;
 // Draw with the DMC3 shaders where the game has one (on by default).
 void set_dmc3_shaders_enabled(bool enabled) noexcept;
 [[nodiscard]] bool dmc3_shaders_enabled() noexcept;
+// Light the DMC3 shaders' stage and models with the stage's light table
+// (experimental: that LIG2 feeds the game's lights is not proven; off by
+// default).
+void set_game_lights_enabled(bool enabled) noexcept;
+[[nodiscard]] bool game_lights_enabled() noexcept;
 
 struct GpuViewStats final {
     std::uint64_t gpu_frames{};

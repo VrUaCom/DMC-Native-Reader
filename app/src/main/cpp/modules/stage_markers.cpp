@@ -334,6 +334,12 @@ std::atomic<int> g_selected{-1};
 [[nodiscard]] RoomPoint room(const stage_config::Vec3& p) noexcept { return {p.x, p.y, p.z}; }
 
 void collect(std::string_view name, std::span<const std::uint8_t> bytes, int depth, StageConfig& config) {
+    if (config.lights == nullptr && bytes.size() >= 4U && std::memcmp(bytes.data(), "LIG2", 4U) == 0) {
+        if (auto table = game_lights::read_light_table(bytes)) {
+            config.lights = std::make_shared<const game_lights::LightTable>(*table);
+            return;
+        }
+    }
     Kind kind{};
     if (stage_config::identify(bytes, &kind)) {
         config.members.push_back({std::string{name} + " (" + stage_config::kind_name(kind) + ")", kind,
@@ -531,6 +537,14 @@ std::vector<PlacedEffect> placed_effects(std::string_view stage_name) {
         out.clear();
     }
     return out;
+}
+
+std::shared_ptr<const game_lights::LightTable> stage_lights(std::string_view stage_name) {
+    const auto config = current();
+    if (config == nullptr) return nullptr;
+    const int ours = stage_number(stage_name), theirs = stage_number(config->name);
+    if (ours >= 0 && theirs >= 0 && ours != theirs) return nullptr;
+    return config->lights;
 }
 
 std::optional<ViewState::Fog> stage_fog(std::string_view stage_name) {

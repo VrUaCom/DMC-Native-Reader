@@ -38,11 +38,55 @@ reads these fields; the Reader does not use them yet.
   into `CLightMgr` (constructor `0x14023ECB0`, inside `CSceneGame` at +0x4078
   and +0x1D80, switch at `0x1402AA2FE` / `0x1402AAC6C`) has been shown.
 
-## Plan for the Reader
+## The stage files
 
-1. Per-mesh sampler: nearest for flag 0x4000, WRAP otherwise (as the HD
-   game samples). Carried in `GpuBatch`; the backend keeps a small sampler set.
-2. `alpha_control` into the model draw: `u_part_alpha` = 128/255 or 1.
-3. An experimental "game lights" switch: LIG2 records → the selection and
-   score above → `stage_lit` point lights and the `model_lit` rig. Labelled
-   as a candidate until the `CLightMgr` binding is proven.
+| Stage | LIG2 records | Type 0 (point) | Type 1 (far) | With a colour modifier |
+| --- | --- | --- | --- | --- |
+| st000 | 8 | 5 | 3 | 0 |
+| st001 | 9 | 6 | 3 | 3 |
+| st002 | 13 | 10 | 3 | 2 |
+| st006 | 3 | 0 | 3 | 0 |
+
+- **Light flags.** Type 1 lights have flags 2 (they pass mask & 2); point
+  lights mostly have 3 (they pass mask & 1). Lights with flags 4 are black
+  and are never picked.
+- **Header.** The six u16 after the version look like a colour (st000
+  220, 210, 200; st001 95, 95, 95; st002 128, 128, 140), perhaps the
+  ambient. This is not proven, and the Reader does not use them.
+- **Object alpha.** MOD objects are all 0x80. SCM objects are 0x80 or
+  0xC0..0xC5 (st006: 18 of 20 objects). No object of these files has the
+  nearest-filter flag.
+
+## In the Reader (v124)
+
+The rules were written clean-room (`docs/cleanroom/specs-v124/`):
+
+- **Material.** `game_material.h`. The per-vertex material byte
+  (`Mesh::blend0`) now carries:
+  - bits 0..3: the blend mode, as before;
+  - bit 4: nearest filtering;
+  - bit 5: part alpha 1.
+
+  MOD and SCM objects write it. GPU batches split on it: a nearest batch
+  samples nearest, and the DMC3 shaders take `u_part_alpha` from it. The HD
+  bridge turns region repeat into WRAP, which the Reader already uses.
+
+  On st000 and st006 the frame is unchanged, because the 0xC* objects'
+  texels are opaque.
+- **Stage lights.** `game_lights.h`. This is the experimental setting
+  Settings → Graphics → Stage lights (off by default).
+  - **Stage.** It uses the four main-list point lights (mask 5) the game
+    would pick for the framing centre, drawn by `stage_lit` (falloff from
+    the record).
+  - **Model.** The top four for the model's centre (mask 7). Up to three
+    of them become the rig's directions, with colour × score (128 = 1), plus
+    a constant term of 0.45.
+  - **Calibrated by eye.** The colour scales (the stage gain 1.25 over the
+    light's reach and the summed room normal, and the model's constant
+    term) are the Reader's. The game's are not known.
+  - **Probe** (Mesa, start camera):
+    - st000: its point lights warm the floor and walls (78% of the pixels
+      change).
+    - st002: only Dante changes, tinted by the violet light nearby. Its
+      rooms have no vertex colours and keep the Reader's shaders.
+    - st006 has no point lights.

@@ -232,6 +232,8 @@ public final class NativeBridge {
 
     /** Draw with the DMC3 (game) shaders where the game has one; the core picks them. */
     public static native void setDmc3Shaders(boolean enabled);
+    /** Light the DMC3 shaders' stage and models with the stage configuration's LIG2 table (experimental). */
+    public static native void setGameLights(boolean enabled);
     /** GPU picture quality: MSAA samples (0 = off), mipmaps, anisotropic filtering (1 = off). */
     public static native void setGpuOptions(int msaaSamples, boolean mipmaps, int anisotropy);
     /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */

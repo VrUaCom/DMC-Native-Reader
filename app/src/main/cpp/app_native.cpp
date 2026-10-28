@@ -1910,6 +1910,11 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_setDmc3Shaders(JNIEnv*, jclass, jb
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setGameLights(JNIEnv*, jclass, jboolean enabled) {
+    dmcresource::set_game_lights_enabled(enabled == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, jboolean enabled) {
     dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
 }
