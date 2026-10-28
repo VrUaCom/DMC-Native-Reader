@@ -287,3 +287,95 @@ The rest of constructor `0x14023EEF0` (`0x14023EF29..0x14023EFD0`):
   - a call of `0x1402EE560` whose `rcx` is owner B `+ 0x40`;
   - a store of an entry address (owner `+0x26A8 + 0x20·k`) into
     `+0x60`/`+0x68`/`+0x78`/`+0x80` or into another node's `+0x08`/`+0x10`.
+
+## LIG2 → CLightMgr: the path, instruction by instruction
+
+Gate 46 v0.6 read the RTTI from `.rdata`:
+
+| Vtable | Class |
+| --- | --- |
+| `0x1404E32C8` | `CSceneGameMain` (owner B) |
+| `0x1404E3118` | `CLightMgr` (at owner `+0x40`) |
+| `0x1404E3108` | `CChain` (at owner `+0x58` and `+0x70`, i.e. `CLightMgr+0x18` and `+0x30`) |
+
+With those names, the disassembly gives the whole path.
+
+### 1. Copying the LIG2 member (in `0x14023C3D0`, `rdi` = `CSceneGameMain`)
+
+- **The source.** It is a PAC in memory: `rcx` = `[[r13+0x18]+0x20]`.
+  - With slot count `[pac+4] >= 2`, the source is `pac + [pac+0x0C]`,
+    i.e. **physical slot 1** of the stage configuration archive.
+  - Slot 0 (`pac + [pac+0x08]`) goes to `0x1401A9B80` on `this+0x1F0` just
+    before.
+- **The copy.** `0x14023CA15..0x14023CA82` copies `0x12 × 0x80 + 0x20` =
+  **0x920 bytes** to `this+0x1D88`, which is `CLightStatic+0x08`.
+  - The file's `LIG2` lands on the magic field.
+  - Its 0x20-byte header follows.
+  - Its 48 records land at `CLightStatic+0x28`, where the entries' record
+    pointers point.
+
+### 2. Linking the records (`0x14023CA77..0x14023CA8D`)
+
+```
+lea  rdx, [rdi+0x40]      ; CLightMgr
+lea  rcx, [rdi+0x1D80]    ; CLightStatic
+call 0x140089000
+```
+
+### 3. `0x140089000(CLightStatic* ls, CLightMgr* mgr)`
+
+```
+lea  rbp, [rdx+0x18]      ; mgr's first CChain
+call 0x1402C83A0          ; CChain::Clear(rbp)
+lea  rbx, [rdi+0x940]     ; &entry[0].record
+mov  esi, 0x30            ; 48 entries
+add  rdi, 0x928           ; &entry[0]
+loop:
+  mov  rax, [rbx]         ; record
+  cmp  byte [rax], 0      ; flags == 0: skip
+  je   next
+  mov  rdx, rdi
+  mov  rcx, rbp
+  call 0x1402C8310        ; CChain::Append(chain, entry)
+next:
+  add  rdi, 0x20 ; add rbx, 0x20 ; dec esi ; jne loop
+```
+
+### 4. The `CChain` methods (`CChain`: vtable, `+0x08` first, `+0x10` last; node: `+0x08` prev, `+0x10` next)
+
+| Method | What it does |
+| --- | --- |
+| `0x1402C8310` (Append) | Empty chain: first = last = node, links 0. Otherwise `last->next = node`, `node->prev = last`, `node->next = 0`, last = node. |
+| `0x1402C8350` (Remove) | Unlinks a node. |
+| `0x1402C83A0` (Clear) | Zeroes every node's links, then first and last. |
+
+### 5. The selector
+
+`0x1402EE560` reads the main list from `[mgr+0x20]`. That is the first
+pointer of the chain at `mgr+0x18`, the chain filled above. It follows
+`node+0x10` and reads `node+0x18`.
+
+### Result
+
+**LIG2 (cfg PAC slot 1) → `CLightStatic` at `CSceneGameMain+0x1D80` →
+the main list of `CLightMgr` at `CSceneGameMain+0x40` → `0x1402EE560`.**
+
+This is proven by instructions, with one step left open: that `rdi` in
+`0x14023C3D0` is a `CSceneGameMain`. Its offsets `+0x40` / `+0x1D80` match
+that class's constructor.
+
+What follows for the Reader:
+- **The list.** LIG2 lights are the **main list** (mask bit 4).
+- **The order.** The list order is the record order (appended k = 0..47).
+- **Skipped records.** Records with flags byte 0 are not linked. They are
+  never candidates anyway.
+- **The secondary list.** It holds lights registered at run time by
+  `0x1402EE9F0`:
+  - a node at `obj+0xD8`;
+  - flags & 8 also makes it the manager's single light (`mgr+0x70`);
+  - flags & 0xF7 appends it to the chain at `mgr+0x30`.
+
+Still not proven:
+- the low mask bits of the scene and model calls;
+- how Lc/Lv become the shader constants;
+- the model's query point.
