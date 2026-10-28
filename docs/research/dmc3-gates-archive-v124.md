@@ -554,3 +554,33 @@ writes its `+0x70`, the single light.
 - **The ambient's units in the stage shader.** It is copied raw (0..255),
   while the colours get K.
 - **Who sets the object masks** `X+0x572` and `Y+0x744`.
+
+### Gate 48 v0.2 results (canonical EXE) and what they imply
+
+- **The tail call.** `0x14008991A jmp 0x1402FC670` is confirmed: it is a
+  tail call, not a `call`.
+- **K.** `float [0x14035D558]` = `0x3B808081` ≈ **1/255**. The stage
+  colours are the record's rgb / 255.
+- **The `andps` mask.** `[0x1405D9F30]` (`.data`, filled by `0x140001920`
+  from `.rdata` `0x14035D340`) is `(0, 0, 0, 0xFFFFFFFF)`. `0x1400311E0`
+  therefore scales xyz and keeps w.
+
+What this means for `stage_lit`, with the Reader's SCM normals (they are
+unit length on st000 and st006):
+
+- **Facing is not normalised.** The shader's facing `dot(light − vertex,
+  normal)` has the light's distance in world units, i.e. hundreds.
+- **A point light would saturate.** With aux (`+0x1C`) = 0, as for every
+  st000 point light, it is not attenuated. It would add about
+  `distance × rgb / 255` and turn white.
+- **So stage objects probably ask for no point lights.** In the game the
+  stage geometry likely uses a mask (`X+0x572`) without the low bits 1/2,
+  so the main list gives it none. Its picture is then the vertex colours
+  times the ambient, as the Reader draws it without Stage lights. This is
+  a hypothesis: the writers of `X+0x572` are not found yet.
+- **A unit for the ambient.** The stage ambient is `mgr+0x60` (header
+  `+0x06..+0x0A`) for every mask but 1. It is 0x20 = 32 in st000..st002
+  and 0x18 = 24 in st006. If the GPU upload uses 32 as 1.0, that gives
+  1.0, the neutral value the Reader set by eye (255/256), and 0.75 in
+  st006. Not proven: the upload of `B+0xB0..+0x14F` to the GPU is not
+  traced.
