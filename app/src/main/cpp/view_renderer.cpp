@@ -1976,17 +1976,19 @@ std::atomic<bool> g_gpu_present{true};
 std::atomic<bool> g_dmc3_shaders{true};
 std::atomic<bool> g_game_lights{false};
 
-// The stage's lights (game_lights.h). Masks of the main list: the stage
-// takes the point lights (low mode 3 and 1), the models every kind. A
-// stage light's colour is scaled so a vertex facing it at its best distance
-// gets about its colour (the shader's facing is not normalised: the reach
-// times the room normal, the sum of three vertex normals). Calibrated by
-// eye: the game's own scale is not known.
+// The stage's lights (game_lights.h). Masks of the main list (the low
+// bits are the Reader's, not traced yet): the stage takes the point lights
+// (low mode 3 and 1), the models every kind.
+// - Models: the game's rig (game_lights::model_rig), its three lights and
+//   the table's ambient as the constant term.
+// - Stage: a light's colour is scaled so a vertex facing it at its best
+//   distance gets about its colour (the shader's facing is not normalised:
+//   the reach times the room normal, the sum of three vertex normals).
+//   Calibrated by eye: how the game fills stage_lit is not known.
 constexpr unsigned kStageLightMask = 4U | 1U;
 constexpr unsigned kModelLightMask = 4U | 2U | 1U;
 constexpr float kRoomNormalLength = 3.0F;
 constexpr float kStageLightGain = 1.25F;
-constexpr float kModelLightAmbient = 0.45F;  // the rig's constant term, 1 = 128
 
 // A point of the frame (model space) in room coordinates: room_place undone.
 Vec3 room_unplace(const ViewState& view, const Vec3& p) {
@@ -2021,22 +2023,21 @@ void stage_lights_frame(const ViewState& view, const Vec3& centre, const Vec3& m
     out.stage_light_count = stage.count;
     const Vec3 m = room_unplace(view, model_centre);
     const auto model = game_lights::select_lights(table, {m.x, m.y, m.z}, kModelLightMask);
-    int used = 0;
-    for (int i = 0; i < model.count && used < 3; ++i) {
-        const auto row = static_cast<std::size_t>(i * 4);
-        const auto& record = table.records[static_cast<std::size_t>(model.index[static_cast<std::size_t>(i)])];
-        const Vec3 d = room_turn(view, {model.lv[row], model.lv[row + 1U], model.lv[row + 2U]});
-        const float length = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
-        if (!(length > 0.0F)) continue;
-        const auto at = static_cast<std::size_t>(used * 3);
-        out.model_light_directions[at] = d.x / length;
-        out.model_light_directions[at + 1U] = d.y / length;
-        out.model_light_directions[at + 2U] = d.z / length;
-        const float weight = model.score[static_cast<std::size_t>(i)];
-        for (std::size_t c = 0U; c < 3U; ++c) out.model_light_colours[at + c] = record.rgb[c] * weight;
-        ++used;
+    const auto rig = game_lights::model_rig(table, model, kModelLightMask);
+    for (int i = 0; i < rig.count; ++i) {
+        const auto& g = rig.direction[static_cast<std::size_t>(i)];
+        const Vec3 d = room_turn(view, {g[0], g[1], g[2]});  // room -> model space
+        const auto at = static_cast<std::size_t>(i * 3);
+        out.model_light_directions[at] = d.x;
+        out.model_light_directions[at + 1U] = d.y;
+        out.model_light_directions[at + 2U] = d.z;
+        for (std::size_t c = 0U; c < 3U; ++c) {
+            out.model_light_colours[at + c] = rig.colour[static_cast<std::size_t>(i)][c];
+        }
     }
-    out.model_light_count = used;
+    out.model_light_count = rig.count;
+    out.model_light_ambient = rig.ambient;
+    out.model_rig = true;
 }
 std::atomic<std::uint64_t> g_presented_frames{0U};
 std::mutex g_shader_stats_mutex;
@@ -2602,7 +2603,7 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
         }
         // The stage's lights instead (all but added / subtracted surfaces):
         // a row and a colour column each, and the constant term.
-        if (d.model_light_count > 0 && !layered) {
+        if (d.model_rig && !layered) {
             const float scale = unit / 128.0F;
             out.light_directions = {};
             out.light_colours = {};
@@ -2614,7 +2615,7 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
                 }
             }
             out.light_directions[15] = 1.0F;
-            for (std::size_t c = 0U; c < 3U; ++c) out.light_colours[12U + c] = kModelLightAmbient * unit;
+            for (std::size_t c = 0U; c < 3U; ++c) out.light_colours[12U + c] = d.model_light_ambient[c] * scale;
         }
         return out;
     }

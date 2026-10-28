@@ -9,7 +9,8 @@
 
 // The game's light table (LIG2): 48 point / directional light records, the
 // choice of the four lights that light a query point, and the colour and
-// vector matrices a renderer uploads for them. Written clean-room from the
+// vector matrices a renderer uploads for them, and a model's three-light rig
+// built from those matrices. Written clean-room from the
 // behaviour specification docs/cleanroom/specs-v124/game_lights.md.
 namespace dmcresource::game_lights {
 
@@ -31,6 +32,9 @@ struct LightTable {
     std::uint16_t version{};
     std::array<std::uint16_t, 6> header_words{};  // meaning unknown; for display
     std::array<LightRecord, kRecordCount> records{};
+    std::int8_t static_light_count{};             // +0x04 as signed 8-bit: lights a model keeps
+    std::array<float, 3> ambient{};               // u16 at +0x0C, +0x0E, +0x10 as floats, unscaled
+    std::array<float, 3> ambient_mask2{};         // u16 at +0x06, +0x08, +0x0A: ambient when mask == 2
 };
 
 // Which light list a selection fills: main needs mask bit 4, secondary bit 8.
@@ -65,6 +69,20 @@ struct SelectedLights {
 [[nodiscard]] SelectedLights select_lights(const LightTable& table, std::array<float, 3> query,
                                            unsigned mask, ListKind list = ListKind::main,
                                            const LightRecord* single = nullptr) noexcept;
+
+struct ModelRig {
+    int count{};                                         // 0..3 lights
+    std::array<std::array<float, 3>, 3> direction{};     // unit vectors
+    std::array<std::array<float, 3>, 3> colour{};        // 0..255 units (128 = 1)
+    std::array<float, 3> ambient{};                      // 0..255 units
+};
+
+// Uses the first min(lights.count, 3, max(limit, 0)) slots. Per slot: attenuation
+// a = max(0, 1 - |lv.xyz|^2 * lv.w) when lv.w != 0, else 1; colour = lc.rgb * a
+// (score and lc.w unused); direction = lv.xyz normalised (zero stays zero).
+// Ambient is table.ambient_mask2 when mask == 2 exactly, else table.ambient.
+[[nodiscard]] ModelRig model_rig(const LightTable& table, const SelectedLights& lights,
+                                 unsigned mask, int limit = 3) noexcept;
 
 // The number of records that pass the candidate rules (no score applied).
 [[nodiscard]] std::size_t candidate_count(const LightTable& table, unsigned mask, ListKind list) noexcept;

@@ -103,14 +103,22 @@ void choices() {
     // The stage's lights (stage_lights_frame): one row and colour column
     // per light, the constant term; coloured effect models keep theirs.
     auto lit = frame_with(true, false);
+    lit.dmc3.model_rig = true;
     lit.dmc3.model_light_count = 2;
+    lit.dmc3.model_light_ambient = {220.0F, 210.0F, 200.0F};
     lit.dmc3.model_light_directions = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, -1.0F, 0.0F, 0.0F, 0.0F};
     lit.dmc3.model_light_colours = {240.0F, 144.0F, 104.0F, 20.0F, 45.0F, 50.0F, 0.0F, 0.0F, 0.0F};
     d = dmc3_draw(model, GpuPass::model, lit);
     assert(d.light_directions[0] == 1.0F && d.light_directions[9] == -1.0F && d.light_directions[15] == 1.0F);
     assert(d.light_directions[4] == 0.0F && d.light_directions[1] == 0.0F);
     assert(d.light_colours[0] == 240.0F && d.light_colours[5] == 45.0F && d.light_colours[8] == 0.0F);
-    assert(std::fabs(d.light_colours[12] - 0.45F * 128.0F) < 1.0e-3F);
+    assert(d.light_colours[12] == 220.0F && d.light_colours[14] == 200.0F);
+    // Coloured (effect) models: model_effect_lit does not divide by 128.
+    auto coloured_lit = model;
+    coloured_lit.colored = true;
+    d = dmc3_draw(coloured_lit, GpuPass::model, lit);
+    assert(std::fabs(d.light_colours[0] - 240.0F / 128.0F) < 1.0e-5F);
+    assert(std::fabs(d.light_colours[12] - 220.0F / 128.0F) < 1.0e-5F);
 
     // With fog: the fog variant, the frame's colour, the model's amount.
     d = dmc3_draw(model, GpuPass::model, frame_with(true, true));

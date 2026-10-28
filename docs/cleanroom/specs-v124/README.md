@@ -23,5 +23,9 @@ For the specification side only; the implementers never read this file.
   selector's instructions again and corrected `game_lights.md`. A new
   implementer, again given only the specification, updated the module and
   its tests.
+- **Revision 3 (v127).** Gate 47 gave the model's light constants
+  (`0x1402FC850`) and the LIG2 header's ambient and static-light count.
+  The specification side added them, and a new implementer, given only the
+  specification, added `model_rig` and the header fields with their tests.
 - **The Reader's side.** Wiring the modules into the adapters, the frame and
   the GPU backend was then done against the modules' public interfaces.

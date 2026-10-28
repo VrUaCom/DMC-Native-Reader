@@ -1,5 +1,7 @@
 // Game light tables (game_lights.h): reading LIG2 tables, the candidate rules
-// per list and mask, the score, the top-four order and the lc / lv matrices.
+// per list and mask, the score, the top-four order, the lc / lv matrices, the
+// named header fields and the model's light rig.
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -503,6 +505,158 @@ void test_matrices() {
     for (float v : empty.lv) assert(v == 0.0f);
 }
 
+// --- header fields (revision 3) ----------------------------------------------
+
+void test_header_fields() {
+    assert(TableBytes(3).read().static_light_count == 3);
+    assert(TableBytes(0x00FF).read().static_light_count == -1);
+    assert(TableBytes(0x0380).read().static_light_count == -128);  // low byte only
+    const LightTable v = TableBytes(0x0380).read();
+    assert(v.version == 0x0380);  // version keeps the whole u16
+
+    TableBytes t(3);
+    put_u16(t.bytes, 0x06, 32);
+    put_u16(t.bytes, 0x08, 33);
+    put_u16(t.bytes, 0x0A, 34);
+    put_u16(t.bytes, 0x0C, 220);
+    put_u16(t.bytes, 0x0E, 210);
+    put_u16(t.bytes, 0x10, 200);
+    const LightTable table = t.read();
+    assert((table.ambient == std::array<float, 3>{220.0f, 210.0f, 200.0f}));
+    assert((table.ambient_mask2 == std::array<float, 3>{32.0f, 33.0f, 34.0f}));
+    // header_words are kept as before.
+    assert((table.header_words == std::array<std::uint16_t, 6>{32, 33, 34, 220, 210, 200}));
+
+    TableBytes big;
+    put_u16(big.bytes, 0x0C, 0xFFFF);
+    assert(big.read().ambient[0] == 65535.0f);  // no scaling
+    assert((TableBytes().read().ambient == std::array<float, 3>{}));
+}
+
+// --- model rig (revision 3) --------------------------------------------------
+
+// A SelectedLights with `count` lights whose rows are given directly.
+SelectedLights rows(int count, const std::array<std::array<float, 4>, 4>& lc,
+                    const std::array<std::array<float, 4>, 4>& lv) {
+    SelectedLights s{};
+    s.count = count;
+    for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t k = 0; k < 4; ++k) {
+            s.lc[i * 4 + k] = lc[i][k];
+            s.lv[i * 4 + k] = lv[i][k];
+        }
+        if (static_cast<int>(i) < count) s.index[i] = static_cast<int>(i);
+    }
+    return s;
+}
+
+float length(const std::array<float, 3>& v) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
+
+void test_model_rig_count() {
+    const LightTable table = TableBytes().read();
+    const std::array<std::array<float, 4>, 4> lc{{{1, 1, 1, 0}, {2, 2, 2, 0}, {3, 3, 3, 0}, {4, 4, 4, 0}}};
+    const std::array<std::array<float, 4>, 4> lv{{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {1, 1, 0, 0}}};
+
+    // Limited by lights.count.
+    for (int c = 0; c <= 4; ++c) assert(model_rig(table, rows(c, lc, lv), 7).count == std::min(c, 3));
+    // Slot 3 is never used.
+    const ModelRig four = model_rig(table, rows(4, lc, lv), 7, 10);
+    assert(four.count == 3);
+    assert((four.colour[2] == std::array<float, 3>{3, 3, 3}));
+    // Limited by limit; 0 or below gives 0.
+    assert(model_rig(table, rows(4, lc, lv), 7, 2).count == 2);
+    assert(model_rig(table, rows(4, lc, lv), 7, 1).count == 1);
+    assert(model_rig(table, rows(1, lc, lv), 7, 2).count == 1);
+    for (int limit : {0, -1, -100}) {
+        const ModelRig none = model_rig(table, rows(4, lc, lv), 7, limit);
+        assert(none.count == 0);
+        for (std::size_t i = 0; i < 3; ++i) {
+            assert((none.colour[i] == std::array<float, 3>{}));
+            assert((none.direction[i] == std::array<float, 3>{}));
+        }
+    }
+    // Unused entries stay zero.
+    const ModelRig two = model_rig(table, rows(4, lc, lv), 7, 2);
+    assert((two.colour[1] == std::array<float, 3>{2, 2, 2}));
+    assert((two.colour[2] == std::array<float, 3>{}));
+    assert((two.direction[2] == std::array<float, 3>{}));
+}
+
+void test_model_rig_attenuation() {
+    const LightTable table = TableBytes().read();
+    const std::array<float, 4> c{100, 200, 50, 0.25f};
+    // lv[3] = 0 keeps the full colour; 0.005 at distance 10 halves it; at
+    // distance 20 it gives 0 (clamped, not negative).
+    const std::array<std::array<float, 4>, 4> lc{{c, c, c, {}}};
+    const std::array<std::array<float, 4>, 4> lv{{{10, 0, 0, 0}, {6, 8, 0, 0.005f}, {0, 0, -20, 0.005f}, {}}};
+    const ModelRig rig = model_rig(table, rows(3, lc, lv), 7);
+    assert(rig.count == 3);
+    assert((rig.colour[0] == std::array<float, 3>{100, 200, 50}));
+    assert(near(rig.colour[1][0], 50) && near(rig.colour[1][1], 100) && near(rig.colour[1][2], 25));
+    assert(rig.colour[2][0] == 0.0f && rig.colour[2][1] == 0.0f && rig.colour[2][2] == 0.0f);
+    assert(!std::signbit(rig.colour[2][0]));
+
+    // The colour ignores the score, and lc[3] is not used.
+    SelectedLights s = rows(1, {{{40, 50, 60, 0.9f}, {}, {}, {}}}, {{{0, 3, 4, 0}, {}, {}, {}}});
+    s.score[0] = 0.1f;
+    const ModelRig a = model_rig(table, s, 7);
+    s.score[0] = 1.0f;
+    s.lc[3] = 123.0f;
+    const ModelRig b = model_rig(table, s, 7);
+    assert((a.colour[0] == std::array<float, 3>{40, 50, 60}));
+    assert(a.colour == b.colour);
+
+    // Through select_lights: a type 0 light keeps aux_w in lv[3], which attenuates.
+    TableBytes t;
+    t.set(0, {.flags = 3, .type = 0, .position = {10, 0, 0}, .aux_w = 0.005f, .falloff = 0.001f,
+              .rgb = {200, 100, 40}});
+    t.set(1, {.flags = 3, .type = 1, .position = {0, 0, 7}, .aux_w = 5.0f, .falloff = 1.0f,
+              .rgb = {128, 128, 128}});
+    const auto sel = select_lights(t.read(), {0, 0, 0}, 5);
+    assert(sel.count == 2 && sel.index[0] == 1 && sel.index[1] == 0);
+    const ModelRig r = model_rig(t.read(), sel, 5);
+    assert(r.count == 2);
+    assert((r.colour[0] == std::array<float, 3>{128, 128, 128}));  // type 1: lv[3] = 0
+    assert(near(r.colour[1][0], 100, 1e-4f) && near(r.colour[1][1], 50, 1e-4f) &&
+           near(r.colour[1][2], 20, 1e-4f));
+    assert((r.direction[0] == std::array<float, 3>{0, 0, 1}));
+    assert((r.direction[1] == std::array<float, 3>{1, 0, 0}));
+}
+
+void test_model_rig_direction() {
+    const LightTable table = TableBytes().read();
+    const std::array<float, 4> c{1, 1, 1, 0};
+    const std::array<std::array<float, 4>, 4> lc{{c, c, c, c}};
+    const std::array<std::array<float, 4>, 4> lv{{{3, 4, 0, 0}, {-1, 2, -2, 0.001f}, {0, 0, 0, 0.5f}, {}}};
+    const ModelRig rig = model_rig(table, rows(3, lc, lv), 7);
+    assert(near(rig.direction[0][0], 0.6f) && near(rig.direction[0][1], 0.8f) && rig.direction[0][2] == 0.0f);
+    assert(near(rig.direction[1][0], -1.0f / 3) && near(rig.direction[1][1], 2.0f / 3) &&
+           near(rig.direction[1][2], -2.0f / 3));
+    assert(near(length(rig.direction[0]), 1.0f) && near(length(rig.direction[1]), 1.0f));
+    // A zero lv gives a zero direction (and attenuation 1 at distance 0).
+    assert((rig.direction[2] == std::array<float, 3>{}));
+    assert((rig.colour[2] == std::array<float, 3>{1, 1, 1}));
+}
+
+void test_model_rig_ambient() {
+    TableBytes t;
+    put_u16(t.bytes, 0x06, 32);
+    put_u16(t.bytes, 0x08, 32);
+    put_u16(t.bytes, 0x0A, 32);
+    put_u16(t.bytes, 0x0C, 220);
+    put_u16(t.bytes, 0x0E, 210);
+    put_u16(t.bytes, 0x10, 200);
+    const LightTable table = t.read();
+    const SelectedLights none{};
+    const std::array<float, 3> normal{220, 210, 200}, mask2{32, 32, 32};
+    assert(model_rig(table, none, 7).ambient == normal);
+    assert(model_rig(table, none, 0).ambient == normal);
+    assert(model_rig(table, none, 2).ambient == mask2);
+    assert(model_rig(table, none, 2 | 4).ambient == normal);   // exactly 2 only
+    assert(model_rig(table, none, 2, 0).ambient == mask2);     // independent of count
+    assert(model_rig(table, none, 7).count == 0);
+}
+
 // --- helpers -----------------------------------------------------------------
 
 void test_describe() {
@@ -537,5 +691,10 @@ int main() {
     test_single_light();
     test_matrices();
     test_describe();
+    test_header_fields();
+    test_model_rig_count();
+    test_model_rig_attenuation();
+    test_model_rig_direction();
+    test_model_rig_ambient();
     return 0;
 }

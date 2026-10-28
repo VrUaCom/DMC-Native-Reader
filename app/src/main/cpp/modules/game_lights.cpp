@@ -43,6 +43,11 @@ std::optional<LightTable> read_light_table(std::span<const std::uint8_t> bytes) 
     for (std::size_t i = 0; i < table.header_words.size(); ++i) {
         table.header_words[i] = read_u16(bytes, 0x06 + i * 2);
     }
+    table.static_light_count = static_cast<std::int8_t>(bytes[0x04]);
+    for (std::size_t c = 0; c < 3; ++c) {
+        table.ambient[c] = static_cast<float>(read_u16(bytes, 0x0C + c * 2));
+        table.ambient_mask2[c] = static_cast<float>(read_u16(bytes, 0x06 + c * 2));
+    }
 
     for (std::size_t i = 0; i < kRecordCount; ++i) {
         const auto rec = bytes.subspan(kHeaderSize + i * kRecordSize, kRecordSize);
@@ -146,6 +151,27 @@ SelectedLights select_lights(const LightTable& table, std::array<float, 3> query
         out.lv[row + 3] = r->type == 0 ? r->aux_w : 0.0f;
     }
     return out;
+}
+
+ModelRig model_rig(const LightTable& table, const SelectedLights& lights, unsigned mask,
+                   int limit) noexcept {
+    ModelRig rig{};
+    const int n = std::max(0, std::min({lights.count, 3, std::max(limit, 0)}));
+    rig.count = n;
+    for (int i = 0; i < n; ++i) {
+        const std::size_t row = static_cast<std::size_t>(i) * 4;
+        const float x = lights.lv[row + 0], y = lights.lv[row + 1], z = lights.lv[row + 2];
+        const float w = lights.lv[row + 3];
+        const float len2 = x * x + y * y + z * z;
+        const float a = w != 0.0f ? std::max(0.0f, 1.0f - len2 * w) : 1.0f;
+        auto& colour = rig.colour[static_cast<std::size_t>(i)];
+        colour = {lights.lc[row + 0] * a, lights.lc[row + 1] * a, lights.lc[row + 2] * a};
+        auto& direction = rig.direction[static_cast<std::size_t>(i)];
+        const float len = std::sqrt(len2);
+        if (len > 0.0f) direction = {x / len, y / len, z / len};
+    }
+    rig.ambient = mask == 2u ? table.ambient_mask2 : table.ambient;
+    return rig;
 }
 
 std::size_t candidate_count(const LightTable& table, unsigned mask, ListKind list) noexcept {

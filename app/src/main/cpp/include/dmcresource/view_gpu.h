@@ -208,14 +208,17 @@ struct GpuViewFrame final {
         std::array<float, 3> light_direction{};
         // The stage's lights (ViewState::stage_lights, when
         // game_lights_enabled): the four stage_lit draws with (room
-        // coordinates; colours per unit of facing), and up to three for the
-        // model's rig (unit directions in model coordinates; 128 = 1).
+        // coordinates; colours per unit of facing), and the model's rig
+        // (game_lights::model_rig: up to three unit directions in model
+        // coordinates, their colours and the table's ambient; 128 = 1).
         int stage_light_count{};
         std::array<float, 4> stage_light_x{}, stage_light_y{}, stage_light_z{}, stage_light_falloff{};
         std::array<float, 16> stage_light_colour{};
+        bool model_rig{};  // the model's rig is the stage's (even with no light: its ambient)
         int model_light_count{};
         std::array<float, 9> model_light_directions{};
         std::array<float, 9> model_light_colours{};
+        std::array<float, 3> model_light_ambient{};
     };
     Dmc3 dmc3{};
 

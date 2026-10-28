@@ -1,5 +1,8 @@
 # Spec: game light records, top-four selection, light matrices
 
+Revision 3: section 1 gains three named header fields, and section 7
+is new (the model's light rig). Keep every earlier rule.
+
 Revision 2: sections 2 and 4 changed (flag bit 2 with mask bit 0x10; the
 selection is an insertion into four slots in list order, not a sort), and
 the manager's single light was added (section 4b). Update the module and
@@ -35,6 +38,15 @@ Record layout (offsets inside the record):
 | 0x24, 0x26, 0x28 | u16 ×3 | `rgb` |
 
 A record is `active` when any of its 0x30 bytes is non-zero.
+
+Named header fields (revision 3). Keep `version` and `header_words` as
+they are, and add:
+
+| Field | Source | Meaning |
+| --- | --- | --- |
+| `static_light_count` | `+0x04` read as a **signed** 8-bit value (`std::int8_t`) | how many lights a model keeps from the table |
+| `ambient` | the u16 at `+0x0C`, `+0x0E`, `+0x10`, each converted to `float` (220 → 220.0f, no scaling) | the ambient colour |
+| `ambient_mask2` | the u16 at `+0x06`, `+0x08`, `+0x0A`, converted the same way | the ambient used when the mask is exactly 2 |
 
 ```cpp
 struct LightRecord {
@@ -162,6 +174,34 @@ Unused slots stay zero; their `index` stays −1.
 No function throws. Header comments state each rule in one line. They do
 not name addresses or any other program.
 
+## 7. The model's light rig
+
+```cpp
+struct ModelRig {
+    int count{};                                         // 0..3 lights
+    std::array<std::array<float, 3>, 3> direction{};     // unit vectors
+    std::array<std::array<float, 3>, 3> colour{};        // 0..255 units (128 = 1)
+    std::array<float, 3> ambient{};                      // 0..255 units
+};
+ModelRig model_rig(const LightTable& table, const SelectedLights& lights,
+                   unsigned mask, int limit = 3) noexcept;
+```
+
+- **Lights used.** The first `n = min(lights.count, 3, max(limit, 0))`
+  slots of `lights`, in slot order. Slot 3 is never used. `count = n`.
+- **For slot `i < n`,** with `lv` = row `i` of `lights.lv` and `lc` = row
+  `i` of `lights.lc`:
+  - attenuation `a`:
+    - if `lv[3] != 0`: `a = max(0, 1 − (lv[0]² + lv[1]² + lv[2]²) · lv[3])`;
+    - otherwise `a = 1`;
+  - `colour[i] = (lc[0] · a, lc[1] · a, lc[2] · a)`. `lc[3]` is not used,
+    and the score never scales the colour;
+  - `direction[i] = (lv[0], lv[1], lv[2])` divided by its length. A zero
+    vector stays zero.
+- **Ambient.** `table.ambient_mask2` when `mask == 2` exactly, otherwise
+  `table.ambient`.
+- **Unused entries** stay zero.
+
 ## Tests (at least)
 
 Build tables in memory (a helper writes the bytes):
@@ -191,3 +231,17 @@ Build tables in memory (a helper writes the bytes):
   - without mask & 2, or when null, nothing changes.
 - Matrices: the `lc` and `lv` rows of a type 0 and a type 1 light, exactly
   as in section 5; unused rows are zero.
+- Header fields (revision 3):
+  - `static_light_count` of byte 0x03 is 3, and of 0xFF is −1;
+  - `ambient` and `ambient_mask2` read the right words as floats (for
+    example 220, 210, 200 and 32, 32, 32).
+- Model rig (revision 3):
+  - `count` is limited by `lights.count`, by 3 and by `limit` (a limit of
+    0 or below gives 0);
+  - the attenuation:
+    - `lv[3] = 0` keeps the full colour;
+    - `lv[3] = 0.005` at distance 10 halves it;
+    - at distance 20 it gives 0 (clamped, not negative);
+  - the colour ignores the score;
+  - directions are unit length, and a zero `lv` gives a zero direction;
+  - the ambient is `ambient` for masks 7 and 0, and `ambient_mask2` for 2.
