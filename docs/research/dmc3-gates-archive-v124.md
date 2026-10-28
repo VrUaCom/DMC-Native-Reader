@@ -416,3 +416,74 @@ Open:
 - the low mask bits of each call;
 - the model's query point;
 - the Lc/Lv packing into GPU constants (with the colour scale).
+
+## Gate 47: from the four selected lights to the model's light constants
+
+### `0x1402FD040(model, mgr, mask)` (the archive's `CDrawSCM`)
+
+- **The query point.** Take `m = 0x1403025E0(model)`, or `model` itself
+  when that returns null. The point is the translation row (`+0x30`) of
+  matrix `[m+0x188] + 0x40·[m+0xFA]`, i.e. the world position of node
+  `[m+0xFA]` (u16).
+- **The selection.** `0x1402EE560(mgr, &query, mask|4|8, null)`: both lists.
+- **Lv and Lc.** Lv = the four slots' `+0x00` rows (vector), Lc = their
+  `+0x10` rows (colour). The function calls `0x1402FC850(model, Lc, Lv)`.
+- **The ambient.** It calls `0x1402FA580(model, mgr+0x60)` when the caller's
+  mask is exactly 2, otherwise `0x1402FA580(model, mgr+0x50)`.
+
+### `0x1402FC850(model, Lc, Lv)`: the constants at `model + 0x280 + 0x80·k`
+
+`k` is `[[0x140D6D300]+0x0E]`, a frame buffer index. The block is two
+4×4 matrices: colours `C[0..3]`, then directions `D[0..3]` at `+0x40`.
+
+1. `C[i] = Lc[i]` for i = 0..2. Only three lights; slot 3 is not used.
+2. `D[0..3] = Lv[0..3]` (`0x140030D00`, a 4×4 copy).
+3. For i = 0..2:
+   - if `D[i].w != 0`: `a = max(0, 1 − dot3(D[i], D[i]) · D[i].w)` and
+     `C[i] *= a`. `dot3` is `0x140030D30`. `D[i].w` is the record's `+0x1C`
+     (aux) for type 0, and 0 for type 1;
+   - then `C[i].w = 0`.
+4. `D[i].w = 0` for i = 0..2. Then `D[i] = normalize(D[i])` (`0x140330390`,
+   with a zero-length guard).
+5. `D[3] = (0, 0, 0, 1)`.
+6. `D = transpose(D)` (`0x140031240`).
+
+### `0x1402FA580(model, ambient)`
+
+`C[3] = *ambient`, and `D` row 3 = (0, 0, 0, 1) again.
+
+### Where the ambient comes from (`0x14023CA92..0x14023CB28`, after the link)
+
+| `CLightMgr` field | Source in the LIG2 file |
+| --- | --- |
+| `+0x10` (int) | `(int8) file[+0x04]` |
+| `+0x50` (rgb, w 0) | floats of the u16 at `+0x0C`, `+0x0E`, `+0x10` |
+| `+0x60` (rgb, w 0) | floats of the u16 at `+0x06`, `+0x08`, `+0x0A` |
+
+The last three header words are the **ambient**: st000 220, 210, 200;
+st001 95, 95, 95; st002 128, 128, 140; st006 120, 132, 138. The first
+three (all 0x20, or 0x18 in st006) are the ambient used with mask 2.
+
+### The static lights of an object (`0x1402FC720`)
+
+- **Selection.** It zeroes the object's four slots at `+0x300` and selects
+  from the main list (mask | 4) at a matrix's translation.
+- **Kept slots.** It copies the first `[mgr+0x10]` slots there. That is
+  file `+0x04`, **3** in every sample. It is the number of static lights
+  kept, not a version.
+- **Per frame.** `0x1402FD370` reuses `+0x300` as the seed with
+  mask | 8: the dynamic lights are added to the static ones each frame.
+
+### So the model's light rig (`model_lit`, 128 = 1) is
+
+| Part | Value |
+| --- | --- |
+| Lights 0..2 | direction `normalize(light − query)`; colour `rgb × max(0, 1 − d²·aux)` (×1 when aux = 0, which is every type 0 record in the samples). The score (+0x20) only ranks; it does not dim the colour. |
+| Constant term | the LIG2 ambient (header `+0x0C..+0x10`), in the same 0..255 units. |
+| Lights kept | at most 3, and at most file `+0x04` for static lights. |
+
+Still open:
+- the low mask bits;
+- whether node `[m+0xFA]` matches the Reader's model centre;
+- how the stage shader's point lights (`u_light_x/y/z`, falloff) are
+  filled: `0x1402FC850` writes directions, not positions.
