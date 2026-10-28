@@ -399,3 +399,20 @@ Still not proven:
 - **The last step.** If `0x14023B3E0` is a slot of `CSceneGameMain`'s
   vtable `0x1404E32C8`, then `rdi` is a `CSceneGameMain` and the path is
   proven end to end.
+
+### Closed (Gate 46 v0.7, checked on the canonical EXE)
+
+- **The vtable slot.** `CSceneGameMain` vtable `0x1404E32C8`, slot 3
+  (`0x1404E32E0`), is `0x14023B3E0`.
+- **The jump table.** Its jump table at image `+0x23B500` has 13 entries.
+  Case 0 goes to `0x14023B424`, which calls `0x14023C3D0` with its own
+  `this`.
+
+The path **LIG2 → `CLightStatic` → `CLightMgr` main `CChain` →
+`0x1402EE560`** is proven by static instructions, from the
+`CSceneGameMain` virtual method to the selector.
+
+Open:
+- the low mask bits of each call;
+- the model's query point;
+- the Lc/Lv packing into GPU constants (with the colour scale).

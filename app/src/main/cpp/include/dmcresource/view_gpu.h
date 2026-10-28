@@ -290,8 +290,9 @@ void set_gpu_present_enabled(bool enabled) noexcept;
 void set_dmc3_shaders_enabled(bool enabled) noexcept;
 [[nodiscard]] bool dmc3_shaders_enabled() noexcept;
 // Light the DMC3 shaders' stage and models with the stage's light table
-// (experimental: that LIG2 feeds the game's lights is not proven; off by
-// default).
+// (LIG2 is the main list of the game's CLightMgr, research
+// dmc3-gates-archive-v124.md). Experimental and off by default: the masks
+// the stage and models ask with, and the light scale, are the Reader's.
 void set_game_lights_enabled(bool enabled) noexcept;
 [[nodiscard]] bool game_lights_enabled() noexcept;
 

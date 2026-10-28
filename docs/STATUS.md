@@ -364,6 +364,11 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v126: the source of the stage lights is proven (Gate 46): the game
+    copies cfg PAC slot 1 (LIG2) into `CLightStatic` and links its
+    records into `CLightMgr`'s main list, which the selector reads. The
+    setting stays experimental, because the masks and the light scale are
+    not known yet.
   - v125: the stage lights choose their four lights as `0x1402EE560` does
     (revision 2 of the clean-room specification, after Gate 46):
     - flag 4 with mask bit 0x10;
