@@ -43,8 +43,8 @@ enum class ListKind : std::uint8_t { main, secondary };
 [[nodiscard]] std::optional<LightTable> find_light_table(std::span<const std::uint8_t> bytes) noexcept;
 
 // Candidate: active, no colour modifier, type 0 or 1, the list's mask bit set,
-// and the low mode (flags without bit 2; secondary also without bit 3)
-// allowed: 1 needs mask & 3, 2 needs mask & 2, 3 needs mask & 1, else never.
+// and, with f = flags (secondary: bit 3 cleared), either f & 4 with mask & 0x10,
+// or low = f without bit 2 allowed: 1 needs mask & 3, 2 mask & 2, 3 mask & 1.
 [[nodiscard]] bool is_candidate(const LightRecord& record, unsigned mask, ListKind list) noexcept;
 // Type 0: max(0, 1 - |position - query|^2 * falloff); type 1: 1.
 [[nodiscard]] float score(const LightRecord& record, std::array<float, 3> query) noexcept;
@@ -57,11 +57,14 @@ struct SelectedLights {
     std::array<float, 16> lv{};                   // 4 rows of 4: vector
 };
 
-// Up to four candidates with score > 0, highest score first, equal scores
-// higher index first. lc row: (r, g, b, falloff | 1 for type 1); lv row:
-// (position - query, aux_w | 0 for type 1). Unused rows zero, index -1.
+// Candidates in record order enter slot 3 only when scoring strictly above it,
+// then rise past every slot scoring <= theirs (a later equal score goes above).
+// With single given and mask & 2, it is scored and put in slot 0, shifting the
+// others down (slot 3 dropped). lc row: (r, g, b, falloff | 1 for type 1);
+// lv row: (position - query, aux_w | 0 for type 1). Unused rows zero, index -1.
 [[nodiscard]] SelectedLights select_lights(const LightTable& table, std::array<float, 3> query,
-                                           unsigned mask, ListKind list = ListKind::main) noexcept;
+                                           unsigned mask, ListKind list = ListKind::main,
+                                           const LightRecord* single = nullptr) noexcept;
 
 // The number of records that pass the candidate rules (no score applied).
 [[nodiscard]] std::size_t candidate_count(const LightTable& table, unsigned mask, ListKind list) noexcept;

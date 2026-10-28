@@ -364,6 +364,12 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v125: the stage lights choose their four lights as `0x1402EE560` does
+    (revision 2 of the clean-room specification, after Gate 46):
+    - flag 4 with mask bit 0x10;
+    - insertion into four slots in list order (ties keep the first four,
+      later ones ahead);
+    - the manager's single light with mask bit 2.
   - Exposure: auto/manual, ISO, shutter, compensation, highlights, sensor
     noise.
   - Colour: white balance in kelvin, picture styles, contrast, saturation,

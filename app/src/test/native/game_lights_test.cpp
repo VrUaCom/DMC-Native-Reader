@@ -165,17 +165,19 @@ void test_find_light_table() {
 
 constexpr std::array<unsigned, 8> kMasks{1, 2, 3, 4, 5, 6, 7, 11};
 
-// Selected for (flags, list) on a type 1 light, per mask in kMasks.
+// Selected for (flags, list) on a type 1 light, per mask in kMasks (each with
+// `extra` added, e.g. 0x10).
 std::array<bool, 8> selected_per_mask(std::uint8_t flags, ListKind list, std::uint8_t type = 1,
-                                      std::uint8_t modifier = 0) {
+                                      std::uint8_t modifier = 0, unsigned extra = 0) {
     TableBytes t;
     t.set(0, {.flags = flags, .colour_modifier = modifier, .type = type, .position = {0, 0, 0},
               .falloff = 0.0f, .rgb = {1, 1, 1}});
     const LightTable table = t.read();
     std::array<bool, 8> out{};
     for (std::size_t i = 0; i < kMasks.size(); ++i) {
-        const auto sel = select_lights(table, {0, 0, 0}, kMasks[i], list);
-        const std::size_t count = candidate_count(table, kMasks[i], list);
+        const unsigned mask = kMasks[i] | extra;
+        const auto sel = select_lights(table, {0, 0, 0}, mask, list);
+        const std::size_t count = candidate_count(table, mask, list);
         assert(count == static_cast<std::size_t>(sel.count));
         out[i] = sel.count == 1;
         if (out[i]) assert(sel.index[0] == 0);
@@ -194,12 +196,36 @@ void test_eligibility_main() {
     assert(selected_per_mask(3, ListKind::main) == (Row{x, x, x, x, o, x, o, x}));
     assert(selected_per_mask(8, ListKind::main) == (Row{x, x, x, x, x, x, x, x}));
     assert(selected_per_mask(0x10, ListKind::main) == (Row{x, x, x, x, x, x, x, x}));
-    // Bit 2 is ignored: 4 is 0, 5 is 1, 6 is 2, 7 is 3.
+    // Without mask bit 0x10, bit 2 adds nothing: 4 is 0, 5 is 1, 6 is 2, 7 is 3.
     for (std::uint8_t low = 0; low < 4; ++low) {
         assert(selected_per_mask(low | 4, ListKind::main) == selected_per_mask(low, ListKind::main));
     }
     // Bit 3 is only cleared for the secondary list.
     assert(selected_per_mask(0x0B, ListKind::main) == (Row{x, x, x, x, x, x, x, x}));
+}
+
+void test_eligibility_main_0x10() {
+    constexpr unsigned e = 0x10;
+    //                    masks + 0x10: 1  2  3  4  5  6  7  11
+    assert(selected_per_mask(0, ListKind::main, 1, 0, e) == (Row{x, x, x, x, x, x, x, x}));
+    assert(selected_per_mask(1, ListKind::main, 1, 0, e) == (Row{x, x, x, x, o, o, o, x}));
+    assert(selected_per_mask(2, ListKind::main, 1, 0, e) == (Row{x, x, x, x, x, o, o, x}));
+    assert(selected_per_mask(3, ListKind::main, 1, 0, e) == (Row{x, x, x, x, o, x, o, x}));
+    // Flags 4 (low 0) pass only with mask bit 0x10 (and the main bit 4).
+    assert(selected_per_mask(4, ListKind::main, 1, 0, e) == (Row{x, x, x, o, o, o, o, x}));
+    assert(selected_per_mask(5, ListKind::main, 1, 0, e) == (Row{x, x, x, o, o, o, o, x}));
+    assert(selected_per_mask(6, ListKind::main, 1, 0, e) == (Row{x, x, x, o, o, o, o, x}));
+    // Flags 7 pass where 3 passes, and also with 0x10.
+    assert(selected_per_mask(7, ListKind::main, 1, 0, e) == (Row{x, x, x, o, o, o, o, x}));
+    for (std::size_t i = 0; i < kMasks.size(); ++i) {
+        if (selected_per_mask(3, ListKind::main)[i]) assert(selected_per_mask(7, ListKind::main)[i]);
+    }
+    // Bit 4 of the flags (0x10) is not bit 2: low 0x10 matches no mode.
+    assert(selected_per_mask(0x10, ListKind::main, 1, 0, e) == (Row{x, x, x, x, x, x, x, x}));
+    assert(selected_per_mask(0x14, ListKind::main, 1, 0, e) == (Row{x, x, x, o, o, o, o, x}));
+    // Bit 3 is not cleared on main: 0x0B is low 0x0B, 0x0C still has bit 2.
+    assert(selected_per_mask(0x0B, ListKind::main, 1, 0, e) == (Row{x, x, x, x, x, x, x, x}));
+    assert(selected_per_mask(0x0C, ListKind::main, 1, 0, e) == (Row{x, x, x, o, o, o, o, x}));
 }
 
 void test_eligibility_secondary() {
@@ -210,6 +236,22 @@ void test_eligibility_secondary() {
     assert(selected_per_mask(3, ListKind::secondary) == (Row{x, x, x, x, x, x, x, o}));
     assert(selected_per_mask(7, ListKind::secondary) == selected_per_mask(3, ListKind::secondary));
     assert(selected_per_mask(0x0B, ListKind::secondary) == selected_per_mask(3, ListKind::secondary));
+    assert(selected_per_mask(4, ListKind::secondary) == (Row{x, x, x, x, x, x, x, x}));
+    // 0x08 never passes: bit 3 is cleared and bit 2 is not set.
+    assert(selected_per_mask(0x08, ListKind::secondary) == (Row{x, x, x, x, x, x, x, x}));
+
+    constexpr unsigned e = 0x10;
+    //                    masks + 0x10: 1  2  3  4  5  6  7  11
+    assert(selected_per_mask(0, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, x}));
+    assert(selected_per_mask(1, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, o}));
+    assert(selected_per_mask(2, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, o}));
+    assert(selected_per_mask(3, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, o}));
+    assert(selected_per_mask(4, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, o}));
+    assert(selected_per_mask(7, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, o}));
+    assert(selected_per_mask(0x0B, ListKind::secondary, 1, 0, e) ==
+           selected_per_mask(3, ListKind::secondary, 1, 0, e));
+    assert(selected_per_mask(0x08, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, x}));
+    assert(selected_per_mask(0x0C, ListKind::secondary, 1, 0, e) == (Row{x, x, x, x, x, x, x, o}));
 
     // Beyond kMasks: the low mode still decides under the secondary bit.
     TableBytes t;
@@ -223,11 +265,24 @@ void test_eligibility_secondary() {
     assert(candidate_count(table, 4 | 3, ListKind::secondary) == 0);   // no bit 8
     assert(candidate_count(table, 8 | 3, ListKind::main) == 0);        // no bit 4
     assert(candidate_count(table, 4 | 3, ListKind::main) == 2);        // 0x0B never on main
+
+    // Flags 4 needs mask bit 0x10 and still the list bit.
+    TableBytes four;
+    four.set(0, {.flags = 0x04, .type = 1});
+    const LightTable ft = four.read();
+    assert(candidate_count(ft, 8 | 3, ListKind::secondary) == 0);
+    assert(candidate_count(ft, 8 | 0x10, ListKind::secondary) == 1);
+    assert(candidate_count(ft, 4 | 0x10, ListKind::secondary) == 0);
+    assert(candidate_count(ft, 4 | 0x10, ListKind::main) == 1);
+    assert(candidate_count(ft, 8 | 0x10, ListKind::main) == 0);
+    assert(candidate_count(ft, 0x10, ListKind::main) == 0);
 }
 
 void test_never_selected() {
     const Row none{x, x, x, x, x, x, x, x};
-    for (std::uint8_t flags : {1, 2, 3}) {
+    for (std::uint8_t flags : {1, 2, 3, 4, 7}) {
+        assert(selected_per_mask(flags, ListKind::main, 2, 0, 0x10) == none);
+        assert(selected_per_mask(flags, ListKind::secondary, 1, 1, 0x10) == none);
         assert(selected_per_mask(flags, ListKind::main, 2) == none);
         assert(selected_per_mask(flags, ListKind::secondary, 2) == none);
         assert(selected_per_mask(flags, ListKind::main, 1, 1) == none);
@@ -289,12 +344,27 @@ void test_ordering() {
     assert(near(sel.score[2], 0.7f) && near(sel.score[3], 0.6f));
     for (int i = 0; i < 3; ++i) assert(sel.score[i] > sel.score[i + 1]);
 
-    // Equal scores: higher index first; the lowest index is the one left out.
+    // Two equal scores: the later index goes first.
+    TableBytes two;
+    two.set(8, {.flags = 3, .type = 0, .position = {1, 0, 0}, .falloff = 0.25f});
+    two.set(20, {.flags = 3, .type = 0, .position = {0, 0, -1}, .falloff = 0.25f});
+    const auto pair = select_lights(two.read(), {0, 0, 0}, 5);
+    assert(pair.count == 2 && pair.index[0] == 20 && pair.index[1] == 8);
+    assert(pair.score[0] == 0.75f && pair.score[1] == 0.75f);
+
+    // Five equal scores at 0..4: the first four visited are kept, latest
+    // first; index 4 does not beat slot 3 and is skipped.
     TableBytes eq;
-    for (std::size_t i : {2u, 9u, 17u, 25u, 47u}) eq.set(i, {.flags = 3, .type = 1});
+    for (std::size_t i = 0; i < 5; ++i) eq.set(i, {.flags = 3, .type = 1});
     const auto tie = select_lights(eq.read(), {0, 0, 0}, 5);
     assert(tie.count == 4);
-    assert((tie.index == std::array<int, 4>{47, 25, 17, 9}));
+    assert((tie.index == std::array<int, 4>{3, 2, 1, 0}));
+
+    // Spread over the table the same holds: the four lowest indices, reversed.
+    TableBytes spread;
+    for (std::size_t i : {2u, 9u, 17u, 25u, 47u}) spread.set(i, {.flags = 3, .type = 1});
+    const auto st = select_lights(spread.read(), {0, 0, 0}, 5);
+    assert((st.index == std::array<int, 4>{25, 17, 9, 2}));
 
     // A type 0 at score 1 (falloff 0) ties with type 1 by index too.
     TableBytes mixed;
@@ -302,6 +372,107 @@ void test_ordering() {
     mixed.set(6, {.flags = 3, .type = 0, .falloff = 0.0f, .rgb = {1, 0, 0}});
     const auto m = select_lights(mixed.read(), {0, 0, 0}, 5);
     assert(m.count == 2 && m.index[0] == 6 && m.index[1] == 5);
+}
+
+void test_ordering_threshold() {
+    // Four kept lights (0.9, 0.8, 0.7, 0.6); a later 0.6 equals slot 3 and is
+    // skipped, a later 0.65 is above it and replaces slot 3.
+    const auto light = [](float falloff) {
+        return RecordSpec{.flags = 3, .type = 0, .position = {1, 0, 0}, .falloff = falloff};
+    };
+    TableBytes t;
+    t.set(0, light(0.1f));
+    t.set(1, light(0.2f));
+    t.set(2, light(0.3f));
+    t.set(3, light(0.4f));
+    t.set(4, light(0.4f));  // equal to slot 3
+    auto sel = select_lights(t.read(), {0, 0, 0}, 5);
+    assert(sel.count == 4);
+    assert((sel.index == std::array<int, 4>{0, 1, 2, 3}));
+
+    t.set(5, light(0.35f));  // 0.65 > 0.6
+    sel = select_lights(t.read(), {0, 0, 0}, 5);
+    assert(sel.count == 4);
+    assert((sel.index == std::array<int, 4>{0, 1, 2, 5}));
+    assert(near(sel.score[3], 0.65f));
+
+    // Below slot 3 never enters; a better late light rises to its place.
+    t.set(6, light(0.5f));   // 0.5
+    t.set(7, light(0.05f));  // 0.95
+    sel = select_lights(t.read(), {0, 0, 0}, 5);
+    assert((sel.index == std::array<int, 4>{7, 0, 1, 2}));
+}
+
+// --- single light ------------------------------------------------------------
+
+void test_single_light() {
+    const auto light = [](float falloff) {
+        return RecordSpec{.flags = 3, .type = 0, .position = {1, 0, 0}, .falloff = falloff};
+    };
+    TableBytes t;
+    t.set(0, light(0.1f));  // 0.9
+    t.set(1, light(0.2f));  // 0.8
+    t.set(2, light(0.3f));  // 0.7
+    t.set(3, light(0.4f));  // 0.6
+    const LightTable table = t.read();
+
+    // Not a candidate itself (flags 0, a colour modifier): no eligibility test.
+    LightRecord single{};
+    single.index = 40;
+    single.active = true;
+    single.flags = 0;
+    single.colour_modifier = 1;
+    single.type = 0;
+    single.position = {0, 3, 0};
+    single.aux_w = 2.0f;
+    single.falloff = 0.1f;  // delta (0, 3, 0): 1 - 9 * 0.1 = 0.1
+    single.rgb = {7, 8, 9};
+
+    const auto base = select_lights(table, {0, 0, 0}, 5);
+    assert((base.index == std::array<int, 4>{0, 1, 2, 3}));
+
+    // mask & 2: slot 0 even with the lowest score; the old slot 3 is dropped.
+    const auto with = select_lights(table, {0, 0, 0}, 5 | 2, ListKind::main, &single);
+    assert(with.count == 4);
+    assert((with.index == std::array<int, 4>{40, 0, 1, 2}));
+    assert(near(with.score[0], 0.1f));
+    assert(near(with.score[1], 0.9f) && near(with.score[2], 0.8f) && near(with.score[3], 0.7f));
+    assert(with.lc[0] == 7 && with.lc[1] == 8 && with.lc[2] == 9 && with.lc[3] == 0.1f);
+    assert(with.lv[0] == 0 && with.lv[1] == 3 && with.lv[2] == 0 && with.lv[3] == 2.0f);
+    for (std::size_t k = 0; k < 12; ++k) {
+        assert(with.lc[4 + k] == base.lc[k]);
+        assert(with.lv[4 + k] == base.lv[k]);
+    }
+
+    // Placed whatever its score, even 0, and counted.
+    LightRecord dark = single;
+    dark.falloff = 1.0f;  // 1 - 9 < 0 -> 0
+    const auto zero = select_lights(table, {0, 0, 0}, 5 | 2, ListKind::main, &dark);
+    assert(zero.count == 4 && zero.index[0] == 40 && zero.score[0] == 0.0f);
+
+    // With fewer lights nothing is dropped and the count grows.
+    const auto alone = select_lights(TableBytes().read(), {0, 0, 0}, 2, ListKind::main, &single);
+    assert(alone.count == 1);
+    assert((alone.index == std::array<int, 4>{40, -1, -1, -1}));
+    for (std::size_t k = 4; k < 16; ++k) assert(alone.lc[k] == 0.0f && alone.lv[k] == 0.0f);
+
+    // Type 1 single: score 1, lc w 1, lv w 0.
+    LightRecord sun = single;
+    sun.type = 1;
+    sun.index = 41;
+    const auto s1 = select_lights(table, {0, 0, 0}, 5 | 2, ListKind::secondary, &sun);
+    assert(s1.count == 1 && s1.index[0] == 41 && s1.score[0] == 1.0f);  // secondary: no bit 8
+    assert(s1.lc[3] == 1.0f && s1.lv[3] == 0.0f);
+
+    // Without mask & 2, or when null, nothing changes.
+    const auto without = select_lights(table, {0, 0, 0}, 5, ListKind::main, &single);
+    assert(without.count == base.count && without.index == base.index && without.score == base.score);
+    assert(without.lc == base.lc && without.lv == base.lv);
+    const auto with_mask = select_lights(table, {0, 0, 0}, 5 | 2);
+    const auto null = select_lights(table, {0, 0, 0}, 5 | 2, ListKind::main, nullptr);
+    assert(null.count == with_mask.count && null.index == with_mask.index);
+    assert(null.lc == with_mask.lc && null.lv == with_mask.lv);
+    assert(with_mask.index == base.index);
 }
 
 // --- matrices ----------------------------------------------------------------
@@ -357,10 +528,13 @@ int main() {
     test_read_non_finite();
     test_find_light_table();
     test_eligibility_main();
+    test_eligibility_main_0x10();
     test_eligibility_secondary();
     test_never_selected();
     test_score();
     test_ordering();
+    test_ordering_threshold();
+    test_single_light();
     test_matrices();
     test_describe();
     return 0;

@@ -19,5 +19,9 @@ For the specification side only; the implementers never read this file.
   | `game_material.md` | `include/dmcresource/game_material.h`, `modules/game_material.cpp` | `game_material_test.cpp` |
   | `game_lights.md` | `include/dmcresource/game_lights.h`, `modules/game_lights.cpp` | `game_lights_test.cpp` |
 
+- **Revision 2 (v125).** After Gate 46 the specification side read the
+  selector's instructions again and corrected `game_lights.md`. A new
+  implementer, again given only the specification, updated the module and
+  its tests.
 - **The Reader's side.** Wiring the modules into the adapters, the frame and
   the GPU backend was then done against the modules' public interfaces.

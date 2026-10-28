@@ -6,6 +6,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace dmcresource::game_lights {
 namespace {
@@ -82,6 +83,7 @@ bool is_candidate(const LightRecord& record, unsigned mask, ListKind list) noexc
 
     unsigned f = record.flags;
     if (list == ListKind::secondary) f &= 0xF7u;
+    if ((f & 4u) != 0 && (mask & 0x10u) != 0) return true;
     const unsigned low = f & ~4u;
     switch (low) {
         case 1: return (mask & 3u) != 0;
@@ -99,40 +101,49 @@ float score(const LightRecord& record, std::array<float, 3> query) noexcept {
 }
 
 SelectedLights select_lights(const LightTable& table, std::array<float, 3> query, unsigned mask,
-                             ListKind list) noexcept {
-    struct Pick {
-        int index;
-        float score;
-    };
-    std::array<Pick, kRecordCount> picks{};
-    std::size_t n = 0;
+                             ListKind list, const LightRecord* single) noexcept {
+    // Four slots, best first; an empty slot scores 0 and holds no record.
+    std::array<const LightRecord*, 4> slot_record{};
+    std::array<float, 4> slot_score{};
+
     for (const LightRecord& r : table.records) {
         if (!is_candidate(r, mask, list)) continue;
         const float s = score(r, query);
-        if (!(s > 0.0f)) continue;
-        picks[n++] = {r.index, s};
+        if (!(s > slot_score[3])) continue;
+        slot_record[3] = &r;
+        slot_score[3] = s;
+        for (std::size_t j = 3; j > 0 && slot_score[j - 1] <= slot_score[j]; --j) {
+            std::swap(slot_record[j - 1], slot_record[j]);
+            std::swap(slot_score[j - 1], slot_score[j]);
+        }
     }
-    std::sort(picks.begin(), picks.begin() + static_cast<std::ptrdiff_t>(n), [](const Pick& a, const Pick& b) {
-        if (a.score != b.score) return a.score > b.score;
-        return a.index > b.index;
-    });
+
+    if (single != nullptr && (mask & 2u) != 0) {
+        for (std::size_t j = 3; j > 0; --j) {
+            slot_record[j] = slot_record[j - 1];
+            slot_score[j] = slot_score[j - 1];
+        }
+        slot_record[0] = single;
+        slot_score[0] = score(*single, query);
+    }
 
     SelectedLights out{};
-    out.count = static_cast<int>(std::min<std::size_t>(n, 4));
-    for (int slot = 0; slot < out.count; ++slot) {
-        const LightRecord& r = table.records[static_cast<std::size_t>(picks[slot].index)];
-        const auto d = delta_of(r, query);
-        const std::size_t row = static_cast<std::size_t>(slot) * 4;
-        out.index[slot] = picks[slot].index;
-        out.score[slot] = picks[slot].score;
-        out.lc[row + 0] = static_cast<float>(r.rgb[0]);
-        out.lc[row + 1] = static_cast<float>(r.rgb[1]);
-        out.lc[row + 2] = static_cast<float>(r.rgb[2]);
-        out.lc[row + 3] = r.type == 0 ? r.falloff : 1.0f;
+    for (std::size_t slot = 0; slot < 4; ++slot) {
+        const LightRecord* r = slot_record[slot];
+        if (r == nullptr) continue;
+        ++out.count;
+        const auto d = delta_of(*r, query);
+        const std::size_t row = slot * 4;
+        out.index[slot] = r->index;
+        out.score[slot] = slot_score[slot];
+        out.lc[row + 0] = static_cast<float>(r->rgb[0]);
+        out.lc[row + 1] = static_cast<float>(r->rgb[1]);
+        out.lc[row + 2] = static_cast<float>(r->rgb[2]);
+        out.lc[row + 3] = r->type == 0 ? r->falloff : 1.0f;
         out.lv[row + 0] = d[0];
         out.lv[row + 1] = d[1];
         out.lv[row + 2] = d[2];
-        out.lv[row + 3] = r.type == 0 ? r.aux_w : 0.0f;
+        out.lv[row + 3] = r->type == 0 ? r->aux_w : 0.0f;
     }
     return out;
 }
