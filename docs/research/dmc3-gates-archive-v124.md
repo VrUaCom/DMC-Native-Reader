@@ -584,3 +584,27 @@ unit length on st000 and st006):
   1.0, the neutral value the Reader set by eye (255/256), and 0.75 in
   st006. Not proven: the upload of `B+0xB0..+0x14F` to the GPU is not
   traced.
+
+### Gate 48 v0.3 leads: who writes the masks
+
+| Field | Writer | Value |
+| --- | --- | --- |
+| `Y+0x744` (model mask) | `0x140089270`, a constructor (vtables `0x1404C9010`, `0x1404C91F0`; 8+ callers) | **2**, with `Y+0x740 = 0` (lights on) |
+| `Y+0x744` | `0x1401B09F0` | `r12d` (r12 serves as zero there) |
+| `Y+0x744` | `0x140089940` | `edx` (a setter with no direct callers, likely a vtable slot) |
+| `X+0x572` (stage mask) | `0x140089950` | `dl` (a setter with no direct callers) |
+| `+0x570..+0x573` | `0x140115FF0`, a constructor (vtables `0x1404D1E48`, `0x1404D1E90`, `0x1404D1F88`) | `0xFF` each |
+
+What follows, if these owners are the drawn holders (their RTTI is still
+to be read):
+
+- **A model holder built by `0x140089270`** draws with mask 2. Its
+  selection is then `2|4|8`:
+  - the main and secondary lists are both walked;
+  - low mode 1 and 2 (directional, type 1) pass, low mode 3 (the point
+    lights) does not;
+  - the ambient is `mgr+0x60` (header `+0x06..+0x0A`, 32 32 32), because
+    the mask is exactly 2.
+- **The holder built by `0x140115FF0`** starts with `+0x570 = 0xFF`.
+  `0x14008B5D0` skips the stage light update while that byte is non-zero,
+  so such objects get no per-frame lights until something clears it.
