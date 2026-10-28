@@ -379,3 +379,23 @@ Still not proven:
 - the low mask bits of the scene and model calls;
 - how Lc/Lv become the shader constants;
 - the model's query point.
+
+### `this` of `0x14023C3D0`
+
+- **Inside the function.** The only write to `rdi` before the link call is
+  `0x14023C3F5 mov rdi, rcx` (after `movzx eax, [rcx+0x24]`; the function
+  steps on `this+0x24`, 0..10). `rdi` is callee-saved, so it is still the
+  entry `rcx` at `0x14023CA77`.
+- **The caller.** The only direct caller is `0x14023B427` in `0x14023B3E0`:
+
+  ```
+  0x14023B3ED  mov rbx, rcx
+  ...          switch on [rbx+0x20] (0..12, table at image+0x23B500)
+  0x14023B424  mov rcx, rbx
+  0x14023B427  call 0x14023C3D0
+  ```
+
+  `0x14023B3E0` has no direct callers, so it is reached through a vtable.
+- **The last step.** If `0x14023B3E0` is a slot of `CSceneGameMain`'s
+  vtable `0x1404E32C8`, then `rdi` is a `CSceneGameMain` and the path is
+  proven end to end.
