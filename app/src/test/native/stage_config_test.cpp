@@ -465,7 +465,8 @@ int main() {
             for (const auto& row : folded.rows) {
                 assert(row.id != static_cast<int>(act::Companion::StageEffects));
             }
-            assert(folded.rows.size() == 2U && folded.stage_ops.size() == 4U);
+            // No Stage Ops in ⋮ around a model: its base room is in Settings.
+            assert(folded.rows.size() == 2U && folded.stage_ops.empty());
             // Settings' base room: the same four archives, of the room loaded
             // there (none here), whatever file is open.
             const auto base = act::base_room_menu(no_room_facts());

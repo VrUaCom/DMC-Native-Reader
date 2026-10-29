@@ -154,8 +154,10 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         add(model_rows, Companion::StageCloth, "Add cloth resource\xE2\x80\xA6");
         add(model_rows, Companion::StageOther, "Add other companion\xE2\x80\xA6");
     }
-    // Stage Ops: what a full stage needs, loaded or missing.
-    if (open && !cutscene) stage_ops(session, facts, menu, slot_for(session));
+    // Stage Ops: what a full stage needs, loaded or missing; in ⋮ for a
+    // stage opened as its scene only (the base room around a model is
+    // built in Settings, base_room_menu).
+    if (stage_scene) stage_ops(session, facts, menu, StageSlot::scene);
     // The markers show over a stage scene only (removing is the ✕ of its
     // Stage Ops row).
     if (stage_scene && has(widow::StateFlag::CanLoadStageConfig) && has(widow::StateFlag::StageConfigLoaded)) {

@@ -364,6 +364,8 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v137: ⋮ shows Stage Ops for a stage opened as its scene only; around
+    a model (e.g. pl000) the base room is built in Settings → Base room.
   - v136: a configuration loaded into the base room says "Base room
     config": its light, fog and effects are in the room, and Settings →
     Base room → Spawn point puts the model on a spawn point. There is no
