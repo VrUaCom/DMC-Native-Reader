@@ -608,3 +608,31 @@ to be read):
 - **The holder built by `0x140115FF0`** starts with `+0x570 = 0xFF`.
   `0x14008B5D0` skips the stage light update while that byte is non-zero,
   so such objects get no per-frame lights until something clears it.
+
+### Correction: the stage holder's own constructor (`0x140089320`)
+
+`+0x570` is written by many unrelated classes. The ones in the light
+holder's own code (`0x1400892xx..0x14008Bxxx`, next to `0x140089900`,
+`0x14008B5D0` and the mask setters) are:
+
+| Writer | Effect |
+| --- | --- |
+| `0x140089320` (constructor, 22 callers), `0x14008938E` | `dword [+0x570] = 0x10000`: `+0x570 = 0` (lights on), `+0x571 = 0`, **`+0x572 = 1`** (mask), `+0x573 = 0` (static lights not built) |
+| `0x140089E20` | `byte [+0x570] = dl` (setter) |
+| `0x140089F20`, `0x140089FB0` | `byte [+0x570] = 1` (lights off) |
+
+- **Stage objects start with mask 1 and lights on**, if `0x140089320` is
+  the constructor of the drawn holder X:
+  - the static selection uses `1|4`, so point lights (low mode 3) and low
+    mode 1 pass, and directional ones (2) do not;
+  - the per-frame selection adds the dynamic list (`|8`);
+  - the ambient is `mgr+0x50` (header `+0x0C..+0x10`, e.g. 220 210 200),
+    because the mask is exactly 1.
+- **`0x140115FF0`** (`+0x570..+0x573 = 0xFF`) is probably another class
+  with its own fields at those offsets. The "lights off by default" reading
+  above is withdrawn.
+- **So hypothesis A (no point lights on the stage) is unlikely.** The open
+  question moves to the scale: with unit normals, aux = 0 and K = 1/255,
+  the `stage_lit` formula as specified would saturate. Either the GPU
+  upload rescales, or the specification's "not normalised" needs
+  rechecking against the shader.
