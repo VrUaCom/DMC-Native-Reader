@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "dmcresource/demo_session.h"
+#include "dmcresource/stage_slot.h"
 #include "dmcresource/effect_spawn_sites.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/spider/cpp23_language.h"
@@ -141,6 +142,14 @@ ActionOutcome load_stage_config(std::string_view name, const std::uint8_t* bytes
                                std::to_string(bytes == nullptr ? 0U : size) + " bytes read" +
                                (start.empty() ? std::string{} : ", starts " + start + "\"" + text + "\"") +
                                "; a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
+        }
+        // The base room shows no markers: its configuration brings light,
+        // fog and effects, and its spawn points are a list in Settings.
+        if (active_slot() == StageSlot::base) {
+            return outcome(true, ShellStep::None,
+                           "Base room config: " + stage_config_summary() +
+                               ". Its light, fog and effects are in the room; Settings \u2192 Base room \u2192 "
+                               "Spawn point puts the model on one.");
         }
         // The view starts again at the configuration's first spawn point.
         g_start_spawn.store(-1);

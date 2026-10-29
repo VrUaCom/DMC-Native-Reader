@@ -364,6 +364,10 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v136: a configuration loaded into the base room says "Base room
+    config": its light, fog and effects are in the room, and Settings →
+    Base room → Spawn point puts the model on a spawn point. There is no
+    "hold a marker" and no view reset.
   - v135: fix: picking stage effects wrote the diagnostics log over the
     picked file (v72-v134). The effects picker and the diagnostics export
     had one request code (1014), so the picked file went to the export.

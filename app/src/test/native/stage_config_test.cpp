@@ -326,6 +326,17 @@ int main() {
         // The view starts again at the configuration's spawn point.
         assert(loaded.ok && loaded.step == act::ShellStep::ResetView && loaded.message.find("2 spawn points") != std::string::npos);
         {
+            // Into the base room: no markers to hold, the spawn points are in Settings.
+            const auto previous = active_slot();
+            set_active_slot(StageSlot::base);
+            const auto base = act::load_stage_config("st100cfg.pac", cfg.data(), cfg.size());
+            assert(base.ok && base.step == act::ShellStep::None && base.message.rfind("Base room config:", 0) == 0U &&
+                   base.message.find("Hold a marker") == std::string::npos);
+            stage_markers::set_current(StageSlot::base, nullptr);
+            set_active_slot(previous);
+            assert(act::load_stage_config("st100cfg.pac", cfg.data(), cfg.size()).step == act::ShellStep::ResetView);
+        }
+        {
             // st100's view starts behind spawn point 0 (0 0 0, facing +z),
             // looking at its chest; another stage's ignores the config and
             // starts on its own floor (here its first floor spot).
