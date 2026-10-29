@@ -315,6 +315,11 @@ int main() {
         // No configuration: the tool asks the shell for the file picker.
         assert(act::stage_config_tool().step == act::ShellStep::PickStageConfig);
         assert(act::stage_config_menu().items.size() == 1U);
+        // A diagnostics log written over the file is named as such.
+        const std::string log = "[2026-10-21 23:02:17] build=0 route=external name=em000.pac\n";
+        const auto logged = act::load_stage_config(
+            "st001cfg.pac", reinterpret_cast<const std::uint8_t*>(log.data()), log.size());
+        assert(!logged.ok && logged.message.find("diagnostics log") != std::string::npos);
         const auto bad = act::load_stage_config("noise.bin", std::vector<std::uint8_t>(64, 7U).data(), 64U);
         assert(!bad.ok && bad.message.find("No stage configuration in noise.bin") == 0U);
         const auto loaded = act::load_stage_config("st100cfg.pac", cfg.data(), cfg.size());

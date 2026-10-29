@@ -1,9 +1,11 @@
 #include "dmcresource/spider/stage_actions.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <string_view>
 #include <utility>
 
 #include "dmcresource/demo_session.h"
@@ -121,6 +123,18 @@ ActionOutcome load_stage_config(std::string_view name, const std::uint8_t* bytes
             std::string text;
             for (std::size_t i = 0; bytes != nullptr && i < size && i < 4U; ++i) {
                 text += bytes[i] >= 0x20U && bytes[i] < 0x7FU ? static_cast<char>(bytes[i]) : '.';
+            }
+            // The Reader's own diagnostics log, written over a file picked for
+            // stage effects by v72-v134 (both pickers had one request code).
+            const std::string_view head{reinterpret_cast<const char*>(bytes == nullptr ? nullptr : bytes),
+                                        bytes == nullptr ? 0U : std::min<std::size_t>(size, 256U)};
+            if (head.starts_with("[20") && head.find(" build=") != std::string_view::npos &&
+                head.find(" route=") != std::string_view::npos) {
+                return outcome(false, ShellStep::None,
+                               std::string{name} +
+                                   " holds the Reader's diagnostics log, not the stage file: an earlier "
+                                   "version wrote it over a file picked for stage effects. Copy the "
+                                   "original from the game again.");
             }
             return outcome(false, ShellStep::None,
                            "No stage configuration in " + std::string{name} + " (" +
