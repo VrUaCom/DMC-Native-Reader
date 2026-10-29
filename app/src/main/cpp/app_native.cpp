@@ -1249,7 +1249,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
 // The stage's effect bank (st*_effect.pac): the layout's effects play from it.
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoomEffects(
-        JNIEnv* env, jclass, jint fd, jstring filename) {
+        JNIEnv* env, jclass, jint fd, jstring filename, jint slot) {
     if (fd < 0) return nullptr;
     ReadOnlyMap mapped(fd);
     if (!mapped.valid()) return nullptr;
@@ -1259,14 +1259,49 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoomEffects(
         if (!host) return nullptr;
         std::string detail = std::to_string(host->effect_banks.front().bank.records.size()) + " effect records, " +
                              std::to_string(host->effect_banks.front().textures.size()) + " textures";
-        dmcresource::stage_room::set_effect_host(std::move(host));
+        dmcresource::stage_room::set_effect_host(slot == 1 ? dmcresource::StageSlot::scene
+                                                           : dmcresource::StageSlot::base,
+                                                 std::move(host));
         return env->NewStringUTF(detail.c_str());
     } catch (...) { return nullptr; }
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoomEffects(JNIEnv*, jclass) {
-    dmcresource::stage_room::set_effect_host(nullptr);
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearRoomEffects(JNIEnv*, jclass, jint slot) {
+    dmcresource::stage_room::set_effect_host(
+        slot == 1 ? dmcresource::StageSlot::scene : dmcresource::StageSlot::base, nullptr);
+}
+
+// Which stage companions a session uses (stage_slot.h): 1 its own (a stage
+// scene), 0 the base room's.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageSlot(JNIEnv*, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    return dmcresource::slot_for(from_handle(handle)) == dmcresource::StageSlot::scene ? 1 : 0;
+}
+
+// The stage a session is ("st001"), for keeping its own companions; empty
+// when it is not a stage or carries no number.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageStem(JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto* session = from_handle(handle);
+        if (session == nullptr || session->stage == nullptr) return env->NewStringUTF("");
+        int number = dmcresource::stage_markers::stage_number(session->stage->name);
+        if (number < 0) number = dmcresource::stage_markers::stage_number(session->source_name);
+        if (number < 0 || number > 999) return env->NewStringUTF("");
+        char stem[8];
+        std::snprintf(stem, sizeof stem, "st%03d", number);
+        return env->NewStringUTF(stem);
+    } catch (...) { return env->NewStringUTF(""); }
+}
+
+// Clears one slot's stage configuration (a stage scene opens clean).
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_clearStageConfig(JNIEnv*, jclass, jint slot) {
+    dmcresource::stage_markers::set_current(
+        slot == 1 ? dmcresource::StageSlot::scene : dmcresource::StageSlot::base, nullptr);
 }
 
 // True when the room drawn with the session moves on its own (core
@@ -1426,8 +1461,11 @@ jobject menu_object(JNIEnv* env, const stage_actions::Menu& menu) {
 }  // namespace
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(JNIEnv* env, jclass, jint fd, jstring filename) {
+Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(JNIEnv* env, jclass, jint fd, jstring filename,
+                                                              jint slot) {
     stage_actions::ActionOutcome outcome;
+    // Into the base room's set or the opened stage's (stage_slot.h).
+    dmcresource::set_active_slot(slot == 1 ? dmcresource::StageSlot::scene : dmcresource::StageSlot::base);
     try {
         const auto name = to_utf8(env, filename);
         if (fd >= 0) {

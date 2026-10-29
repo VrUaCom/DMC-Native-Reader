@@ -327,7 +327,7 @@ namespace {
 using RoomPoint = dmcresource::Vec3;
 
 std::mutex g_mutex;
-std::shared_ptr<const StageConfig> g_current;
+std::array<std::shared_ptr<const StageConfig>, 2> g_current;
 std::atomic<bool> g_visible{true};
 std::atomic<int> g_selected{-1};
 
@@ -388,16 +388,20 @@ std::shared_ptr<const StageConfig> load_stage_config(std::string_view name, std:
     return config;
 }
 
-void set_current(std::shared_ptr<const StageConfig> config) noexcept {
+void set_current(StageSlot slot, std::shared_ptr<const StageConfig> config) noexcept {
     const std::lock_guard lock{g_mutex};
-    g_current = std::move(config);
+    g_current[static_cast<std::size_t>(slot)] = std::move(config);
     g_selected.store(-1);
 }
 
-std::shared_ptr<const StageConfig> current() noexcept {
+std::shared_ptr<const StageConfig> current(StageSlot slot) noexcept {
     const std::lock_guard lock{g_mutex};
-    return g_current;
+    return g_current[static_cast<std::size_t>(slot)];
 }
+
+void set_current(std::shared_ptr<const StageConfig> config) noexcept { set_current(active_slot(), std::move(config)); }
+
+std::shared_ptr<const StageConfig> current() noexcept { return current(active_slot()); }
 
 void set_visible(bool visible) noexcept { g_visible.store(visible); }
 bool visible() noexcept { return g_visible.load(); }

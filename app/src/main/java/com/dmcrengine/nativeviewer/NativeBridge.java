@@ -94,7 +94,13 @@ public final class NativeBridge {
     public static native long openStage(int fd, String filename);
     // Spider stage / sound / export actions: the core decides and writes
     // every line; the shell carries out the named platform step.
-    public static native ActionOutcome loadStageConfig(int fd, String filename);
+    /** slot: 0 the base room's set, 1 the opened stage's (stage_slot.h). */
+    public static native ActionOutcome loadStageConfig(int fd, String filename, int slot);
+    public static native void clearStageConfig(int slot);
+    /** 1 when the session is a stage scene with its own companions, 0 when it uses the base room's. */
+    public static native int stageSlot(long handle);
+    /** "st001" for a stage scene, "" otherwise. */
+    public static native String stageStem(long handle);
     /** The base room's four archives (Settings): a CompanionMenu with only its stage ops. */
     public static native CompanionMenu baseRoomMenu(boolean roomLoaded);
     /** The view held at a point (render pixels): marker card, joint, or scrub. */
@@ -193,8 +199,8 @@ public final class NativeBridge {
             float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
             boolean follow, float dolly, float x, float y, boolean place);
     /** Loads the stage's effect bank (st*_effect.pac); its summary, or null. */
-    public static native String loadRoomEffects(int fd, String filename);
-    public static native void clearRoomEffects();
+    public static native String loadRoomEffects(int fd, String filename, int slot);
+    public static native void clearRoomEffects(int slot);
     /** The room drawn with the session has scrolling textures (clouds) or effects. */
     public static native boolean roomAnimated(long handle);
     /**

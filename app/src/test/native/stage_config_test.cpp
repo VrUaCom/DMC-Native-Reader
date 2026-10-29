@@ -472,8 +472,19 @@ int main() {
             }
             assert(stop);
         }
+        // Removing acts on the set of the session the menu is for: the
+        // stage's own (stage_slot.h), as the shell builds the menu first.
+        set_active_slot(slot_for(&stage));
         assert(act::run_stage_config_menu(menu.items[2].id).message == "Stage config removed");
         assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
+        // The base room's set and the opened stage's never mix.
+        stage_markers::set_current(StageSlot::base, config);
+        assert(stage_markers::current(StageSlot::scene) == nullptr);
+        assert(!widow::has_state(black_widow_state(&stage), widow::StateFlag::StageConfigLoaded));
+        Session model;  // a model stands in the base room: its set
+        set_active_slot(slot_for(&model));
+        assert(stage_markers::current() == config);
+        stage_markers::set_current(StageSlot::base, nullptr);
     }
 
     // A configuration's STE records are effects of the stage's bank, played

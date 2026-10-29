@@ -15,6 +15,7 @@
 #include "dmcresource/mesh.h"
 #include "dmcresource/scene_projection.h"
 #include "dmcresource/environment_collision.h"
+#include "dmcresource/stage_slot.h"
 
 // Viewer "room": a stage archive (st*.pac, a lone .scm, or any PAC with
 // models) the user picked as the backdrop for every model instead of the
@@ -193,8 +194,11 @@ void clear_active_collision(const void* owner) noexcept;
 // from. It is held as a host Session that only carries the bank.
 [[nodiscard]] std::shared_ptr<Session> make_effect_host(std::string_view name, const std::uint8_t* bytes,
                                                         std::size_t size) noexcept;
+// One per StageSlot; without a slot, the active one.
 void set_effect_host(std::shared_ptr<const Session> host) noexcept;
 [[nodiscard]] std::shared_ptr<const Session> effect_host() noexcept;
+void set_effect_host(StageSlot slot, std::shared_ptr<const Session> host) noexcept;
+[[nodiscard]] std::shared_ptr<const Session> effect_host(StageSlot slot) noexcept;
 
 // The "# GAME" sets with a model that stand in the room, intact or broken
 // (their order in the layout): DUMMY sets never; a STAY set whose "# SET"

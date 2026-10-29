@@ -14,6 +14,7 @@
 #include "dmcresource/image_preview.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/stage_config.h"
+#include "dmcresource/stage_slot.h"
 
 // What a stage configuration member places in the world, as markers in stage
 // space: spawn points (POS), item placements (ITM), stage elements (STE),
@@ -90,10 +91,13 @@ struct StageConfig final {
 [[nodiscard]] std::shared_ptr<const StageConfig> load_stage_config(std::string_view name,
                                                                    std::span<const std::uint8_t> bytes);
 
-// The configuration drawn over the viewer's room or stage scene (shared by
-// every render; thread-safe), whether it shows, and the held marker.
+// The configuration drawn over the viewer's room or stage scene (one per
+// StageSlot, thread-safe; without a slot, the active one), whether it
+// shows, and the held marker.
 void set_current(std::shared_ptr<const StageConfig> config) noexcept;
 [[nodiscard]] std::shared_ptr<const StageConfig> current() noexcept;
+void set_current(StageSlot slot, std::shared_ptr<const StageConfig> config) noexcept;
+[[nodiscard]] std::shared_ptr<const StageConfig> current(StageSlot slot) noexcept;
 void set_visible(bool visible) noexcept;
 [[nodiscard]] bool visible() noexcept;
 void set_selected(int marker) noexcept;  // -1 none

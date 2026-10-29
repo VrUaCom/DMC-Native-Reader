@@ -375,7 +375,8 @@ std::optional<Vec3> g_placed;
 const void* g_collision_owner = nullptr;
 std::optional<ActiveCollision> g_collision;
 std::uint64_t g_collision_revision = 0U;
-std::shared_ptr<const Session> g_effect_host;
+std::array<std::shared_ptr<const Session>, 2> g_effect_host;
+std::atomic<int> g_active_slot{0};
 
 }  // namespace
 
@@ -1011,15 +1012,35 @@ std::shared_ptr<Session> make_effect_host(std::string_view name, const std::uint
     }
 }
 
-void set_effect_host(std::shared_ptr<const Session> host) noexcept {
+void set_effect_host(StageSlot slot, std::shared_ptr<const Session> host) noexcept {
     const std::lock_guard lock{g_mutex};
-    g_effect_host = std::move(host);
+    g_effect_host[static_cast<std::size_t>(slot)] = std::move(host);
 }
 
-std::shared_ptr<const Session> effect_host() noexcept {
+std::shared_ptr<const Session> effect_host(StageSlot slot) noexcept {
     const std::lock_guard lock{g_mutex};
-    return g_effect_host;
+    return g_effect_host[static_cast<std::size_t>(slot)];
 }
+
+void set_effect_host(std::shared_ptr<const Session> host) noexcept { set_effect_host(active_slot(), std::move(host)); }
+
+std::shared_ptr<const Session> effect_host() noexcept { return effect_host(active_slot()); }
+
+}  // namespace dmcresource::stage_room
+
+namespace dmcresource {
+
+StageSlot slot_for(const Session* session) noexcept {
+    return session != nullptr && session->stage != nullptr ? StageSlot::scene : StageSlot::base;
+}
+
+void set_active_slot(StageSlot slot) noexcept { stage_room::g_active_slot.store(static_cast<int>(slot)); }
+
+StageSlot active_slot() noexcept { return static_cast<StageSlot>(stage_room::g_active_slot.load()); }
+
+}  // namespace dmcresource
+
+namespace dmcresource::stage_room {
 
 namespace {
 

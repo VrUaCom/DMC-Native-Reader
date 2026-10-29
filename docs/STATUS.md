@@ -364,6 +364,16 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v132: the base room and Stage Ops are separate (core `stage_slot.h`).
+    Each keeps its own effect bank and configuration.
+    - Settings → Base room is the surroundings every model, enemy and
+      character stands in. It is kept across starts.
+    - A stage archive opened as its own scene starts clean: none of the
+      base room's companions. What ⋮ → Stage Ops adds to it belongs to that
+      stage only. It is kept per stage (stage_stNNN_effect.bin / _cfg.bin)
+      and comes back the next time that stage is opened.
+    - The frame's title says which set it is: "this stage only" or "base
+      room".
   - v131: stage configuration fixes and the Stage Ops look:
     - the configuration is read through the picker's descriptor, as before
       v130; if the copy into app storage fails it is still loaded;

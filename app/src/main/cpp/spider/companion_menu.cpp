@@ -23,10 +23,10 @@ void add(std::vector<MenuItem>& items, Companion id, std::string label, std::str
 // The four archives of a full stage (stNNN.pac, stNNN_effect.pac,
 // stNNNcfg.pac and its sounds): each row names the file loaded, or the one
 // to add. The stage number comes from whichever of them is loaded.
-void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& menu) {
+void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& menu, StageSlot slot) {
     const auto room = stage_room::current();
-    const auto host = stage_room::effect_host();
-    const auto config = stage_markers::current();
+    const auto host = stage_room::effect_host(slot);
+    const auto config = stage_markers::current(slot);
     std::string room_name;
     if (session != nullptr && session->stage != nullptr) {
         // The opened stage is the room, whatever its name says.
@@ -68,6 +68,8 @@ void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& m
 
 CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     CompanionMenu menu;
+    // The menu acts on the stage companions of the opened file (stage_slot.h).
+    set_active_slot(slot_for(session));
     const auto state = black_widow_state(session);
     const auto has = [state](widow::StateFlag flag) { return widow::has_state(state, flag); };
     const bool open = session != nullptr;
@@ -155,7 +157,7 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         add(model_rows, Companion::StageOther, "Add other companion\xE2\x80\xA6");
     }
     // Stage Ops: what a full stage needs, loaded or missing.
-    if (open && !cutscene) stage_ops(session, facts, menu);
+    if (open && !cutscene) stage_ops(session, facts, menu, slot_for(session));
     if (stage_around && has(widow::StateFlag::CanLoadStageConfig)) {
         const bool loaded = has(widow::StateFlag::StageConfigLoaded);
         if (loaded) {
@@ -169,7 +171,7 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
 
 CompanionMenu base_room_menu(const ShellFacts& facts) {
     CompanionMenu menu;
-    stage_ops(nullptr, facts, menu);
+    stage_ops(nullptr, facts, menu, StageSlot::base);
     return menu;
 }
 

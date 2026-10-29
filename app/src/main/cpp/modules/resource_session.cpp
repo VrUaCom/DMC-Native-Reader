@@ -432,6 +432,8 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
 [[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
         const Session* session) noexcept {
     if (session == nullptr) return 0U;
+    // The stage companions of what is asked about (stage_slot.h).
+    set_active_slot(slot_for(session));
     std::size_t sounds = 0U;
     try {
         if (session->sound_bytes != nullptr) sounds = session_sound_count(session);
@@ -2225,6 +2227,9 @@ void set_room_animation(ViewState* view, const std::vector<stage_room::Room::UvS
 void prepare_view(const Session& session, int requested_width, int requested_height, float yaw,
                   float pitch, float zoom, std::uint32_t render_flags, const ViewControls& controls,
                   PreparedView* out) {
+    // The stage companions of the session drawn: a stage scene its own, a
+    // model the base room's (stage_slot.h).
+    set_active_slot(slot_for(&session));
     const auto flags = static_cast<RenderFlags>(render_flags);
     auto& view = out->view;
     view.yaw_radians = yaw;
@@ -2485,7 +2490,7 @@ bool room_animated(const Session* session) noexcept {
     try {
         if (session == nullptr) return false;
         if (session->launched_effect) return true;
-        const bool has_host = stage_room::effect_host() != nullptr;
+        const bool has_host = stage_room::effect_host(slot_for(session)) != nullptr;
         const auto moves = [has_host](const stage_room::Room& room) {
             return !room.uv_scrolls.empty() || (has_host && !stage_effects(room).empty());
         };
@@ -2523,7 +2528,7 @@ std::vector<EffectChoice> effect_choices(const Session* session) {
         }
     };
     add(*session, EffectChoice::Source::own);
-    if (const auto stage = stage_room::effect_host(); stage && stage.get() != session) {
+    if (const auto stage = stage_room::effect_host(slot_for(session)); stage && stage.get() != session) {
         add(*stage, EffectChoice::Source::stage);
     }
     if (const auto cutscene = demo::effect_host(*session)) add(*cutscene, EffectChoice::Source::cutscene);
@@ -2533,7 +2538,7 @@ std::vector<EffectChoice> effect_choices(const Session* session) {
 bool launch_effect(Session* session, const EffectChoice& choice) {
     if (session == nullptr) return false;
     std::shared_ptr<const Session> host;
-    if (choice.source == EffectChoice::Source::stage) host = stage_room::effect_host();
+    if (choice.source == EffectChoice::Source::stage) host = stage_room::effect_host(slot_for(session));
     if (choice.source == EffectChoice::Source::cutscene) host = demo::effect_host(*session);
     if (choice.source != EffectChoice::Source::own && !host) return false;
     const Session& bank_host = host ? *host : *session;
