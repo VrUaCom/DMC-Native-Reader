@@ -1736,6 +1736,8 @@ public final class MainActivity extends Activity {
         // highlighted, each named by the stage it holds.
         final LinearLayout presets = new LinearLayout(this);
         presets.setOrientation(LinearLayout.HORIZONTAL);
+        // Squares with a stage name under the number stay level with the rest.
+        presets.setBaselineAligned(false);
         presets.setPadding(0, dp(8), 0, dp(4));
         for (int preset = 1; preset <= ROOM_PRESETS; ++preset) {
             final int number = preset;
@@ -3462,11 +3464,20 @@ public final class MainActivity extends Activity {
             final boolean ready = menu.isReady(id);
             final String emoji = i < menu.stageOps.icons.length ? menu.stageOps.icons[i] : "";
             // The square buttons' own background (same corners and press
-            // feedback), green-tinted once the archive is loaded.
-            final Button row = makeSquareButton(emoji + "  " + menu.stageOps.labels[i].replace("\n", "\n      "),
-                    menu.stageOps.labels[i], 15f);
+            // feedback) and height, green-tinted once the archive is loaded:
+            // one line, the archive's name; a long press tells the rest.
+            final String label = menu.stageOps.labels[i];
+            final int lineEnd = label.indexOf('\n');
+            final Button row = makeSquareButton(emoji + "  " + (lineEnd >= 0 ? label.substring(0, lineEnd) : label),
+                    label, 15f);
+            row.setSingleLine(true);
+            row.setEllipsize(TextUtils.TruncateAt.END);
             row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(14), dp(10), dp(14), dp(10));
+            row.setPadding(dp(14), 0, dp(14), 0);
+            row.setOnLongClickListener(v -> {
+                notice(emoji + "  " + label.replace("\n", " \u00b7 "), Toast.LENGTH_LONG);
+                return true;
+            });
             if (ready) {
                 row.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff2e7d32));
                 row.setTextColor(0xffffffff);
@@ -3482,13 +3493,14 @@ public final class MainActivity extends Activity {
             if (removable) cross.setOnClickListener(v -> remove.accept(id));
             final LinearLayout line = new LinearLayout(this);
             line.setOrientation(LinearLayout.HORIZONTAL);
+            line.setBaselineAligned(false);
             line.addView(row, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
             final LinearLayout.LayoutParams crossParams = new LinearLayout.LayoutParams(
                     dp(TOOL_SIZE_DP), LinearLayout.LayoutParams.MATCH_PARENT);
             crossParams.setMarginStart(dp(6));
             line.addView(cross, crossParams);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(TOOL_SIZE_DP));
             params.bottomMargin = dp(6);
             frame.addView(line, params);
         }

@@ -364,6 +364,9 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v134: Stage Ops rows are one line, the height of a square button (a
+    long press tells the rest); the base room squares stay level; a
+    configuration that does not read says what its first bytes are.
   - v133: five base rooms, ✕ in the Stage Ops rows, a game folder.
     - Settings → Base room has squares 1-5. Each base room keeps its own
       room, effect bank, configuration and spawn point; base room 1 keeps

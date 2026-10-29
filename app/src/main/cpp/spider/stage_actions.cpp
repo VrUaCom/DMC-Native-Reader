@@ -110,10 +110,23 @@ ActionOutcome load_stage_config(std::string_view name, const std::uint8_t* bytes
         if (!report.ok()) {
             // How much arrived tells a failed read (0 bytes) from a file of
             // another kind.
+            // Its first bytes tell what it is instead (a stage configuration
+            // archive starts "PAC").
+            std::string start;
+            for (std::size_t i = 0; bytes != nullptr && i < size && i < 8U; ++i) {
+                char hex[4]{};
+                std::snprintf(hex, sizeof hex, "%02X ", bytes[i]);
+                start += hex;
+            }
+            std::string text;
+            for (std::size_t i = 0; bytes != nullptr && i < size && i < 4U; ++i) {
+                text += bytes[i] >= 0x20U && bytes[i] < 0x7FU ? static_cast<char>(bytes[i]) : '.';
+            }
             return outcome(false, ShellStep::None,
                            "No stage configuration in " + std::string{name} + " (" +
-                               std::to_string(bytes == nullptr ? 0U : size) +
-                               " bytes read; a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
+                               std::to_string(bytes == nullptr ? 0U : size) + " bytes read" +
+                               (start.empty() ? std::string{} : ", starts " + start + "\"" + text + "\"") +
+                               "; a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
         }
         // The view starts again at the configuration's first spawn point.
         g_start_spawn.store(-1);
