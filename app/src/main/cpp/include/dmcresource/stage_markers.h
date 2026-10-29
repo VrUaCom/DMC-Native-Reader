@@ -105,6 +105,22 @@ void set_selected(int marker) noexcept;  // -1 none
 
 // The stage number of a file name ("st006cfg.pac", "st006.pac": 6), -1 none.
 [[nodiscard]] int stage_number(std::string_view name) noexcept;
+// The archives that come with the stage of `name` (any of its files, e.g.
+// "ST001.pac"), in Stage Ops order: its effect bank "st001_effect.pac" and
+// its configuration "st001cfg.pac". Empty when the name holds no stNNN.
+struct StageArchives final {
+    std::string effects;
+    std::string config;
+};
+[[nodiscard]] std::optional<StageArchives> stage_archives(std::string_view name);
+// The spawn points (POS) of a slot's configuration, in room coordinates, in
+// their order: where a model can be put in the base room.
+struct SpawnPoint final {
+    std::string title;  // "Spawn point 3"
+    stage_config::Vec3 position;
+};
+[[nodiscard]] std::vector<SpawnPoint> spawn_points(StageSlot slot);
+
 // Whether the current configuration belongs to the stage of `stage_name`:
 // true when both carry the same number, or either carries none.
 [[nodiscard]] bool current_matches(std::string_view stage_name) noexcept;

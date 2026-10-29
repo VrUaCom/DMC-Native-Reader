@@ -68,6 +68,18 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_SAVE_SOURCE = 1015;
     private static final int REQUEST_STAGE_CONFIG = 1016;
     private static final int REQUEST_CUTSCENE_SOUND = 1017;
+    private static final int REQUEST_GAME_FOLDER = 1018;
+    /**
+     * Five base rooms to switch between (Settings → Base room 1-5). Each keeps
+     * its own room, effect bank, configuration and spawn point; base room 1
+     * keeps the names the single base room had before.
+     */
+    private static final String PREF_ROOM_PRESET = "room.preset";
+    private static final int ROOM_PRESETS = 5;
+    /** The spawn point (POS index) the model stands on in the base room; -1 the room's own spot. */
+    private static final String PREF_SPAWN = "room.spawn";
+    /** The game folder (a document tree): where the archives of a picked stage are looked for. */
+    private static final String PREF_GAME_FOLDER = "game.folder";
     private static final String PREFS = "viewer";
     private static final String PREF_ROOM_NAME = "room.name";
     private static final String PREF_ROOM_SHOWN = "room.shown";
@@ -249,9 +261,7 @@ public final class MainActivity extends Activity {
         }
         renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
         renderView.setResolutionListener(side -> prefs().edit().putInt(SET_MAX_SIDE, side).apply());
-        restoreRoom();
-        restoreRoomEffects();
-        restoreStageConfig();
+        loadRoomPreset(null);
         handleIncomingIntent(getIntent());
     }
 
@@ -826,7 +836,249 @@ public final class MainActivity extends Activity {
     private String effectsDetail = "";
 
     private File effectsFile() {
-        return new File(getFilesDir(), EFFECTS_FILE);
+        return new File(getFilesDir(), presetFile(EFFECTS_FILE));
+    }
+
+    // ---- Base room presets 1-5: each keeps its files and names apart.
+
+    private int roomPreset() {
+        return Math.max(1, Math.min(ROOM_PRESETS, prefs().getInt(PREF_ROOM_PRESET, 1)));
+    }
+
+    /** A base room setting of the chosen preset ("room.name" → "room.p2.name"; base room 1 as before). */
+    private String presetPref(String key) {
+        return presetPref(key, roomPreset());
+    }
+
+    private static String presetPref(String key, int preset) {
+        return preset == 1 ? key : "room.p" + preset + key.substring("room".length());
+    }
+
+    /** A base room file of the chosen preset ("room.bin" → "room_p2.bin"). */
+    private String presetFile(String file) {
+        final int preset = roomPreset();
+        return preset == 1 ? file : "room_p" + preset + file.substring("room".length());
+    }
+
+    /**
+     * Single worker for the base room's loads and clears, so a switch of
+     * preset never interleaves with the one before it.
+     */
+    private final java.util.concurrent.ExecutorService roomWork =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /**
+     * Loads the chosen preset's room, effect bank and configuration (what
+     * is kept of them), then puts the model on its spawn point.
+     */
+    private void loadRoomPreset(Runnable then) {
+        final int preset = roomPreset();
+        final File room = roomFile(), effects = effectsFile(), config = stageConfigFile();
+        final String roomKey = prefs().getString(presetPref(PREF_ROOM_NAME), null);
+        final String effectsKey = prefs().getString(presetPref(PREF_EFFECTS_NAME), null);
+        final String configKey = prefs().getString(presetPref(PREF_CONFIG_NAME), null);
+        roomWork.execute(() -> {
+            NativeBridge.clearRoom();
+            NativeBridge.clearRoomEffects(0);
+            NativeBridge.clearStageConfig(0);
+            final String roomDone = roomKey != null && room.isFile() ? loadRoomFile(room, roomKey) : null;
+            final String effectsDone = effectsKey != null && effects.isFile()
+                    ? loadEffectsFile(effects, effectsKey, 0) : null;
+            if (configKey != null && config.isFile()) loadStageConfigFile(config, configKey, 0);
+            runOnUiThread(() -> {
+                if (preset != roomPreset()) return;  // switched again meanwhile
+                roomLoaded = roomDone != null;
+                roomName = roomLoaded ? roomKey : "";
+                roomDetail = roomLoaded ? roomDone : "";
+                effectsName = effectsDone != null ? effectsKey : "";
+                effectsDetail = effectsDone != null ? effectsDone : "";
+                applySpawn();
+                renderView.setRoomVisible(roomLoaded && roomShown());
+                renderView.refreshRoom();
+                applyResourceUiState();
+                if (then != null) then.run();
+            });
+        });
+    }
+
+    private void switchRoomPreset(int preset, Runnable then) {
+        if (preset == roomPreset()) return;
+        prefs().edit().putInt(PREF_ROOM_PRESET, preset).apply();
+        loadRoomPreset(() -> {
+            notice("Base room " + preset + ": " + (roomLoaded ? roomName : "empty"), Toast.LENGTH_SHORT);
+            if (then != null) then.run();
+        });
+    }
+
+    /** The model stands on the preset's chosen spawn point (if its configuration has it). */
+    private void applySpawn() {
+        final int index = prefs().getInt(presetPref(PREF_SPAWN), -1);
+        if (roomLoaded && index >= 0) NativeBridge.placeAtSpawn(index);
+    }
+
+    /** Spawn point list of the base room's configuration; the pick is kept with the preset. */
+    private void chooseSpawnPoint(Runnable then) {
+        final String[] points = NativeBridge.baseSpawnPoints();
+        if (points == null || points.length == 0) return;
+        final String[] items = new String[points.length + 1];
+        items[0] = "The room's own floor spot";
+        System.arraycopy(points, 0, items, 1, points.length);
+        new AlertDialog.Builder(this)
+                .setTitle("Spawn point")
+                .setItems(items, (d, which) -> {
+                    prefs().edit().putInt(presetPref(PREF_SPAWN), which - 1).apply();
+                    if (which == 0) NativeBridge.placeAtSpawn(-1); else applySpawn();
+                    renderView.refreshRoom();
+                    notice("Model on: " + items[which], Toast.LENGTH_SHORT);
+                    if (then != null) then.run();
+                })
+                .show();
+    }
+
+    // ---- Game folder: finds the archives that come with a picked stage.
+
+    private final Object gameIndexLock = new Object();
+    /** Lower-case file name → document, of the game folder (built once, on first need). */
+    private java.util.Map<String, Uri> gameIndex;
+
+    private Uri gameFolder() {
+        final String text = prefs().getString(PREF_GAME_FOLDER, null);
+        return text == null ? null : Uri.parse(text);
+    }
+
+    private void chooseGameFolder() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        startActivityForResult(intent, REQUEST_GAME_FOLDER);
+    }
+
+    private void setGameFolder(Uri tree) {
+        prefs().edit().putString(PREF_GAME_FOLDER, tree.toString()).apply();
+        synchronized (gameIndexLock) {
+            gameIndex = null;
+        }
+        notice("Game folder: " + gameFolderName(), Toast.LENGTH_SHORT);
+    }
+
+    private void forgetGameFolder() {
+        final Uri tree = gameFolder();
+        if (tree != null) {
+            try {
+                getContentResolver().releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException ignored) {}
+        }
+        prefs().edit().remove(PREF_GAME_FOLDER).apply();
+        synchronized (gameIndexLock) {
+            gameIndex = null;
+        }
+    }
+
+    private String gameFolderName() {
+        final Uri tree = gameFolder();
+        if (tree == null) return "";
+        try {
+            final String id = DocumentsContract.getTreeDocumentId(tree);
+            final int colon = id.indexOf(':');
+            return colon >= 0 && colon + 1 < id.length() ? id.substring(colon + 1) : id;
+        } catch (Exception e) {
+            return tree.getLastPathSegment();
+        }
+    }
+
+    /**
+     * A file of the game folder by name (any case): first next to `near`
+     * (a picked file of the same folder tree), else anywhere in the folder.
+     * Runs off the UI thread.
+     */
+    private Uri findGameFile(Uri near, String name) {
+        final Uri tree = gameFolder();
+        if (tree == null) return null;
+        if (near != null && DocumentsContract.isDocumentUri(this, near)
+                && tree.getAuthority() != null && tree.getAuthority().equals(near.getAuthority())) {
+            try {
+                final String id = DocumentsContract.getDocumentId(near);
+                final int slash = id.lastIndexOf('/');
+                final String sibling = (slash >= 0 ? id.substring(0, slash + 1) : id.substring(0, id.indexOf(':') + 1))
+                        + name;
+                final Uri candidate = DocumentsContract.buildDocumentUriUsingTree(tree, sibling);
+                try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(candidate, "r")) {
+                    if (pfd != null) return candidate;
+                }
+            } catch (Exception ignored) {
+                // not in the folder, or another case: the index below
+            }
+        }
+        synchronized (gameIndexLock) {
+            if (gameIndex == null) gameIndex = indexGameFolder(tree);
+            return gameIndex.get(name.toLowerCase(java.util.Locale.ROOT));
+        }
+    }
+
+    private java.util.Map<String, Uri> indexGameFolder(Uri tree) {
+        final java.util.Map<String, Uri> index = new java.util.HashMap<>();
+        final ArrayDeque<String> folders = new ArrayDeque<>();
+        try {
+            folders.add(DocumentsContract.getTreeDocumentId(tree));
+        } catch (Exception e) {
+            return index;
+        }
+        final String[] columns = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE};
+        int visited = 0;
+        while (!folders.isEmpty() && visited < 4000) {
+            final String folder = folders.poll();
+            ++visited;
+            final Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, folder);
+            try (Cursor cursor = getContentResolver().query(children, columns, null, null, null)) {
+                if (cursor == null) continue;
+                while (cursor.moveToNext()) {
+                    final String id = cursor.getString(0);
+                    final String name = cursor.getString(1);
+                    if (id == null || name == null) continue;
+                    if (DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2))) {
+                        folders.add(id);
+                    } else {
+                        index.putIfAbsent(name.toLowerCase(java.util.Locale.ROOT),
+                                DocumentsContract.buildDocumentUriUsingTree(tree, id));
+                    }
+                }
+            } catch (Exception ignored) {
+                // an unreadable folder is skipped
+            }
+        }
+        return index;
+    }
+
+    /**
+     * Finds the effect bank and configuration that come with the stage of
+     * `name` (the core names them) and loads the ones found into `slot`;
+     * `missingOnly` skips what the set already has.
+     */
+    private void autoFindStageArchives(Uri near, String name, int slot, boolean wantEffects, boolean wantConfig) {
+        final String[] wanted = NativeBridge.stageArchives(name);
+        if (wanted == null || wanted.length < 2 || (!wantEffects && !wantConfig)) return;
+        if (gameFolder() == null) {
+            if (slot == 0) {
+                notice("Set Settings → Game folder to find " + wanted[0] + " and " + wanted[1]
+                        + " automatically", Toast.LENGTH_LONG);
+            }
+            return;
+        }
+        final long handle = session;
+        new Thread(() -> {
+            final Uri effects = wantEffects ? findGameFile(near, wanted[0]) : null;
+            final Uri config = wantConfig ? findGameFile(near, wanted[1]) : null;
+            runOnUiThread(() -> {
+                if (slot == 1 && session != handle) return;  // another file opened meanwhile
+                if (effects != null) chooseRoomEffects(effects, slot);
+                if (config != null) loadStageConfig(config, slot);
+                if (effects == null && config == null) {
+                    notice("Not in the game folder: " + wanted[0] + ", " + wanted[1], Toast.LENGTH_LONG);
+                }
+            });
+        }).start();
     }
 
     /** The core's list of every loaded effect; the picked one plays on the view until stopped. */
@@ -853,15 +1105,48 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, REQUEST_ROOM_EFFECTS);
     }
 
-    private void roomEffectsRemove() {
+    /** The base room's effect bank is gone, also for the next start. */
+    private void forgetRoomEffects() {
         NativeBridge.clearRoomEffects(0);
         effectsName = "";
         effectsDetail = "";
         //noinspection ResultOfMethodCallIgnored
         effectsFile().delete();
-        prefs().edit().remove(PREF_EFFECTS_NAME).apply();
-        renderView.refreshRoom();
-        notice("Stage effects removed", Toast.LENGTH_SHORT);
+        prefs().edit().remove(presetPref(PREF_EFFECTS_NAME)).apply();
+    }
+
+    /** The opened stage's effect bank is gone, also when it opens again. */
+    private void forgetStageEffects() {
+        NativeBridge.clearRoomEffects(1);
+        final String stem = session != 0 ? NativeBridge.stageStem(session) : "";
+        if (stem.isEmpty()) return;
+        //noinspection ResultOfMethodCallIgnored
+        stageOpsFile(stem, "effect").delete();
+        prefs().edit().remove(stageOpsPref(stem, "effect")).apply();
+    }
+
+    /** ✕ of a Stage Ops row: removes that archive from the set of `slot`. */
+    private void removeStageOp(int id, int slot) {
+        switch (id) {
+            case CompanionMenu.STAGE_OPS_ROOM:
+                if (slot == 0) roomRemove();
+                break;
+            case CompanionMenu.STAGE_EFFECTS:
+                if (slot == 0) forgetRoomEffects(); else forgetStageEffects();
+                renderView.refreshRoom();
+                notice("Stage effects removed", Toast.LENGTH_SHORT);
+                break;
+            case CompanionMenu.STAGE_CONFIG_LOAD:
+                NativeBridge.clearStageConfig(slot);
+                forgetStageConfig(slot);
+                if (slot == 0) prefs().edit().remove(presetPref(PREF_SPAWN)).apply();
+                renderView.refreshRoom();
+                refreshBlackWidowState();
+                notice("Stage config removed", Toast.LENGTH_SHORT);
+                break;
+            default:
+                break;
+        }
     }
 
     /** The opened stage's set (1) or the base room's (0). */
@@ -882,12 +1167,13 @@ public final class MainActivity extends Activity {
      * Copies the picked stage effect bank (st*_effect.pac) into app storage
      * and loads it into the base room's set, or the opened stage's.
      */
-    private void chooseRoomEffects(Uri uri) {
+    private void chooseRoomEffects(Uri uri, int slot) {
         final String name = displayName(uri);
-        final int slot = pendingStageSlot;
         final String stem = slot == 1 && session != 0 ? NativeBridge.stageStem(session) : "";
+        final File baseTarget = effectsFile();
+        final String basePref = presetPref(PREF_EFFECTS_NAME);
         new Thread(() -> {
-            final File target = slot == 0 ? effectsFile()
+            final File target = slot == 0 ? baseTarget
                     : (stem.isEmpty() ? null : stageOpsFile(stem, "effect"));
             final File partial = new File(getFilesDir(), EFFECTS_FILE + ".part");
             boolean copied = false;
@@ -914,7 +1200,7 @@ public final class MainActivity extends Activity {
                 target.delete();
                 //noinspection ResultOfMethodCallIgnored
                 partial.renameTo(target);
-                prefs().edit().putString(slot == 0 ? PREF_EFFECTS_NAME : stageOpsPref(stem, "effect"), name).apply();
+                prefs().edit().putString(slot == 0 ? basePref : stageOpsPref(stem, "effect"), name).apply();
             } else {
                 //noinspection ResultOfMethodCallIgnored
                 partial.delete();
@@ -931,21 +1217,6 @@ public final class MainActivity extends Activity {
         }).start();
     }
 
-    private void restoreRoomEffects() {
-        final File file = effectsFile();
-        final String name = prefs().getString(PREF_EFFECTS_NAME, null);
-        if (name == null || !file.isFile()) return;
-        new Thread(() -> {
-            final String detail = loadEffectsFile(file, name, 0);
-            if (detail == null) return;
-            runOnUiThread(() -> {
-                effectsName = name;
-                effectsDetail = detail;
-                renderView.refreshRoom();
-            });
-        }).start();
-    }
-
     private static String loadEffectsFile(File file, String name, int slot) {
         try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
             return NativeBridge.loadRoomEffects(pfd.getFd(), name, slot);
@@ -955,7 +1226,7 @@ public final class MainActivity extends Activity {
     }
 
     private File roomFile() {
-        return new File(getFilesDir(), ROOM_FILE);
+        return new File(getFilesDir(), presetFile(ROOM_FILE));
     }
 
     private boolean roomShown() {
@@ -1040,7 +1311,7 @@ public final class MainActivity extends Activity {
         roomDetail = "";
         //noinspection ResultOfMethodCallIgnored
         roomFile().delete();
-        prefs().edit().remove(PREF_ROOM_NAME).apply();
+        prefs().edit().remove(presetPref(PREF_ROOM_NAME)).apply();
         renderView.setRoomVisible(false);
         applyResourceUiState();
         notice("Room removed: plain floor", Toast.LENGTH_SHORT);
@@ -1461,17 +1732,50 @@ public final class MainActivity extends Activity {
                 speedIndex, i -> { p.edit().putFloat(SET_SPEED, speeds[i]).apply(); apply.run(); }));
 
         content.addView(sectionTitle("Base room"));
+        // Five base rooms to switch between: squares 1-5, the chosen one
+        // highlighted, each named by the stage it holds.
+        final LinearLayout presets = new LinearLayout(this);
+        presets.setOrientation(LinearLayout.HORIZONTAL);
+        presets.setPadding(0, dp(8), 0, dp(4));
+        for (int preset = 1; preset <= ROOM_PRESETS; ++preset) {
+            final int number = preset;
+            final String held = prefs().getString(presetPref(PREF_ROOM_NAME, preset), null);
+            final String[] archives = held == null ? null : NativeBridge.stageArchives(held);
+            final String stem = archives != null && archives.length == 2
+                    ? archives[1].substring(0, archives[1].length() - "cfg.pac".length()) : "";
+            final SpannableStringBuilder label = new SpannableStringBuilder(String.valueOf(preset));
+            if (!stem.isEmpty()) {
+                final int from = label.length();
+                label.append("\n").append(stem);
+                label.setSpan(new RelativeSizeSpan(0.55f), from, label.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            final Button square = makeSquareButton("", "Base room " + preset, 18f);
+            square.setText(label);
+            square.setTooltipText(held == null ? "Base room " + preset + ": empty" : "Base room " + preset + ": " + held);
+            if (preset == roomPreset()) {
+                square.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff8a2432));
+                square.setTextColor(0xffffffff);
+            } else if (held == null) {
+                square.setAlpha(0.6f);
+            }
+            square.setOnClickListener(v -> switchRoomPreset(number, () -> {
+                dialog.dismiss();
+                showSettingsDialog();
+            }));
+            final LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(TOOL_SIZE_DP + 4), 1f);
+            if (preset < ROOM_PRESETS) params.setMarginEnd(dp(6));
+            presets.addView(square, params);
+        }
+        content.addView(presets);
         TextView status = new TextView(this);
         status.setTextColor(0xffc8ccd6);
         status.setTextSize(14f);
         status.setPadding(0, dp(6), 0, dp(6));
-        status.setText((roomLoaded
-                ? (roomDetail.isEmpty() ? roomName : roomDetail)
-                : "No room: models stand on the plain floor.")
-                + "\nBuild the room every model stands in from a stage's archives: the room, its effect "
-                + "bank and its configuration (fog, lights, placed effects). They are kept for the next start.");
+        status.setText("Base room " + roomPreset() + ": " + (roomLoaded ? roomName : "empty, models stand on the plain floor")
+                + "\nEvery model stands in it. Its configuration brings the stage's light, fog and effects "
+                + "(no markers); a new room clears the previous one's effects and configuration.");
         content.addView(status);
-        // The same four archives as ⋮ → Stage Ops, of this room.
+        // The same four archives as ⋮ → Stage Ops, of this room; ✕ removes one.
         final CompanionMenu base = NativeBridge.baseRoomMenu(roomLoaded);
         if (base != null && base.stageOps != null && base.stageOps.ids.length > 0) {
             content.addView(stageOpsFrame(base, id -> {
@@ -1482,7 +1786,11 @@ public final class MainActivity extends Activity {
                     case CompanionMenu.STAGE_CONFIG_LOAD: pickStageConfig(0); break;
                     default: handleOutcome(NativeBridge.runCompanionAction(session, id)); break;
                 }
-            }, "Base room \u00b7 for models, enemies, characters"));
+            }, id -> {
+                removeStageOp(id, 0);
+                dialog.dismiss();
+                showSettingsDialog();
+            }, 0, "Base room " + roomPreset() + " \u00b7 for models, enemies, characters"));
         }
         LinearLayout roomActions = new LinearLayout(this);
         roomActions.setOrientation(LinearLayout.VERTICAL);
@@ -1492,6 +1800,19 @@ public final class MainActivity extends Activity {
             params.topMargin = dp(6);
             roomActions.addView(actionChip(text, action), params);
         };
+        if (roomLoaded) {
+            // Where the model stands: a spawn point (POS) of the configuration.
+            final String[] spawns = NativeBridge.baseSpawnPoints();
+            if (spawns != null && spawns.length > 0) {
+                final int chosen = prefs().getInt(presetPref(PREF_SPAWN), -1);
+                addAction.accept("\ud83d\udccd Spawn point: "
+                                + (chosen >= 0 && chosen < spawns.length ? spawns[chosen] : "the room's own spot") + "  \u25b8",
+                        () -> chooseSpawnPoint(() -> { dialog.dismiss(); showSettingsDialog(); }));
+            } else if (NativeBridge.roomSpotCount() > 1) {
+                addAction.accept("Next floor spot", this::roomNextSpot);
+            }
+        }
+        content.addView(roomActions);
         if (roomLoaded) {
             content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
                     i -> { if ((i == 0) != roomShown()) roomToggle(); }));
@@ -1509,29 +1830,35 @@ public final class MainActivity extends Activity {
                             applyResourceUiState();
                         }));
             }
-            if (NativeBridge.roomSpotCount() > 1) addAction.accept("Next floor spot", this::roomNextSpot);
-            addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
         }
-        content.addView(roomActions);
-        // Removing what the base room was built from (adding is in the frame).
-        final LinearLayout removeActions = new LinearLayout(this);
-        removeActions.setOrientation(LinearLayout.VERTICAL);
-        final LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        removeParams.topMargin = dp(6);
-        if (!effectsName.isEmpty()) {
-            removeActions.addView(actionChip("Remove stage effects", () -> { roomEffectsRemove(); dialog.dismiss(); }),
-                    removeParams);
-        }
-        if (prefs().getString(PREF_CONFIG_NAME, null) != null) {
-            removeActions.addView(actionChip("Remove stage config", () -> {
-                NativeBridge.clearStageConfig(0);
-                forgetStageConfig(0);
-                renderView.refreshRoom();
+
+        content.addView(sectionTitle("Game folder"));
+        final TextView folderStatus = new TextView(this);
+        folderStatus.setTextColor(0xffc8ccd6);
+        folderStatus.setTextSize(14f);
+        folderStatus.setPadding(0, dp(6), 0, dp(6));
+        folderStatus.setText(gameFolder() == null
+                ? "Not set. With the game folder chosen once, picking a stage (stNNN.pac) finds its effect bank "
+                        + "and configuration by itself, for the base room and an opened stage."
+                : "\ud83d\udcc1 " + gameFolderName() + "\nPicking a stage finds its stNNN_effect.pac and stNNNcfg.pac here.");
+        content.addView(folderStatus);
+        final LinearLayout folderActions = new LinearLayout(this);
+        folderActions.setOrientation(LinearLayout.HORIZONTAL);
+        final LinearLayout.LayoutParams folderParams = new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        folderParams.setMarginEnd(dp(6));
+        folderActions.addView(actionChip(gameFolder() == null ? "Choose game folder" : "Change", () -> {
+            dialog.dismiss();
+            chooseGameFolder();
+        }), folderParams);
+        if (gameFolder() != null) {
+            folderActions.addView(actionChip("Forget", () -> {
+                forgetGameFolder();
                 dialog.dismiss();
-            }), removeParams);
+                showSettingsDialog();
+            }), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         }
-        content.addView(removeActions);
+        content.addView(folderActions);
 
         dialog.dialog = showPanel("Settings", content, null, null, null);
     }
@@ -1733,10 +2060,11 @@ public final class MainActivity extends Activity {
      * reloaded on start, part of the base room) and goes to the native load
      * action as a descriptor.
      */
-    private void loadStageConfig(Uri uri) {
+    private void loadStageConfig(Uri uri, int slot) {
         final String name = displayName(uri);
-        final int slot = pendingStageSlot;
         final String stem = slot == 1 && session != 0 ? NativeBridge.stageStem(session) : "";
+        final File baseTarget = stageConfigFile();
+        final String basePref = presetPref(PREF_CONFIG_NAME);
         new Thread(() -> {
             // Read through the same descriptor the picker hands out (file:// or
             // content://), as every other file the Reader opens.
@@ -1757,12 +2085,12 @@ public final class MainActivity extends Activity {
             }
             ActionOutcome outcome = copied ? loadStageConfigFile(partial, name, slot) : null;
             if (outcome != null && outcome.ok) {
-                final File target = slot == 0 ? stageConfigFile()
+                final File target = slot == 0 ? baseTarget
                         : (stem.isEmpty() ? null : stageOpsFile(stem, "cfg"));
                 if (target != null) {
                     //noinspection ResultOfMethodCallIgnored
                     partial.renameTo(target);
-                    prefs().edit().putString(slot == 0 ? PREF_CONFIG_NAME : stageOpsPref(stem, "cfg"), name).apply();
+                    prefs().edit().putString(slot == 0 ? basePref : stageOpsPref(stem, "cfg"), name).apply();
                 } else {
                     //noinspection ResultOfMethodCallIgnored
                     partial.delete();
@@ -1779,12 +2107,16 @@ public final class MainActivity extends Activity {
                 }
             }
             final ActionOutcome shown = outcome;
-            runOnUiThread(() -> handleOutcome(shown));
+            runOnUiThread(() -> {
+                handleOutcome(shown);
+                if (slot == 0) applySpawn();
+                renderView.refreshRoom();
+            });
         }).start();
     }
 
     private File stageConfigFile() {
-        return new File(getFilesDir(), CONFIG_FILE);
+        return new File(getFilesDir(), presetFile(CONFIG_FILE));
     }
 
     private static ActionOutcome loadStageConfigFile(File file, String name, int slot) {
@@ -1795,23 +2127,12 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** The base room's configuration from the last run. */
-    private void restoreStageConfig() {
-        final File file = stageConfigFile();
-        final String name = prefs().getString(PREF_CONFIG_NAME, null);
-        if (name == null || !file.isFile()) return;
-        new Thread(() -> {
-            final ActionOutcome outcome = loadStageConfigFile(file, name, 0);
-            if (outcome != null && outcome.ok) runOnUiThread(() -> renderView.refreshRoom());
-        }).start();
-    }
-
     /** The configuration was removed from a set: it no longer comes back. */
     private void forgetStageConfig(int slot) {
         if (slot == 0) {
             //noinspection ResultOfMethodCallIgnored
             stageConfigFile().delete();
-            prefs().edit().remove(PREF_CONFIG_NAME).apply();
+            prefs().edit().remove(presetPref(PREF_CONFIG_NAME)).apply();
             return;
         }
         final String stem = session != 0 ? NativeBridge.stageStem(session) : "";
@@ -1835,7 +2156,12 @@ public final class MainActivity extends Activity {
         final String config = prefs().getString(stageOpsPref(stem, "cfg"), null);
         final File effectsFile = stageOpsFile(stem, "effect");
         final File configFile = stageOpsFile(stem, "cfg");
-        if ((effects == null || !effectsFile.isFile()) && (config == null || !configFile.isFile())) return;
+        final boolean haveEffects = effects != null && effectsFile.isFile();
+        final boolean haveConfig = config != null && configFile.isFile();
+        if (gameFolder() != null && (!haveEffects || !haveConfig)) {
+            autoFindStageArchives(stagePacUri, stem, 1, !haveEffects, !haveConfig);
+        }
+        if (!haveEffects && !haveConfig) return;
         new Thread(() -> {
             if (effects != null && effectsFile.isFile()) loadEffectsFile(effectsFile, effects, 1);
             if (config != null && configFile.isFile()) loadStageConfigFile(configFile, config, 1);
@@ -3080,8 +3406,11 @@ public final class MainActivity extends Activity {
         // Stage Ops: the archives of a full stage, one framed row each.
         if (menu.stageOps != null && menu.stageOps.ids.length > 0) {
             // A stage scene keeps its own set; anything else shows the base room's.
-            panel.addView(stageOpsFrame(menu, pick, openedStageSlot() == 1
-                    ? "Stage Ops \u00b7 this stage only" : "Stage Ops \u00b7 base room"));
+            final int slot = openedStageSlot();
+            panel.addView(stageOpsFrame(menu, pick, id -> {
+                if (shown[0] != null) shown[0].dismiss();
+                removeStageOp(id, slot);
+            }, slot, slot == 1 ? "Stage Ops \u00b7 this stage only" : "Stage Ops \u00b7 base room"));
         }
         for (int i = 0; menu.rows != null && i < menu.rows.ids.length; ++i) {
             final int id = menu.rows.ids[i];
@@ -3112,7 +3441,8 @@ public final class MainActivity extends Activity {
      * The Stage Ops frame: a title and one full-width button per archive,
      * shaped like the square buttons; grey while missing, green when loaded.
      */
-    private View stageOpsFrame(CompanionMenu menu, java.util.function.IntConsumer pick, String heading) {
+    private View stageOpsFrame(CompanionMenu menu, java.util.function.IntConsumer pick,
+                               java.util.function.IntConsumer remove, int slot, String heading) {
         LinearLayout frame = new LinearLayout(this);
         frame.setOrientation(LinearLayout.VERTICAL);
         frame.setPadding(dp(8), dp(6), dp(8), dp(8));
@@ -3142,10 +3472,25 @@ public final class MainActivity extends Activity {
                 row.setTextColor(0xffffffff);
             }
             row.setOnClickListener(v -> pick.accept(id));
+            // ✕ at the end of the row, a square of the same style: removes
+            // what is loaded (the opened stage itself and the sounds stay).
+            final boolean removable = ready && (id == CompanionMenu.STAGE_EFFECTS
+                    || id == CompanionMenu.STAGE_CONFIG_LOAD || (id == CompanionMenu.STAGE_OPS_ROOM && slot == 0));
+            final Button cross = makeSquareButton("\u2715", "Remove: " + menu.stageOps.labels[i], 18f);
+            cross.setEnabled(removable);
+            cross.setAlpha(removable ? 1f : 0.35f);
+            if (removable) cross.setOnClickListener(v -> remove.accept(id));
+            final LinearLayout line = new LinearLayout(this);
+            line.setOrientation(LinearLayout.HORIZONTAL);
+            line.addView(row, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+            final LinearLayout.LayoutParams crossParams = new LinearLayout.LayoutParams(
+                    dp(TOOL_SIZE_DP), LinearLayout.LayoutParams.MATCH_PARENT);
+            crossParams.setMarginStart(dp(6));
+            line.addView(cross, crossParams);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             params.bottomMargin = dp(6);
-            frame.addView(row, params);
+            frame.addView(line, params);
         }
         LinearLayout.LayoutParams frameParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -3180,7 +3525,7 @@ public final class MainActivity extends Activity {
             case CompanionMenu.BROWSE_ASSEMBLED_PAC: browseAssembledPac(); break;
             case CompanionMenu.BROWSE_STAGE_PAC: if (stagePacUri != null) browsePac(stagePacUri); break;
             case CompanionMenu.STAGE_EFFECTS: roomEffectsChoose(openedStageSlot()); break;
-            case CompanionMenu.STAGE_OPS_ROOM: roomChoose(); break;
+            case CompanionMenu.STAGE_OPS_ROOM: if (openedStageSlot() == 1) chooseFile(); else roomChoose(); break;
             case CompanionMenu.STAGE_CONFIG_REMOVE:
                 handleOutcome(NativeBridge.runCompanionAction(session, id));
                 forgetStageConfig(openedStageSlot());
@@ -3208,8 +3553,9 @@ public final class MainActivity extends Activity {
     private void chooseRoom(Uri uri) {
         final String name = displayName(uri);
         notice("Room: loading " + name + "\u2026", Toast.LENGTH_SHORT);
+        final File target = roomFile();
+        final String roomPref = presetPref(PREF_ROOM_NAME);
         new Thread(() -> {
-            final File target = roomFile();
             final File partial = new File(getFilesDir(), ROOM_FILE + ".part");
             boolean copied = false;
             try (java.io.InputStream in = getContentResolver().openInputStream(uri);
@@ -3241,31 +3587,28 @@ public final class MainActivity extends Activity {
             //noinspection ResultOfMethodCallIgnored
             partial.renameTo(target);
             getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putString(PREF_ROOM_NAME, name).putBoolean(PREF_ROOM_SHOWN, true).apply();
+                    .putString(roomPref, name).putBoolean(PREF_ROOM_SHOWN, true).apply();
             runOnUiThread(() -> {
                 roomLoaded = true;
                 roomName = name;
                 roomDetail = detail;
+                // A new stage: the previous one's effects and configuration
+                // do not stay with it; its own are looked for.
+                final String[] own = NativeBridge.stageArchives(name);
+                final boolean keepEffects = own != null && own.length == 2 && own[0].equalsIgnoreCase(effectsName);
+                final String configName = prefs().getString(presetPref(PREF_CONFIG_NAME), "");
+                final boolean keepConfig = own != null && own.length == 2 && own[1].equalsIgnoreCase(configName);
+                if (!keepEffects) forgetRoomEffects();
+                if (!keepConfig) {
+                    NativeBridge.clearStageConfig(0);
+                    forgetStageConfig(0);
+                    prefs().edit().remove(presetPref(PREF_SPAWN)).apply();
+                }
                 renderView.setRoomVisible(true);
+                renderView.refreshRoom();
                 applyResourceUiState();
                 notice("Room: " + detail, Toast.LENGTH_LONG);
-            });
-        }).start();
-    }
-
-    private void restoreRoom() {
-        final File file = roomFile();
-        final String name = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_ROOM_NAME, null);
-        if (name == null || !file.isFile()) return;
-        new Thread(() -> {
-            final String detail = loadRoomFile(file, name);
-            if (detail == null) return;
-            runOnUiThread(() -> {
-                roomLoaded = true;
-                roomName = name;
-                roomDetail = detail;
-                renderView.setRoomVisible(roomShown());
-                applyResourceUiState();
+                autoFindStageArchives(uri, name, 0, !keepEffects, !keepConfig);
             });
         }).start();
     }
@@ -4560,7 +4903,7 @@ public final class MainActivity extends Activity {
             return;
         }
         if (requestCode == REQUEST_STAGE_CONFIG) {
-            if (data != null && data.getData() != null) loadStageConfig(data.getData());
+            if (data != null && data.getData() != null) loadStageConfig(data.getData(), pendingStageSlot);
             return;
         }
         if (requestCode == REQUEST_CUTSCENE_SOUND) {
@@ -4568,7 +4911,15 @@ public final class MainActivity extends Activity {
             return;
         }
         if (requestCode == REQUEST_ROOM_EFFECTS) {
-            if (data != null && data.getData() != null) chooseRoomEffects(data.getData());
+            if (data != null && data.getData() != null) chooseRoomEffects(data.getData(), pendingStageSlot);
+            return;
+        }
+        if (requestCode == REQUEST_GAME_FOLDER) {
+            final Uri tree = data.getData();
+            if (tree != null) {
+                persistUriPermission(tree, data.getFlags(), false);
+                setGameFolder(tree);
+            }
             return;
         }
         if (requestCode == REQUEST_ADD_PAC) {
@@ -4853,7 +5204,7 @@ public final class MainActivity extends Activity {
 
         // A stage's effect bank opened on its own is also the stage effects of the room.
         if (opened != 0 && name.toLowerCase(java.util.Locale.ROOT).matches("st\\d+.*effect.*")) {
-            chooseRoomEffects(uri);
+            chooseRoomEffects(uri, 0);
         }
 
         if (opened == 0) {

@@ -408,7 +408,7 @@ int main() {
                 for (const int r : companions.stage_ops_ready) if (r == static_cast<int>(id)) return true;
                 return false;
             };
-            assert(has_row(act::Companion::StageConfigToggle) && has_row(act::Companion::StageConfigRemove) &&
+            assert(has_row(act::Companion::StageConfigToggle) && !has_row(act::Companion::StageConfigRemove) &&
                    has_row(act::Companion::BrowseStagePac));
             // Stage Ops: room, effect bank, configuration and sounds, each with
             // its emoji; the opened stage is the room, its configuration loaded.
@@ -484,7 +484,12 @@ int main() {
         Session model;  // a model stands in the base room: its set
         set_active_slot(slot_for(&model));
         assert(stage_markers::current() == config);
+        // The base room offers its spawn points (POS) to put a model on.
+        const auto spawns = stage_markers::spawn_points(StageSlot::base);
+        assert(spawns.size() == 2U && spawns[0].title.rfind("Spawn point", 0) == 0U);
+        assert(stage_markers::spawn_points(StageSlot::scene).empty());
         stage_markers::set_current(StageSlot::base, nullptr);
+        assert(stage_markers::spawn_points(StageSlot::base).empty());
     }
 
     // A configuration's STE records are effects of the stage's bank, played
@@ -503,6 +508,10 @@ int main() {
                placed[0].position.y == 570.0F && placed[0].rotation_degrees.y == 90.0F && placed[0].scale.x == 0.5F);
         assert(stage_markers::placed_effects("st100.pac").empty());
         assert(stage_markers::stage_number("ST006CFG.PAC") == 6 && stage_markers::stage_number("m02_s00.pac") == -1);
+        // The archives found next to a picked stage.
+        const auto archives = stage_markers::stage_archives("ST001.pac");
+        assert(archives && archives->effects == "st001_effect.pac" && archives->config == "st001cfg.pac");
+        assert(!stage_markers::stage_archives("pl000.pac"));
     }
     // The SEF section of value 2 is the stage's fog (st006cfg: 1000 .. 2360,
     // grey 80 80 80 at 0x34 of 0x80).

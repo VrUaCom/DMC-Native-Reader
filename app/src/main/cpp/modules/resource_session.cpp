@@ -2463,12 +2463,11 @@ void prepare_view(const Session& session, int requested_width, int requested_hei
     }
     // The stage configuration's spawn points, zones and paths over the room
     // or the stage scene (stage_markers.h).
-    // Another stage's configuration is not drawn over this one.
-    const std::string_view drawn_stage = session.stage != nullptr ? std::string_view{session.stage->name}
-                                         : out->room != nullptr  ? std::string_view{out->room->name}
-                                                                 : std::string_view{};
-    if (!view.uv_layout && stage_markers::visible() && (out->room != nullptr || session.stage != nullptr) &&
-        stage_markers::current_matches(drawn_stage)) {
+    // Only over a stage opened as its own scene: the base room around a
+    // model takes its configuration's light, fog and effects, not its
+    // markers. Another stage's configuration is not drawn over this one.
+    if (!view.uv_layout && stage_markers::visible() && session.stage != nullptr &&
+        stage_markers::current_matches(session.stage->name)) {
         out->stage_config = stage_markers::current();
         if (out->stage_config != nullptr) {
             out->marker_overlay = stage_markers::build_overlay(*out->stage_config, stage_markers::selected());

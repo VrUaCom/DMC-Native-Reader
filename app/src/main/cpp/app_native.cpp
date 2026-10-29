@@ -1304,6 +1304,63 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_clearStageConfig(JNIEnv*, jclass, 
         slot == 1 ? dmcresource::StageSlot::scene : dmcresource::StageSlot::base, nullptr);
 }
 
+// The archives that come with the stage of `name` (stage_markers::
+// stage_archives): {effect bank, configuration}, or an empty array.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_stageArchives(JNIEnv* env, jclass, jstring name) {
+    try {
+        const char* chars = name == nullptr ? nullptr : env->GetStringUTFChars(name, nullptr);
+        const std::string text = chars == nullptr ? std::string{} : std::string{chars};
+        if (chars != nullptr) env->ReleaseStringUTFChars(name, chars);
+        const auto archives = dmcresource::stage_markers::stage_archives(text);
+        jobjectArray out = env->NewObjectArray(archives ? 2 : 0, env->FindClass("java/lang/String"), nullptr);
+        if (archives) {
+            jstring effects = env->NewStringUTF(archives->effects.c_str());
+            jstring config = env->NewStringUTF(archives->config.c_str());
+            env->SetObjectArrayElement(out, 0, effects);
+            env->SetObjectArrayElement(out, 1, config);
+            env->DeleteLocalRef(effects);
+            env->DeleteLocalRef(config);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// The spawn points (POS) of the base room's configuration, by title, in
+// their order (stage_markers::spawn_points).
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_baseSpawnPoints(JNIEnv* env, jclass) {
+    try {
+        const auto points = dmcresource::stage_markers::spawn_points(dmcresource::StageSlot::base);
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(points.size()),
+                                               env->FindClass("java/lang/String"), nullptr);
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            jstring title = env->NewStringUTF(points[i].title.c_str());
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), title);
+            env->DeleteLocalRef(title);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+// Puts the model on the base room's spawn point `index` (-1: back on the
+// room's own floor spot); false when there is no such point or no room.
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_placeAtSpawn(JNIEnv*, jclass, jint index) {
+    try {
+        if (index == -1) {
+            dmcresource::stage_room::set_spot(dmcresource::stage_room::spot());
+            return JNI_TRUE;
+        }
+        const auto points = dmcresource::stage_markers::spawn_points(dmcresource::StageSlot::base);
+        if (index < 0 || static_cast<std::size_t>(index) >= points.size() ||
+            dmcresource::stage_room::current() == nullptr) return JNI_FALSE;
+        const auto& p = points[static_cast<std::size_t>(index)].position;
+        dmcresource::stage_room::place_at({p.x, p.y, p.z});
+        return JNI_TRUE;
+    } catch (...) { return JNI_FALSE; }
+}
+
 // True when the room drawn with the session moves on its own (core
 // room_animated: texture scrolls, effects): the viewer then redraws on a timer.
 extern "C" JNIEXPORT jboolean JNICALL

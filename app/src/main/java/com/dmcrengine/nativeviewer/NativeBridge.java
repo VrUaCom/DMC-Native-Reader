@@ -97,6 +97,12 @@ public final class NativeBridge {
     /** slot: 0 the base room's set, 1 the opened stage's (stage_slot.h). */
     public static native ActionOutcome loadStageConfig(int fd, String filename, int slot);
     public static native void clearStageConfig(int slot);
+    /** The archives that come with the stage of a file name: {effect bank, configuration}, or empty. */
+    public static native String[] stageArchives(String filename);
+    /** The spawn points (POS) of the base room's configuration, by title. */
+    public static native String[] baseSpawnPoints();
+    /** Puts the model on the base room's spawn point `index`; -1 back on the room's own spot. */
+    public static native boolean placeAtSpawn(int index);
     /** 1 when the session is a stage scene with its own companions, 0 when it uses the base room's. */
     public static native int stageSlot(long handle);
     /** "st001" for a stage scene, "" otherwise. */

@@ -520,6 +520,14 @@ int stage_number(std::string_view name) noexcept {
     return -1;
 }
 
+std::optional<StageArchives> stage_archives(std::string_view name) {
+    const int number = stage_number(name);
+    if (number < 0) return std::nullopt;
+    char stem[16]{};
+    std::snprintf(stem, sizeof stem, "st%03d", number);
+    return StageArchives{std::string{stem} + "_effect.pac", std::string{stem} + "cfg.pac"};
+}
+
 std::vector<PlacedEffect> placed_effects(std::string_view stage_name) {
     std::vector<PlacedEffect> out;
     try {
@@ -539,6 +547,17 @@ std::vector<PlacedEffect> placed_effects(std::string_view stage_name) {
         }
     } catch (...) {
         out.clear();
+    }
+    return out;
+}
+
+std::vector<SpawnPoint> spawn_points(StageSlot slot) {
+    std::vector<SpawnPoint> out;
+    const auto config = current(slot);
+    if (config == nullptr) return out;
+    for (const auto& marker : config->markers) {
+        if (marker.source != Kind::Pos || marker.points.empty()) continue;
+        out.push_back({marker.title, marker.points.front()});
     }
     return out;
 }

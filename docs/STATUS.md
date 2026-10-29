@@ -364,6 +364,27 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v133: five base rooms, ✕ in the Stage Ops rows, a game folder.
+    - Settings → Base room has squares 1-5. Each base room keeps its own
+      room, effect bank, configuration and spawn point; base room 1 keeps
+      the files of the single base room before. A square shows the stage
+      it holds.
+    - Each Stage Ops row (Settings and ⋮) ends in a square ✕ that removes
+      what is loaded. The separate "Remove …" buttons and the ⋮ "Remove
+      stage config" row are gone. The opened stage itself and the sounds
+      have no ✕.
+    - A new room clears the previous stage's effect bank and configuration
+      (both kept when they belong to the new stage).
+    - The base room's configuration brings light, fog and placed effects,
+      no markers; markers show over a stage opened as its scene only. Its
+      spawn points (POS, core `stage_markers::spawn_points`) are a list to
+      put the model on, kept with the base room.
+    - Settings → Game folder (a folder chosen once): picking stNNN.pac
+      finds stNNN_effect.pac and stNNNcfg.pac (core
+      `stage_markers::stage_archives`) and loads them, for the base room
+      and for an opened stage that has none kept. Stage sounds: not read
+      yet.
+    - In a stage scene the ⋮ Stage Ops Room row opens another file.
   - v132: the base room and Stage Ops are separate (core `stage_slot.h`).
     Each keeps its own effect bank and configuration.
     - Settings → Base room is the surroundings every model, enemy and

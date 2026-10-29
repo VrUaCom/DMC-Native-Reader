@@ -82,8 +82,6 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     const bool room_drawn = facts.room_loaded && facts.room_shown && !cutscene;
     auto& model_rows = cutscene ? menu.more : menu.rows;
     auto& stage_rows = stage_scene || room_drawn ? menu.rows : menu.more;
-    // A stage around at all: a stage scene, a cutscene's stage, a room.
-    const bool stage_around = stage_scene || facts.room_loaded || (cutscene && session->stage != nullptr);
 
     // Squares: the quick switches and a cutscene's media (the label is the tooltip).
     add(menu.shortcuts, Companion::Settings, "Settings", "\xE2\x9A\x99");
@@ -158,13 +156,11 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     }
     // Stage Ops: what a full stage needs, loaded or missing.
     if (open && !cutscene) stage_ops(session, facts, menu, slot_for(session));
-    if (stage_around && has(widow::StateFlag::CanLoadStageConfig)) {
-        const bool loaded = has(widow::StateFlag::StageConfigLoaded);
-        if (loaded) {
-            add(stage_rows, Companion::StageConfigToggle,
-                has(widow::StateFlag::StageMarkersShown) ? "Hide stage config" : "Show stage config");
-            add(stage_rows, Companion::StageConfigRemove, "Remove stage config");
-        }
+    // The markers show over a stage scene only (removing is the ✕ of its
+    // Stage Ops row).
+    if (stage_scene && has(widow::StateFlag::CanLoadStageConfig) && has(widow::StateFlag::StageConfigLoaded)) {
+        add(stage_rows, Companion::StageConfigToggle,
+            has(widow::StateFlag::StageMarkersShown) ? "Hide stage config markers" : "Show stage config markers");
     }
     return menu;
 }
