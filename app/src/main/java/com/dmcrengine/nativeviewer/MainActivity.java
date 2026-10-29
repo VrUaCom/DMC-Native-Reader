@@ -2918,6 +2918,10 @@ public final class MainActivity extends Activity {
             params.setMarginEnd(dp(6));
             icons.addView(button, params);
         }
+        // Stage Ops: the archives of a full stage, one framed row each.
+        if (menu.stageOps != null && menu.stageOps.ids.length > 0) {
+            panel.addView(stageOpsFrame(menu, pick));
+        }
         for (int i = 0; menu.rows != null && i < menu.rows.ids.length; ++i) {
             final int id = menu.rows.ids[i];
             panel.addView(menuRow(menu.rows.labels[i], 0xffe8eaf0, v -> pick.accept(id)));
@@ -2941,6 +2945,49 @@ public final class MainActivity extends Activity {
             panel.addView(folded);
         }
         shown[0] = showPanel(titleView.getText(), panel, null, null, null);
+    }
+
+    /** The Stage Ops frame: a title and one full-width row per archive, green when loaded. */
+    private View stageOpsFrame(CompanionMenu menu, java.util.function.IntConsumer pick) {
+        LinearLayout frame = new LinearLayout(this);
+        frame.setOrientation(LinearLayout.VERTICAL);
+        frame.setPadding(dp(8), dp(6), dp(8), dp(8));
+        android.graphics.drawable.GradientDrawable border = new android.graphics.drawable.GradientDrawable();
+        border.setCornerRadius(dp(10));
+        border.setStroke(dp(1), 0xff5c6370);
+        border.setColor(0x00000000);
+        frame.setBackground(border);
+        TextView title = new TextView(this);
+        title.setText("Stage Ops");
+        title.setTextSize(13f);
+        title.setTextColor(0xff9aa0ae);
+        title.setPadding(dp(4), 0, 0, dp(6));
+        frame.addView(title);
+        for (int i = 0; i < menu.stageOps.ids.length; ++i) {
+            final int id = menu.stageOps.ids[i];
+            final boolean ready = menu.isReady(id);
+            final String emoji = i < menu.stageOps.icons.length ? menu.stageOps.icons[i] : "";
+            TextView row = new TextView(this);
+            row.setText(emoji + "  " + menu.stageOps.labels[i].replace("\n", "\n      "));
+            row.setTextSize(15f);
+            row.setTextColor(ready ? 0xffdff5e1 : 0xfff3e2c7);
+            row.setPadding(dp(10), dp(8), dp(10), dp(8));
+            android.graphics.drawable.GradientDrawable fill = new android.graphics.drawable.GradientDrawable();
+            fill.setCornerRadius(dp(8));
+            fill.setColor(ready ? 0xff24452c : 0xff4a3a22);
+            row.setBackground(fill);
+            row.setOnClickListener(v -> pick.accept(id));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            params.bottomMargin = dp(6);
+            frame.addView(row, params);
+        }
+        LinearLayout.LayoutParams frameParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        frameParams.topMargin = dp(4);
+        frameParams.bottomMargin = dp(8);
+        frame.setLayoutParams(frameParams);
+        return frame;
     }
 
     /** One text row of the ⋮ menu. */
@@ -2968,6 +3015,7 @@ public final class MainActivity extends Activity {
             case CompanionMenu.BROWSE_ASSEMBLED_PAC: browseAssembledPac(); break;
             case CompanionMenu.BROWSE_STAGE_PAC: if (stagePacUri != null) browsePac(stagePacUri); break;
             case CompanionMenu.STAGE_EFFECTS: roomEffectsChoose(); break;
+            case CompanionMenu.STAGE_OPS_ROOM: roomChoose(); break;
             case CompanionMenu.EFFECTS: chooseEffect(); break;
             case CompanionMenu.ADD_MOD_PARTS: chooseAdditionalMods(); break;
             case CompanionMenu.COMPOSITE_PARTS: showCompositePartsDialog(); break;

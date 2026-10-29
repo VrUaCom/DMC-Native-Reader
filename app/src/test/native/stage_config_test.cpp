@@ -393,8 +393,25 @@ int main() {
                 for (const auto& row : companions.rows) if (row.id == static_cast<int>(id)) return true;
                 return false;
             };
-            assert(has_row(act::Companion::StageConfigLoad) && has_row(act::Companion::StageConfigToggle) &&
-                   has_row(act::Companion::StageConfigRemove) && has_row(act::Companion::BrowseStagePac));
+            const auto has_op = [&](act::Companion id) {
+                for (const auto& row : companions.stage_ops) if (row.id == static_cast<int>(id)) return true;
+                return false;
+            };
+            const auto ready = [&](act::Companion id) {
+                for (const int r : companions.stage_ops_ready) if (r == static_cast<int>(id)) return true;
+                return false;
+            };
+            assert(has_row(act::Companion::StageConfigToggle) && has_row(act::Companion::StageConfigRemove) &&
+                   has_row(act::Companion::BrowseStagePac));
+            // Stage Ops: room, effect bank, configuration and sounds, each with
+            // its emoji; the opened stage is the room, its configuration loaded.
+            assert(companions.stage_ops.size() == 4U && has_op(act::Companion::StageOpsRoom) &&
+                   has_op(act::Companion::StageEffects) && has_op(act::Companion::StageConfigLoad) &&
+                   has_op(act::Companion::StageOpsSound));
+            for (const auto& op : companions.stage_ops) assert(!op.icon.empty());
+            assert(ready(act::Companion::StageOpsRoom) && ready(act::Companion::StageConfigLoad) &&
+                   !ready(act::Companion::StageOpsSound));
+            assert(!has_row(act::Companion::StageConfigLoad) && !has_row(act::Companion::StageEffects));
             assert(!has_row(act::Companion::AddPac));
             // Squares: settings, gestures, the camera's settings. Rows: Open
             // and Diagnostics first (every file has them), then the stage's;
@@ -403,7 +420,7 @@ int main() {
             assert(companions.shortcuts[2].id == static_cast<int>(act::Companion::CameraSettings));
             assert(companions.rows[0].id == static_cast<int>(act::Companion::OpenFile) &&
                    companions.rows[1].id == static_cast<int>(act::Companion::Diagnostics));
-            assert(has_row(act::Companion::StageEffects) && companions.more.empty());
+            assert(companions.more.empty());
             std::size_t browsers = 0U;
             for (const auto& row : companions.rows) {
                 browsers += row.label.find("Browse") != std::string::npos ? 1U : 0U;
@@ -425,8 +442,8 @@ int main() {
             for (const auto& row : folded.rows) {
                 assert(row.id != static_cast<int>(act::Companion::StageEffects));
             }
-            assert(folded.rows.size() == 2U && !folded.more.empty() &&
-                   folded.more[0].id == static_cast<int>(act::Companion::StageEffects));
+            assert(folded.rows.size() == 2U && folded.stage_ops.size() == 4U);
+            assert(!act::run_companion_action(static_cast<int>(act::Companion::StageOpsSound)).message.empty());
             const act::ShellFacts no_room{.root_scene = true, .assembled_pac_source = false,
                                           .stage_source = false, .room_loaded = false, .room_shown = false};
             const auto bare = act::companion_menu(&lone, no_room);

@@ -1533,7 +1533,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_soundPcm(JNIEnv* env, jclass, jlon
 }
 
 // The ⋮ menu (spider/companion_menu.h). CompanionMenu(NativeMenu shortcuts,
-// NativeMenu rows, int[] dimmed).
+// NativeMenu rows, NativeMenu more, int[] dimmed, NativeMenu stageOps,
+// int[] stageOpsReady).
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
         JNIEnv* env, jclass, jlong handle, jboolean root_scene, jboolean assembled_pac_source,
@@ -1552,13 +1553,15 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
         jmethodID make = env->GetMethodID(
             type, "<init>",
             "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;"
-            "Lcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
+            "Lcom/dmcrengine/nativeviewer/NativeMenu;[ILcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
         if (make == nullptr) return nullptr;
         stage_actions::Menu shortcuts{.title = {}, .message = {}, .items = menu.shortcuts};
         stage_actions::Menu rows{.title = {}, .message = {}, .items = menu.rows};
         stage_actions::Menu more{.title = {}, .message = {}, .items = menu.more};
+        stage_actions::Menu ops{.title = {}, .message = {}, .items = menu.stage_ops};
         return env->NewObject(type, make, menu_object(env, shortcuts), menu_object(env, rows),
-                              menu_object(env, more), int_array(env, menu.dimmed));
+                              menu_object(env, more), int_array(env, menu.dimmed), menu_object(env, ops),
+                              int_array(env, menu.stage_ops_ready));
     } catch (...) { return nullptr; }
 }
 

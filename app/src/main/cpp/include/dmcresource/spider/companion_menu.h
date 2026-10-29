@@ -53,6 +53,10 @@ enum class Companion : int {
     BrowseCutscenePac = 29,
     // rows: play any effect of the loaded banks (stage_actions.h effect_menu)
     Effects = 30,
+    // Stage Ops: the archives a full stage is built from (the effect bank and
+    // the configuration rows are StageEffects and StageConfigLoad)
+    StageOpsRoom = 31,
+    StageOpsSound = 32,
 };
 
 // What only the shell knows.
@@ -72,12 +76,18 @@ struct ShellFacts final {
 // - more: what can be done but does not fit it (a model's tools in a
 //   cutscene, the stage tools while the room is hidden), under a folded
 //   "Other actions" row: nothing that can be done leaves the menu.
+// - stage ops: the four archives a full stage is built from (room, effect
+//   bank, configuration, sounds), each a row with its emoji, the file it
+//   is or should be, and whether it is loaded; framed under the squares.
 struct CompanionMenu final {
     std::vector<MenuItem> shortcuts;
     std::vector<MenuItem> rows;
     std::vector<MenuItem> more;
+    std::vector<MenuItem> stage_ops;
     // A shortcut drawn dimmed (the room while hidden): ids listed here.
     std::vector<int> dimmed;
+    // The stage ops rows whose archive is loaded.
+    std::vector<int> stage_ops_ready;
 };
 
 [[nodiscard]] CompanionMenu companion_menu(const Session* session, const ShellFacts& facts);

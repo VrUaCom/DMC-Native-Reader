@@ -364,6 +364,20 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v129: ⋮ → Stage Ops, a frame under the squares with the four archives
+    of a full stage:
+    - 🏛 Room (stNNN.pac), ✨ Effects (stNNN_effect.pac), 🗺 Config
+      (stNNNcfg.pac), 🔊 Sounds;
+    - each row names the file loaded (green) or the one to add (amber), and
+      a tap loads it;
+    - the effect bank and configuration rows moved there from the list;
+    - stage sounds are not read yet, and their row says so.
+    Why adding st001's bank and configuration seemed to change nothing:
+    - st001cfg.pac places no effects (no STE records), so its bank only
+      fills ⋮ → Effects (play any);
+    - its configuration adds the fog and the markers.
+    - st002's placed G effects do draw, but they are small and outside the
+      start view.
   - v128: Stage lights follow Gates 47-48 (clean-room revision 4,
     `game_lights::stage_rig`):
     - Masks:

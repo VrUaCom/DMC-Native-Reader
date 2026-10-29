@@ -39,18 +39,32 @@ public final class CompanionMenu {
     /** A cutscene's own files: the core opens them as a gallery (ActionOutcome STEP_OPEN_SESSION). */
     public static final int BROWSE_CUTSCENE_PAC = 29;
     public static final int EFFECTS = 30;
+    /** Stage Ops: the room archive (stNNN.pac) and the stage's sounds. */
+    public static final int STAGE_OPS_ROOM = 31;
+    public static final int STAGE_OPS_SOUND = 32;
 
     public final NativeMenu shortcuts;
     public final NativeMenu rows;
     /** What can be done but does not fit what is on the screen: under a folded row. */
     public final NativeMenu more;
     public final int[] dimmed;
+    /** Stage Ops: the archives of a full stage, framed under the squares (icon = emoji). */
+    public final NativeMenu stageOps;
+    public final int[] stageOpsReady;
 
-    public CompanionMenu(NativeMenu shortcuts, NativeMenu rows, NativeMenu more, int[] dimmed) {
+    public CompanionMenu(NativeMenu shortcuts, NativeMenu rows, NativeMenu more, int[] dimmed,
+                         NativeMenu stageOps, int[] stageOpsReady) {
         this.shortcuts = shortcuts;
         this.rows = rows;
         this.more = more;
         this.dimmed = dimmed == null ? new int[0] : dimmed;
+        this.stageOps = stageOps;
+        this.stageOpsReady = stageOpsReady == null ? new int[0] : stageOpsReady;
+    }
+
+    public boolean isReady(int id) {
+        for (int value : stageOpsReady) if (value == id) return true;
+        return false;
     }
 
     public boolean isDimmed(int id) {

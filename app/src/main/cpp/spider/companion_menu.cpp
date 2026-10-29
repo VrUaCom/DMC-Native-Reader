@@ -1,5 +1,7 @@
 #include "dmcresource/spider/companion_menu.h"
 
+#include <cstdio>
+#include <initializer_list>
 #include <string>
 
 #include "dmcresource/camera_control.h"
@@ -16,6 +18,46 @@ namespace widow = dmcresource::spider::black_widow;
 
 void add(std::vector<MenuItem>& items, Companion id, std::string label, std::string icon = {}) {
     items.push_back({static_cast<int>(id), std::move(label), std::move(icon)});
+}
+
+// The four archives of a full stage (stNNN.pac, stNNN_effect.pac,
+// stNNNcfg.pac and its sounds): each row names the file loaded, or the one
+// to add. The stage number comes from whichever of them is loaded.
+void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& menu) {
+    const auto room = stage_room::current();
+    const auto host = stage_room::effect_host();
+    const auto config = stage_markers::current();
+    std::string room_name;
+    if (session != nullptr && session->stage != nullptr) {
+        // The opened stage is the room, whatever its name says.
+        room_name = !session->stage->name.empty() ? session->stage->name
+                    : !session->source_name.empty() ? session->source_name
+                                                    : std::string{"the opened stage"};
+    }
+    if (room_name.empty() && facts.room_loaded && room != nullptr) room_name = room->name;
+    const std::string effects_name = host != nullptr ? host->archive_name : std::string{};
+    const std::string config_name = config != nullptr ? config->name : std::string{};
+    int number = -1;
+    for (const std::string* name : std::initializer_list<const std::string*>{&room_name, &config_name, &effects_name}) {
+        if (number < 0) number = stage_markers::stage_number(*name);
+    }
+    char stem[16] = "stNNN";
+    if (number >= 0 && number < 1000) std::snprintf(stem, sizeof stem, "st%03d", number);
+    const auto row = [&](Companion id, const char* icon, const char* what, const std::string& loaded,
+                         const std::string& expected, const char* missing) {
+        const bool ready = !loaded.empty();
+        add(menu.stage_ops, id, std::string{what} + "\n" + (ready ? loaded + " \xC2\xB7 loaded" : expected + " \xC2\xB7 " + missing),
+            icon);
+        if (ready) menu.stage_ops_ready.push_back(static_cast<int>(id));
+    };
+    row(Companion::StageOpsRoom, "\xF0\x9F\x8F\x9B", "Room", room_name, std::string{stem} + ".pac",
+        "missing, tap to add");
+    row(Companion::StageEffects, "\xE2\x9C\xA8", "Effects", effects_name, std::string{stem} + "_effect.pac",
+        "missing, tap to add (static_effect.pac too)");
+    row(Companion::StageConfigLoad, "\xF0\x9F\x97\xBA", "Config", config_name, std::string{stem} + "cfg.pac",
+        "missing, tap to add");
+    row(Companion::StageOpsSound, "\xF0\x9F\x94\x8A", "Sounds", std::string{}, "the stage's sound bank",
+        "not read by the Reader yet");
 }
 
 }  // namespace
@@ -108,14 +150,10 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         add(model_rows, Companion::StageCloth, "Add cloth resource\xE2\x80\xA6");
         add(model_rows, Companion::StageOther, "Add other companion\xE2\x80\xA6");
     }
-    // The stage tools, wherever a stage is around.
-    if (root && stage_around && !cutscene) {
-        add(stage_rows, Companion::StageEffects, "Effect bank (st*_effect.pac, static_effect.pac)\xE2\x80\xA6");
-    }
+    // Stage Ops: what a full stage needs, loaded or missing.
+    if (open && !cutscene) stage_ops(session, facts, menu);
     if (stage_around && has(widow::StateFlag::CanLoadStageConfig)) {
         const bool loaded = has(widow::StateFlag::StageConfigLoaded);
-        add(stage_rows, Companion::StageConfigLoad,
-            loaded ? "Load another stage config (stNNNcfg.pac)\xE2\x80\xA6" : "Stage config (stNNNcfg.pac)\xE2\x80\xA6");
         if (loaded) {
             add(stage_rows, Companion::StageConfigToggle,
                 has(widow::StateFlag::StageMarkersShown) ? "Hide stage config" : "Show stage config");
@@ -188,6 +226,12 @@ ActionOutcome run_companion_action(int id) noexcept {
     case Companion::StageConfigLoad: return run_stage_config_menu(1);
     case Companion::StageConfigToggle: return run_stage_config_menu(2);
     case Companion::StageConfigRemove: return run_stage_config_menu(3);
+    case Companion::StageOpsSound: {
+        ActionOutcome out;
+        out.ok = true;
+        out.message = "Stage sounds: the Reader does not read a stage's sound bank yet";
+        return out;
+    }
     default: {
         ActionOutcome none;
         none.ok = true;
