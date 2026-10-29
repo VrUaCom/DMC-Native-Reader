@@ -636,3 +636,45 @@ holder's own code (`0x1400892xx..0x14008Bxxx`, next to `0x140089900`,
   the `stage_lit` formula as specified would saturate. Either the GPU
   upload rescales, or the specification's "not normalised" needs
   rechecking against the shader.
+
+### Gate 48 v0.3d leads: the vertex formats (`0x1400473F0`)
+
+`0x1400473F0` builds the engine's vertex formats. For each format it:
+- takes a shader record from the table at `0x140C0CFA0` with
+  `0x1400461B0(table, id)`;
+- creates two input layouts with `ID3D11Device::CreateInputLayout` (slot
+  `+0x58`) from static `D3D11_INPUT_ELEMENT_DESC` arrays in `.rdata`, with
+  the element count at record `+0x10`;
+- stores a D3D9-style FVF code (`+0x28`) and the stride (`+0x30`).
+
+| Shader id | Layouts (`.rdata`) | FVF code | Stride |
+| --- | --- | --- | --- |
+| 5 | `0x140562620`, `0x140562920` | `0x80030112` | 0x28 |
+| 8 | `0x1405626C0`, `0x1405629C0` | `0x80030152` | 0x38 |
+| 0xD | `0x140562780`, `0x140562A80` | `0x80000152` | 0x30 |
+| 0xF | `0x140562800` (both) | `0x2` | 0x0C |
+| 0xE | `0x140562820` (both) | `0x40000002` | 0x10 |
+| 4 | `0x140562880`, `0x140562B40` | `0x102` | 0x14 |
+| 1 | `0x1405628C0`, `0x140562B80` | `0x142` | 0x24 |
+| (next) | `0x140562840`, `0x140562B00` | `0x42` | 0x1C |
+
+The strides fit the FVF bits only if `DIFFUSE` (0x40) takes 16 bytes:
+- `0x42` (XYZ, DIFFUSE) is 12 + 16 = 28;
+- `0x142` adds TEX1: 12 + 16 + 8 = 36;
+- `0x80000152` (XYZ, NORMAL, DIFFUSE, TEX1) is 12 + 12 + 16 + 8 = 48;
+- `0x80030152` adds 8 bytes more: 56.
+
+So in the HD vertex buffers the colour is **four floats**, not four
+bytes, and the `R8G8B8A8_UNORM` reading above does not hold. Whether the
+floats are 0..255 or 0..1 is decided by the code that fills the buffer,
+not by the format.
+
+To check:
+- the `DXGI_FORMAT` of `COLOR` (`+0x0C` of its element) in
+  `0x140562780` / `0x140562A80`;
+- which shader name id 0xD is (expected `dmc3_stg`);
+- the SCM vertex fill (colour bytes → floats, and whether ×1/255 is
+  applied).
+
+The legacy GS vertex emitter `0x14002BAD0` is another path. It writes
+`DIFFUSE` as a packed dword and the fog byte as ×1/255.
