@@ -1,5 +1,5 @@
 // Game light tables (LIG2): reading, candidate rules, top-four selection and
-// the light matrices. See dmcresource/game_lights.h.
+// the light matrices, and the model and stage light rigs. See dmcresource/game_lights.h.
 #include "dmcresource/game_lights.h"
 
 #include <algorithm>
@@ -31,6 +31,9 @@ float read_f32(std::span<const std::uint8_t> bytes, std::size_t offset) noexcept
 std::array<float, 3> delta_of(const LightRecord& record, std::array<float, 3> query) noexcept {
     return {record.position[0] - query[0], record.position[1] - query[1], record.position[2] - query[2]};
 }
+
+// The stage rig's colour scale: the float with bits 0x3B808081 (about 1/255).
+constexpr float kStageColourScale = std::bit_cast<float>(std::uint32_t{0x3B808081u});
 
 }  // namespace
 
@@ -171,6 +174,24 @@ ModelRig model_rig(const LightTable& table, const SelectedLights& lights, unsign
         if (len > 0.0f) direction = {x / len, y / len, z / len};
     }
     rig.ambient = mask == 2u ? table.ambient_mask2 : table.ambient;
+    return rig;
+}
+
+StageRig stage_rig(const LightTable& table, const SelectedLights& lights, std::array<float, 3> query,
+                   unsigned mask, int limit) noexcept {
+    StageRig rig{};
+    const int n = std::max(0, std::min({lights.count, 4, std::max(limit, 0)}));
+    rig.count = n;
+    for (int i = 0; i < n; ++i) {
+        const auto slot = static_cast<std::size_t>(i);
+        const std::size_t row = slot * 4;
+        rig.position[slot] = {query[0] + lights.lv[row + 0], query[1] + lights.lv[row + 1],
+                              query[2] + lights.lv[row + 2]};
+        rig.falloff[slot] = lights.lv[row + 3];
+        rig.colour[slot] = {lights.lc[row + 0] * kStageColourScale, lights.lc[row + 1] * kStageColourScale,
+                            lights.lc[row + 2] * kStageColourScale};
+    }
+    rig.ambient = mask == 1u ? table.ambient : table.ambient_mask2;
     return rig;
 }
 

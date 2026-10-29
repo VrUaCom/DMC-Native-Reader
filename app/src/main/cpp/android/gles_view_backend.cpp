@@ -1260,7 +1260,7 @@ private:
         glUniformMatrix4fv(program->light_colours, 1, GL_FALSE, d.light_colours.data());
         glUniform4f(program->part_colour, d.part_colour, d.part_colour, d.part_colour, d.fog_amount);
         glUniform1f(program->part_alpha, d.part_alpha);
-        glUniform3f(program->ambient, d.ambient, d.ambient, d.ambient);
+        glUniform3f(program->ambient, d.ambient[0], d.ambient[1], d.ambient[2]);
         glUniform4fv(program->light_x, 1, d.light_x.data());
         glUniform4fv(program->light_y, 1, d.light_y.data());
         glUniform4fv(program->light_z, 1, d.light_z.data());

@@ -26,7 +26,7 @@
 namespace dmcresource {
 
 // One de-indexed vertex. Model: light = camera light term (vertex_light),
-// normal unused. Room: normal = the triangle's summed vertex normals (zero
+// normal unused. Room: normal = the triangle's summed vertex normals at unit length (zero
 // when the room has none), light unused.
 struct GpuVertex final {
     float x{}, y{}, z{};
@@ -211,6 +211,8 @@ struct GpuViewFrame final {
         // coordinates; colours per unit of facing), and the model's rig
         // (game_lights::model_rig: up to three unit directions in model
         // coordinates, their colours and the table's ambient; 128 = 1).
+        bool stage_rig{};  // the stage's rig is the table's (its ambient replaces the neutral one)
+        std::array<float, 3> stage_ambient{};
         int stage_light_count{};
         std::array<float, 4> stage_light_x{}, stage_light_y{}, stage_light_z{}, stage_light_falloff{};
         std::array<float, 16> stage_light_colour{};
@@ -253,7 +255,7 @@ struct GpuDmc3Draw final {
     std::array<float, 16> light_colours{};
     float part_colour{0.5F};
     float part_alpha{128.0F / 255.0F};
-    float ambient{1.0F};
+    std::array<float, 3> ambient{1.0F, 1.0F, 1.0F};
     // Stage: u_light_x / _y / _z / _falloff and u_light_colour[4].
     std::array<float, 4> light_x{}, light_y{}, light_z{}, light_falloff{};
     std::array<float, 16> light_colour{};
@@ -294,8 +296,9 @@ void set_dmc3_shaders_enabled(bool enabled) noexcept;
 [[nodiscard]] bool dmc3_shaders_enabled() noexcept;
 // Light the DMC3 shaders' stage and models with the stage's light table
 // (LIG2 is the main list of the game's CLightMgr, research
-// dmc3-gates-archive-v124.md). Experimental and off by default: the masks
-// the stage and models ask with, and the light scale, are the Reader's.
+// dmc3-gates-archive-v124.md), with the game's object masks, selection and
+// packing. Experimental and off by default: one query point per frame, and
+// the stage's colour units are a reading not yet proven.
 void set_game_lights_enabled(bool enabled) noexcept;
 [[nodiscard]] bool game_lights_enabled() noexcept;
 

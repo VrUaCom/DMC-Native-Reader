@@ -1335,9 +1335,10 @@ public final class MainActivity extends Activity {
                 p.getBoolean(SET_GAME_LIGHTS, false) ? 1 : 0,
                 i -> { p.edit().putBoolean(SET_GAME_LIGHTS, i == 1).apply(); apply.run(); renderView.renderNow(); }));
         content.addView(hint("On: the light table of the stage's configuration (stNNNcfg.pac, LIG2) lights the "
-                + "stage and the models, through the game's choice of the four nearest lights. The game loads "
-                + "this table into its light manager. Still experimental, because which lights the stage and the models "
-                + "ask for and how strongly they shine are the Reader's estimate. "
+                + "stage and the models as the game does: its choice of lights (the stage's point lights, the "
+                + "models' directional ones), its packing and the table's ambient colours. Still experimental: "
+                + "the lights are chosen for the middle of the view and the model's centre, not for each object, "
+                + "and the stage's colour units are the best reading so far. "
                 + "Needs the configuration loaded (⋮ → Stage config (stNNNcfg.pac))."));
         final int[] msaa = {0, 2, 4, 8};
         content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},

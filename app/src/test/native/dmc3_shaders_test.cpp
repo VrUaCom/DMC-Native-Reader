@@ -152,7 +152,7 @@ void choices() {
     d = dmc3_draw(room, GpuPass::room_opaque, frame_with(true, true));
     assert(d.vertex == Shader::stage_lit_fog_vert && d.fragment == Shader::texture_modulate_fog_frag);
     assert(d.alpha_func == AlphaFunc::greater_equal && std::fabs(d.alpha_ref - 31.5F / 255.0F) < 1.0e-6F);
-    assert(std::fabs(d.ambient - 255.0F / 256.0F) < 1.0e-6F);
+    assert(std::fabs(d.ambient[0] - 255.0F / 256.0F) < 1.0e-6F);
     room.translucent = true;
     assert(std::fabs(dmc3_draw(room, GpuPass::room_opaque, frame_with(true, false)).alpha_ref - 239.5F / 255.0F) <
            1.0e-6F);
@@ -166,6 +166,12 @@ void choices() {
     lights.dmc3.stage_light_colour[0] = 0.5F;
     d = dmc3_draw(room, GpuPass::room_soft, lights);
     assert(d.light_x[0] == 450.0F && d.light_falloff[0] == 1.0e-6F && d.light_colour[0] == 0.5F);
+    // The table's ambient replaces the neutral one only with the stage's rig.
+    assert(std::fabs(d.ambient[1] - 255.0F / 256.0F) < 1.0e-6F);
+    lights.dmc3.stage_rig = true;
+    lights.dmc3.stage_ambient = {220.0F / 255.0F, 210.0F / 255.0F, 200.0F / 255.0F};
+    d = dmc3_draw(room, GpuPass::room_soft, lights);
+    assert(d.ambient[0] == 220.0F / 255.0F && d.ambient[2] == 200.0F / 255.0F);
 
     // Light shafts and stages the Reader lights itself keep its shaders.
     auto shaft = room;

@@ -1976,19 +1976,23 @@ std::atomic<bool> g_gpu_present{true};
 std::atomic<bool> g_dmc3_shaders{true};
 std::atomic<bool> g_game_lights{false};
 
-// The stage's lights (game_lights.h). Masks of the main list (the low
-// bits are the Reader's, not traced yet): the stage takes the point lights
-// (low mode 3 and 1), the models every kind.
-// - Models: the game's rig (game_lights::model_rig), its three lights and
-//   the table's ambient as the constant term.
-// - Stage: a light's colour is scaled so a vertex facing it at its best
-//   distance gets about its colour (the shader's facing is not normalised:
-//   the reach times the room normal, the sum of three vertex normals).
-//   Calibrated by eye: how the game fills stage_lit is not known.
-constexpr unsigned kStageLightMask = 4U | 1U;
-constexpr unsigned kModelLightMask = 4U | 2U | 1U;
-constexpr float kRoomNormalLength = 3.0F;
-constexpr float kStageLightGain = 1.25F;
+// The stage's lights (game_lights.h), as the game lights its objects
+// (research dmc3-gates-archive-v124.md, Gates 46-48):
+// - Models: the holder's constructor (0x140089270) sets mask 2. The
+//   selection asks with 2|4|8 (LIG2 is the main list), the rig is
+//   game_lights::model_rig, and mask 2 takes the second ambient.
+// - Stage objects: the constructor (0x140089320) sets mask 1. The static
+//   lights are chosen with 1|4 and the first static_light_count kept
+//   (0x1402FC720); the rig is game_lights::stage_rig, and mask 1 takes the
+//   main ambient.
+// - Units: the game feeds stage_lit vertex colours as 0..1 and divides by
+//   255; the Reader feeds 0..255, so the stage colours and ambient are
+//   divided by 255 once more. That the colours arrive as 0..1 is the
+//   best reading (Gate 48 v0.3), not yet proven.
+// - Query points: the framing centre (stage) and the model's centre, not
+//   each object's node.
+constexpr unsigned kModelObjectMask = 2U;
+constexpr unsigned kStageObjectMask = 1U;
 
 // A point of the frame (model space) in room coordinates: room_place undone.
 Vec3 room_unplace(const ViewState& view, const Vec3& p) {
@@ -2005,25 +2009,23 @@ void stage_lights_frame(const ViewState& view, const Vec3& centre, const Vec3& m
     if (!g_game_lights.load() || view.stage_lights == nullptr) return;
     const auto& table = *view.stage_lights;
     const Vec3 q = room_unplace(view, centre);
-    const auto stage = game_lights::select_lights(table, {q.x, q.y, q.z}, kStageLightMask);
-    for (int i = 0; i < stage.count; ++i) {
-        const auto& record = table.records[static_cast<std::size_t>(stage.index[static_cast<std::size_t>(i)])];
-        const auto row = static_cast<std::size_t>(i * 4);
+    const auto stage = game_lights::select_lights(table, {q.x, q.y, q.z}, kStageObjectMask | 4U);
+    const auto lit = game_lights::stage_rig(table, stage, {q.x, q.y, q.z}, kStageObjectMask,
+                                            table.static_light_count);
+    for (int i = 0; i < lit.count; ++i) {
         const auto k = static_cast<std::size_t>(i);
-        const float dx = stage.lv[row], dy = stage.lv[row + 1U], dz = stage.lv[row + 2U];
-        out.stage_light_x[k] = q.x + dx;
-        out.stage_light_y[k] = q.y + dy;
-        out.stage_light_z[k] = q.z + dz;
-        const bool point = record.type == 0U && record.falloff > 0.0F;
-        out.stage_light_falloff[k] = point ? record.falloff : 0.0F;
-        const float reach = point ? 1.0F / std::sqrt(record.falloff) : std::sqrt(dx * dx + dy * dy + dz * dz);
-        const float scale = kStageLightGain / (255.0F * std::max(reach, 1.0F) * kRoomNormalLength);
-        for (std::size_t c = 0U; c < 3U; ++c) out.stage_light_colour[row + c] = record.rgb[c] * scale;
+        out.stage_light_x[k] = lit.position[k][0];
+        out.stage_light_y[k] = lit.position[k][1];
+        out.stage_light_z[k] = lit.position[k][2];
+        out.stage_light_falloff[k] = lit.falloff[k];
+        for (std::size_t c = 0U; c < 3U; ++c) out.stage_light_colour[k * 4U + c] = lit.colour[k][c] / 255.0F;
     }
-    out.stage_light_count = stage.count;
+    out.stage_light_count = lit.count;
+    for (std::size_t c = 0U; c < 3U; ++c) out.stage_ambient[c] = lit.ambient[c] / 255.0F;
+    out.stage_rig = true;
     const Vec3 m = room_unplace(view, model_centre);
-    const auto model = game_lights::select_lights(table, {m.x, m.y, m.z}, kModelLightMask);
-    const auto rig = game_lights::model_rig(table, model, kModelLightMask);
+    const auto model = game_lights::select_lights(table, {m.x, m.y, m.z}, kModelObjectMask | 4U | 8U);
+    const auto rig = game_lights::model_rig(table, model, kModelObjectMask);
     for (int i = 0; i < rig.count; ++i) {
         const auto& g = rig.direction[static_cast<std::size_t>(i)];
         const Vec3 d = room_turn(view, {g[0], g[1], g[2]});  // room -> model space
@@ -2335,6 +2337,14 @@ GpuGeometry build_room_geometry(const ViewState& view) {
                     normal.y += nm.y;
                     normal.z += nm.z;
                 }
+                // Unit length, as the stage shader's facing expects (the
+                // Reader's own shader normalises it anyway).
+                const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+                if (length > 0.0F) {
+                    normal.x /= length;
+                    normal.y /= length;
+                    normal.z /= length;
+                }
             }
             for (std::size_t k = 0U; k < 3U; ++k) {
                 const auto i = rm.indices[t + k];
@@ -2629,7 +2639,8 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
     out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
     if (d.fog) out.fog_colour = d.fog_colour;
     // 0x80 is 1: ambient x colour / 255 x 2 = colour / 128.
-    out.ambient = 255.0F / 256.0F;
+    out.ambient = {255.0F / 256.0F, 255.0F / 256.0F, 255.0F / 256.0F};
+    if (d.stage_rig) out.ambient = d.stage_ambient;
     if (d.stage_light_count > 0) {
         out.light_x = d.stage_light_x;
         out.light_y = d.stage_light_y;

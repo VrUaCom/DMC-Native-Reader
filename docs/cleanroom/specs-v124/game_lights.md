@@ -1,5 +1,8 @@
 # Spec: game light records, top-four selection, light matrices
 
+Revision 4: section 8 is new (the stage's light rig). Keep every earlier
+rule.
+
 Revision 3: section 1 gains three named header fields, and section 7
 is new (the model's light rig). Keep every earlier rule.
 
@@ -202,6 +205,33 @@ ModelRig model_rig(const LightTable& table, const SelectedLights& lights,
   `table.ambient`.
 - **Unused entries** stay zero.
 
+## 8. The stage's light rig
+
+```cpp
+struct StageRig {
+    int count{};                                          // 0..4 lights
+    std::array<std::array<float, 3>, 4> position{};       // light positions
+    std::array<float, 4> falloff{};
+    std::array<std::array<float, 3>, 4> colour{};         // per unit of facing
+    std::array<float, 3> ambient{};                       // 0..255 units
+};
+StageRig stage_rig(const LightTable& table, const SelectedLights& lights,
+                   std::array<float, 3> query, unsigned mask, int limit = 4) noexcept;
+```
+
+- **Lights used.** The first `n = min(lights.count, 4, max(limit, 0))`
+  slots of `lights`, in slot order. `count = n`.
+- **For slot `i < n`,** with `lv` = row `i` of `lights.lv` and `lc` = row
+  `i` of `lights.lc`:
+  - `position[i] = (query[0] + lv[0], query[1] + lv[1], query[2] + lv[2])`
+    (lv holds the light minus the query point);
+  - `falloff[i] = lv[3]`;
+  - `colour[i] = (lc[0] · K, lc[1] · K, lc[2] · K)` with `K` the float
+    whose bits are `0x3B808081` (about 1/255). `lc[3]` is not used.
+- **Ambient.** `table.ambient` when `mask == 1` exactly, otherwise
+  `table.ambient_mask2`. This is the opposite test from the model rig.
+- **Unused entries** stay zero.
+
 ## Tests (at least)
 
 Build tables in memory (a helper writes the bytes):
@@ -245,3 +275,10 @@ Build tables in memory (a helper writes the bytes):
   - the colour ignores the score;
   - directions are unit length, and a zero `lv` gives a zero direction;
   - the ambient is `ambient` for masks 7 and 0, and `ambient_mask2` for 2.
+- Stage rig (revision 4):
+  - `count` is limited by `lights.count`, by 4 and by `limit`;
+  - positions are the query plus `lv`, and `falloff` is `lv[3]`;
+  - a colour of 255 becomes exactly the float with bits `0x3B808081` times
+    255, and `lc[3]` is ignored;
+  - the ambient is `ambient` for mask 1, and `ambient_mask2` for masks 0,
+    2, 5 and 7.

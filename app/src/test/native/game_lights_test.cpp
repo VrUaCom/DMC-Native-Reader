@@ -1,8 +1,9 @@
 // Game light tables (game_lights.h): reading LIG2 tables, the candidate rules
 // per list and mask, the score, the top-four order, the lc / lv matrices, the
-// named header fields and the model's light rig.
+// named header fields, the model's light rig and the stage's light rig.
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -657,6 +658,116 @@ void test_model_rig_ambient() {
     assert(model_rig(table, none, 7).count == 0);
 }
 
+// --- stage rig (revision 4) --------------------------------------------------
+
+const float kK = std::bit_cast<float>(std::uint32_t{0x3B808081u});  // about 1/255
+
+void test_stage_rig_count() {
+    const LightTable table = TableBytes().read();
+    const std::array<std::array<float, 4>, 4> lc{{{1, 1, 1, 0}, {2, 2, 2, 0}, {3, 3, 3, 0}, {4, 4, 4, 0}}};
+    const std::array<std::array<float, 4>, 4> lv{{{1, 0, 0, 1}, {0, 1, 0, 2}, {0, 0, 1, 3}, {1, 1, 0, 4}}};
+    const std::array<float, 3> q{0, 0, 0};
+
+    // Limited by lights.count, and by 4 (slot 3 is used, unlike the model rig).
+    for (int c = 0; c <= 4; ++c) assert(stage_rig(table, rows(c, lc, lv), q, 7).count == c);
+    const StageRig four = stage_rig(table, rows(4, lc, lv), q, 7, 10);
+    assert(four.count == 4);
+    assert((four.position[3] == std::array<float, 3>{1, 1, 0}) && four.falloff[3] == 4.0f);
+    assert(four.colour[3][0] == 4 * kK);
+    SelectedLights over = rows(4, lc, lv);
+    over.count = 9;
+    assert(stage_rig(table, over, q, 7, 10).count == 4);
+    // Limited by limit; 0 or below gives 0.
+    assert(stage_rig(table, rows(4, lc, lv), q, 7, 3).count == 3);
+    assert(stage_rig(table, rows(4, lc, lv), q, 7, 1).count == 1);
+    assert(stage_rig(table, rows(2, lc, lv), q, 7, 3).count == 2);
+    for (int limit : {0, -1, -100}) {
+        const StageRig none = stage_rig(table, rows(4, lc, lv), q, 7, limit);
+        assert(none.count == 0);
+        for (std::size_t i = 0; i < 4; ++i) {
+            assert((none.position[i] == std::array<float, 3>{}));
+            assert((none.colour[i] == std::array<float, 3>{}));
+            assert(none.falloff[i] == 0.0f);
+        }
+    }
+    // Unused entries stay zero.
+    const StageRig two = stage_rig(table, rows(4, lc, lv), q, 7, 2);
+    assert(two.colour[1][0] == 2 * kK && two.falloff[1] == 2.0f);
+    for (std::size_t i = 2; i < 4; ++i) {
+        assert((two.position[i] == std::array<float, 3>{}));
+        assert((two.colour[i] == std::array<float, 3>{}));
+        assert(two.falloff[i] == 0.0f);
+    }
+}
+
+void test_stage_rig_position_falloff() {
+    const LightTable table = TableBytes().read();
+    const std::array<std::array<float, 4>, 4> lc{};
+    const std::array<std::array<float, 4>, 4> lv{{{1, -2, 3, 0.25f}, {-10, 0, 5, 0}, {0, 0, 0, 7}, {}}};
+    const StageRig rig = stage_rig(table, rows(3, lc, lv), {100, 200, 300}, 7);
+    assert(rig.count == 3);
+    assert((rig.position[0] == std::array<float, 3>{101, 198, 303}));
+    assert((rig.position[1] == std::array<float, 3>{90, 200, 305}));
+    assert((rig.position[2] == std::array<float, 3>{100, 200, 300}));
+    assert(rig.falloff[0] == 0.25f && rig.falloff[1] == 0.0f && rig.falloff[2] == 7.0f);
+    assert(rig.falloff[3] == 0.0f);
+
+    // Through select_lights: the light's own position comes back; falloff is
+    // lv[3], which is aux_w for type 0 and 0 for type 1.
+    TableBytes t;
+    t.set(0, {.flags = 3, .type = 0, .position = {12, 4, -6}, .aux_w = 0.003f, .falloff = 0.001f,
+              .rgb = {255, 0, 10}});
+    t.set(1, {.flags = 3, .type = 1, .position = {0, 50, 0}, .aux_w = 9.0f, .falloff = 1.0f,
+              .rgb = {1, 2, 3}});
+    const std::array<float, 3> query{2, 4, -6};
+    const auto sel = select_lights(t.read(), query, 5);
+    assert(sel.count == 2 && sel.index[0] == 1 && sel.index[1] == 0);
+    const StageRig r = stage_rig(t.read(), sel, query, 5);
+    assert(r.count == 2);
+    assert((r.position[0] == std::array<float, 3>{0, 50, 0}) && r.falloff[0] == 0.0f);
+    assert((r.position[1] == std::array<float, 3>{12, 4, -6}) && r.falloff[1] == 0.003f);
+    assert(r.colour[1][0] == 255 * kK && r.colour[1][1] == 0.0f && r.colour[1][2] == 10 * kK);
+}
+
+void test_stage_rig_colour() {
+    const LightTable table = TableBytes().read();
+    assert(std::bit_cast<std::uint32_t>(kK) == 0x3B808081u);
+    const std::array<std::array<float, 4>, 4> lc{{{255, 255, 255, 0.5f}, {128, 0, 64, 99}, {}, {}}};
+    const std::array<std::array<float, 4>, 4> lv{};
+    SelectedLights s = rows(2, lc, lv);
+    const StageRig a = stage_rig(table, s, {0, 0, 0}, 7);
+    const float full = kK * 255.0f;
+    assert(a.colour[0][0] == full && a.colour[0][1] == full && a.colour[0][2] == full);
+    assert(near(full, 1.0f, 1e-5f));
+    assert(a.colour[1][0] == 128 * kK && a.colour[1][1] == 0.0f && a.colour[1][2] == 64 * kK);
+    // lc[3] is ignored, and so is the score.
+    s.lc[3] = 1000.0f;
+    s.lc[7] = -5.0f;
+    s.score = {0.1f, 0.2f, 0, 0};
+    const StageRig b = stage_rig(table, s, {0, 0, 0}, 7);
+    assert(a.colour == b.colour);
+}
+
+void test_stage_rig_ambient() {
+    TableBytes t;
+    put_u16(t.bytes, 0x06, 32);
+    put_u16(t.bytes, 0x08, 32);
+    put_u16(t.bytes, 0x0A, 32);
+    put_u16(t.bytes, 0x0C, 220);
+    put_u16(t.bytes, 0x0E, 210);
+    put_u16(t.bytes, 0x10, 200);
+    const LightTable table = t.read();
+    const SelectedLights none{};
+    const std::array<float, 3> normal{220, 210, 200}, mask2{32, 32, 32};
+    const std::array<float, 3> q{0, 0, 0};
+    assert(stage_rig(table, none, q, 1).ambient == normal);
+    for (unsigned mask : {0u, 2u, 5u, 7u}) assert(stage_rig(table, none, q, mask).ambient == mask2);
+    assert(stage_rig(table, none, q, 1, 0).ambient == normal);  // independent of count
+    // The opposite test from the model rig.
+    assert(model_rig(table, none, 1).ambient == normal && model_rig(table, none, 2).ambient == mask2);
+    assert(stage_rig(table, none, q, 2).ambient == mask2 && model_rig(table, none, 7).ambient == normal);
+}
+
 // --- helpers -----------------------------------------------------------------
 
 void test_describe() {
@@ -696,5 +807,9 @@ int main() {
     test_model_rig_attenuation();
     test_model_rig_direction();
     test_model_rig_ambient();
+    test_stage_rig_count();
+    test_stage_rig_position_falloff();
+    test_stage_rig_colour();
+    test_stage_rig_ambient();
     return 0;
 }

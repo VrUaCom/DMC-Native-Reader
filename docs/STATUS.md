@@ -364,6 +364,18 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v128: Stage lights follow Gates 47-48 (clean-room revision 4,
+    `game_lights::stage_rig`):
+    - Masks:
+      - models ask with mask 2 (their constructor's), so they get the
+        directional lights and the second ambient;
+      - the stage asks with mask 1, so it gets the point lights (at most
+        the table's static count) and the main ambient.
+    - Stage packing: light position, falloff = the record's aux, and colour
+      × 1/255. The vertex colours are taken as 0..1 in the game, so the
+      Reader divides by 255 once more (best reading, not proven).
+    - Stage normals reach the shader at unit length.
+    - No scale set by eye is left.
   - v127: with Stage lights on, a model's rig is the game's (Gate 47,
     `0x1402FC850`; clean-room revision 3, `game_lights::model_rig`):
     - up to three lights, each a unit direction with its colour dimmed only

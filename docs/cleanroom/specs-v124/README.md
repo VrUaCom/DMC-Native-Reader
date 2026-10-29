@@ -27,5 +27,8 @@ For the specification side only; the implementers never read this file.
   (`0x1402FC850`) and the LIG2 header's ambient and static-light count.
   The specification side added them, and a new implementer, given only the
   specification, added `model_rig` and the header fields with their tests.
+- **Revision 4 (v128).** Gate 48 gave the stage packing (`0x1402FCED0`,
+  K = 1/255) and the stage ambient rule. A new implementer, given only the
+  specification, added `stage_rig` with its tests.
 - **The Reader's side.** Wiring the modules into the adapters, the frame and
   the GPU backend was then done against the modules' public interfaces.

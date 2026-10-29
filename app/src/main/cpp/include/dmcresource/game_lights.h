@@ -10,7 +10,7 @@
 // The game's light table (LIG2): 48 point / directional light records, the
 // choice of the four lights that light a query point, and the colour and
 // vector matrices a renderer uploads for them, and a model's three-light rig
-// built from those matrices. Written clean-room from the
+// and the stage's four-light rig built from those matrices. Written clean-room from the
 // behaviour specification docs/cleanroom/specs-v124/game_lights.md.
 namespace dmcresource::game_lights {
 
@@ -83,6 +83,21 @@ struct ModelRig {
 // Ambient is table.ambient_mask2 when mask == 2 exactly, else table.ambient.
 [[nodiscard]] ModelRig model_rig(const LightTable& table, const SelectedLights& lights,
                                  unsigned mask, int limit = 3) noexcept;
+
+struct StageRig {
+    int count{};                                          // 0..4 lights
+    std::array<std::array<float, 3>, 4> position{};       // light positions
+    std::array<float, 4> falloff{};
+    std::array<std::array<float, 3>, 4> colour{};         // per unit of facing
+    std::array<float, 3> ambient{};                       // 0..255 units
+};
+
+// Uses the first min(lights.count, 4, max(limit, 0)) slots. Per slot: position =
+// query + lv.xyz; falloff = lv.w; colour = lc.rgb * K, K the float with bits
+// 0x3B808081 (about 1/255; lc.w unused).
+// Ambient is table.ambient when mask == 1 exactly, else table.ambient_mask2.
+[[nodiscard]] StageRig stage_rig(const LightTable& table, const SelectedLights& lights,
+                                 std::array<float, 3> query, unsigned mask, int limit = 4) noexcept;
 
 // The number of records that pass the candidate rules (no score applied).
 [[nodiscard]] std::size_t candidate_count(const LightTable& table, unsigned mask, ListKind list) noexcept;
