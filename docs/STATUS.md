@@ -364,6 +364,15 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v130: Settings → Base room is built from the same four archives
+    (the Stage Ops frame of the room loaded there):
+    - the room, its effect bank and its configuration, each tapped to add
+      or replace;
+    - the configuration is now kept like the room and the bank, and comes
+      back on the next start;
+    - Remove rows for the bank and the configuration.
+    Any room can thus be put together to look at enemies and characters in
+    it.
   - v129: ⋮ → Stage Ops, a frame under the squares with the four archives
     of a full stage:
     - 🏛 Room (stNNN.pac), ✨ Effects (stNNN_effect.pac), 🗺 Config

@@ -1565,6 +1565,28 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
     } catch (...) { return nullptr; }
 }
 
+// The base room's four archives (Settings), as a CompanionMenu with only
+// its stage ops.
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_baseRoomMenu(JNIEnv* env, jclass, jboolean room_loaded) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const auto menu = dmcresource::spider::actions::base_room_menu(
+            {.root_scene = true, .room_loaded = room_loaded == JNI_TRUE, .room_shown = true});
+        jclass type = env->FindClass("com/dmcrengine/nativeviewer/CompanionMenu");
+        if (type == nullptr) return nullptr;
+        jmethodID make = env->GetMethodID(
+            type, "<init>",
+            "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;"
+            "Lcom/dmcrengine/nativeviewer/NativeMenu;[ILcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
+        if (make == nullptr) return nullptr;
+        stage_actions::Menu none{};
+        stage_actions::Menu ops{.title = {}, .message = {}, .items = menu.stage_ops};
+        return env->NewObject(type, make, menu_object(env, none), menu_object(env, none), menu_object(env, none),
+                              int_array(env, {}), menu_object(env, ops), int_array(env, menu.stage_ops_ready));
+    } catch (...) { return nullptr; }
+}
+
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_runCompanionAction(JNIEnv* env, jclass, jlong handle, jint id) {
     const SessionLock jni_lock{session_mutex()};

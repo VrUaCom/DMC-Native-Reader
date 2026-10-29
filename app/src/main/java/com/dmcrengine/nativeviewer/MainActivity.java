@@ -55,6 +55,9 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_ROOM_EFFECTS = 1014;
     private static final String PREF_EFFECTS_NAME = "room.effects.name";
     private static final String EFFECTS_FILE = "room_effects.bin";
+    /** The base room's stage configuration (stNNNcfg.pac), kept like the room and its effects. */
+    private static final String PREF_CONFIG_NAME = "room.config.name";
+    private static final String CONFIG_FILE = "room_config.bin";
     private static final int REQUEST_EXPORT_INFO = 1013;
     private static final int REQUEST_SAVE_SOURCE = 1015;
     private static final int REQUEST_STAGE_CONFIG = 1016;
@@ -242,6 +245,7 @@ public final class MainActivity extends Activity {
         renderView.setResolutionListener(side -> prefs().edit().putInt(SET_MAX_SIDE, side).apply());
         restoreRoom();
         restoreRoomEffects();
+        restoreStageConfig();
         handleIncomingIntent(getIntent());
     }
 
@@ -1417,16 +1421,30 @@ public final class MainActivity extends Activity {
         content.addView(choiceRow("Playback speed", new String[]{"¼×", "½×", "1×", "2×"},
                 speedIndex, i -> { p.edit().putFloat(SET_SPEED, speeds[i]).apply(); apply.run(); }));
 
-        content.addView(sectionTitle("Room"));
+        content.addView(sectionTitle("Base room"));
         TextView status = new TextView(this);
         status.setTextColor(0xffc8ccd6);
         status.setTextSize(14f);
         status.setPadding(0, dp(6), 0, dp(6));
-        status.setText(roomLoaded
+        status.setText((roomLoaded
                 ? (roomDetail.isEmpty() ? roomName : roomDetail)
-                : "No room: models stand on the plain floor. Choose a stage (st*.pac or .scm) to show "
-                        + "every model inside it.");
+                : "No room: models stand on the plain floor.")
+                + "\nBuild the room every model stands in from a stage's archives: the room, its effect "
+                + "bank and its configuration (fog, lights, placed effects). They are kept for the next start.");
         content.addView(status);
+        // The same four archives as ⋮ → Stage Ops, of this room.
+        final CompanionMenu base = NativeBridge.baseRoomMenu(roomLoaded);
+        if (base != null && base.stageOps != null && base.stageOps.ids.length > 0) {
+            content.addView(stageOpsFrame(base, id -> {
+                dialog.dismiss();
+                switch (id) {
+                    case CompanionMenu.STAGE_OPS_ROOM: roomChoose(); break;
+                    case CompanionMenu.STAGE_EFFECTS: roomEffectsChoose(); break;
+                    case CompanionMenu.STAGE_CONFIG_LOAD: pickStageConfig(); break;
+                    default: handleOutcome(NativeBridge.runCompanionAction(session, id)); break;
+                }
+            }));
+        }
         LinearLayout roomActions = new LinearLayout(this);
         roomActions.setOrientation(LinearLayout.VERTICAL);
         final java.util.function.BiConsumer<String, Runnable> addAction = (text, action) -> {
@@ -1435,10 +1453,6 @@ public final class MainActivity extends Activity {
             params.topMargin = dp(6);
             roomActions.addView(actionChip(text, action), params);
         };
-        addAction.accept(roomLoaded ? "Replace stage…" : "Choose stage…", () -> {
-            dialog.dismiss();
-            roomChoose();
-        });
         if (roomLoaded) {
             content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
                     i -> { if ((i == 0) != roomShown()) roomToggle(); }));
@@ -1460,28 +1474,24 @@ public final class MainActivity extends Activity {
             addAction.accept("Remove room", () -> { roomRemove(); dialog.dismiss(); });
         }
         content.addView(roomActions);
-        // Stage effects: the layout's effects (burning drums) play from st*_effect.pac.
-        final TextView effectsStatus = new TextView(this);
-        effectsStatus.setTextColor(0xffc8ccd6);
-        effectsStatus.setTextSize(14f);
-        effectsStatus.setPadding(0, dp(12), 0, dp(4));
-        effectsStatus.setText(effectsName.isEmpty()
-                ? "Stage effects: none. Choose the stage's effect bank (st*_effect.pac) to play the effects its "
-                        + "layout keeps on objects."
-                : "Stage effects: " + effectsName + " (" + effectsDetail + ")");
-        content.addView(effectsStatus);
-        final LinearLayout effectsActions = new LinearLayout(this);
-        effectsActions.setOrientation(LinearLayout.VERTICAL);
-        final LinearLayout.LayoutParams effectsParams = new LinearLayout.LayoutParams(
+        // Removing what the base room was built from (adding is in the frame).
+        final LinearLayout removeActions = new LinearLayout(this);
+        removeActions.setOrientation(LinearLayout.VERTICAL);
+        final LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        effectsParams.topMargin = dp(6);
-        effectsActions.addView(actionChip(effectsName.isEmpty() ? "Choose stage effects…" : "Replace stage effects…",
-                () -> { dialog.dismiss(); roomEffectsChoose(); }), effectsParams);
+        removeParams.topMargin = dp(6);
         if (!effectsName.isEmpty()) {
-            effectsActions.addView(actionChip("Remove stage effects", () -> { roomEffectsRemove(); dialog.dismiss(); }),
-                    effectsParams);
+            removeActions.addView(actionChip("Remove stage effects", () -> { roomEffectsRemove(); dialog.dismiss(); }),
+                    removeParams);
         }
-        content.addView(effectsActions);
+        if (prefs().getString(PREF_CONFIG_NAME, null) != null) {
+            removeActions.addView(actionChip("Remove stage config", () -> {
+                handleOutcome(NativeBridge.runCompanionAction(session, CompanionMenu.STAGE_CONFIG_REMOVE));
+                forgetStageConfig();
+                dialog.dismiss();
+            }), removeParams);
+        }
+        content.addView(removeActions);
 
         dialog.dialog = showPanel("Settings", content, null, null, null);
     }
@@ -1673,15 +1683,69 @@ public final class MainActivity extends Activity {
         if (renderView.isMotionPlaying()) renderView.resumeMotionAt(renderView.motionFrame());
     }
 
-    /** The picked file goes to the native load action as a descriptor. */
+    /**
+     * The picked stage configuration is copied into app storage (it is
+     * reloaded on start, part of the base room) and goes to the native load
+     * action as a descriptor.
+     */
     private void loadStageConfig(Uri uri) {
-        ActionOutcome outcome = null;
-        try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
-            outcome = NativeBridge.loadStageConfig(pfd == null ? -1 : pfd.getFd(), displayName(uri));
-        } catch (Exception ignored) {
-            outcome = NativeBridge.loadStageConfig(-1, displayName(uri));
+        final String name = displayName(uri);
+        new Thread(() -> {
+            final File partial = new File(getFilesDir(), CONFIG_FILE + ".part");
+            boolean copied = false;
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream out = new java.io.FileOutputStream(partial)) {
+                if (in != null) {
+                    byte[] buffer = new byte[1 << 16];
+                    int read;
+                    while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+                    copied = true;
+                }
+            } catch (Exception ignored) {
+                copied = false;
+            }
+            final ActionOutcome outcome = copied ? loadStageConfigFile(partial, name)
+                                                 : NativeBridge.loadStageConfig(-1, name);
+            if (copied && outcome != null && outcome.ok) {
+                //noinspection ResultOfMethodCallIgnored
+                partial.renameTo(stageConfigFile());
+                prefs().edit().putString(PREF_CONFIG_NAME, name).apply();
+            } else {
+                //noinspection ResultOfMethodCallIgnored
+                partial.delete();
+            }
+            runOnUiThread(() -> handleOutcome(outcome));
+        }).start();
+    }
+
+    private File stageConfigFile() {
+        return new File(getFilesDir(), CONFIG_FILE);
+    }
+
+    private static ActionOutcome loadStageConfigFile(File file, String name) {
+        try (ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            return NativeBridge.loadStageConfig(pfd.getFd(), name);
+        } catch (Exception e) {
+            return null;
         }
-        handleOutcome(outcome);
+    }
+
+    /** The base room's configuration from the last run. */
+    private void restoreStageConfig() {
+        final File file = stageConfigFile();
+        final String name = prefs().getString(PREF_CONFIG_NAME, null);
+        if (name == null || !file.isFile()) return;
+        new Thread(() -> {
+            final ActionOutcome outcome = loadStageConfigFile(file, name);
+            if (outcome != null && outcome.ok) runOnUiThread(() -> renderView.refreshRoom());
+        }).start();
+    }
+
+    /** The configuration was removed: it no longer comes back on start. */
+    private void forgetStageConfig() {
+        //noinspection ResultOfMethodCallIgnored
+        stageConfigFile().delete();
+        prefs().edit().remove(PREF_CONFIG_NAME).apply();
     }
 
     /** Carries out the one platform step a native action names, and shows its line. */
@@ -3016,6 +3080,10 @@ public final class MainActivity extends Activity {
             case CompanionMenu.BROWSE_STAGE_PAC: if (stagePacUri != null) browsePac(stagePacUri); break;
             case CompanionMenu.STAGE_EFFECTS: roomEffectsChoose(); break;
             case CompanionMenu.STAGE_OPS_ROOM: roomChoose(); break;
+            case CompanionMenu.STAGE_CONFIG_REMOVE:
+                handleOutcome(NativeBridge.runCompanionAction(session, id));
+                forgetStageConfig();
+                break;
             case CompanionMenu.EFFECTS: chooseEffect(); break;
             case CompanionMenu.ADD_MOD_PARTS: chooseAdditionalMods(); break;
             case CompanionMenu.COMPOSITE_PARTS: showCompositePartsDialog(); break;

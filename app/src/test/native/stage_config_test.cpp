@@ -62,6 +62,13 @@ void expect(std::string_view name, const std::vector<std::uint8_t>& bytes, Forma
 
 }  // namespace
 
+namespace {
+dmcresource::spider::actions::ShellFacts no_room_facts() {
+    return {.root_scene = true, .assembled_pac_source = false, .stage_source = false, .room_loaded = false,
+            .room_shown = false};
+}
+}  // namespace
+
 int main() {
     // POS: two spawn points declared, room for three; the spare is zero.
     Writer pos;
@@ -443,6 +450,11 @@ int main() {
                 assert(row.id != static_cast<int>(act::Companion::StageEffects));
             }
             assert(folded.rows.size() == 2U && folded.stage_ops.size() == 4U);
+            // Settings' base room: the same four archives, of the room loaded
+            // there (none here), whatever file is open.
+            const auto base = act::base_room_menu(no_room_facts());
+            assert(base.stage_ops.size() == 4U && base.rows.empty() && base.shortcuts.empty());
+            for (const int r : base.stage_ops_ready) assert(r != static_cast<int>(act::Companion::StageOpsRoom));
             assert(!act::run_companion_action(static_cast<int>(act::Companion::StageOpsSound)).message.empty());
             const act::ShellFacts no_room{.root_scene = true, .assembled_pac_source = false,
                                           .stage_source = false, .room_loaded = false, .room_shown = false};

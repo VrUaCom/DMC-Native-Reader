@@ -163,6 +163,12 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     return menu;
 }
 
+CompanionMenu base_room_menu(const ShellFacts& facts) {
+    CompanionMenu menu;
+    stage_ops(nullptr, facts, menu);
+    return menu;
+}
+
 ActionOutcome run_companion_action(Session* session, int id, std::unique_ptr<Session>* opened) noexcept {
     if (static_cast<Companion>(id) != Companion::BrowseCutscenePac) return run_companion_action(session, id);
     ActionOutcome out;

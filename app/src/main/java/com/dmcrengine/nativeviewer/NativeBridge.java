@@ -95,6 +95,8 @@ public final class NativeBridge {
     // Spider stage / sound / export actions: the core decides and writes
     // every line; the shell carries out the named platform step.
     public static native ActionOutcome loadStageConfig(int fd, String filename);
+    /** The base room's four archives (Settings): a CompanionMenu with only its stage ops. */
+    public static native CompanionMenu baseRoomMenu(boolean roomLoaded);
     /** The view held at a point (render pixels): marker card, joint, or scrub. */
     public static native ActionOutcome holdView(long handle, int width, int height,
                                                 float yaw, float pitch, float zoom, int renderFlags,

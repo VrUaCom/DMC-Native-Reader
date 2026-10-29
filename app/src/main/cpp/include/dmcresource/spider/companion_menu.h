@@ -92,6 +92,11 @@ struct CompanionMenu final {
 
 [[nodiscard]] CompanionMenu companion_menu(const Session* session, const ShellFacts& facts);
 
+// The base room of Settings (the room every model stands in) as Stage Ops:
+// the same four archives, of the room loaded there rather than of the
+// opened file. Only stage_ops and stage_ops_ready are filled.
+[[nodiscard]] CompanionMenu base_room_menu(const ShellFacts& facts);
+
 // The items the core carries out itself (the stage configuration ones);
 // every other id answers with ShellStep::None and an empty message, and the
 // shell runs its platform step for it.
