@@ -364,6 +364,15 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v131: stage configuration fixes and the Stage Ops look:
+    - the configuration is read through the picker's descriptor, as before
+      v130; if the copy into app storage fails it is still loaded;
+    - a failure says how many bytes arrived;
+    - another stage's configuration (e.g. st006cfg kept from the last
+      start) is not drawn over this stage, and its Config row asks for this
+      stage's file;
+    - Stage Ops rows are buttons shaped like the square ones: grey while
+      missing, green when loaded.
   - v130: Settings → Base room is built from the same four archives
     (the Stage Ops frame of the room loaded there):
     - the room, its effect bank and its configuration, each tapped to add

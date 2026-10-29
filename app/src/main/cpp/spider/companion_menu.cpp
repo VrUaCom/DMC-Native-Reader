@@ -36,11 +36,15 @@ void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& m
     }
     if (room_name.empty() && facts.room_loaded && room != nullptr) room_name = room->name;
     const std::string effects_name = host != nullptr ? host->archive_name : std::string{};
-    const std::string config_name = config != nullptr ? config->name : std::string{};
     int number = -1;
-    for (const std::string* name : std::initializer_list<const std::string*>{&room_name, &config_name, &effects_name}) {
+    for (const std::string* name : std::initializer_list<const std::string*>{&room_name, &effects_name}) {
         if (number < 0) number = stage_markers::stage_number(*name);
     }
+    // A configuration of another stage does not count for this one.
+    const bool config_fits = config != nullptr && (number < 0 || stage_markers::stage_number(config->name) < 0 ||
+                                                   stage_markers::stage_number(config->name) == number);
+    const std::string config_name = config_fits ? config->name : std::string{};
+    if (number < 0 && config_fits) number = stage_markers::stage_number(config_name);
     char stem[16] = "stNNN";
     if (number >= 0 && number < 1000) std::snprintf(stem, sizeof stem, "st%03d", number);
     const auto row = [&](Companion id, const char* icon, const char* what, const std::string& loaded,

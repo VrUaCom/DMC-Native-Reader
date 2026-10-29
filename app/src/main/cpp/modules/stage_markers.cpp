@@ -539,6 +539,17 @@ std::vector<PlacedEffect> placed_effects(std::string_view stage_name) {
     return out;
 }
 
+bool current_matches(std::string_view stage_name) noexcept {
+    try {
+        const auto config = current();
+        if (config == nullptr) return false;
+        const int ours = stage_number(stage_name), theirs = stage_number(config->name);
+        return ours < 0 || theirs < 0 || ours == theirs;
+    } catch (...) {
+        return false;
+    }
+}
+
 std::shared_ptr<const game_lights::LightTable> stage_lights(std::string_view stage_name) {
     const auto config = current();
     if (config == nullptr) return nullptr;

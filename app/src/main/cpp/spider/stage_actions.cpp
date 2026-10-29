@@ -108,9 +108,12 @@ ActionOutcome load_stage_config(std::string_view name, const std::uint8_t* bytes
                         .config = nullptr};
         const auto report = spider_cpp::execute(load_plan().build(), k_load_bindings, state);
         if (!report.ok()) {
+            // How much arrived tells a failed read (0 bytes) from a file of
+            // another kind.
             return outcome(false, ShellStep::None,
-                           "No stage configuration in " + std::string{name} +
-                               " (a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
+                           "No stage configuration in " + std::string{name} + " (" +
+                               std::to_string(bytes == nullptr ? 0U : size) +
+                               " bytes read; a stNNNcfg.pac or a POS / EVE / CAM / ITM / STE / EST / SEF file)");
         }
         // The view starts again at the configuration's first spawn point.
         g_start_spawn.store(-1);

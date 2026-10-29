@@ -101,6 +101,9 @@ void set_selected(int marker) noexcept;  // -1 none
 
 // The stage number of a file name ("st006cfg.pac", "st006.pac": 6), -1 none.
 [[nodiscard]] int stage_number(std::string_view name) noexcept;
+// Whether the current configuration belongs to the stage of `stage_name`:
+// true when both carry the same number, or either carries none.
+[[nodiscard]] bool current_matches(std::string_view stage_name) noexcept;
 
 // The effects the current configuration places in its stage: its STE
 // records, each (u16 dispatch kind 0 P, 1 E, 2 G, 3 V; u16 effect id) of the

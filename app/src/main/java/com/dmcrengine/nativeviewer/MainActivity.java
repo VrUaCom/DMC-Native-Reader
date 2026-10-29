@@ -1691,30 +1691,41 @@ public final class MainActivity extends Activity {
     private void loadStageConfig(Uri uri) {
         final String name = displayName(uri);
         new Thread(() -> {
+            // Read through the same descriptor the picker hands out (file:// or
+            // content://), as every other file the Reader opens.
             final File partial = new File(getFilesDir(), CONFIG_FILE + ".part");
             boolean copied = false;
-            try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri);
+                 java.io.InputStream in = pfd == null ? null
+                         : new java.io.FileInputStream(pfd.getFileDescriptor());
                  OutputStream out = new java.io.FileOutputStream(partial)) {
                 if (in != null) {
                     byte[] buffer = new byte[1 << 16];
                     int read;
                     while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
-                    copied = true;
+                    copied = partial.length() > 0;
                 }
             } catch (Exception ignored) {
                 copied = false;
             }
-            final ActionOutcome outcome = copied ? loadStageConfigFile(partial, name)
-                                                 : NativeBridge.loadStageConfig(-1, name);
-            if (copied && outcome != null && outcome.ok) {
+            ActionOutcome outcome = copied ? loadStageConfigFile(partial, name) : null;
+            if (outcome != null && outcome.ok) {
                 //noinspection ResultOfMethodCallIgnored
                 partial.renameTo(stageConfigFile());
                 prefs().edit().putString(PREF_CONFIG_NAME, name).apply();
             } else {
                 //noinspection ResultOfMethodCallIgnored
                 partial.delete();
+                // The copy failed: load straight from the picked file, as
+                // before (it is then not kept for the next start).
+                try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
+                    outcome = NativeBridge.loadStageConfig(pfd == null ? -1 : pfd.getFd(), name);
+                } catch (Exception e) {
+                    outcome = NativeBridge.loadStageConfig(-1, name);
+                }
             }
-            runOnUiThread(() -> handleOutcome(outcome));
+            final ActionOutcome shown = outcome;
+            runOnUiThread(() -> handleOutcome(shown));
         }).start();
     }
 
@@ -3011,13 +3022,16 @@ public final class MainActivity extends Activity {
         shown[0] = showPanel(titleView.getText(), panel, null, null, null);
     }
 
-    /** The Stage Ops frame: a title and one full-width row per archive, green when loaded. */
+    /**
+     * The Stage Ops frame: a title and one full-width button per archive,
+     * shaped like the square buttons; grey while missing, green when loaded.
+     */
     private View stageOpsFrame(CompanionMenu menu, java.util.function.IntConsumer pick) {
         LinearLayout frame = new LinearLayout(this);
         frame.setOrientation(LinearLayout.VERTICAL);
         frame.setPadding(dp(8), dp(6), dp(8), dp(8));
         android.graphics.drawable.GradientDrawable border = new android.graphics.drawable.GradientDrawable();
-        border.setCornerRadius(dp(10));
+        border.setCornerRadius(dp(4));
         border.setStroke(dp(1), 0xff5c6370);
         border.setColor(0x00000000);
         frame.setBackground(border);
@@ -3031,15 +3045,16 @@ public final class MainActivity extends Activity {
             final int id = menu.stageOps.ids[i];
             final boolean ready = menu.isReady(id);
             final String emoji = i < menu.stageOps.icons.length ? menu.stageOps.icons[i] : "";
-            TextView row = new TextView(this);
-            row.setText(emoji + "  " + menu.stageOps.labels[i].replace("\n", "\n      "));
-            row.setTextSize(15f);
-            row.setTextColor(ready ? 0xffdff5e1 : 0xfff3e2c7);
-            row.setPadding(dp(10), dp(8), dp(10), dp(8));
-            android.graphics.drawable.GradientDrawable fill = new android.graphics.drawable.GradientDrawable();
-            fill.setCornerRadius(dp(8));
-            fill.setColor(ready ? 0xff24452c : 0xff4a3a22);
-            row.setBackground(fill);
+            // The square buttons' own background (same corners and press
+            // feedback), green-tinted once the archive is loaded.
+            final Button row = makeSquareButton(emoji + "  " + menu.stageOps.labels[i].replace("\n", "\n      "),
+                    menu.stageOps.labels[i], 15f);
+            row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(14), dp(10), dp(14), dp(10));
+            if (ready) {
+                row.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff2e7d32));
+                row.setTextColor(0xffffffff);
+            }
             row.setOnClickListener(v -> pick.accept(id));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
