@@ -470,9 +470,6 @@ struct SessionPick final {
 [[nodiscard]] std::uint32_t session_sound_rate(const Session* session, std::size_t index);
 [[nodiscard]] std::vector<std::int16_t> session_sound_samples(const Session* session, std::size_t index);
 
-// The current stage configuration's marker as a card: its title, then its
-// fields, then the file it comes from; empty for an index out of range.
-[[nodiscard]] std::string stage_marker_card(int marker);
 // Opens the file a marker of the current stage configuration comes from, as
 // its own resource (Info and its map); nullptr when there is none.
 [[nodiscard]] std::unique_ptr<Session> open_stage_marker_file(int marker);

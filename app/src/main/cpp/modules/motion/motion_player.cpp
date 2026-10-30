@@ -1710,6 +1710,9 @@ MotionLoadReport load_motion_impl(Session* session, std::string_view name, const
             " float=" + std::to_string(stats.raw_tracks) +
             " heldAtRest=" + std::to_string(stats.unsupported_tracks) +
             " local=EXE 0x140310310 world=local*parent skin=inverseRest*world";
+        // Whether the motion stretches or shrinks bones (a scale channel off 1).
+        report.detail += state->parts.front().clip.scales_bones() ? "\nBones scaled: yes (the motion stretches or shrinks bones)"
+                                                                    : "\nBones scaled: no";
         if (!reasons.empty()) report.detail += "\nStatic parts: " + reasons;
 
         session->motion = std::move(state);

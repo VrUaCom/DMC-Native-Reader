@@ -416,6 +416,24 @@ std::optional<Vec3> floor_spots_near(const Mesh& mesh, const Vec3& focus) {
     return best;
 }
 
+void order_spots_as_walk(std::vector<Vec3>& spots) noexcept {
+    // From the first spot, always on to the nearest one not yet visited (in
+    // xz), so "Next floor spot" steps to a neighbour instead of across the room.
+    for (std::size_t i = 1U; i + 1U < spots.size(); ++i) {
+        std::size_t best = i;
+        float best_distance = std::numeric_limits<float>::max();
+        for (std::size_t j = i; j < spots.size(); ++j) {
+            const float dx = spots[j].x - spots[i - 1U].x, dz = spots[j].z - spots[i - 1U].z;
+            const float distance = dx * dx + dz * dz;
+            if (distance < best_distance) {
+                best_distance = distance;
+                best = j;
+            }
+        }
+        std::swap(spots[i], spots[best]);
+    }
+}
+
 std::vector<Vec3> floor_spots(const Mesh& mesh, std::size_t limit) {
     struct Floor final {
         Vec3 centre;
@@ -689,6 +707,7 @@ std::shared_ptr<Room> build_room_state(std::string_view name, const std::uint8_t
             const auto near_focus = floor_spots_near(room->mesh, focus);
             if (near_focus) room->spots.insert(room->spots.begin(), *near_focus);
         }
+        order_spots_as_walk(room->spots);
         std::ostringstream detail;
         detail << room->name << ": " << room->pieces << " pieces (" << scm << " SCM, " << mod << " MOD, "
                << objects << " placed objects), "
@@ -760,6 +779,7 @@ std::shared_ptr<Room> assemble_room(std::string_view name, std::span<const Sessi
         if (room->mesh.indices.size() < 3U) return nullptr;
         mark_translucent(*room);
         room->spots = floor_spots(room->mesh);
+        order_spots_as_walk(room->spots);
         std::ostringstream detail;
         detail << room->name << ": " << room->pieces << " pieces, " << room->textured_pieces << " textured, "
                << room->mesh.vertices.size() << " vertices, " << room->mesh.indices.size() / 3U << " triangles";

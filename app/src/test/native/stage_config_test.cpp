@@ -325,13 +325,18 @@ int main() {
             }
         }
         assert(found == 1);
-        const auto card = stage_marker_card(1);
-        assert(card.rfind("Spawn point 1\n", 0) == 0 && card.find("Heading: 90.00 deg") != std::string::npos);
-        assert(card.find("File: st100cfg.pac / slot 0 (POS)") != std::string::npos);
+        // The card the shell shows (spider marker_card): title, fields, the file.
+        const auto card = dmcresource::spider::actions::marker_card(1);
+        bool heading = false, file_row = false;
+        for (const auto& [key, value] : card.rows) {
+            heading = heading || (key == "Heading" && value.find("90.00 deg") != std::string::npos);
+            file_row = file_row || (key == "File" && value == "st100cfg.pac / slot 0 (POS)");
+        }
+        assert(card.title == "Spawn point 1" && heading && file_row);
         auto file = open_stage_marker_file(1);
         assert(file && file->image_preview.available());
         assert(stage_config_summary().find("2 spawn points") != std::string::npos);
-        assert(stage_marker_card(99).empty() && !open_stage_marker_file(-1));
+        assert(dmcresource::spider::actions::marker_card(99).title.empty() && !open_stage_marker_file(-1));
         stage_markers::set_current(nullptr);
         assert(stage_config_summary().empty());
 

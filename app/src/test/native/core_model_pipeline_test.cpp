@@ -562,6 +562,11 @@ int main() {
         const auto under = room::floor_spots_near(box, {100.0F, 300.0F, 100.0F});
         assert(under && std::fabs(under->y) < 1.0F);
         assert(!room::floor_spots_near(box, {0.0F, -10.0F, 0.0F}));  // nothing below
+        // Spots in walking order: the first stays, then always the nearest.
+        std::vector<dmcresource::Vec3> walk{{0, 0, 0}, {900, 0, 0}, {100, 0, 0}, {500, 0, 0}, {200, 0, 0}};
+        room::order_spots_as_walk(walk);
+        assert(walk[0].x == 0.0F && walk[1].x == 100.0F && walk[2].x == 200.0F && walk[3].x == 500.0F &&
+               walk[4].x == 900.0F);
 
         dmcresource::ViewState view;
         view.yaw_radians = 0.0F;

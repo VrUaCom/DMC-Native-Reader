@@ -364,6 +364,16 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v141: the audit's last three points.
+    - **Floor spots** are ordered as a walk (core `order_spots_as_walk`):
+      "Next floor spot" steps to the nearest neighbour instead of across
+      the room. The first spot stays.
+    - **A motion's detail** says whether it scales bones
+      (`MotionClip::scales_bones`, 16 frames sampled when it loads).
+    - **Cleanup:** the unused natives `render`, `renderEx`, `setMotionFrame`
+      and `clearMotion` are gone, along with the core's `stage_marker_card`
+      (the shell uses spider `marker_card`) and `mesh_floor_shadow`. The
+      JNI bridge now has 151 natives, each implemented and called.
   - v140: the game's camera in the base room. Choosing a spawn point in
     Settings → Base room puts the model there and resets the view to the
     camera the game has of that place: the base configuration's CAM zone

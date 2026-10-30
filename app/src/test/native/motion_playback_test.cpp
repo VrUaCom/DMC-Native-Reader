@@ -434,6 +434,8 @@ int main() {
     assert(report.ok);
     assert(report.animated_parts == 1U);
     assert(report.end_frame == 10.0F);
+    // A translation-only motion scales no bone; the detail says so.
+    assert(report.detail.find("Bones scaled: no") != std::string::npos);
     assert(motion::has_motion(session.get()));
     // Raw MOT is intentionally isolated from Script Play runtime effects.
     assert(motion::effect_events(session.get()).empty());

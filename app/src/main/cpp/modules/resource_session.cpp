@@ -2751,15 +2751,6 @@ std::vector<std::int16_t> session_sound_samples(const Session* session, std::siz
     return sound::decode_vag(*session->sound_bytes, chunks[index]);
 }
 
-std::string stage_marker_card(int marker) {
-    const auto config = stage_markers::current();
-    if (config == nullptr || marker < 0 || static_cast<std::size_t>(marker) >= config->markers.size()) return {};
-    const auto& m = config->markers[static_cast<std::size_t>(marker)];
-    std::string card = m.title + "\n" + m.description();
-    if (m.member < config->members.size()) card += "\nFile: " + config->members[m.member].name;
-    return card;
-}
-
 std::unique_ptr<Session> open_stage_marker_file(int marker) {
     const auto config = stage_markers::current();
     if (config == nullptr || marker < 0 || static_cast<std::size_t>(marker) >= config->markers.size()) return nullptr;

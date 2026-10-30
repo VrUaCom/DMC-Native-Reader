@@ -628,42 +628,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspection(
     } catch (...) { return env->NewStringUTF("Information unavailable"); }
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_render(
-        JNIEnv* env, jclass, jlong handle, jint requested_width,
-        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
-        jint render_flags, jobject target) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-
-    try {
-        const auto image = dmcresource::render_session(
-            session, requested_width, requested_height, yaw, pitch, zoom,
-            static_cast<std::uint32_t>(render_flags));
-        return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
-    } catch (...) { return JNI_FALSE; }
-}
-
-// Render with the gesture controls (pan, room twist, camera follow).
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_renderEx(
-        JNIEnv* env, jclass, jlong handle, jint requested_width,
-        jint requested_height, jfloat yaw, jfloat pitch, jfloat zoom,
-        jint render_flags, jfloat pan_x, jfloat pan_y, jfloat room_yaw,
-        jboolean follow, jfloat dolly, jobject target) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return JNI_FALSE;
-    try {
-        const auto controls = view_controls(pan_x, pan_y, room_yaw, follow, dolly);
-        const auto image = dmcresource::render_session(
-            session, requested_width, requested_height, yaw, pitch, zoom,
-            static_cast<std::uint32_t>(render_flags), controls);
-        return image_to_bitmap(env, target, image) ? JNI_TRUE : JNI_FALSE;
-    } catch (...) { return JNI_FALSE; }
-}
-
 // Worker-thread frame: optionally pose the bound MOT at `motion_frame`
 // (NaN: leave the pose), render with the gesture controls and write RGBA8
 // rows into a direct ByteBuffer of width * height * 4 bytes. Returns 0 on
@@ -1810,21 +1774,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_motionLoopStartFrame(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     return dmcresource::motion::motion_loop_start_frame(from_handle(handle));
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setMotionFrame(
-        JNIEnv*, jclass, jlong handle, jfloat frame) {
-    const SessionLock jni_lock{session_mutex()};
-    return dmcresource::motion::apply_motion_frame(from_handle(handle), frame)
-        ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_clearMotion(
-        JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    dmcresource::motion::clear_motion(from_handle(handle));
 }
 
 extern "C" JNIEXPORT jlong JNICALL

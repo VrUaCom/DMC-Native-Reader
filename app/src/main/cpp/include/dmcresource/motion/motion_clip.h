@@ -73,6 +73,9 @@ public:
     [[nodiscard]] bool evaluate_channels(float frame, std::span<JointChannels> out) noexcept;
 
     [[nodiscard]] bool any_non_unit_scale() const noexcept { return saw_non_unit_scale_; }
+    // Whether the motion scales any bone: evaluates `samples` frames spread
+    // over the timeline (and records it for any_non_unit_scale).
+    [[nodiscard]] bool scales_bones(int samples = 16) noexcept;
 
 private:
     struct ChannelTrack final {

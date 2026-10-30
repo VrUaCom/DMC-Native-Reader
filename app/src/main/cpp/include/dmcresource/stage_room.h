@@ -117,6 +117,9 @@ void mark_translucent(Room& room);
 
 // Floor spots of a merged mesh (exposed for tests).
 [[nodiscard]] std::vector<Vec3> floor_spots(const Mesh& mesh, std::size_t limit = 8U);
+// Orders spots as a walk: the first stays, then always the nearest one not
+// yet visited (xz), so stepping through them goes to a neighbour each time.
+void order_spots_as_walk(std::vector<Vec3>& spots) noexcept;
 // Floor point nearest to `focus` in xz, not above it.
 [[nodiscard]] std::optional<Vec3> floor_spots_near(const Mesh& mesh, const Vec3& focus);
 

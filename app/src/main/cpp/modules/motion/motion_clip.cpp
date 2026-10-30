@@ -321,6 +321,21 @@ bool MotionClip::evaluate_locals(float frame, std::span<Matrix4f> out_locals) no
     return true;
 }
 
+bool MotionClip::scales_bones(int samples) noexcept {
+    const int count = std::max(samples, 1);
+    for (int i = 0; i < count && !saw_non_unit_scale_; ++i) {
+        const float frame = count == 1 ? 0.0F : end_frame_ * static_cast<float>(i) / static_cast<float>(count - 1);
+        if (!evaluate_channels(frame, scratch_)) break;
+        for (const auto& channels : scratch_) {
+            if (has_non_unit_scale(channels)) {
+                saw_non_unit_scale_ = true;
+                break;
+            }
+        }
+    }
+    return saw_non_unit_scale_;
+}
+
 bool MotionClip::evaluate_channels(float frame, std::span<JointChannels> out) noexcept {
     if (document_ == nullptr || out.size() != defaults_.size() || !std::isfinite(frame)) {
         return false;

@@ -84,9 +84,6 @@ public final class NativeBridge {
 
     // Android allocates/reuses the destination Bitmap. JNI writes native RGBA
     // pixels directly into it, avoiding an intermediate Java int[] frame.
-    public static native boolean render(long handle, int width, int height,
-                                        float yaw, float pitch, float zoom,
-                                        int renderFlags, Bitmap target);
 
     // Read-only PAC assembly: MODs in model space, slot-adjacent PTX, MOT library.
     public static native long assemblePac(long handle, String archiveName);
@@ -184,17 +181,12 @@ public final class NativeBridge {
     public static native boolean hasMotion(long handle);
     public static native float motionEndFrame(long handle);
     public static native float motionLoopStartFrame(long handle);
-    public static native boolean setMotionFrame(long handle, float frame);
-    public static native void clearMotion(long handle);
 
     // SHW shadow hulls bound to the assembled models (drawn with RENDER_SHADOWS).
 
     // Attack collision shapes on the body bones (drawn with RENDER_COLLISION):
     // used attack ids, and the selection (-1 = every attack) with its label.
     /** Render with gesture controls: pan (framing radii), room twist, follow. */
-    public static native boolean renderEx(long handle, int width, int height, float yaw,
-            float pitch, float zoom, int flags, float panX, float panY, float roomYaw,
-            boolean follow, float dolly, android.graphics.Bitmap target);
     /**
      * Worker-thread frame: pose the MOT at motionFrame (NaN: keep the pose),
      * render and write RGBA8 into a direct buffer; 0 failed, 1 ok, 2 pose failed.
