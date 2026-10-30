@@ -146,7 +146,6 @@ public final class MainActivity extends Activity {
     private Button parentButton;
     private Button moreButton;
     // Orange warning: something on screen was read through a non-canonical path.
-    private Button nonCanonicalBadge;
     private static final int NON_CANONICAL_ORANGE = 0xffff9800;
     private Button resetButton;
     private Button wireButton;
@@ -517,13 +516,6 @@ public final class MainActivity extends Activity {
         titleView.setText("DMC Native Reader");
         header.addView(titleView, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        nonCanonicalBadge = makeSquareButton("▲", "Shown, but not read canonically", 22f);
-        nonCanonicalBadge.setTextColor(NON_CANONICAL_ORANGE);
-        nonCanonicalBadge.setVisibility(View.GONE);
-        nonCanonicalBadge.setOnClickListener(v -> showNonCanonicalNotes());
-        header.addView(nonCanonicalBadge, new LinearLayout.LayoutParams(
-                dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
 
         // Camera mode on and off: the same button goes back to the scene.
         cameraModeButton = makeSquareButton("📷", "Camera mode", 22f);
@@ -4040,9 +4032,40 @@ public final class MainActivity extends Activity {
         final String snapshot = text == null || text.isEmpty()
                 ? "No resource information available."
                 : text;
-        Button download = makeSquareButton("\u21e9", "Download inspection report", 24f);
-        download.setOnClickListener(v -> chooseInfoExport(snapshot));
-        showPanel(titleView.getText(), panelText(snapshot, 13f), download, null, null);
+        // Three squares at the bottom: close, download what is shown, and
+        // the file's health (⚠), which turns into ℹ to come back.
+        final TextView body = panelText(snapshot, 13f);
+        final Object[] health = fileHealth();
+        final int level = (int) health[0];
+        final String healthText = ((String) health[1]).isEmpty()
+                ? "FILE HEALTH\n\nNothing to check for this view." : (String) health[1];
+        final boolean[] showingHealth = {false};
+        final PanelRef panel = new PanelRef();
+        final LinearLayout squares = new LinearLayout(this);
+        squares.setOrientation(LinearLayout.HORIZONTAL);
+        squares.setGravity(Gravity.CENTER);
+        squares.setPadding(dp(8), dp(8), dp(8), dp(8));
+        squares.setBackgroundColor(0xff222226);
+        final Button close = makeSquareButton("\u2715", "Close", 20f);
+        close.setOnClickListener(v -> panel.dismiss());
+        final Button download = makeSquareButton("\u21e9", "Download what is shown", 22f);
+        download.setOnClickListener(v -> chooseInfoExport(showingHealth[0] ? healthText : snapshot));
+        final Button toggle = makeSquareButton("\u26a0", "What is wrong with the file", 22f);
+        toggle.setTextColor(level == 0 ? 0xff8a8f9c : healthColour(level));
+        toggle.setOnClickListener(v -> {
+            showingHealth[0] = !showingHealth[0];
+            body.setText(showingHealth[0] ? healthText : snapshot);
+            toggle.setText(showingHealth[0] ? "\u2139" : "\u26a0");
+            toggle.setContentDescription(showingHealth[0] ? "Resource information" : "What is wrong with the file");
+            toggle.setTextColor(showingHealth[0] ? Color.WHITE : (level == 0 ? 0xff8a8f9c : healthColour(level)));
+        });
+        for (Button square : new Button[]{close, download, toggle}) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP));
+            params.setMarginStart(dp(8));
+            params.setMarginEnd(dp(8));
+            squares.addView(square, params);
+        }
+        panel.dialog = new PanelBuilder().setTitle(titleView.getText()).setView(body).setSquares(squares).show();
     }
 
     /** Selectable monospace text for a panel. */
@@ -4076,6 +4099,7 @@ public final class MainActivity extends Activity {
         private final android.content.DialogInterface.OnClickListener[] clicks =
                 new android.content.DialogInterface.OnClickListener[3];
         private boolean cancelable = true;
+        private View squares;  // a row of square buttons in place of the text buttons
         private android.content.DialogInterface.OnDismissListener dismissed;
         private CharSequence[] choices;  // one of them picked, the window stays
         private int chosen = -1;
@@ -4086,6 +4110,7 @@ public final class MainActivity extends Activity {
         PanelBuilder setMessage(CharSequence value) { message = value; return this; }
         PanelBuilder setMonospace(boolean value) { monospace = value; return this; }
         PanelBuilder setView(View value) { view = value; return this; }
+        PanelBuilder setSquares(View value) { squares = value; return this; }
         PanelBuilder setItems(CharSequence[] values, android.content.DialogInterface.OnClickListener click) {
             items = values;
             itemClick = click;
@@ -4188,12 +4213,25 @@ public final class MainActivity extends Activity {
                 bar.addView(action, new LinearLayout.LayoutParams(dp(48), dp(48)));
             }
 
+            View content = scroll;
+            if (squares != null) {
+                // The squares stay at the bottom; the text scrolls above them.
+                LinearLayout column = new LinearLayout(MainActivity.this);
+                column.setOrientation(LinearLayout.VERTICAL);
+                column.addView(scroll, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                column.addView(squares, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                content = column;
+            }
             AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this)
                     .setCustomTitle(bar)
-                    .setView(scroll)
+                    .setView(content)
                     .setCancelable(cancelable);
             final boolean any = labels[0] != null || labels[1] != null || labels[2] != null;
-            if (!any) {
+            if (squares != null) {
+                // no text buttons
+            } else if (!any) {
                 builder.setPositiveButton("Close", null);
             } else {
                 if (labels[0] != null) builder.setPositiveButton(labels[0], clicks[0]);
@@ -5104,6 +5142,7 @@ public final class MainActivity extends Activity {
         // The core writes the start Info from its module registry.
         final String welcome = NativeBridge.welcomeText(BuildConfig.VERSION_NAME);
         setInfo(welcome == null ? "DMC Native Reader " + BuildConfig.VERSION_NAME : welcome);
+        refreshHealthDot();
         applyResourceUiState();
     }
 
@@ -5148,20 +5187,52 @@ public final class MainActivity extends Activity {
         return notes == null ? "" : notes;
     }
 
-    private void refreshNonCanonicalBadge() {
-        if (nonCanonicalBadge == null) return;
-        nonCanonicalBadge.setVisibility(nonCanonicalNotes().isEmpty() ? View.GONE : View.VISIBLE);
+    // ---- File health: a dot on the Info button, the ⚠ square in Info.
+
+    private static final int HEALTH_RED = 0xffe53935;
+    /** The file's name as it lies on disk: the title without its " · stage" kind. */
+    private String healthFileName() {
+        final String title = titleView.getText().toString();
+        final int dot = title.indexOf(" \u00b7 ");
+        return dot > 0 ? title.substring(0, dot) : title;
     }
 
-    private void showNonCanonicalNotes() {
-        final String notes = nonCanonicalNotes();
-        if (notes.isEmpty()) return;
-        new PanelBuilder()
-                .setTitle("▲ Shown, not canonical")
-                .setMessage("This view is displayed, but part of it was not read the canonical "
-                        + "way the game data is specified:\n\n" + notes)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+    /** {level, report}: level 0 fine, 1 notice (orange), 2 problem (red). */
+    private Object[] fileHealth() {
+        if (session == 0) return new Object[]{0, ""};
+        final String raw = NativeBridge.fileHealth(session, healthFileName());
+        if (raw == null || raw.isEmpty()) return new Object[]{0, ""};
+        final int newline = raw.indexOf('\n');
+        int level = 0;
+        try {
+            level = Integer.parseInt(newline > 0 ? raw.substring(0, newline) : raw);
+        } catch (NumberFormatException ignored) {}
+        return new Object[]{level, newline >= 0 ? raw.substring(newline + 1) : ""};
+    }
+
+    private static int healthColour(int level) {
+        return level >= 2 ? HEALTH_RED : NON_CANONICAL_ORANGE;
+    }
+
+    /** A dot in the Info button's top right corner while the file has something to say. */
+    private void refreshHealthDot() {
+        if (infoButton == null) return;
+        final int level = (int) fileHealth()[0];
+        if (level == 0) {
+            infoButton.setForeground(null);
+            return;
+        }
+        android.graphics.drawable.GradientDrawable dot = new android.graphics.drawable.GradientDrawable();
+        dot.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        dot.setColor(healthColour(level));
+        dot.setStroke(dp(1), 0xff1a1a1e);
+        dot.setSize(dp(11), dp(11));
+        android.graphics.drawable.LayerDrawable layer =
+                new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{dot});
+        layer.setLayerGravity(0, Gravity.TOP | Gravity.END);
+        layer.setLayerSize(0, dp(11), dp(11));
+        layer.setLayerInset(0, 0, dp(5), dp(5), 0);
+        infoButton.setForeground(layer);
     }
 
     private void rebuildInfo(String name) {
@@ -5175,7 +5246,7 @@ public final class MainActivity extends Activity {
                 : inspection);
         final String nonCanonical = nonCanonicalNotes();
         if (!nonCanonical.isEmpty()) {
-            details.append("\n▲ NOT CANONICAL (shown anyway)\n").append(nonCanonical).append("\n");
+            details.append("\n\u26a0 NOT CANONICAL (shown anyway; see \u26a0 below)\n").append(nonCanonical).append("\n");
         }
         details.append("\nSESSION / EVIDENCE\n").append(nativeInfo).append("\n");
         if (!navigation.isEmpty()) {
@@ -5192,7 +5263,7 @@ public final class MainActivity extends Activity {
             details.append("MOT cards play on tap (tap again to pause). Physics/cloth companions stay staged: their native runtime is not promoted yet.\n");
         }
         setInfo(details.toString());
-        refreshNonCanonicalBadge();
+        refreshHealthDot();
     }
 
     private void openUri(Uri uri, String route) {

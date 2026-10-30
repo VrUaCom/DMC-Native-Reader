@@ -364,6 +364,21 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v138: file health (core `file_health.h`). Each file is checked as it
+    lies on disk when it opens.
+    - **Red: the game would not load it.** The file is empty or all zero,
+      the PAC is cut short (slots past the end), or it holds something else:
+      the Reader's own diagnostics log, a ZIP, a picture or a web page under
+      a game name.
+    - **Orange: small mismatches.** A copy's name (" (1)", "copy"), a space,
+      a doubled extension, .pac without a PAC inside, contents no reader
+      takes, or parts read in a way the game's data is not specified.
+    - A dot on the Info button carries the colour. It replaces the orange
+      triangle in the title bar.
+    - Info has three squares at the bottom: ✕ close, ⇩ download what is
+      shown, and ⚠ the health report. ⚠ turns into ℹ to come back.
+    - All 30 sample game files read fine; the overwritten st001cfg.pac is
+      red.
   - v137: ⋮ shows Stage Ops for a stage opened as its scene only; around
     a model (e.g. pl000) the base room is built in Settings → Base room.
   - v136: a configuration loaded into the base room says "Base room

@@ -359,6 +359,11 @@ std::unique_ptr<Session> open_session_child(const Session* parent, int index) {
     if (!parent->uv_gallery) {
         const auto& child = parent->children[static_cast<std::size_t>(index)];
         auto session = session_from_child(child);
+        // A slot is checked as the file it would be on its own (its name only
+        // when the archive's name list gives one).
+        if (session && !child.source_bytes.empty()) {
+            assess_health(session.get(), child.suggested_filename, child.source_bytes);
+        }
         // Its archive's name list names its slots: "#3 · BIN · 16 B" becomes
         // "#3 · m07_b00_Motion00Set.txt · EMPTY · 16 B".
         if (session && !child.member_names.empty()) {

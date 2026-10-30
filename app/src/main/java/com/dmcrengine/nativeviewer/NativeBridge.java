@@ -97,6 +97,8 @@ public final class NativeBridge {
     /** slot: 0 the base room's set, 1 the opened stage's (stage_slot.h). */
     public static native ActionOutcome loadStageConfig(int fd, String filename, int slot);
     public static native void clearStageConfig(int slot);
+    /** File health of the session's file: "<level>\n<report>", level 0 fine, 1 notice, 2 problem. */
+    public static native String fileHealth(long handle, String filename);
     /** The archives that come with the stage of a file name: {effect bank, configuration}, or empty. */
     public static native String[] stageArchives(String filename);
     /** The spawn points (POS) of the base room's configuration, by title. */

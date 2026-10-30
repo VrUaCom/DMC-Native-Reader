@@ -1441,6 +1441,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
         const auto name = to_utf8(env, filename);
         auto stage = dmcresource::stage_room::open_stage(name, mapped.data(), mapped.size());
         if (!stage) return 0;
+        stage->health = dmcresource::file_health::check(
+            name, std::span<const std::uint8_t>{mapped.data(), mapped.size()}, true, stage->non_canonical_notes);
         const SessionLock jni_lock{session_mutex()};
         return to_handle(stage.release());
     } catch (...) { return 0; }
@@ -1902,6 +1904,32 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_nonCanonicalNotes(
         }
         return env->NewStringUTF(joined.c_str());
     } catch (...) { return env->NewStringUTF(""); }
+}
+
+// File health of the session's file (file_health.h): "<level>\n<report>",
+// level 0 fine, 1 notice (orange), 2 problem (red).
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_fileHealth(
+        JNIEnv* env, jclass, jlong handle, jstring filename) {
+    const SessionLock jni_lock{session_mutex()};
+    const Session* session = from_handle(handle);
+    if (session == nullptr) return env->NewStringUTF("0\n");
+    try {
+        // Notes added after the file opened (an assembled PAC, a texture
+        // action) are notices too.
+        auto report = session->health;
+        for (const auto& note : session->non_canonical_notes) {
+            bool listed = false;
+            for (const auto& finding : report.findings) listed = listed || finding.detail == note;
+            if (!listed) {
+                report.findings.push_back({dmcresource::file_health::Level::notice,
+                                           "Read in a way the game's data is not specified", note});
+            }
+        }
+        const auto text = std::to_string(static_cast<int>(report.worst())) + "\n" +
+                          dmcresource::file_health::format(to_utf8(env, filename), report);
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF("0\n"); }
 }
 
 // ---- Texture format change (Spider texture re-encode action) ----

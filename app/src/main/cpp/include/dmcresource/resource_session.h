@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "dmcresource/file_health.h"
 #include "dmcresource/composite_model.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/uv_gallery.h"
@@ -124,6 +125,9 @@ struct Session {
 
     // Non-canonical reads the viewer still shows (orange warning in the UI).
     std::vector<std::string> non_canonical_notes;
+    // Whether the file as it lies on disk is one the game would take
+    // (file_health.h), checked when it opens; the Info button's dot.
+    file_health::Report health;
 
     // Bytes the session was opened from, kept only for resources whose
     // textures the Spider re-encode action can rewrite (DDS, PTX, single
@@ -296,6 +300,9 @@ struct Session {
 
 [[nodiscard]] std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size);
+// Checks the bytes a session opened from as a file on disk (file_health.h),
+// with the session's non-canonical notes; open_session does it.
+void assess_health(Session* session, std::string_view name, std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::unique_ptr<Session> session_from_child(const ChildResource& child);
 [[nodiscard]] std::unique_ptr<Session> open_uv_gallery(const Session* model);
 // An opened UV map's PNG: its pixel size (the texture's resolution, see

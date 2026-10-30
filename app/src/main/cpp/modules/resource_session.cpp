@@ -588,8 +588,28 @@ void retain_texture_source(Session* session, std::string_view name,
 
 }  // namespace
 
+namespace {
+
+std::unique_ptr<Session> open_session_unchecked(std::string_view name, const std::uint8_t* bytes, std::size_t size);
+
+}  // namespace
+
+void assess_health(Session* session, std::string_view name, std::span<const std::uint8_t> bytes) {
+    if (session == nullptr) return;
+    const bool recognized = session->probe.format != Format::Unknown;
+    session->health = file_health::check(name, bytes, recognized, session->non_canonical_notes);
+}
+
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
+    auto session = open_session_unchecked(name, bytes, size);
+    if (session && bytes != nullptr) assess_health(session.get(), name, std::span<const std::uint8_t>{bytes, size});
+    return session;
+}
+
+namespace {
+
+std::unique_ptr<Session> open_session_unchecked(std::string_view name, const std::uint8_t* bytes, std::size_t size) {
     auto pipeline = dmcresource::run_decode_pipeline(name, bytes, size);
     if (!pipeline.accepted) {
         if (bytes == nullptr) return nullptr;
@@ -633,6 +653,8 @@ std::unique_ptr<Session> open_session(std::string_view name,
     }
     return session;
 }
+
+}  // namespace
 
 std::unique_ptr<Session> compose_mod_sessions(
         const std::vector<const Session*>& sources,
