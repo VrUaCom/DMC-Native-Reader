@@ -121,6 +121,7 @@ int main() {
     // Not a walk of camera records (the second record is the path): no shots.
     assert(stage_config::read_cam_shots(cam.bytes).empty());
 
+    std::vector<std::uint8_t> shot_bytes;  // kept for the base room's game camera below
     // The game's cameras: a fixed camera following the player over one zone,
     // a rail camera over a far zone and a wide one round both.
     {
@@ -150,6 +151,7 @@ int main() {
         shots.pad_to(at + 0x490U);
         zone(1500, -500, 3500, 1500);
         zone(-1000, -1000, 5000, 2000);
+        shot_bytes = shots.bytes;
         const auto read = stage_config::read_cam_shots(shots.bytes);
         assert(read.size() == 2U && read[0].type == 0U && read[0].follows_player && read[1].eye.size() == 2U);
         // The fixed camera: its eye, the player's chest.
@@ -236,6 +238,39 @@ int main() {
         return w.bytes;
     };
     const auto cfg = pack({pos.bytes, eve.bytes, pack({cam.bytes})});
+    {
+        // The base room's game camera: a model on spawn point 0 of a
+        // configuration whose fixed camera (eye 500 300 500) follows the
+        // player looks from that eye at the model's chest.
+        const auto base = stage_markers::load_stage_config("st100cfg.pac", pack({pos.bytes, shot_bytes}));
+        assert(base != nullptr);
+        auto room = std::make_shared<stage_room::Room>();
+        room->name = "st100.pac";
+        room->mesh.vertices = {{-5000, 0, -5000}, {5000, 0, -5000}, {5000, 0, 5000}};
+        room->mesh.indices = {0, 1, 2};
+        room->spots = {{0, 0, 0}};
+        stage_room::set_current(room);
+        stage_markers::set_current(StageSlot::base, base);
+        Session model;
+        model.renderable = true;
+        model.render_mesh.vertices = {{-50, 0, -50}, {50, 200, 50}};
+        model.render_mesh.indices = {0, 0, 0};
+        namespace act = dmcresource::spider::actions;
+        assert(!act::stage_start_view(&model));  // no spawn point chosen
+        const auto spawns = stage_markers::spawn_points(StageSlot::base);
+        assert(!spawns.empty() && act::choose_base_spawn(0) && act::base_spawn() == 0);
+        const auto at = stage_room::spot_position();
+        assert(at.x == spawns[0].position.x && at.z == spawns[0].position.z);
+        const auto view = act::stage_start_view(&model);
+        assert(view);
+        const float dx = at.x - 500.0F, dy = at.y + 105.0F - 300.0F, dz = at.z - 500.0F;
+        assert(std::fabs((*view)[0] - std::atan2(dx, dz)) < 1.0e-4F);
+        assert(std::fabs((*view)[1] - std::atan2(dy, std::hypot(dx, dz))) < 1.0e-4F && (*view)[2] > 0.0F);
+        assert(!act::choose_base_spawn(99) && act::choose_base_spawn(-1) && act::base_spawn() == -1);
+        assert(!act::stage_start_view(&model));
+        stage_markers::set_current(StageSlot::base, nullptr);
+        stage_room::set_current(nullptr);
+    }
     const auto config = stage_markers::load_stage_config("st100cfg.pac", cfg);
     assert(config != nullptr && config->members.size() == 3U);
     assert(config->members[2].name.find("slot 2 / slot 0") != std::string::npos);

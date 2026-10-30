@@ -75,6 +75,15 @@ struct Menu final {
 // cutscene's scene included (the shell keeps its own start).
 [[nodiscard]] std::optional<std::array<float, 3>> stage_start_view(Session* session) noexcept;
 
+// The base room's spawn point the model stands on (stage_markers::
+// spawn_points of the base set), or -1 for the room's own floor spot. While
+// one is chosen, stage_start_view of a model drawn in the base room is the
+// game's camera (the base configuration's CAM) for where the model stands;
+// the room unturned, as the view's reset leaves it. False when there is no
+// such point or no room.
+bool choose_base_spawn(int index) noexcept;
+[[nodiscard]] int base_spawn() noexcept;
+
 // ---- the view's long press -----------------------------------------------
 
 // A held stage-config marker comes first (it is selected and its card is

@@ -364,6 +364,13 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v140: the game's camera in the base room. Choosing a spawn point in
+    Settings → Base room puts the model there and resets the view to the
+    camera the game has of that place: the base configuration's CAM zone
+    that holds the model (core `choose_base_spawn`, and `stage_start_view`
+    for a model in the base room). The zoom gives the model the size it has
+    in the game's frame. The room's own spot (or no CAM zone there) keeps
+    the usual view.
   - v139: LIG2 and Stage Ops say what they hold.
     - **Info of a LIG2 table** (a stage configuration's slot 1) now reads
       it through `game_lights`:

@@ -1347,18 +1347,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_baseSpawnPoints(JNIEnv* env, jclas
 // room's own floor spot); false when there is no such point or no room.
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_placeAtSpawn(JNIEnv*, jclass, jint index) {
-    try {
-        if (index == -1) {
-            dmcresource::stage_room::set_spot(dmcresource::stage_room::spot());
-            return JNI_TRUE;
-        }
-        const auto points = dmcresource::stage_markers::spawn_points(dmcresource::StageSlot::base);
-        if (index < 0 || static_cast<std::size_t>(index) >= points.size() ||
-            dmcresource::stage_room::current() == nullptr) return JNI_FALSE;
-        const auto& p = points[static_cast<std::size_t>(index)].position;
-        dmcresource::stage_room::place_at({p.x, p.y, p.z});
-        return JNI_TRUE;
-    } catch (...) { return JNI_FALSE; }
+    return dmcresource::spider::actions::choose_base_spawn(index) ? JNI_TRUE : JNI_FALSE;
 }
 
 // True when the room drawn with the session moves on its own (core

@@ -920,8 +920,11 @@ public final class MainActivity extends Activity {
                 .setItems(items, (d, which) -> {
                     prefs().edit().putInt(presetPref(PREF_SPAWN), which - 1).apply();
                     if (which == 0) NativeBridge.placeAtSpawn(-1); else applySpawn();
-                    renderView.refreshRoom();
-                    notice("Model on: " + items[which], Toast.LENGTH_SHORT);
+                    // The view's reset is the game's camera for a spawn point
+                    // (the core's stage_start_view), the usual one otherwise.
+                    renderView.resetView();
+                    notice(which == 0 ? "Model on the room's own spot"
+                            : "Model on " + items[which] + " \u00b7 the game's camera", Toast.LENGTH_SHORT);
                     if (then != null) then.run();
                 })
                 .show();

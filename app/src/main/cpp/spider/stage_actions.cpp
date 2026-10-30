@@ -94,6 +94,8 @@ constexpr int kCardGameCamera = 3;
 
 // The spawn point (POS record) the stage's view starts at; -1 the first.
 std::atomic<int> g_start_spawn{-1};
+// The base room's chosen spawn point (choose_base_spawn); -1 none.
+std::atomic<int> g_base_spawn{-1};
 
 [[nodiscard]] ActionOutcome toggle_markers() {
     const bool show = !stage_markers::visible();
@@ -436,8 +438,57 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+// A model in the base room, standing on a chosen spawn point: the view the
+// game's camera has of it, as yaw, pitch and the zoom that gives the model
+// the size it has in the game's frame (the viewer orbits at its own framing
+// distance with a 0.5 rad half field of view).
+std::optional<std::array<float, 3>> base_room_game_view(Session* session) {
+    if (g_base_spawn.load() < 0) return std::nullopt;
+    const auto config = stage_markers::current(StageSlot::base);
+    if (config == nullptr || stage_room::current() == nullptr) return std::nullopt;
+    const auto at = stage_room::spot_position();
+    const auto cam = config_camera(*config, {at.x, at.y, at.z});
+    if (!cam) return std::nullopt;
+    const float dx = cam->target.x - cam->eye.x, dy = cam->target.y - cam->eye.y, dz = cam->target.z - cam->eye.z;
+    const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float framing = session_camera_distance(session);
+    if (!(distance > 1.0F) || !(framing > 0.0F)) return std::nullopt;
+    const float flat = std::hypot(dx, dz);
+    const float zoom = std::clamp(framing * std::tan(0.5F) / (distance * std::tan(cam->fov_radians * 0.5F)), 0.15F, 8.0F);
+    return std::array<float, 3>{flat > 1.0e-4F ? std::atan2(dx, dz) : 0.0F, std::atan2(dy, std::max(flat, 1.0e-4F)),
+                                zoom};
+}
+
+}  // namespace
+
+bool choose_base_spawn(int index) noexcept {
+    try {
+        if (index < 0) {
+            g_base_spawn.store(-1);
+            stage_room::set_spot(stage_room::spot());
+            return stage_room::current() != nullptr;
+        }
+        const auto points = stage_markers::spawn_points(StageSlot::base);
+        if (static_cast<std::size_t>(index) >= points.size() || stage_room::current() == nullptr) return false;
+        const auto& p = points[static_cast<std::size_t>(index)].position;
+        stage_room::place_at({p.x, p.y, p.z});
+        g_base_spawn.store(index);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+int base_spawn() noexcept { return g_base_spawn.load(); }
+
 std::optional<std::array<float, 3>> stage_start_view(Session* session) noexcept {
     try {
+        // A model in the base room: the game's camera at its spawn point.
+        if (session != nullptr && session->stage == nullptr && !demo::is_demo(session)) {
+            return base_room_game_view(session);
+        }
         // A cutscene's scene holds its stage too; its camera is the cutscene's.
         if (session == nullptr || session->stage == nullptr || demo::is_demo(session)) return std::nullopt;
         const auto config = config_of(session->archive_name);
