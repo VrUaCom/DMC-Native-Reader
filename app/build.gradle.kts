@@ -39,8 +39,8 @@ android {
         applicationId = "com.dmcrengine.nativereader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 72
-        versionName = "1.0.45"
+        versionCode = 142
+        versionName = "1.0.115"
 
         // Do not set -std= or other semantic C++ flags here. Gradle's CMake
         // cppFlags are global to the external native build. Language mode is
@@ -72,3 +72,25 @@ android {
         }
     }
 }
+
+dependencies {
+    // ARCore, optional: the camera mode's walking (6DoF). The app runs
+    // without it; walking asks for Google Play Services for AR when turned on.
+    implementation("com.google.ar:core:1.48.0")
+}
+
+// Every activity request code is its own: two equal codes route one picker's
+// result to the other's handler (v72-v134 wrote the diagnostics log over a
+// file picked for stage effects). The build stops on a repeated code.
+val checkRequestCodes by tasks.registering {
+    val source = file("src/main/java/com/dmcrengine/nativeviewer/MainActivity.java")
+    inputs.file(source)
+    doLast {
+        val pattern = Regex("""static final int (REQUEST_\w+) = (\d+);""")
+        val repeated = pattern.findAll(source.readText())
+            .groupBy({ it.groupValues[2] }, { it.groupValues[1] })
+            .filterValues { it.size > 1 }
+        if (repeated.isNotEmpty()) throw GradleException("Repeated request codes: $repeated")
+    }
+}
+tasks.named("preBuild") { dependsOn(checkRequestCodes) }

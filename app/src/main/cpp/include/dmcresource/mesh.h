@@ -31,9 +31,10 @@ struct Mesh {
     }
 
     // Optional COLOR0 (EFM mesh +0x38, RGBA8 with 0x80 = 1.0, PS2 modulate)
-    // and per-vertex blend mode of the owning object (source flags & 0xF:
-    // 0 opaque, 1/4 alpha, 2 additive, 3 subtractive -- GS ALPHA table
-    // 0x1405D0550 via 0x1402F17C0).
+    // and per-vertex material byte of the owning object (game_material.h):
+    // bits 0..3 its blend mode (source flags & 0xF: 0 opaque, 1/4 alpha,
+    // 2 additive, 3 subtractive -- GS ALPHA table 0x1405D0550 via
+    // 0x1402F17C0), bit 4 nearest filtering, bit 5 part alpha 1.
     std::vector<std::array<std::uint8_t, 4>> color0;
     std::vector<std::uint8_t> blend0;
 

@@ -38,6 +38,22 @@ enum class StateFlag : std::uint64_t {
     CanExportPng               = 1ULL << 22U,
     CanAddModelPart            = 1ULL << 23U,
     CanStageCompanion          = 1ULL << 24U,
+    CanReencodeTextures        = 1ULL << 25U,
+    CanSaveSource              = 1ULL << 26U,
+    ReencodeRebuildsContainer  = 1ULL << 27U,
+    // Stage configuration over a stage scene or the room around a model.
+    CanLoadStageConfig         = 1ULL << 28U,
+    StageConfigLoaded          = 1ULL << 29U,
+    StageMarkersShown          = 1ULL << 30U,
+    // A sound the shell can play (PCM from the core).
+    CanPlaySound               = 1ULL << 31U,
+    // View tools of the opened session.
+    CanShowShadows             = 1ULL << 32U,  // SHW hulls bound to the model
+    CanShowHitboxes            = 1ULL << 33U,  // attack collision shapes on its bones
+    CanShowStageCollision      = 1ULL << 34U,  // a stage scene with HITS
+    CanFly                     = 1ULL << 35U,  // a stage, a room or a collision view
+    CanBreakRoom               = 1ULL << 36U,  // the stage / room has a broken state
+    RoomBroken                 = 1ULL << 37U,  // ... and it is shown broken
 };
 
 using StateBits = std::uint64_t;
@@ -66,6 +82,22 @@ struct ModelSessionView final {
     std::size_t hierarchy_node_count{};
     bool part_texture_attachment_available{};
     bool png_export_available{};
+    bool texture_reencode_available{};
+    bool authored_source_available{};
+    bool reencode_rebuilds_container{};
+    // A stage is drawn: the session is a stage scene or a room is loaded.
+    bool stage_drawn{};
+    // A stage scene whose merged mesh has UVs and textures: its UV maps.
+    bool stage_uv{};
+    bool stage_config_loaded{};
+    bool stage_markers_visible{};
+    std::size_t sound_count{};
+    bool shadow_bindings{};
+    bool hitboxes{};
+    bool stage_collision{};
+    bool fly_space{};       // a stage scene, a stage archive, a room or HITS
+    bool breakable{};
+    bool broken{};
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral

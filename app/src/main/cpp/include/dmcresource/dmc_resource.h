@@ -16,6 +16,7 @@ enum class Format : std::uint8_t {
     Dds,
     Ptx,
     Evt,
+    Hits,
     Pac,
     Mot,
     Pnst,
@@ -26,6 +27,33 @@ enum class Format : std::uint8_t {
     CollisionShapes,
     AttackIndex,
     EffectBank,
+    Fon,
+    // Stage configuration members (stNNNcfg.pac), by their tags.
+    StagePos,
+    StageEve,
+    StageCam,
+    StageItm,
+    StageSte,
+    StageEst,
+    StageSef,
+    // Further stage and enemy families (module_families.cpp).
+    Lig2,
+    Dca,
+    StageText,
+    NameIndex,
+    SoGraph,
+    SoundTable,
+    FloatTable,
+    Hid,
+    SpuMap,
+    Vag,
+    Ogg,
+    // Cutscene archives (demo\...\mNN_xNN.pac), their cameras and clip texts.
+    Demo,
+    DemoCamera,
+    DemoClips,
+    // Movies (.wmv, ASF): the HD release's game movies (video.h).
+    Wmv,
 };
 
 struct ProbeResult {

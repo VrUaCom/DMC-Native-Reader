@@ -1,0 +1,11 @@
+# Flat geometry, one colour, fog
+
+Shader: `flat_object_colour_fog.vert` (GLSL ES 3.00, CONVENTIONS.md).
+
+A vertex shader for flat geometry in one colour with a per-vertex fog amount.
+
+Inputs: `a_position` (vec3), `a_fog`. Outputs: `gl_Position`, `v_colour`, `v_fog`.
+
+- `uniform mat4 u_transform`: `gl_Position = u_transform * vec4(a_position, 1.0)` (no screen mapping).
+- `uniform vec4 u_colour`: `v_colour = clamp(u_colour)`.
+- `uniform vec3 u_fog_colour`: `v_fog = clamp(vec4(u_fog_colour, a_fog))`.

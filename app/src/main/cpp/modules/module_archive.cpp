@@ -1,3 +1,4 @@
+#include "dmcresource/stage_config.h"
 #include "dmcresource/native_module.h"
 
 #include <cmath>
@@ -15,12 +16,15 @@
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/demo.h"
+#include "dmcresource/sound.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/motion/cloth_chain.h"
 #include "dmcresource/motion/motion_chart.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/texture_reencode.h"
 #include "dmcresource/resource_limits.h"
 
 namespace dmcresource {
@@ -44,7 +48,10 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
     if (magic_at(bytes, size, 0U, "EFM ")) return {Format::Mod, "EFM", "efm"};
     if (magic_at(bytes, size, 0U, "SCM ")) return {Format::Scm, "SCM", "scm"};
     if (magic_at(bytes, size, 0U, "DDS ")) return {Format::Dds, "DDS", "dds"};
-    if (magic_at(bytes, size, 0U, "PAC\0")) return {Format::Pac, "PAC", "pac"};
+    if (magic_at(bytes, size, 0U, "PAC\0")) {
+        if (demo::looks_like_demo(std::span<const std::uint8_t>{bytes, size})) return {Format::Demo, "DEMO", "pac"};
+        return {Format::Pac, "PAC", "pac"};
+    }
     if (magic_at(bytes, size, 0U, "PNST")) {
         if (effect_bank::looks_like_bank(std::span<const std::uint8_t>{bytes, size})) {
             return {Format::EffectBank, "FXBANK", "fxbank"};
@@ -52,20 +59,61 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         return {Format::Pnst, "PNST", "pnst"};
     }
     if (magic_at(bytes, size, 0U, "EVT\0")) return {Format::Evt, "EventTbl", "bin"};
+    if (magic_at(bytes, size, 0U, "HITS")) return {Format::Hits, "HITS", "hits"};
     if (magic_at(bytes, size, 4U, "MOT\0")) return {Format::Mot, "MOT", "mot"};
     if (magic_at(bytes, size, 0U, "SHW ")) {
         return {Format::Shw, "SHW", "shw", true};
+    }
+    // Stage configuration members and the tagged stage / sound families.
+    if (stage_config::Kind kind{};
+        bytes != nullptr && stage_config::identify(std::span<const std::uint8_t>{bytes, size}, &kind)) {
+        static constexpr Format kFormat[] = {Format::StagePos, Format::StageEve, Format::StageCam,
+                                             Format::StageItm, Format::StageSte, Format::StageEst,
+                                             Format::StageSef};
+        static constexpr const char* kExtension[] = {"pos", "eve", "cam", "itm", "ste", "est", "sef"};
+        const auto index = static_cast<std::size_t>(kind);
+        return {kFormat[index], stage_config::kind_name(kind), kExtension[index]};
+    }
+    if (magic_at(bytes, size, 0U, "LIG2")) return {Format::Lig2, "LIG2", "lig"};
+    if (magic_at(bytes, size, 0U, "DCA\0")) return {Format::Dca, "DCA", "dca"};
+    if (magic_at(bytes, size, 0U, "dbsT")) return {Format::SoundTable, "dbsT", "tsb"};
+    if (magic_at(bytes, size, 0U, "ff&A")) return {Format::FloatTable, "ff&A", "ff"};
+    if (magic_at(bytes, size, 0U, "VAGp")) return {Format::Vag, "VAG", "vag"};
+    if (bytes != nullptr && sound::looks_like_ogg(std::span<const std::uint8_t>{bytes, size})) {
+        return {Format::Ogg, "OGG", "ogg"};
+    }
+    if (magic_at(bytes, size, 0U, "SPUM") && magic_at(bytes, size, 4U, "APDT")) {
+        return {Format::SpuMap, "SPUMAPDT", "bin"};
+    }
+    if (magic_at(bytes, size, 4U, "HID\0")) return {Format::Hid, "HID", "hid"};
+    if (bytes != nullptr && demo::looks_like_cam(std::span<const std::uint8_t>{bytes, size})) {
+        return {Format::DemoCamera, "DEMO-CAM", "cam"};
     }
     if (bytes != nullptr && size > 0U) {
         const std::string_view text{reinterpret_cast<const char*>(bytes), size};
         if (motion::looks_like_tsc(text)) return {Format::Tsc, "TSC", "tsc"};
         if (motion::looks_like_clt(text)) return {Format::Clt, "CLT", "clt"};
+        if (demo::looks_like_clips(text)) return {Format::DemoClips, "CLIPS", "txt"};
+        // A cutscene archive's script and the name list of its clip texts.
+        if (demo::looks_like_script(text)) return {Format::Unknown, "SCRIPT", "txt"};
+        if (demo::looks_like_name_list(text)) return {Format::Unknown, "NAMES", "txt"};
+        if (demo::looks_like_effect_list(text)) return {Format::Unknown, "FX-IDS", "txt"};
+        // A clip text with nothing in it (an unused track's Set file).
+        if (const auto body = text.substr(0, text.find('\0'));
+            body == "# End\r\n" || body == "# End\n" || body == "# End") {
+            return {Format::Unknown, "EMPTY", "txt"};
+        }
     }
     if (bytes != nullptr && size > 0U) {
         try {
             const auto parsed = ptx_compat::parse_texture_bundle(
                 std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size});
             if (parsed.ok()) return {Format::Ptx, "PTX", "ptx"};
+            // One gfxTexture + DDS without a bundle header (id5000.pac slot 23).
+            if (texture_reencode::is_wrapped_texture(
+                    std::span<const std::byte>{reinterpret_cast<const std::byte*>(bytes), size})) {
+                return {Format::Dds, "TEX", "tm2"};
+            }
         } catch (...) {
         }
         try {
@@ -148,8 +196,10 @@ PipelineResult run_pac_module(const NativeModule& module,
         entries.kind = InspectionKind::Collection;
 
         std::size_t populated = 0U;
-        std::size_t by_format[16]{};
+        std::size_t by_format[32]{};
         std::size_t shadows = 0U;
+        // The names a name list slot gave the container after it.
+        std::vector<std::string> listed_names;
         for (const auto& entry : document.entries) {
             if (!entry.populated || entry.size == 0U || !entry.valid(document.container_size)) {
                 continue;
@@ -160,7 +210,7 @@ PipelineResult run_pac_module(const NativeModule& module,
             auto kind = archive::classify_payload(payload, payload_size);
             // Attack index: the slot before a shape table whose entries all
             // name one of its shapes (0x14005C260 takes the pair together).
-            if (kind.format == Format::Unknown) {
+            if (kind.format == Format::Unknown && std::string_view{kind.family} == "BIN") {
                 for (const auto& next : document.entries) {
                     if (next.slot_index <= entry.slot_index || !next.populated || next.size == 0U ||
                         !next.valid(document.container_size)) {
@@ -177,7 +227,8 @@ PipelineResult run_pac_module(const NativeModule& module,
                     break;
                 }
             }
-            ++by_format[static_cast<std::size_t>(kind.format) & 15U];
+            const auto format_index = static_cast<std::size_t>(kind.format);
+            if (format_index < std::size(by_format)) ++by_format[format_index];
             if (kind.shadow) ++shadows;
 
             ChildResource child;
@@ -185,12 +236,37 @@ PipelineResult run_pac_module(const NativeModule& module,
             child.suggested_filename = archive::slot_filename(entry.slot_index, kind);
             child.title = "#" + std::to_string(entry.slot_index) + " · " + kind.family +
                           " · " + size_text(entry.size);
+            // A name list names the files of the container after it.
+            std::vector<std::string> names;
+            const std::string_view payload_text{reinterpret_cast<const char*>(payload), payload_size};
+            if (std::string_view{kind.family} == "NAMES") {
+                names = demo::list_names(payload_text);
+            } else if (std::string_view{kind.family} == "FX-IDS") {
+                names = demo::effect_ids(payload_text);
+            } else if (!listed_names.empty() && (kind.format == Format::Pac || kind.format == Format::Demo ||
+                                                 kind.format == Format::Pnst)) {
+                std::string joined;
+                for (std::size_t i = 0; i < listed_names.size() && i < 3U; ++i) {
+                    joined += (i == 0U ? "" : ", ") + listed_names[i];
+                }
+                if (listed_names.size() > 3U) joined += ", +" + std::to_string(listed_names.size() - 3U);
+                child.title += " · " + joined;
+                child.member_names = listed_names;
+            }
             child.source_span = SourceSpan{entry.offset, entry.size};
             child.probe = dmcresource::probe(child.suggested_filename, payload, payload_size);
             child.capabilities = capability(ResourceCapability::Inspection);
+            if (kind.format == Format::Hits) {
+                child.capabilities = child.capabilities | ResourceCapability::Collision;
+            }
             child.source_bytes.assign(payload, payload + payload_size);
             child.detail = std::string{kind.family} + " payload in " + family + " slot " +
                            std::to_string(entry.slot_index) + " (" + size_text(entry.size) + ")";
+            if (!names.empty()) {
+                child.detail += "\nNames the files of the next slot:";
+                for (const auto& name : names) child.detail += "\n  " + name;
+            }
+            listed_names = std::move(names);
             child.trace = std::string{"[OK] canonical."} + (pnst ? "pnst" : "pac") +
                           ".relative-slot-container\n[OK] native.archive.classify";
             child.inspection.format = kind.family;
@@ -218,6 +294,7 @@ PipelineResult run_pac_module(const NativeModule& module,
                << " MOD=" << by_format[static_cast<std::size_t>(Format::Mod)]
                << " PTX=" << by_format[static_cast<std::size_t>(Format::Ptx)]
                << " MOT=" << by_format[static_cast<std::size_t>(Format::Mot)]
+               << " HITS=" << by_format[static_cast<std::size_t>(Format::Hits)]
                << " PAC=" << (by_format[static_cast<std::size_t>(Format::Pac)] +
                               by_format[static_cast<std::size_t>(Format::Pnst)])
                << " SHW=" << shadows;

@@ -18,6 +18,7 @@
 #include "dmc_rengine/formats/scm_render.hpp"
 #include "dmc_rengine/formats/scm_topology.hpp"
 #include "dmc_rengine/formats/scm_transform.hpp"
+#include "dmcresource/game_material.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/uv_projection.h"
 
@@ -445,6 +446,9 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                         "SCM canonical local-mesh projection exceeded topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
+                // The object's material byte, as for MOD (game_material.h).
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
+                                             game_material::material_byte(object.flags, object.alpha_control));
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());

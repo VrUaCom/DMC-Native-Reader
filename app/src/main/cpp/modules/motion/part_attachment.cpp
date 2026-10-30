@@ -5,6 +5,7 @@
 #include <bit>
 #include <cctype>
 #include <cmath>
+#include <memory>
 #include <new>
 #include <optional>
 #include <vector>
@@ -531,27 +532,10 @@ std::size_t attach_part_cloth(Session* session,
             part.scene.rig == nullptr || part.scene.rig->node_count() != part.scene.nodes.size()) {
             return 0U;
         }
-        auto blocks = parse_clt(clt_text);
-        if (blocks.empty()) return 0U;
-        const auto count = part.scene.rig->node_count();
-        auto state = std::make_shared<ClothState>();
-        state->params = blocks.front();
-        state->blocks = std::move(blocks);
-        state->sim.assign(count, {});
-        state->velocity.assign(count, {});
-        state->axis_by_node.assign(count, -1);
-        state->block_by_node.assign(count, 0U);
+        auto state = make_cloth_state(part.scene.rig->node_count(), clt_text);
+        if (state == nullptr) return 0U;
         std::size_t simulated = 0U;
-        // Every ClothNo block (0x1402CA1D0 reads ClothNum of them).
-        for (std::size_t b = 0U; b < state->blocks.size() && b < 255U; ++b) {
-            for (const auto& bone : state->blocks[b].bones) {
-                if (bone.node >= count || bone.node == 0U) continue;
-                if (state->axis_by_node[bone.node] < 0) ++simulated;
-                state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
-                state->block_by_node[bone.node] = static_cast<std::uint8_t>(b);
-            }
-        }
-        if (simulated == 0U) return 0U;
+        for (const auto axis : state->axis_by_node) simulated += axis >= 0 ? 1U : 0U;
         state->capsules.assign(capsules.begin(), capsules.end());
         const auto previous = part.placement.cloth;
         part.placement.cloth = state;
@@ -616,13 +600,12 @@ bool set_lady_component_preset(Session* session,
     if (index >= contract->presets.size()) return false;
     const auto& record = contract->presets[index];
 
-    // CEm034 component3/preset1 deliberately bypasses serialized node13 and
-    // points CCnsMatrix at CEm034+0x43C0. Canonical EXE reconstruction:
-    //   +0x43C0 = bodyManager(+0x850)->currentWorld(+0x110)
-    //   effective parent = S(+0x4400) * bodyRoot
-    // Both retail Lady bodies (slots1/32) have node0 identity at rest, so the
-    // same result is materialized as (local * S) * hostRootWorld.
-    if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+    // CEm034 component3/preset1 points its CCnsMatrix at CEm034+0x43C0.
+    // Update 0x140171240 copies [em+0x850]->world (+0x110) there - body
+    // joint 13 of the +0x7E8 joint table - and 0x1401712A6 scales it by
+    // +0x4400: effective parent = S * joint13 world, so the shotgun sits in
+    // the hand, not at the body root.
+    if (record.effective_parent == LadyEffectiveParent::RuntimeJointScaled) {
         world::Matrix4f local{};
         local.values =
             attach_local_matrix(record.translation, record.rotation_xyz_radians).values;
@@ -634,7 +617,8 @@ bool set_lady_component_preset(Session* session,
         Matrix4 offset;
         offset.values = local_scaled.values;
         if (!attach_part_skeleton(
-                session, binding.host_part, binding.part, 0U, false, offset)) {
+                session, binding.host_part, binding.part, record.serialized_node,
+                false, offset)) {
             return false;
         }
         binding.preset = preset;
@@ -666,11 +650,19 @@ bool set_lady_component_control_domain(Session* session,
     // +0x4020 selects em034_013. Never collapse these into one scalar state.
     auto& part = session->composite_parts[binding.part];
     if (domain == LadyControlDomain::IndependentMotionScript) {
-        // Freeze the currently resolved equipment world as the root for its
-        // own 3-node MOT domain. HostJointSkeleton must be disabled, otherwise
-        // the generic motion player correctly treats the part as host-driven
-        // and refuses to animate it independently.
+        // Clearing +0x4020 disables the slot20 node0 CCnsMatrix (+0x4000,
+        // enable byte +0x20): node0 then takes the em034_013 MOT in the same
+        // actor space as the body MOT, not a copy of the stowed or held
+        // equipment matrix. The Lady body part defines that space.
         if (!part.placement.resolved) return false;
+        Matrix4 actor_space;
+        if (binding.host_part < session->composite_parts.size()) {
+            const auto& host = session->composite_parts[binding.host_part].placement;
+            if (host.resolved) actor_space = host.root_matrix;
+        }
+        part.placement.root_matrix = actor_space;
+        // HostJointSkeleton must be disabled, otherwise the generic motion
+        // player treats the part as host-driven and refuses to animate it.
         part.placement.mode = CompositePlacementMode::HostJoint;
         binding.control_domain = domain;
         return true;
@@ -714,7 +706,7 @@ namespace {
     if (binding == nullptr) return false;
     const bool materialized = set_lady_component_preset(session, *binding, preset);
     // Runtime state remains known even when the preview lacks the special
-    // RuntimeBodyRootScaled materialization bridge.
+    // RuntimeJointScaled materialization bridge.
     binding->preset = preset;
     ++out.changed_components;
     if (!materialized) out.fully_materialized = false;
@@ -916,6 +908,9 @@ LadyRuntimeApplyResult apply_lady_signal(Session* session,
 
     return out;
 }
+
+// Effect profile data and provider matching live in effect_profile_registry.cpp.
+// This attachment unit remains limited to transform/state consumers.
 
 const WeaponStateRecord* weapon_state_record(std::string_view class_name,
                                              std::uint8_t state) noexcept {
