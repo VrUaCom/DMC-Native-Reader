@@ -7,6 +7,8 @@
 #include "dmcresource/camera_control.h"
 #include "dmcresource/demo_session.h"
 #include "dmcresource/spider/black_widow.h"
+#include "dmcresource/game_lights.h"
+#include "dmcresource/stage_config.h"
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/video.h"
@@ -40,26 +42,58 @@ void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& m
     for (const std::string* name : std::initializer_list<const std::string*>{&room_name, &effects_name}) {
         if (number < 0) number = stage_markers::stage_number(*name);
     }
-    // A configuration of another stage does not count for this one.
+    // A configuration of another stage does not count for this one (it is
+    // neither drawn nor used); it shows in orange.
     const bool config_fits = config != nullptr && (number < 0 || stage_markers::stage_number(config->name) < 0 ||
                                                    stage_markers::stage_number(config->name) == number);
     const std::string config_name = config_fits ? config->name : std::string{};
     if (number < 0 && config_fits) number = stage_markers::stage_number(config_name);
     char stem[16] = "stNNN";
     if (number >= 0 && number < 1000) std::snprintf(stem, sizeof stem, "st%03d", number);
+    // What the loaded configuration holds: lights, spawn points, placed effects.
+    std::string config_summary;
+    if (config_fits) {
+        std::size_t spawns = 0U, lights = 0U, placed = 0U;
+        for (const auto& marker : config->markers) spawns += marker.source == stage_config::Kind::Pos ? 1U : 0U;
+        if (config->lights) {
+            for (const auto& record : config->lights->records) lights += record.active ? 1U : 0U;
+        }
+        for (const auto& member : config->members) {
+            if (member.kind != stage_config::Kind::Ste || member.bytes == nullptr) continue;
+            placed += stage_config::read_ste(*member.bytes).document.records.size();
+        }
+        config_summary = "\n" + std::to_string(lights) + " lights \xC2\xB7 " + std::to_string(spawns) +
+                         " spawn points \xC2\xB7 " + std::to_string(placed) + " placed effects";
+    }
     const auto row = [&](Companion id, const char* icon, const char* what, const std::string& loaded,
-                         const std::string& expected, const char* missing) {
+                         const std::string& expected, const char* missing, const std::string& extra = {}) {
         const bool ready = !loaded.empty();
-        add(menu.stage_ops, id, std::string{what} + "\n" + (ready ? loaded + " \xC2\xB7 loaded" : expected + " \xC2\xB7 " + missing),
+        add(menu.stage_ops, id,
+            std::string{what} + "\n" + (ready ? loaded + " \xC2\xB7 loaded" + extra : expected + " \xC2\xB7 " + missing),
             icon);
         if (ready) menu.stage_ops_ready.push_back(static_cast<int>(id));
     };
+    // An archive of another stage than the room: named, in orange.
+    const auto other_stage = [&](Companion id, const char* icon, const char* what, const std::string& name) {
+        add(menu.stage_ops, id,
+            std::string{what} + "\n" + name + " \xC2\xB7 another stage's (the room is " + stem + ")", icon);
+        menu.stage_ops_warn.push_back(static_cast<int>(id));
+    };
     row(Companion::StageOpsRoom, "\xF0\x9F\x8F\x9B", "Room", room_name, std::string{stem} + ".pac",
         "missing, tap to add");
-    row(Companion::StageEffects, "\xE2\x9C\xA8", "Effects", effects_name, std::string{stem} + "_effect.pac",
-        "missing, tap to add (static_effect.pac too)");
-    row(Companion::StageConfigLoad, "\xF0\x9F\x97\xBA", "Config", config_name, std::string{stem} + "cfg.pac",
-        "missing, tap to add");
+    const int effects_number = stage_markers::stage_number(effects_name);
+    if (!effects_name.empty() && number >= 0 && effects_number >= 0 && effects_number != number) {
+        other_stage(Companion::StageEffects, "\xE2\x9C\xA8", "Effects", effects_name);
+    } else {
+        row(Companion::StageEffects, "\xE2\x9C\xA8", "Effects", effects_name, std::string{stem} + "_effect.pac",
+            "missing, tap to add (static_effect.pac too)");
+    }
+    if (config != nullptr && !config_fits) {
+        other_stage(Companion::StageConfigLoad, "\xF0\x9F\x97\xBA", "Config", config->name);
+    } else {
+        row(Companion::StageConfigLoad, "\xF0\x9F\x97\xBA", "Config", config_name, std::string{stem} + "cfg.pac",
+            "missing, tap to add", config_summary);
+    }
     row(Companion::StageOpsSound, "\xF0\x9F\x94\x8A", "Sounds", std::string{}, "the stage's sound bank",
         "not read by the Reader yet");
 }

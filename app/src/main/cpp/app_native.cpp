@@ -1650,7 +1650,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
         jmethodID make = env->GetMethodID(
             type, "<init>",
             "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;"
-            "Lcom/dmcrengine/nativeviewer/NativeMenu;[ILcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
+            "Lcom/dmcrengine/nativeviewer/NativeMenu;[ILcom/dmcrengine/nativeviewer/NativeMenu;[I[I)V");
         if (make == nullptr) return nullptr;
         stage_actions::Menu shortcuts{.title = {}, .message = {}, .items = menu.shortcuts};
         stage_actions::Menu rows{.title = {}, .message = {}, .items = menu.rows};
@@ -1658,7 +1658,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_companionMenu(
         stage_actions::Menu ops{.title = {}, .message = {}, .items = menu.stage_ops};
         return env->NewObject(type, make, menu_object(env, shortcuts), menu_object(env, rows),
                               menu_object(env, more), int_array(env, menu.dimmed), menu_object(env, ops),
-                              int_array(env, menu.stage_ops_ready));
+                              int_array(env, menu.stage_ops_ready), int_array(env, menu.stage_ops_warn));
     } catch (...) { return nullptr; }
 }
 
@@ -1675,12 +1675,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_baseRoomMenu(JNIEnv* env, jclass, 
         jmethodID make = env->GetMethodID(
             type, "<init>",
             "(Lcom/dmcrengine/nativeviewer/NativeMenu;Lcom/dmcrengine/nativeviewer/NativeMenu;"
-            "Lcom/dmcrengine/nativeviewer/NativeMenu;[ILcom/dmcrengine/nativeviewer/NativeMenu;[I)V");
+            "Lcom/dmcrengine/nativeviewer/NativeMenu;[ILcom/dmcrengine/nativeviewer/NativeMenu;[I[I)V");
         if (make == nullptr) return nullptr;
         stage_actions::Menu none{};
         stage_actions::Menu ops{.title = {}, .message = {}, .items = menu.stage_ops};
         return env->NewObject(type, make, menu_object(env, none), menu_object(env, none), menu_object(env, none),
-                              int_array(env, {}), menu_object(env, ops), int_array(env, menu.stage_ops_ready));
+                              int_array(env, {}), menu_object(env, ops), int_array(env, menu.stage_ops_ready),
+                              int_array(env, menu.stage_ops_warn));
     } catch (...) { return nullptr; }
 }
 

@@ -3473,11 +3473,15 @@ public final class MainActivity extends Activity {
             if (ready) {
                 row.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff2e7d32));
                 row.setTextColor(0xffffffff);
+            } else if (menu.isWarn(id)) {
+                // Another stage's archive: loaded, but not used with this room.
+                row.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xffb26a00));
+                row.setTextColor(0xffffffff);
             }
             row.setOnClickListener(v -> pick.accept(id));
             // ✕ at the end of the row, a square of the same style: removes
             // what is loaded (the opened stage itself and the sounds stay).
-            final boolean removable = ready && (id == CompanionMenu.STAGE_EFFECTS
+            final boolean removable = (ready || menu.isWarn(id)) && (id == CompanionMenu.STAGE_EFFECTS
                     || id == CompanionMenu.STAGE_CONFIG_LOAD || (id == CompanionMenu.STAGE_OPS_ROOM && slot == 0));
             final Button cross = makeSquareButton("\u2715", "Remove: " + menu.stageOps.labels[i], 18f);
             cross.setEnabled(removable);

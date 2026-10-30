@@ -88,6 +88,8 @@ struct CompanionMenu final {
     std::vector<int> dimmed;
     // The stage ops rows whose archive is loaded.
     std::vector<int> stage_ops_ready;
+    // Rows whose archive is of another stage than the room (orange).
+    std::vector<int> stage_ops_warn;
 };
 
 [[nodiscard]] CompanionMenu companion_menu(const Session* session, const ShellFacts& facts);

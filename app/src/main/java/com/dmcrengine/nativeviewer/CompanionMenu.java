@@ -51,15 +51,23 @@ public final class CompanionMenu {
     /** Stage Ops: the archives of a full stage, framed under the squares (icon = emoji). */
     public final NativeMenu stageOps;
     public final int[] stageOpsReady;
+    /** Stage Ops rows holding an archive of another stage than the room (orange). */
+    public final int[] stageOpsWarn;
 
     public CompanionMenu(NativeMenu shortcuts, NativeMenu rows, NativeMenu more, int[] dimmed,
-                         NativeMenu stageOps, int[] stageOpsReady) {
+                         NativeMenu stageOps, int[] stageOpsReady, int[] stageOpsWarn) {
         this.shortcuts = shortcuts;
         this.rows = rows;
         this.more = more;
         this.dimmed = dimmed == null ? new int[0] : dimmed;
         this.stageOps = stageOps;
         this.stageOpsReady = stageOpsReady == null ? new int[0] : stageOpsReady;
+        this.stageOpsWarn = stageOpsWarn == null ? new int[0] : stageOpsWarn;
+    }
+
+    public boolean isWarn(int id) {
+        for (int value : stageOpsWarn) if (value == id) return true;
+        return false;
     }
 
     public boolean isReady(int id) {

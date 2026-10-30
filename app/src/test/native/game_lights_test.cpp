@@ -778,9 +778,9 @@ void test_describe() {
     t.set(21, {.flags = 3, .colour_modifier = 9, .type = 1});
     const LightTable table = t.read();
     assert(describe(table) ==
-           "LIG2 v3: 9 of 48 records active (type 0: 6, type 1: 3; 2 with a colour modifier)");
+           "LIG2: 9 of 48 lights (6 point, 3 directional; 2 with a colour modifier; 3 static kept)");
     assert(describe(TableBytes(0).read()) ==
-           "LIG2 v0: 0 of 48 records active (type 0: 0, type 1: 0; 0 with a colour modifier)");
+           "LIG2: 0 of 48 lights (0 point, 0 directional; 0 with a colour modifier; 0 static kept)");
     // Records with a modifier are not candidates.
     assert(candidate_count(table, 7, ListKind::main) == 7);
 }

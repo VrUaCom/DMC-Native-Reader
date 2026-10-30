@@ -434,6 +434,25 @@ int main() {
             for (const auto& op : companions.stage_ops) assert(!op.icon.empty());
             assert(ready(act::Companion::StageOpsRoom) && ready(act::Companion::StageConfigLoad) &&
                    !ready(act::Companion::StageOpsSound));
+            // The loaded configuration's row tells what it holds.
+            for (const auto& op : companions.stage_ops) {
+                if (op.id == static_cast<int>(act::Companion::StageConfigLoad)) {
+                    assert(op.label.find("2 spawn points") != std::string::npos);
+                }
+            }
+            assert(companions.stage_ops_warn.empty());
+            {
+                // A stage of another number: st100's configuration is another stage's (orange).
+                auto named = std::make_shared<stage_room::Room>(*stage.stage);
+                named->name = "st200.pac";
+                Session other_stage;
+                other_stage.renderable = true;
+                other_stage.stage = named;
+                const auto other = act::companion_menu(&other_stage, facts);
+                bool warned = false;
+                for (const int id : other.stage_ops_warn) warned = warned || id == static_cast<int>(act::Companion::StageConfigLoad);
+                assert(warned);
+            }
             assert(!has_row(act::Companion::StageConfigLoad) && !has_row(act::Companion::StageEffects));
             assert(!has_row(act::Companion::AddPac));
             // Squares: settings, gestures, the camera's settings. Rows: Open

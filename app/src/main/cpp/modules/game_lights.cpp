@@ -210,10 +210,10 @@ std::string describe(const LightTable& table) noexcept {
         if (r.colour_modifier != 0) ++modified;
     }
     try {
-        return "LIG2 v" + std::to_string(table.version) + ": " + std::to_string(active) + " of " +
-               std::to_string(kRecordCount) + " records active (type 0: " + std::to_string(type0) +
-               ", type 1: " + std::to_string(type1) + "; " + std::to_string(modified) +
-               " with a colour modifier)";
+        return "LIG2: " + std::to_string(active) + " of " + std::to_string(kRecordCount) + " lights (" +
+               std::to_string(type0) + " point, " + std::to_string(type1) + " directional; " +
+               std::to_string(modified) + " with a colour modifier; " +
+               std::to_string(table.static_light_count) + " static kept)";
     } catch (...) {
         return {};
     }

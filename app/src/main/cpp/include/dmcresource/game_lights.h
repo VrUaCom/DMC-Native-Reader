@@ -101,8 +101,9 @@ struct StageRig {
 
 // The number of records that pass the candidate rules (no score applied).
 [[nodiscard]] std::size_t candidate_count(const LightTable& table, unsigned mask, ListKind list) noexcept;
-// One line: "LIG2 v3: 9 of 48 records active (type 0: 6, type 1: 3; 2 with a
-// colour modifier)"; counts are over active records. Empty on allocation failure.
+// One line: "LIG2: 9 of 48 lights (6 point, 3 directional; 2 with a colour
+// modifier; 3 static kept)" (+0x04 is the static-light count, not a version;
+// counts are over active records). Empty on allocation failure.
 [[nodiscard]] std::string describe(const LightTable& table) noexcept;
 
 }  // namespace dmcresource::game_lights

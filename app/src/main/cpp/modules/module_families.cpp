@@ -15,6 +15,7 @@
 #include "dmc_rengine/formats/so/graph.hpp"
 #include "dmc_rengine/formats/stage_txt.hpp"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/game_lights.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/sound.h"
@@ -133,11 +134,56 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             auto& root = out.inspection.root;
             property(root, "Records", std::to_string(scan.records.size()) + " of 0x30 bytes after a 0x20-byte header",
                      EvidenceLevel::StructuralConfirmed);
-            property(root, "Fields", "names open; each record shown as its twelve words",
-                     EvidenceLevel::PreservedUndecoded);
-            add_rows(root, "Records", data, rf::lig2::header_size, rf::lig2::record_size, scan.records.size());
+            // The lights as the game reads them (game_lights.h: the header's
+            // ambients and static-light count, each record's fields), and
+            // which of them the stage's objects and a model would pick.
+            const auto table = game_lights::read_light_table(data);
+            if (table) {
+                namespace gl = game_lights;
+                const auto rgb = [](const std::array<float, 3>& c) {
+                    return number(c[0]) + " " + number(c[1]) + " " + number(c[2]);
+                };
+                property(root, "Lights", gl::describe(*table), EvidenceLevel::DataConfirmed);
+                property(root, "Ambient (stage objects)", rgb(table->ambient) + "  (header +0x0C, 0..255)",
+                         EvidenceLevel::DataConfirmed);
+                property(root, "Ambient (models)", rgb(table->ambient_mask2) + "  (header +0x06, mask 2)",
+                         EvidenceLevel::DataConfirmed);
+                property(root, "Static lights kept", std::to_string(table->static_light_count) + "  (header +0x04)",
+                         EvidenceLevel::DataConfirmed);
+                property(root, "Stage objects can pick",
+                         std::to_string(gl::candidate_count(*table, 1U | 4U, gl::ListKind::main)) +
+                             " lights (mask 1: point lights)",
+                         EvidenceLevel::DataConfirmed);
+                property(root, "Models can pick",
+                         std::to_string(gl::candidate_count(*table, 2U | 4U, gl::ListKind::main)) +
+                             " lights (mask 2: directional lights)",
+                         EvidenceLevel::DataConfirmed);
+                InspectionNode lights;
+                lights.id = "lights";
+                lights.title = "Lights";
+                lights.kind = InspectionKind::Collection;
+                for (const auto& r : table->records) {
+                    if (!r.active) continue;
+                    std::string text = std::string{r.type == 0 ? "point" : r.type == 1 ? "directional" : "type " +
+                                                                                          std::to_string(r.type)} +
+                                       "  flags " + std::to_string(r.flags) + "  rgb " + std::to_string(r.rgb[0]) +
+                                       " " + std::to_string(r.rgb[1]) + " " + std::to_string(r.rgb[2]) + "  at " +
+                                       number(r.position[0]) + " " + number(r.position[1]) + " " +
+                                       number(r.position[2]);
+                    if (r.type == 0) text += "  reach " + number(r.falloff) + "  aux " + number(r.aux_w);
+                    if (r.colour_modifier != 0) text += "  colour modifier " + std::to_string(r.colour_modifier);
+                    if ((r.flags & 4U) != 0 && r.rgb[0] == 0 && r.rgb[1] == 0 && r.rgb[2] == 0) text += "  (black: a shadow direction?)";
+                    property(lights, "#" + std::to_string(r.index), text, EvidenceLevel::DataConfirmed);
+                }
+                root.children.push_back(std::move(lights));
+            } else {
+                property(root, "Fields", "each record shown as its twelve words", EvidenceLevel::PreservedUndecoded);
+            }
+            add_rows(root, "Records (raw words)", data, rf::lig2::header_size, rf::lig2::record_size,
+                     scan.records.size());
             add_diagnostics(root, scan.diagnostics);
-            out.detail = "LIG2 | " + std::to_string(scan.records.size()) + " records";
+            out.detail = table ? game_lights::describe(*table)
+                               : "LIG2 | " + std::to_string(scan.records.size()) + " records";
             return out;
         }
         case Format::Dca: {

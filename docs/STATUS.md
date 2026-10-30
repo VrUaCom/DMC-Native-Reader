@@ -364,6 +364,22 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v139: LIG2 and Stage Ops say what they hold.
+    - **Info of a LIG2 table** (a stage configuration's slot 1) now reads
+      it through `game_lights`:
+      - the lights (point / directional);
+      - the two ambients, and how many static lights are kept;
+      - how many lights stage objects (mask 1) and models (mask 2) can pick;
+      - one row per light: type, flags, rgb, position, reach (black flag-4
+        records marked as a possible shadow direction);
+      - the raw words below that.
+
+      The one-line summary no longer calls +0x04 a version.
+    - **Stage Ops Config row:** with a configuration loaded, it adds its
+      lights, spawn points and placed effects (long press).
+    - **Another stage's archive:** an effect bank or configuration of
+      another stage than the room shows in orange ("another stage's"). It
+      can be removed with ✕.
   - v138: file health (core `file_health.h`). Each file is checked as it
     lies on disk when it opens.
     - **Red: the game would not load it.** The file is empty or all zero,
