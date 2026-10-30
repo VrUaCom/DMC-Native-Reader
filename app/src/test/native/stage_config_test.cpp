@@ -268,8 +268,20 @@ int main() {
         assert(std::fabs((*view)[1] - std::atan2(dy, std::hypot(dx, dz))) < 1.0e-4F && (*view)[2] > 0.0F);
         assert(!act::choose_base_spawn(99) && act::choose_base_spawn(-1) && act::base_spawn() == -1);
         assert(!act::stage_start_view(&model));
+        // "Next spot" steps through the configuration's spawn points, round.
+        assert(act::base_spot_count() == static_cast<int>(spawns.size()));
+        for (std::size_t step = 0; step <= spawns.size(); ++step) {
+            const auto next = act::next_base_spot();
+            assert(next.spawn && next.index == static_cast<int>(step % spawns.size()) &&
+                   next.title == spawns[step % spawns.size()].title && act::base_spawn() == next.index);
+        }
+        act::choose_base_spawn(-1);
         stage_markers::set_current(StageSlot::base, nullptr);
+        // Without a configuration: the room's floor spots.
+        const auto floor = act::next_base_spot();
+        assert(!floor.spawn && floor.count == 1 && act::base_spawn() == -1);
         stage_room::set_current(nullptr);
+        assert(act::next_base_spot().index == -1);
     }
     const auto config = stage_markers::load_stage_config("st100cfg.pac", cfg);
     assert(config != nullptr && config->members.size() == 3U);

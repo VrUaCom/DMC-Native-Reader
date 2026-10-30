@@ -1286,9 +1286,24 @@ public final class MainActivity extends Activity {
         notice(shown ? "Room shown: " + roomName : "Room hidden", Toast.LENGTH_SHORT);
     }
 
+    /**
+     * The model to the base room's next place: the configuration's next spawn
+     * point (kept with the base room, the game's camera there) when it has
+     * any, otherwise the next floor spot.
+     */
     private void roomNextSpot() {
-        final int spot = NativeBridge.nextRoomSpot();
-        notice("Room: floor spot " + (spot + 1) + " / " + NativeBridge.roomSpotCount(), Toast.LENGTH_SHORT);
+        final String next = NativeBridge.nextBaseSpot();
+        final String[] parts = next == null ? new String[0] : next.split("\t", 4);
+        if (parts.length < 4) return;
+        final int index = Integer.parseInt(parts[1]);
+        if ("spawn".equals(parts[0])) {
+            prefs().edit().putInt(presetPref(PREF_SPAWN), index).apply();
+            renderView.resetView();
+            notice(parts[3] + " (" + (index + 1) + " / " + parts[2] + ") \u00b7 the game's camera", Toast.LENGTH_SHORT);
+        } else {
+            prefs().edit().putInt(presetPref(PREF_SPAWN), -1).apply();
+            notice(parts[3] + " / " + parts[2], Toast.LENGTH_SHORT);
+        }
         renderView.refreshRoom();
     }
 

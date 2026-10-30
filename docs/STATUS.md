@@ -364,6 +364,11 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v142: "Next spot" (the ⇄ square in ⋮) steps through the base
+    configuration's spawn points (POS) when it has any: the model goes to
+    each in turn, with the game's camera there, and the choice is kept
+    with the base room. Without a configuration it steps through floor
+    spots as before (core `next_base_spot`; the native is `nextBaseSpot`).
   - v141: the audit's last three points.
     - **Floor spots** are ordered as a walk (core `order_spots_as_walk`):
       "Next floor spot" steps to the nearest neighbour instead of across

@@ -1685,10 +1685,18 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_roomSpotCount(JNIEnv*, jclass) {
     return room ? static_cast<jint>(room->spots.size()) : 0;
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_nextRoomSpot(JNIEnv*, jclass) {
-    dmcresource::stage_room::set_spot(dmcresource::stage_room::spot() + 1U);
-    return static_cast<jint>(dmcresource::stage_room::spot());
+// The base room's next place for the model (spider next_base_spot): the
+// configuration's next spawn point, else the next floor spot, as
+// "<spawn|floor>\t<index>\t<count>\t<title>"; empty when there is none.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_nextBaseSpot(JNIEnv* env, jclass) {
+    try {
+        const auto next = dmcresource::spider::actions::next_base_spot();
+        if (next.index < 0) return env->NewStringUTF("");
+        const auto text = std::string{next.spawn ? "spawn" : "floor"} + "\t" + std::to_string(next.index) + "\t" +
+                          std::to_string(next.count) + "\t" + next.title;
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF(""); }
 }
 
 extern "C" JNIEXPORT jint JNICALL

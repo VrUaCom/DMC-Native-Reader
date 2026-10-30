@@ -216,7 +216,8 @@ public final class NativeBridge {
     public static native String loadRoom(int fd, String filename);
     public static native void clearRoom();
     public static native int roomSpotCount();
-    public static native int nextRoomSpot();
+    /** The base room's next place: "<spawn|floor>\t<index>\t<count>\t<title>", empty when none. */
+    public static native String nextBaseSpot();
     /** Number of independently retained HITS environment-collision sources. */
     public static native int roomCollisionSourceCount();
     public static native boolean isStageSession(long handle);

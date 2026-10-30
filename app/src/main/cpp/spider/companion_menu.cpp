@@ -124,9 +124,12 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         add(menu.shortcuts, Companion::RoomToggle, facts.room_shown ? "Hide the room" : "Show the room",
             "\xE2\x8C\x82");
         if (!facts.room_shown) menu.dimmed.push_back(static_cast<int>(Companion::RoomToggle));
-        const auto room = stage_room::current();
-        if (facts.room_shown && room != nullptr && room->spots.size() > 1U) {
-            add(menu.shortcuts, Companion::NextRoomSpot, "Next floor spot", "\xE2\x87\x84");
+        // Through the base configuration's spawn points when it has any,
+        // otherwise through the room's floor spots.
+        const bool spawns = !stage_markers::spawn_points(StageSlot::base).empty();
+        if (facts.room_shown && (spawns || base_spot_count() > 1)) {
+            add(menu.shortcuts, Companion::NextRoomSpot, spawns ? "Next spawn point (config)" : "Next floor spot",
+                "\xE2\x87\x84");
         }
     }
     if (cutscene) {

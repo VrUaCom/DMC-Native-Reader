@@ -84,6 +84,19 @@ struct Menu final {
 bool choose_base_spawn(int index) noexcept;
 [[nodiscard]] int base_spawn() noexcept;
 
+// "Next spot" of the base room: the next spawn point of its configuration
+// (choose_base_spawn, so the view's reset is the game's camera there) when
+// it has any, otherwise the room's next floor spot.
+struct NextSpot final {
+    bool spawn{};        // a configuration's spawn point, not a floor spot
+    int index{-1};       // 0-based
+    int count{};
+    std::string title;   // "Spawn point 3" / "Floor spot 2"
+};
+[[nodiscard]] NextSpot next_base_spot() noexcept;
+// How many places "Next spot" steps through (spawn points, else floor spots).
+[[nodiscard]] int base_spot_count() noexcept;
+
 // ---- the view's long press -----------------------------------------------
 
 // A held stage-config marker comes first (it is selected and its card is

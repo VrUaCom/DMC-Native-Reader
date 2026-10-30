@@ -483,6 +483,40 @@ bool choose_base_spawn(int index) noexcept {
 
 int base_spawn() noexcept { return g_base_spawn.load(); }
 
+int base_spot_count() noexcept {
+    try {
+        const auto spawns = stage_markers::spawn_points(StageSlot::base);
+        if (!spawns.empty()) return static_cast<int>(spawns.size());
+        const auto room = stage_room::current();
+        return room != nullptr ? static_cast<int>(room->spots.size()) : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+NextSpot next_base_spot() noexcept {
+    NextSpot next;
+    try {
+        const auto spawns = stage_markers::spawn_points(StageSlot::base);
+        if (!spawns.empty() && stage_room::current() != nullptr) {
+            const int count = static_cast<int>(spawns.size());
+            const int index = (g_base_spawn.load() + 1) % count;
+            if (!choose_base_spawn(index)) return next;
+            return {.spawn = true, .index = index, .count = count,
+                    .title = spawns[static_cast<std::size_t>(index)].title};
+        }
+        const auto room = stage_room::current();
+        if (room == nullptr || room->spots.empty()) return next;
+        g_base_spawn.store(-1);
+        stage_room::set_spot(stage_room::spot() + 1U);
+        const int index = static_cast<int>(stage_room::spot());
+        return {.spawn = false, .index = index, .count = static_cast<int>(room->spots.size()),
+                .title = "Floor spot " + std::to_string(index + 1)};
+    } catch (...) {
+        return {};
+    }
+}
+
 std::optional<std::array<float, 3>> stage_start_view(Session* session) noexcept {
     try {
         // A model in the base room: the game's camera at its spawn point.
