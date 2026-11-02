@@ -2,6 +2,19 @@
 
 Native Android and Windows reader for Devil May Cry 3: Special Edition resources from Devil May Cry HD Collection, built around a reusable **C++23** core and canonical DMC Rengine read-side architecture.
 
+## Start with your task
+
+The [DMC Modding Hub](https://vruacom.github.io/dmc-rengine-cpp/) connects the reader to practical, edition-specific workflows:
+
+- [Start modding DMC3 in HD Collection](https://vruacom.github.io/dmc-rengine-cpp/guides/start-modding-dmc3/) — choose the correct edition and prepare your workspace.
+- [Extract NBZ resources](https://vruacom.github.io/dmc-rengine-cpp/guides/extract-nbz/) — follow the archive-to-resource workflow before opening a supported leaf file.
+- [Open and inspect MOD models](https://vruacom.github.io/dmc-rengine-cpp/guides/inspect-mod/) and [SCM scenes](https://vruacom.github.io/dmc-rengine-cpp/guides/inspect-scm/) — Windows v1.0.0 Preview walkthroughs.
+- [Inspect DDS/PTX textures](https://vruacom.github.io/dmc-rengine-cpp/guides/extract-textures/) — understand texture resources and model relationships.
+
+Use [Downloads](https://vruacom.github.io/dmc-rengine-cpp/downloads/) to select an exact public package and [Capabilities](https://vruacom.github.io/dmc-rengine-cpp/capabilities/) to check platform/version limits. Source capabilities, preview packages and device-test builds have separate evidence; an available download is not automatically a stable or device-accepted release.
+
+Native Reader opens supported resources read-only. The NBZ guide describes a separate extraction workflow; it does not turn the reader into an NBZ unpacker, editor or repacker.
+
 ## Releases
 
 | Platform | Status | Current public release |
@@ -103,6 +116,8 @@ See [Android v68 release notes](docs/releases/android-v68-1.0.41.md).
 The public Windows build is currently **v1.0.0 Preview**.
 
 It is a portable Windows x64 technical preview with read-only MOD / SCM / DDS / PTX viewing from the shared native architecture. Windows parity with the newer Android line is active work and should be described as such until a newer Windows release is published.
+
+See the [Windows preview overview and practical guides](docs/releases/windows-v1.0.0-preview.md).
 
 ## Documentation
 
