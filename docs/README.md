@@ -4,6 +4,12 @@ This directory contains current product documentation, release notes, architectu
 
 Do not assume that every version-numbered document describes the current public application.
 
+## Practical guides
+
+Start at the [DMC Modding Hub guides](https://vruacom.github.io/dmc-rengine-cpp/guides/) for edition-specific archive, MOD, SCM and texture workflows. The [download catalog](https://vruacom.github.io/dmc-rengine-cpp/downloads/) and [capability matrix](https://vruacom.github.io/dmc-rengine-cpp/capabilities/) distinguish exact public artifacts from source capabilities and device acceptance.
+
+Windows users can follow the [v1.0.0 Preview overview](releases/windows-v1.0.0-preview.md). The current task walkthroughs identify their platform/version explicitly; they do not establish Android/Windows feature parity.
+
 ## Current source of truth
 
 For current product state, read in this order:
