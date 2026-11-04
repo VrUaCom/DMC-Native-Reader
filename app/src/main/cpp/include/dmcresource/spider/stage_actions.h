@@ -84,6 +84,13 @@ struct Menu final {
 bool choose_base_spawn(int index) noexcept;
 [[nodiscard]] int base_spawn() noexcept;
 
+// The game's camera of the opened stage, one spawn point after another: the
+// current configuration's spawn points (POS) that a CAM camera covers, in
+// record order. Each call steps to the next and resets the view to that
+// camera (stage_start_view).
+[[nodiscard]] int game_camera_count() noexcept;
+[[nodiscard]] ActionOutcome next_game_camera() noexcept;
+
 // "Next spot" of the base room: the next spawn point of its configuration
 // (choose_base_spawn, so the view's reset is the game's camera there) when
 // it has any, otherwise the room's next floor spot.

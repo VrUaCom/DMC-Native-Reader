@@ -57,6 +57,8 @@ enum class Companion : int {
     // the configuration rows are StageEffects and StageConfigLoad)
     StageOpsRoom = 31,
     StageOpsSound = 32,
+    // Stage Ops of an opened stage: the game's camera at its next spawn point
+    StageGameCamera = 33,
 };
 
 // What only the shell knows.

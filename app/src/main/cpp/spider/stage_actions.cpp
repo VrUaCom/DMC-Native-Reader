@@ -483,6 +483,55 @@ bool choose_base_spawn(int index) noexcept {
 
 int base_spawn() noexcept { return g_base_spawn.load(); }
 
+namespace {
+
+// The spawn points of the current configuration with a game camera, by record.
+std::vector<const stage_markers::Marker*> camera_spawns(const stage_markers::StageConfig& config) {
+    std::vector<const stage_markers::Marker*> out;
+    for (const auto& marker : config.markers) {
+        if (marker.source != stage_config::Kind::Pos || marker.points.empty()) continue;
+        if (config_camera(config, marker.points.front())) out.push_back(&marker);
+    }
+    std::sort(out.begin(), out.end(), [](const auto* a, const auto* b) { return a->record < b->record; });
+    return out;
+}
+
+}  // namespace
+
+int game_camera_count() noexcept {
+    try {
+        const auto config = stage_markers::current();
+        return config != nullptr ? static_cast<int>(camera_spawns(*config).size()) : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+ActionOutcome next_game_camera() noexcept {
+    try {
+        const auto config = stage_markers::current();
+        if (config == nullptr) return outcome(false, ShellStep::None, "No stage configuration: no game camera");
+        const auto spawns = camera_spawns(*config);
+        if (spawns.empty()) return outcome(false, ShellStep::None, "This configuration has no game camera");
+        // The one after the spawn point shown now (the first when none is).
+        const int current = g_start_spawn.load();
+        std::size_t next = 0U;
+        for (std::size_t i = 0U; i < spawns.size(); ++i) {
+            if (current >= 0 && spawns[i]->record == static_cast<std::size_t>(current)) {
+                next = (i + 1U) % spawns.size();
+                break;
+            }
+        }
+        stage_markers::set_selected(-1);
+        g_start_spawn.store(static_cast<int>(spawns[next]->record));
+        return outcome(true, ShellStep::ResetView,
+                       spawns[next]->title + " (" + std::to_string(next + 1U) + " / " +
+                           std::to_string(spawns.size()) + "): the game's camera");
+    } catch (...) {
+        return outcome(false);
+    }
+}
+
 int base_spot_count() noexcept {
     try {
         const auto spawns = stage_markers::spawn_points(StageSlot::base);

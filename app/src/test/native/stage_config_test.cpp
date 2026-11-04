@@ -276,6 +276,23 @@ int main() {
                    next.title == spawns[step % spawns.size()].title && act::base_spawn() == next.index);
         }
         act::choose_base_spawn(-1);
+        {
+            // An opened stage with this configuration: the Stage Ops game
+            // camera steps through its two spawn points (both under a CAM
+            // camera), round, each a reset of the view.
+            const auto previous = active_slot();
+            set_active_slot(StageSlot::scene);
+            stage_markers::set_current(StageSlot::scene, base);
+            assert(act::game_camera_count() == 2);
+            const auto first = act::next_game_camera();
+            const auto second = act::next_game_camera();
+            const auto again = act::next_game_camera();
+            assert(first.ok && first.step == act::ShellStep::ResetView && first.message.find("(1 / 2)") != std::string::npos);
+            assert(second.message.find("(2 / 2)") != std::string::npos && again.message.find("(1 / 2)") != std::string::npos);
+            stage_markers::set_current(StageSlot::scene, nullptr);
+            assert(act::game_camera_count() == 0 && !act::next_game_camera().ok);
+            set_active_slot(previous);
+        }
         stage_markers::set_current(StageSlot::base, nullptr);
         // Without a configuration: the room's floor spots.
         const auto floor = act::next_base_spot();

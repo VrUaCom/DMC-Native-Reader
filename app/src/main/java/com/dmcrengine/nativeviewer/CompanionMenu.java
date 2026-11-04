@@ -42,6 +42,8 @@ public final class CompanionMenu {
     /** Stage Ops: the room archive (stNNN.pac) and the stage's sounds. */
     public static final int STAGE_OPS_ROOM = 31;
     public static final int STAGE_OPS_SOUND = 32;
+    /** Stage Ops of an opened stage: the game's camera at its next spawn point (a square in the frame). */
+    public static final int STAGE_GAME_CAMERA = 33;
 
     public final NativeMenu shortcuts;
     public final NativeMenu rows;

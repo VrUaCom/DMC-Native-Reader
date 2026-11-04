@@ -3463,14 +3463,29 @@ public final class MainActivity extends Activity {
         border.setStroke(dp(1), 0xff5c6370);
         border.setColor(0x00000000);
         frame.setBackground(border);
+        // The heading, and the game's camera as a square beside it.
+        final LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(0, 0, 0, dp(6));
         TextView title = new TextView(this);
         title.setText(heading);
         title.setTextSize(13f);
         title.setTextColor(0xff9aa0ae);
-        title.setPadding(dp(4), 0, 0, dp(6));
-        frame.addView(title);
+        title.setPadding(dp(4), 0, 0, 0);
+        top.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        for (int i = 0; i < menu.stageOps.ids.length; ++i) {
+            if (menu.stageOps.ids[i] != CompanionMenu.STAGE_GAME_CAMERA) continue;
+            final String icon = i < menu.stageOps.icons.length ? menu.stageOps.icons[i] : "\ud83c\udfa5";
+            final Button camera = makeSquareButton(icon, "Game camera: the next spawn point", 20f);
+            camera.setTooltipText("Game camera: the next spawn point");
+            camera.setOnClickListener(v -> pick.accept(CompanionMenu.STAGE_GAME_CAMERA));
+            top.addView(camera, new LinearLayout.LayoutParams(dp(TOOL_SIZE_DP), dp(TOOL_SIZE_DP)));
+        }
+        frame.addView(top);
         for (int i = 0; i < menu.stageOps.ids.length; ++i) {
             final int id = menu.stageOps.ids[i];
+            if (id == CompanionMenu.STAGE_GAME_CAMERA) continue;
             final boolean ready = menu.isReady(id);
             final String emoji = i < menu.stageOps.icons.length ? menu.stageOps.icons[i] : "";
             // The square buttons' own background (same corners and press

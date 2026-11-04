@@ -364,6 +364,13 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v143: 🎥 Game camera in Stage Ops. In an opened stage whose
+    configuration has spawn points under a CAM camera, the Stage Ops frame
+    carries a 🎥 square beside its title. Each tap shows the game's camera
+    at the next spawn point, round ("Spawn point 2 (2 / 4): the game's
+    camera"; core `next_game_camera`, `game_camera_count`). The base room's
+    ⇄ square no longer shows over an opened stage, where it moved the
+    hidden base room.
   - v142: "Next spot" (the ⇄ square in ⋮) steps through the base
     configuration's spawn points (POS) when it has any: the model goes to
     each in turn, with the game's camera there, and the choice is kept

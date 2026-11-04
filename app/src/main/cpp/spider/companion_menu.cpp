@@ -127,7 +127,7 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
         // Through the base configuration's spawn points when it has any,
         // otherwise through the room's floor spots.
         const bool spawns = !stage_markers::spawn_points(StageSlot::base).empty();
-        if (facts.room_shown && (spawns || base_spot_count() > 1)) {
+        if (facts.room_shown && !stage_scene && (spawns || base_spot_count() > 1)) {
             add(menu.shortcuts, Companion::NextRoomSpot, spawns ? "Next spawn point (config)" : "Next floor spot",
                 "\xE2\x87\x84");
         }
@@ -194,7 +194,11 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     // Stage Ops: what a full stage needs, loaded or missing; in ⋮ for a
     // stage opened as its scene only (the base room around a model is
     // built in Settings, base_room_menu).
-    if (stage_scene) stage_ops(session, facts, menu, StageSlot::scene);
+    if (stage_scene) {
+        stage_ops(session, facts, menu, StageSlot::scene);
+        // The game's camera, spawn point by spawn point (a square of the frame).
+        if (game_camera_count() > 0) add(menu.stage_ops, Companion::StageGameCamera, "Game camera", "\xF0\x9F\x8E\xA5");
+    }
     // The markers show over a stage scene only (removing is the ✕ of its
     // Stage Ops row).
     if (stage_scene && has(widow::StateFlag::CanLoadStageConfig) && has(widow::StateFlag::StageConfigLoaded)) {
@@ -273,6 +277,7 @@ ActionOutcome run_companion_action(int id) noexcept {
     case Companion::StageConfigLoad: return run_stage_config_menu(1);
     case Companion::StageConfigToggle: return run_stage_config_menu(2);
     case Companion::StageConfigRemove: return run_stage_config_menu(3);
+    case Companion::StageGameCamera: return next_game_camera();
     case Companion::StageOpsSound: {
         ActionOutcome out;
         out.ok = true;
