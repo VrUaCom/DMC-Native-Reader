@@ -289,7 +289,14 @@ int main() {
             const auto again = act::next_game_camera();
             assert(first.ok && first.step == act::ShellStep::ResetView && first.message.find("(1 / 2)") != std::string::npos);
             assert(second.message.find("(2 / 2)") != std::string::npos && again.message.find("(1 / 2)") != std::string::npos);
+            // The opened stage's tool bar shows the 🎥 square (Black Widow).
+            namespace bw = dmcresource::spider::black_widow;
+            Session opened_stage;
+            opened_stage.renderable = true;
+            opened_stage.stage = room;
+            assert(bw::has_state(black_widow_state(&opened_stage), bw::StateFlag::CanGameCamera));
             stage_markers::set_current(StageSlot::scene, nullptr);
+            assert(!bw::has_state(black_widow_state(&opened_stage), bw::StateFlag::CanGameCamera));
             assert(act::game_camera_count() == 0 && !act::next_game_camera().ok);
             set_active_slot(previous);
         }

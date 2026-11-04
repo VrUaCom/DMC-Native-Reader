@@ -106,6 +106,7 @@ StateBits evaluate_model_session(const ModelSessionView& session) noexcept {
     set_if(&state, StateFlag::CanFly, view_tools && session.fly_space);
     set_if(&state, StateFlag::CanBreakRoom, view_tools && session.breakable);
     set_if(&state, StateFlag::RoomBroken, view_tools && session.breakable && session.broken);
+    set_if(&state, StateFlag::CanGameCamera, view_tools && session.game_camera);
     set_if(&state, StateFlag::CanAddModelPart, model_companion_actions);
     set_if(&state, StateFlag::CanStageCompanion, model_companion_actions);
     return state;

@@ -364,6 +364,10 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v144: the 🎥 game camera is a square of the bottom tool bar (beside
+    Info) instead of the Stage Ops frame, so each spawn point is one tap
+    away. It shows for an opened stage whose own configuration has a CAM
+    camera at a spawn point (Black Widow `CanGameCamera`, bit 38).
   - v143: 🎥 Game camera in Stage Ops. In an opened stage whose
     configuration has spawn points under a CAM camera, the Stage Ops frame
     carries a 🎥 square beside its title. Each tap shows the game's camera

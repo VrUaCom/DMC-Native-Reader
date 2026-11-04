@@ -194,11 +194,8 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     // Stage Ops: what a full stage needs, loaded or missing; in ⋮ for a
     // stage opened as its scene only (the base room around a model is
     // built in Settings, base_room_menu).
-    if (stage_scene) {
-        stage_ops(session, facts, menu, StageSlot::scene);
-        // The game's camera, spawn point by spawn point (a square of the frame).
-        if (game_camera_count() > 0) add(menu.stage_ops, Companion::StageGameCamera, "Game camera", "\xF0\x9F\x8E\xA5");
-    }
+    // (The game's camera is a square of the tool bar: CanGameCamera.)
+    if (stage_scene) stage_ops(session, facts, menu, StageSlot::scene);
     // The markers show over a stage scene only (removing is the ✕ of its
     // Stage Ops row).
     if (stage_scene && has(widow::StateFlag::CanLoadStageConfig) && has(widow::StateFlag::StageConfigLoaded)) {

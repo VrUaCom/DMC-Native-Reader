@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/frame_profile.h"
 #include "dmcresource/texture_reencode.h"
 #include "dmcresource/demo_session.h"
@@ -480,6 +481,9 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
                                                : (stage_room::current() != nullptr &&
                                                   stage_room::current()->broken != nullptr),
         .broken = stage_room::broken(),
+        .game_camera = session->stage != nullptr && !demo::is_demo(session) &&
+                       stage_markers::current_matches(session->stage->name) &&
+                       spider::actions::game_camera_count() > 0,
     });
 }
 

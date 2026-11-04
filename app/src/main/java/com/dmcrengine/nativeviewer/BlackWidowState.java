@@ -47,6 +47,7 @@ public final class BlackWidowState {
     private static final long CAN_FLY = 1L << 35;
     private static final long CAN_BREAK_ROOM = 1L << 36;
     private static final long ROOM_BROKEN = 1L << 37;
+    private static final long CAN_GAME_CAMERA = 1L << 38;
 
     public final long bits;
     public final boolean canRender;
@@ -84,6 +85,8 @@ public final class BlackWidowState {
     public final boolean canShowStageCollision;
     public final boolean canFly;
     public final boolean canBreakRoom;
+    /** An opened stage whose configuration has a game camera at a spawn point: the 🎥 square. */
+    public final boolean canGameCamera;
     public final boolean roomBroken;
     public final boolean canAddModelPart;
     public final boolean canStageCompanion;
@@ -125,6 +128,7 @@ public final class BlackWidowState {
         canShowStageCollision = has(bits, CAN_SHOW_STAGE_COLLISION);
         canFly = has(bits, CAN_FLY);
         canBreakRoom = has(bits, CAN_BREAK_ROOM);
+        canGameCamera = has(bits, CAN_GAME_CAMERA);
         roomBroken = has(bits, ROOM_BROKEN);
         canAddModelPart = has(bits, CAN_ADD_MODEL_PART);
         canStageCompanion = has(bits, CAN_STAGE_COMPANION);

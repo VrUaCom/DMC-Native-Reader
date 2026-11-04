@@ -54,6 +54,7 @@ enum class StateFlag : std::uint64_t {
     CanFly                     = 1ULL << 35U,  // a stage, a room or a collision view
     CanBreakRoom               = 1ULL << 36U,  // the stage / room has a broken state
     RoomBroken                 = 1ULL << 37U,  // ... and it is shown broken
+    CanGameCamera              = 1ULL << 38U,  // an opened stage whose config has a CAM camera at a spawn point
 };
 
 using StateBits = std::uint64_t;
@@ -98,6 +99,7 @@ struct ModelSessionView final {
     bool fly_space{};       // a stage scene, a stage archive, a room or HITS
     bool breakable{};
     bool broken{};
+    bool game_camera{};     // spider::actions::game_camera_count of an opened stage
 };
 
 // Evaluates only platform-neutral session state. UINT32_MAX is the neutral
