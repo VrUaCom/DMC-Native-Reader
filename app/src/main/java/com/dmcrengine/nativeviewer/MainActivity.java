@@ -1686,9 +1686,8 @@ public final class MainActivity extends Activity {
         for (int preset = 1; preset <= ROOM_PRESETS; ++preset) {
             final int number = preset;
             final String held = prefs().getString(presetPref(PREF_ROOM_NAME, preset), null);
-            final String[] archives = held == null ? null : NativeBridge.stageArchives(held);
-            final String stem = archives != null && archives.length == 2
-                    ? archives[1].substring(0, archives[1].length() - "cfg.pac".length()) : "";
+            final String heldStage = held == null ? null : NativeBridge.presetLabel(held);
+            final String stem = heldStage == null ? "" : heldStage;
             final SpannableStringBuilder label = new SpannableStringBuilder(String.valueOf(preset));
             if (!stem.isEmpty()) {
                 final int from = label.length();
@@ -3552,10 +3551,10 @@ public final class MainActivity extends Activity {
                 roomDetail = detail;
                 // A new stage: the previous one's effects and configuration
                 // do not stay with it; its own are looked for.
-                final String[] own = NativeBridge.stageArchives(name);
-                final boolean keepEffects = own != null && own.length == 2 && own[0].equalsIgnoreCase(effectsName);
-                final String configName = prefs().getString(presetPref(PREF_CONFIG_NAME), "");
-                final boolean keepConfig = own != null && own.length == 2 && own[1].equalsIgnoreCase(configName);
+                final String[] change = NativeBridge.roomChange(name, effectsName,
+                        prefs().getString(presetPref(PREF_CONFIG_NAME), ""));
+                final boolean keepEffects = change != null && change.length == 4 && !change[0].isEmpty();
+                final boolean keepConfig = change != null && change.length == 4 && !change[1].isEmpty();
                 if (!keepEffects) forgetRoomEffects();
                 if (!keepConfig) {
                     NativeBridge.clearStageConfig(0);

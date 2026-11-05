@@ -1,6 +1,7 @@
 #include "dmcresource/spider/stage_actions.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -530,6 +531,33 @@ ActionOutcome next_game_camera() noexcept {
     } catch (...) {
         return outcome(false);
     }
+}
+
+namespace {
+[[nodiscard]] bool same_name(std::string_view a, std::string_view b) noexcept {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+}
+}  // namespace
+
+RoomChange after_new_room(std::string_view room, std::string_view effects, std::string_view config) {
+    RoomChange change;
+    const auto own = stage_markers::stage_archives(room);
+    if (!own) return change;
+    change.keep_effects = same_name(own->effects, effects);
+    change.keep_config = same_name(own->config, config);
+    if (!change.keep_effects) change.find_effects = own->effects;
+    if (!change.keep_config) change.find_config = own->config;
+    return change;
+}
+
+std::string preset_label(std::string_view room) {
+    const auto own = stage_markers::stage_archives(room);
+    if (!own) return {};
+    constexpr std::string_view suffix = "cfg.pac";
+    const std::string& config = own->config;
+    return config.size() > suffix.size() ? config.substr(0, config.size() - suffix.size()) : std::string{};
 }
 
 int base_spot_count() noexcept {

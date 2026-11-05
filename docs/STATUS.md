@@ -364,6 +364,12 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v147: Spider first, step 3. What a new base room keeps is the core's
+    (`spider::actions::after_new_room`): its own stage's effect bank and
+    configuration stay, another stage's go, and the missing ones of its own
+    stage are named for the game folder search. The preset squares' stage
+    name comes from `preset_label`. The shell keeps the files, the
+    preferences and the folder search.
   - v146: Spider first, step 4. The Settings window is the core's
     (`spider/viewer_settings`): every row's section, label, choices, the
     value each choice stores, its default, its hint and how the shell keeps

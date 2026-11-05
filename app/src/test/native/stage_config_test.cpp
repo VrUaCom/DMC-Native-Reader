@@ -655,5 +655,20 @@ int main() {
     std::vector<std::uint8_t> not_pos = pos.bytes;
     not_pos[3] = 'X';
     assert(dmcresource::probe("renamed.bin", not_pos.data(), not_pos.size()).format != Format::StagePos);
+
+    // A new base room keeps its own stage's companions, drops another
+    // stage's and names what to look for in the game folder.
+    {
+        namespace act = dmcresource::spider::actions;
+        const auto same = act::after_new_room("ST001.pac", "st001_effect.pac", "ST001CFG.PAC");
+        assert(same.keep_effects && same.keep_config && same.find_effects.empty() && same.find_config.empty());
+        const auto other = act::after_new_room("st006.pac", "st001_effect.pac", "");
+        assert(!other.keep_effects && !other.keep_config);
+        assert(other.find_effects == "st006_effect.pac" && other.find_config == "st006cfg.pac");
+        const auto none = act::after_new_room("room.pac", "st001_effect.pac", "st001cfg.pac");
+        assert(!none.keep_effects && !none.keep_config && none.find_effects.empty() && none.find_config.empty());
+        assert(act::preset_label("ST006.pac") == "st006");
+        assert(act::preset_label("room.pac").empty());
+    }
     return 0;
 }

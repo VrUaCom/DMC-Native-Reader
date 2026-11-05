@@ -1487,6 +1487,27 @@ jobject menu_object(JNIEnv* env, const stage_actions::Menu& menu) {
 
 }  // namespace
 
+// After a new base room (spider after_new_room): {"1" keep effects or "",
+// "1" keep config or "", effect bank to look for or "", config to look for or ""}.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_roomChange(JNIEnv* env, jclass, jstring room, jstring effects,
+                                                         jstring config) {
+    try {
+        const auto change = dmcresource::spider::actions::after_new_room(to_utf8(env, room), to_utf8(env, effects),
+                                                                         to_utf8(env, config));
+        return utf_array(env, {change.keep_effects ? "1" : "", change.keep_config ? "1" : "", change.find_effects,
+                               change.find_config});
+    } catch (...) { return nullptr; }
+}
+
+// The stage a base room preset holds, for its square ("st001"; "" none).
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_presetLabel(JNIEnv* env, jclass, jstring room) {
+    try {
+        return utf(env, dmcresource::spider::actions::preset_label(to_utf8(env, room)));
+    } catch (...) { return nullptr; }
+}
+
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_loadStageConfig(JNIEnv* env, jclass, jint fd, jstring filename,
                                                               jint slot) {

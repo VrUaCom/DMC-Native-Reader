@@ -114,6 +114,10 @@ public final class NativeBridge {
     public static native String fileHealth(long handle, String filename);
     /** The archives that come with the stage of a file name: {effect bank, configuration}, or empty. */
     public static native String[] stageArchives(String filename);
+    /** After a new base room: {"1" keep effects, "1" keep config, effects to find, config to find}. */
+    public static native String[] roomChange(String room, String effects, String config);
+    /** The stage a base room preset holds ("st001"; "" none). */
+    public static native String presetLabel(String room);
     /** The spawn points (POS) of the base room's configuration, by title. */
     public static native String[] baseSpawnPoints();
     /** Puts the model on the base room's spawn point `index`; -1 back on the room's own spot. */

@@ -104,6 +104,21 @@ struct NextSpot final {
 // How many places "Next spot" steps through (spawn points, else floor spots).
 [[nodiscard]] int base_spot_count() noexcept;
 
+// A new base room was loaded. Its own stage's effect bank and configuration
+// stay with it; another stage's go, and the missing ones of its own stage
+// are looked for in the game folder (empty names: nothing to look for).
+struct RoomChange final {
+    bool keep_effects{};
+    bool keep_config{};
+    std::string find_effects;
+    std::string find_config;
+};
+[[nodiscard]] RoomChange after_new_room(std::string_view room, std::string_view effects,
+                                        std::string_view config);
+// What a base room preset square shows under its number: the stage of the
+// room it holds ("st001"), empty when it holds none.
+[[nodiscard]] std::string preset_label(std::string_view room);
+
 // ---- the view's long press -----------------------------------------------
 
 // A held stage-config marker comes first (it is selected and its card is
