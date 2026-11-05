@@ -167,6 +167,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     spider/texture_reencode_actions.cpp
     spider/stage_actions.cpp
     spider/app_info.cpp
+    spider/open_actions.cpp
     spider/companion_menu.cpp
     spider/collision_report.cpp
     spider/camera.cpp

@@ -4,7 +4,9 @@
 #include <utility>
 #include <vector>
 
+#include "dmcresource/inspection_format.h"
 #include "dmcresource/native_module.h"
+#include "dmcresource/resource_session.h"
 
 namespace dmcresource::spider::actions {
 namespace {
@@ -83,6 +85,41 @@ std::string welcome_text(std::string_view app_version, std::string_view native_b
             "\n\xE2\x80\xA2 \xE2\x8B\xAE holds the companions: model parts, PTX, animations, room, stage config."
             "\n\xE2\x80\xA2 Hold a joint or a stage marker to see what it is; \xE2\x9C\x88 flies the camera on stages."
             "\n\xE2\x80\xA2 UV maps keep their texture's proportions; \xE2\x96\xB6 plays sounds.";
+    return text;
+}
+
+std::string session_info_text(const Session* session, const InfoContext& context) {
+    std::string text{context.title};
+    text += "\n\nSTRUCTURE\n";
+    const std::string inspection = session == nullptr ? std::string{} : format_inspection_tree(session->inspection);
+    text += inspection.empty() ? std::string{"No typed inspection document.\n"} : inspection;
+
+    if (session != nullptr && !session->non_canonical_notes.empty()) {
+        text += "\n\u26a0 NOT CANONICAL (shown anyway; see \u26a0 below)\n";
+        for (std::size_t i = 0; i < session->non_canonical_notes.size(); ++i) {
+            if (i > 0) text += "\n";
+            text += "- " + session->non_canonical_notes[i];
+        }
+        text += "\n";
+    }
+
+    text += "\nSESSION / EVIDENCE\n";
+    if (session != nullptr) text += describe_session(session);
+    text += "\n";
+
+    if (context.navigation_depth > 0) {
+        text += "\nNAVIGATION\nDepth: " + std::to_string(context.navigation_depth) + "\n";
+        text += "Back returns to: ";
+        text += context.back_title;
+        text += "\n";
+    }
+
+    if (!context.staged.empty()) {
+        text += "\nSTAGED COMPANIONS\n";
+        for (const auto& file : context.staged) text += "- " + file.role + ": " + file.name + "\n";
+        text += "MOT cards play on tap (tap again to pause). Physics/cloth companions stay staged: "
+                "their native runtime is not promoted yet.\n";
+    }
     return text;
 }
 

@@ -246,6 +246,48 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
     } catch (...) { return 0; }
 }
 
+// A picked file opened the way the core decides (spider open_resource):
+// {Long handle (0 when rejected), Integer OpenedAs, String title,
+// Boolean room_effects}.
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_openResource(
+        JNIEnv* env, jclass, jint fd, jstring filename) {
+    if (fd < 0) return nullptr;
+    ReadOnlyMap mapped(fd);
+    if (!mapped.valid()) return nullptr;
+    try {
+        const auto name = to_utf8(env, filename);
+        auto opened = dmcresource::spider::actions::open_resource(name, mapped.data(), mapped.size());
+        jobjectArray out = env->NewObjectArray(4, env->FindClass("java/lang/Object"), nullptr);
+        if (out == nullptr) return nullptr;
+        jclass long_class = env->FindClass("java/lang/Long");
+        jclass integer_class = env->FindClass("java/lang/Integer");
+        jclass boolean_class = env->FindClass("java/lang/Boolean");
+        jobject as = env->NewObject(integer_class, env->GetMethodID(integer_class, "<init>", "(I)V"),
+                                    static_cast<jint>(opened.as));
+        jobject effects = env->NewObject(boolean_class, env->GetMethodID(boolean_class, "<init>", "(Z)V"),
+                                         opened.room_effects ? JNI_TRUE : JNI_FALSE);
+        jstring title = env->NewStringUTF(opened.title.c_str());
+        if (as == nullptr || effects == nullptr || title == nullptr) return nullptr;
+        // The session becomes a live handle last, so a failure above frees it.
+        const jlong value = opened.session ? to_handle(opened.session.release()) : 0;
+        jobject handle = env->NewObject(long_class, env->GetMethodID(long_class, "<init>", "(J)V"), value);
+        if (handle == nullptr) {
+            const SessionLock lock{session_mutex()};
+            if (auto* session = from_handle(value)) {
+                live_sessions().erase(session);
+                delete session;
+            }
+            return nullptr;
+        }
+        env->SetObjectArrayElement(out, 0, handle);
+        env->SetObjectArrayElement(out, 1, as);
+        env->SetObjectArrayElement(out, 2, title);
+        env->SetObjectArrayElement(out, 3, effects);
+        return out;
+    } catch (...) { return nullptr; }
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_composeMods(
         JNIEnv* env, jclass, jlongArray handles, jobjectArray names) {
@@ -288,18 +330,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_close(
     if (session == nullptr) return;
     live_sessions().erase(session);
     delete session;
-}
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_info(
-        JNIEnv* env, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return env->NewStringUTF("no session");
-    try {
-        const auto text = dmcresource::describe_session(session);
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF("Information unavailable"); }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -614,18 +644,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openUvGallery(
     try {
         return to_handle(dmcresource::open_uv_gallery(from_handle(handle)).release());
     } catch (...) { return 0; }
-}
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_inspection(
-        JNIEnv* env, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return env->NewStringUTF("");
-    try {
-        const auto text = dmcresource::format_inspection_tree(session->inspection);
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF("Information unavailable"); }
 }
 
 // Worker-thread frame: optionally pose the bound MOT at `motion_frame`
@@ -1046,19 +1064,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
 // on the UI thread that also renders, so a Session is never posed and drawn
 // concurrently.
 
-extern "C" JNIEXPORT jlong JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_assemblePac(
-        JNIEnv* env, jclass, jlong handle, jstring archive_name) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return 0;
-    try {
-        const auto name = to_utf8(env, archive_name);
-        return to_handle(dmcresource::pac_assembly::assemble_pac(
-            *session, nullptr, name).release());
-    } catch (...) { return 0; }
-}
-
 extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryCount(
         JNIEnv*, jclass, jlong handle) {
@@ -1382,25 +1387,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_collisionReport(JNIEnv* env, jclas
     } catch (...) { return nullptr; }
 }
 
-// A stage archive opened as its assembled scene (stage_room::open_stage);
-// 0 when it is not a stage.
-extern "C" JNIEXPORT jlong JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_openStage(
-        JNIEnv* env, jclass, jint fd, jstring filename) {
-    if (fd < 0) return 0;
-    ReadOnlyMap mapped(fd);
-    if (!mapped.valid()) return 0;
-    try {
-        const auto name = to_utf8(env, filename);
-        auto stage = dmcresource::stage_room::open_stage(name, mapped.data(), mapped.size());
-        if (!stage) return 0;
-        stage->health = dmcresource::file_health::check(
-            name, std::span<const std::uint8_t>{mapped.data(), mapped.size()}, true, stage->non_canonical_notes);
-        const SessionLock jni_lock{session_mutex()};
-        return to_handle(stage.release());
-    } catch (...) { return 0; }
-}
-
 // The start screen's Info, written by the core from the module registry.
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_welcomeText(JNIEnv* env, jclass, jstring app_version) {
@@ -1409,6 +1395,34 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_welcomeText(JNIEnv* env, jclass, j
             dmcresource::spider::actions::welcome_text(to_utf8(env, app_version), DMC_NATIVE_READER_BUILD_SHA)
                 .c_str());
     } catch (...) { return nullptr; }
+}
+
+// The open session's Info, written by spider::actions::session_info_text:
+// the shell passes its title, the navigation depth and Back's title, and
+// the staged files as role, name pairs in one array.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_sessionInfoText(
+        JNIEnv* env, jclass, jlong handle, jstring title, jint navigation_depth,
+        jstring back_title, jobjectArray staged) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        const std::string title_text = to_utf8(env, title);
+        const std::string back_text = to_utf8(env, back_title);
+        dmcresource::spider::actions::InfoContext context;
+        context.title = title_text;
+        context.navigation_depth = navigation_depth > 0 ? static_cast<std::size_t>(navigation_depth) : 0U;
+        context.back_title = back_text;
+        const jsize count = staged == nullptr ? 0 : env->GetArrayLength(staged);
+        for (jsize index = 0; index + 1 < count; index += 2) {
+            auto* role = static_cast<jstring>(env->GetObjectArrayElement(staged, index));
+            auto* name = static_cast<jstring>(env->GetObjectArrayElement(staged, index + 1));
+            context.staged.push_back({to_utf8(env, role), to_utf8(env, name)});
+            if (role != nullptr) env->DeleteLocalRef(role);
+            if (name != nullptr) env->DeleteLocalRef(name);
+        }
+        const auto text = dmcresource::spider::actions::session_info_text(from_handle(handle), context);
+        return env->NewStringUTF(text.c_str());
+    } catch (...) { return env->NewStringUTF("Information unavailable"); }
 }
 
 // ---- Spider stage / sound / export actions (spider/stage_actions.h) ----
@@ -1705,14 +1719,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_roomCollisionSourceCount(JNIEnv*, 
     return room ? static_cast<jint>(room->collision_sources.size()) : 0;
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_isStageSession(
-        JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const auto* session = from_handle(handle);
-    return session != nullptr && dmcresource::stage_room::is_stage_session(*session) ? JNI_TRUE : JNI_FALSE;
-}
-
 extern "C" JNIEXPORT jintArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_collisionAttackIds(
         JNIEnv* env, jclass, jlong handle) {
@@ -1835,22 +1841,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_archiveVariantNames(
         }
         return out;
     } catch (...) { return nullptr; }
-}
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_nonCanonicalNotes(
-        JNIEnv* env, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return env->NewStringUTF("");
-    try {
-        std::string joined;
-        for (const auto& note : session->non_canonical_notes) {
-            if (!joined.empty()) joined += "\n";
-            joined += "- " + note;
-        }
-        return env->NewStringUTF(joined.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
 }
 
 // File health of the session's file (file_health.h): "<level>\n<report>",

@@ -12,10 +12,19 @@ public final class NativeBridge {
     public static native long open(int fd, String filename);
     public static native long composeMods(long[] handles, String[] names);
     public static native void close(long handle);
-    public static native String info(long handle);
     public static native String buildIdentity();
     /** The start screen's Info, written by the core (version passed in). */
     public static native String welcomeText(String appVersion);
+    /** How openResource opened a file (spider OpenedAs). */
+    public static final int OPENED_AS_REJECTED = 0;
+    public static final int OPENED_AS_PLAIN = 1;
+    public static final int OPENED_AS_ASSEMBLED_PAC = 2;
+    public static final int OPENED_AS_STAGE = 3;
+    /** {Long handle, Integer OPENED_AS_*, String title, Boolean roomEffects}; null when unreadable. */
+    public static native Object[] openResource(int fd, String filename);
+    /** Info for the open session; staged holds role, name pairs. */
+    public static native String sessionInfoText(long handle, String title, int navigationDepth,
+            String backTitle, String[] staged);
     public static native String diagnostics(long handle);
 
     // Spider Black Widow is the single Android application/UI-state contract.
@@ -45,7 +54,6 @@ public final class NativeBridge {
     public static native boolean hasDualPreview(long handle);
     public static native boolean infoPreviewActive(long handle);
     public static native boolean setInfoPreviewActive(long handle, boolean active);
-    public static native String inspection(long handle);
     public static final int INSPECT_UV = 1;
     public static final int INSPECT_MESHES = 2;
     public static final int INSPECT_HIERARCHY = 3;
@@ -70,7 +78,6 @@ public final class NativeBridge {
     public static native String textureAttachmentInfo(long handle);
     // Newline-separated reasons the current view is shown but not read
     // canonically (orange warning). Empty when everything is canonical.
-    public static native String nonCanonicalNotes(long handle);
 
     // Generic nested-resource browser contract. Parent modules publish typed
     // children; Android does not know whether the parent is PTX/PAC/PNST/etc.
@@ -86,9 +93,7 @@ public final class NativeBridge {
     // pixels directly into it, avoiding an intermediate Java int[] frame.
 
     // Read-only PAC assembly: MODs in model space, slot-adjacent PTX, MOT library.
-    public static native long assemblePac(long handle, String archiveName);
     /** A stage archive (st*.pac) as its assembled scene; 0 when it is not a stage. */
-    public static native long openStage(int fd, String filename);
     // Spider stage / sound / export actions: the core decides and writes
     // every line; the shell carries out the named platform step.
     /** slot: 0 the base room's set, 1 the opened stage's (stage_slot.h). */
@@ -220,7 +225,6 @@ public final class NativeBridge {
     public static native String nextBaseSpot();
     /** Number of independently retained HITS environment-collision sources. */
     public static native int roomCollisionSourceCount();
-    public static native boolean isStageSession(long handle);
     public static native int[] collisionAttackIds(long handle);
     public static native String selectCollisionAttack(long handle, int attack);
     /** Class events the playing enemy accepts (em000 family: "Death"). */

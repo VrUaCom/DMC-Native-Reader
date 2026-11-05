@@ -364,6 +364,16 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v145: Spider first, steps 1 and 2. The open session's Info is written
+    by the core (`spider::actions::session_info_text`: STRUCTURE, NOT
+    CANONICAL, SESSION / EVIDENCE, NAVIGATION, STAGED COMPANIONS); the
+    shell passes only its title, the navigation depth and the staged files.
+    How a picked file opens is decided by the core (`open_resource`): an
+    assembled PAC, a stage's room, the file itself, or the rejection text,
+    plus whether a stage effect bank is also the room's effects. The JNI
+    natives `info`, `inspection`, `nonCanonicalNotes`, `assemblePac`,
+    `openStage` and `isStageSession` are replaced by `sessionInfoText` and
+    `openResource`, which a C API for the Apple shells can mirror.
   - v144: the 🎥 game camera is a square of the bottom tool bar (beside
     Info) instead of the Stage Ops frame, so each spawn point is one tap
     away. It shows for an opened stage whose own configuration has a CAM

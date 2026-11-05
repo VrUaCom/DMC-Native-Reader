@@ -5212,12 +5212,6 @@ public final class MainActivity extends Activity {
         applyResourceUiState();
     }
 
-    private String nonCanonicalNotes() {
-        if (session == 0) return "";
-        final String notes = NativeBridge.nonCanonicalNotes(session);
-        return notes == null ? "" : notes;
-    }
-
     // ---- File health: a dot on the Info button, the ⚠ square in Info.
 
     private static final int HEALTH_RED = 0xffe53935;
@@ -5267,33 +5261,15 @@ public final class MainActivity extends Activity {
     }
 
     private void rebuildInfo(String name) {
-        final String inspection = session == 0 ? "" : NativeBridge.inspection(session);
-        final String nativeInfo = session == 0 ? "" : NativeBridge.info(session);
-
-        StringBuilder details = new StringBuilder();
-        details.append(name).append("\n\nSTRUCTURE\n");
-        details.append(inspection == null || inspection.isEmpty()
-                ? "No typed inspection document.\n"
-                : inspection);
-        final String nonCanonical = nonCanonicalNotes();
-        if (!nonCanonical.isEmpty()) {
-            details.append("\n\u26a0 NOT CANONICAL (shown anyway; see \u26a0 below)\n").append(nonCanonical).append("\n");
+        final String[] staged = new String[stagedAssets.size() * 2];
+        int index = 0;
+        for (StagedAsset asset : stagedAssets) {
+            staged[index++] = asset.role;
+            staged[index++] = asset.name;
         }
-        details.append("\nSESSION / EVIDENCE\n").append(nativeInfo).append("\n");
-        if (!navigation.isEmpty()) {
-            details.append("\nNAVIGATION\n")
-                    .append("Depth: ").append(navigation.size()).append("\n")
-                    .append("Back returns to: ").append(navigation.peek().title).append("\n");
-        }
-        if (!stagedAssets.isEmpty()) {
-            details.append("\nSTAGED COMPANIONS\n");
-            for (StagedAsset asset : stagedAssets) {
-                details.append("- ").append(asset.role).append(": ")
-                        .append(asset.name).append("\n");
-            }
-            details.append("MOT cards play on tap (tap again to pause). Physics/cloth companions stay staged: their native runtime is not promoted yet.\n");
-        }
-        setInfo(details.toString());
+        final String backTitle = navigation.isEmpty() ? "" : navigation.peek().title;
+        final String text = NativeBridge.sessionInfoText(session, name, navigation.size(), backTitle, staged);
+        setInfo(text == null ? name : text);
         refreshHealthDot();
     }
 
@@ -5303,10 +5279,13 @@ public final class MainActivity extends Activity {
         String name = displayName(uri);
         titleView.setText(name);
 
-        long opened;
+        // The core decides how the file opens (spider open_resource): an
+        // assembled PAC, a stage's room, or the file itself.
+        Object[] result;
         try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
             if (pfd == null) throw new FileNotFoundException("No file descriptor");
-            opened = NativeBridge.open(pfd.getFd(), name);
+            result = NativeBridge.openResource(pfd.getFd(), name);
+            if (result == null) throw new java.io.IOException("Could not map the file");
         } catch (Exception error) {
             appendDiagnostics(route, name, 0,
                     "platform transport failure: " + error.getClass().getSimpleName());
@@ -5315,46 +5294,23 @@ public final class MainActivity extends Activity {
             notice("Could not read file", Toast.LENGTH_LONG);
             return;
         }
-
-        // A stage's effect bank opened on its own is also the stage effects of the room.
-        if (opened != 0 && name.toLowerCase(java.util.Locale.ROOT).matches("st\\d+.*effect.*")) {
-            chooseRoomEffects(uri, 0);
-        }
+        final long opened = (Long) result[0];
+        final int openedAs = (Integer) result[1];
+        final String openedTitle = (String) result[2];
 
         if (opened == 0) {
             appendDiagnostics(route, name, 0, "not accepted by any native module");
-            setInfo(name + "\nRejected: supported route failed structural validation or format is outside MOD / SCM / DDS / PTX / PAC / MOT.");
+            setInfo(openedTitle);
             applyResourceUiState();
             notice("Unsupported or malformed DMC resource", Toast.LENGTH_LONG);
             return;
         }
+        if ((Boolean) result[3]) chooseRoomEffects(uri, 0);
 
-        // A PAC opens as an assembled character/scene when it holds MODs; the
-        // raw archive stays browsable from ⋮ (read-only, nothing is written).
         enemyVariant = 0;
-        final long assembled = NativeBridge.assemblePac(opened, name);
-        if (assembled != 0) {
-            NativeBridge.close(opened);
-            opened = assembled;
-            assembledPacUri = uri;
-            name = name + " · assembled";
-        } else if (NativeBridge.isStageSession(opened)
-                && NativeBridge.childResourceCount(opened) > 0) {
-            // A stage archive opens as its assembled scene (the same build as
-            // the room), not as the file gallery.
-            long stage = 0;
-            try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
-                if (pfd != null) stage = NativeBridge.openStage(pfd.getFd(), name);
-            } catch (Exception ignored) {
-                stage = 0;
-            }
-            if (stage != 0) {
-                NativeBridge.close(opened);
-                opened = stage;
-                stagePacUri = uri;
-                name = name + " · stage";
-            }
-        }
+        if (openedAs == NativeBridge.OPENED_AS_ASSEMBLED_PAC) assembledPacUri = uri;
+        if (openedAs == NativeBridge.OPENED_AS_STAGE) stagePacUri = uri;
+        name = openedTitle;
 
         appendDiagnostics(route, name, opened, null);
         activateSession(opened, name);

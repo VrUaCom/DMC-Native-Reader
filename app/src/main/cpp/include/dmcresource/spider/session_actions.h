@@ -64,4 +64,27 @@ struct TextureFormatChoice final {
 };
 [[nodiscard]] std::vector<TextureFormatChoice> texture_format_choices();
 
+// How a file the user picked is opened, decided by the core. A PAC holding
+// MODs opens as its assembled character or scene, a stage archive as its
+// assembled room, anything else as itself. The shell only reads the bytes,
+// shows `title` and keeps the source for later reopens.
+enum class OpenedAs : std::uint8_t {
+    Rejected = 0,  // no module accepted the file; `title` says why
+    Plain = 1,
+    AssembledPac = 2,
+    Stage = 3,
+};
+
+struct OpenedResource final {
+    std::unique_ptr<Session> session;
+    OpenedAs as = OpenedAs::Rejected;
+    std::string title;
+    // A stage's effect bank (stNNN*effect*) opened on its own is also the
+    // stage effects of the base room.
+    bool room_effects = false;
+};
+
+[[nodiscard]] OpenedResource open_resource(std::string_view name, const std::uint8_t* bytes,
+                                           std::size_t size) noexcept;
+
 }  // namespace dmcresource::spider::actions

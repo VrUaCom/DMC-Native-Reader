@@ -3,6 +3,7 @@
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/spider/session_actions.h"
 
 #include <array>
 #include <bit>
@@ -637,5 +638,27 @@ int main() {
     auto no_model = dmcresource::open_session("mot.pac", motions_only.data(), motions_only.size());
     assert(no_model != nullptr);
     assert(assembly::assemble_pac(*no_model) == nullptr);
+
+    // The open plan is the core's: a PAC with MODs opens assembled, one
+    // without opens as itself, an unreadable file is rejected with the reason.
+    namespace act = dmcresource::spider::actions;
+    const auto assembled_open = act::open_resource("pl_test.pac", pac.data(), pac.size());
+    assert(assembled_open.as == act::OpenedAs::AssembledPac && assembled_open.session != nullptr);
+    assert(assembled_open.title == "pl_test.pac \u00b7 assembled");
+    assert(assembled_open.session->motion_library.size() == 1U && !assembled_open.room_effects);
+    const auto plain_open = act::open_resource("mot.pac", motions_only.data(), motions_only.size());
+    assert(plain_open.as == act::OpenedAs::Plain && plain_open.title == "mot.pac");
+    assert(plain_open.session != nullptr && plain_open.session->health.worst() == dmcresource::file_health::Level::fine);
+    const std::vector<std::uint8_t> junk(64U, 0x5AU);
+    const auto raw = act::open_resource("junk.bin", junk.data(), junk.size());
+    assert(raw.as == act::OpenedAs::Plain);  // unknown bytes still open, as raw bytes
+    const auto rejected = act::open_resource("junk.bin", nullptr, 0U);
+    assert(rejected.as == act::OpenedAs::Rejected && rejected.session == nullptr);
+    assert(rejected.title.rfind("junk.bin\nRejected: ", 0) == 0U);
+    // A stage effect bank opened on its own also becomes the room's effects.
+    assert(act::open_resource("st001_effect.pac", motions_only.data(), motions_only.size()).room_effects);
+    assert(act::open_resource("ST10effect.pac", motions_only.data(), motions_only.size()).room_effects);
+    assert(!act::open_resource("pl000.pac", motions_only.data(), motions_only.size()).room_effects);
+    assert(!act::open_resource("steffect.pac", motions_only.data(), motions_only.size()).room_effects);
     return 0;
 }
