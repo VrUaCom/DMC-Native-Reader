@@ -1246,45 +1246,79 @@ public final class MainActivity extends Activity {
     // ---- Viewer settings (persisted; applied to the render view).
 
     private static final String SET_MAX_SIDE = "set.maxSide";
-    private static final String SET_FRAME_MS = "set.frameMs";
-    private static final String SET_SMOOTH = "set.smooth";
-    private static final String SET_UNLIT = "set.unlit";
-    private static final String SET_BACKGROUND = "set.background";
-    private static final String SET_SHADOWS = "set.shadows";
-    private static final String SET_SPEED = "set.speed";
-    private static final String SET_FAST_PREVIEW = "set.fastPreview";
-    private static final String SET_MESH_LINE = "set.meshLine";
-    // Opacity of the room's wireframe lines behind a model, in tenths (0-10);
-    // bits 28-31 of the render flags hold it + 1.
-    private static final String SET_ROOM_LINES = "set.roomLines";
-    private static final String SET_ROOM_ANIM = "set.roomAnimate";
-    private static final String SET_COLLISION_LINE = "set.collisionLine";
-    private static final String SET_GPU = "set.gpu";
-    private static final String SET_GPU_MSAA = "set.gpuMsaa";
-    private static final String SET_GPU_MIPMAPS = "set.gpuMipmaps";
-    private static final String SET_GPU_ANISOTROPY = "set.gpuAnisotropy";
-    private static final String SET_GPU_PRESENT = "set.gpuPresent";
-    private static final String SET_DMC3_SHADERS = "set.dmc3Shaders";
-    private static final String SET_GAME_LIGHTS = "set.gameLights";
+
+    // ---- Settings: the rows and what their values mean come from the core
+    // (spider/viewer_settings.h); here they are stored and drawn.
+
+    private SettingRow[] settingRows;
+
+    private SettingRow[] settingRows(boolean fresh) {
+        if (fresh || settingRows == null) {
+            final SettingRow[] rows = NativeBridge.settingsSchema(fresh);
+            if (rows != null) settingRows = rows;
+        }
+        return settingRows == null ? new SettingRow[0] : settingRows;
+    }
+
+    /** {String[] keys, float[] values} of every stored row. */
+    private Object[] storedSettings(SettingRow[] rows) {
+        int count = 0;
+        for (SettingRow row : rows) if (row.control != SettingRow.CONTROL_SLOT) ++count;
+        final String[] keys = new String[count];
+        final float[] values = new float[count];
+        final android.content.SharedPreferences p = prefs();
+        int index = 0;
+        for (SettingRow row : rows) {
+            if (row.control == SettingRow.CONTROL_SLOT) continue;
+            keys[index] = row.key;
+            values[index++] = row.read(p);
+        }
+        return new Object[]{keys, values};
+    }
 
     private void applyViewerSettings() {
-        final android.content.SharedPreferences p = prefs();
-        NativeBridge.setGpuRendering(p.getBoolean(SET_GPU, true));
-        NativeBridge.setGpuPresent(p.getBoolean(SET_GPU_PRESENT, true));
-        NativeBridge.setDmc3Shaders(p.getBoolean(SET_DMC3_SHADERS, true));
-        NativeBridge.setGameLights(p.getBoolean(SET_GAME_LIGHTS, false));
+        final Object[] stored = storedSettings(settingRows(false));
+        final int[] v = NativeBridge.applySettings((String[]) stored[0], (float[]) stored[1]);
         applyCameraChoices();
-        NativeBridge.setGpuOptions(p.getInt(SET_GPU_MSAA, 4), p.getBoolean(SET_GPU_MIPMAPS, true),
-                p.getInt(SET_GPU_ANISOTROPY, 8));
-        final int flags = (p.getBoolean(SET_SMOOTH, false) ? 1 << 9 : 0)
-                | (p.getBoolean(SET_UNLIT, false) ? 1 << 10 : 0)
-                | ((p.getInt(SET_BACKGROUND, 0) & 3) << 11)
-                | ((Math.max(0, Math.min(10, p.getInt(SET_ROOM_LINES, 5))) + 1) << 28)
-                | (p.getBoolean(SET_ROOM_ANIM, true) ? 1 << 15 : 0);
-        renderView.applySettings(p.getInt(SET_MAX_SIDE, 720), p.getInt(SET_FRAME_MS, 33),
-                p.getFloat(SET_SPEED, 1.0f), flags, p.getBoolean(SET_SHADOWS, true),
-                p.getBoolean(SET_FAST_PREVIEW, true),
-                p.getInt(SET_MESH_LINE, 1), p.getInt(SET_COLLISION_LINE, 1));
+        if (v == null || v.length < 8) return;
+        renderView.applySettings(v[1], v[2], v[3] / 1000.0f, v[0], v[4] != 0, v[5] != 0, v[6], v[7]);
+    }
+
+    /**
+     * The core's rows of one section: a choice or a slider per row, its hint
+     * under it; slots are the platform pieces in `slots`.
+     */
+    private void addSettingRows(LinearLayout content, SettingRow[] rows, String section,
+                                java.util.Map<String, Runnable> slots, Runnable apply) {
+        final Object[] stored = storedSettings(rows);
+        final String[] keys = (String[]) stored[0];
+        final int[] chosen = NativeBridge.settingsSelection(keys, (float[]) stored[1]);
+        final android.content.SharedPreferences p = prefs();
+        for (SettingRow row : rows) {
+            if (!row.section.equals(section) || (row.roomOnly && !roomLoaded)) continue;
+            if (row.control == SettingRow.CONTROL_SLOT) {
+                final Runnable piece = slots.get(row.key);
+                if (piece != null) piece.run();
+                continue;
+            }
+            int selected = 0;
+            for (int i = 0; i < keys.length; ++i) {
+                if (keys[i].equals(row.key) && chosen != null && i < chosen.length) selected = chosen[i];
+            }
+            final java.util.function.IntConsumer pick = i -> {
+                if (i < 0 || i >= row.values.length) return;
+                row.write(p, row.values[i]);
+                apply.run();
+                if (row.renderNow) renderView.renderNow();
+            };
+            if (row.control == SettingRow.CONTROL_SLIDER) {
+                content.addView(sliderRow(row.label, 0, row.choices.length - 1, 1, selected,
+                        i -> i >= 0 && i < row.choices.length ? row.choices[i] : "", pick));
+            } else {
+                content.addView(choiceRow(row.label, row.choices, selected, pick));
+            }
+            if (!row.hint.isEmpty()) content.addView(hint(row.hint));
+        }
     }
 
     private void roomToggle() {
@@ -1411,11 +1445,6 @@ public final class MainActivity extends Activity {
         styleChip(chip, false);
         chip.setOnClickListener(v -> action.run());
         return chip;
-    }
-
-    private static int indexOf(int[] values, int value, int fallback) {
-        for (int i = 0; i < values.length; ++i) if (values[i] == value) return i;
-        return fallback;
     }
 
     /** A labelled slider from `min` to `max`; the label shows `format(value)`. */
@@ -1556,22 +1585,9 @@ public final class MainActivity extends Activity {
 
     /** The settings a benchmark ran with, for its report. */
     private String benchmarkSettings() {
-        final android.content.SharedPreferences p = prefs();
-        final boolean gpu = p.getBoolean(SET_GPU, true);
-        final StringBuilder text = new StringBuilder();
-        if (gpu) {
-            final int msaa = p.getInt(SET_GPU_MSAA, 4);
-            final int aniso = p.getInt(SET_GPU_ANISOTROPY, 8);
-            text.append("MSAA ").append(msaa == 0 ? "off" : msaa + "x")
-                    .append(", mipmaps ").append(p.getBoolean(SET_GPU_MIPMAPS, true) ? "on" : "off")
-                    .append(", anisotropy ").append(aniso <= 1 ? "off" : aniso + "x")
-                    .append(", shown ").append(p.getBoolean(SET_GPU_PRESENT, true) ? "directly" : "through a picture")
-                    .append(", shaders ").append(p.getBoolean(SET_DMC3_SHADERS, true) ? "DMC3" : "Reader")
-                    .append(p.getBoolean(SET_GAME_LIGHTS, false) ? " with the stage's lights" : "")
-                    .append(", ");
-        }
-        text.append(p.getBoolean(SET_SMOOTH, false) ? "smooth" : "pixel").append(" textures");
-        if (p.getBoolean(SET_UNLIT, false)) text.append(", unlit");
+        final Object[] stored = storedSettings(settingRows(false));
+        final String summary = NativeBridge.benchmarkSettings((String[]) stored[0], (float[]) stored[1]);
+        final StringBuilder text = new StringBuilder(summary == null ? "" : summary);
         if (roomLoaded && roomShown()) text.append(", room ").append(roomName);
         return text.toString();
     }
@@ -1631,124 +1647,33 @@ public final class MainActivity extends Activity {
     /** The settings window (the app's one window): render quality, animation, room. */
     private void showSettingsDialog() {
         final PanelRef dialog = new PanelRef();
-        final android.content.SharedPreferences p = prefs();
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(12), dp(16), dp(24));
 
-
         final Runnable apply = this::applyViewerSettings;
-        content.addView(sectionTitle("Graphics"));
-        content.addView(choiceRow("Renderer", new String[]{"GPU (graphics chip)", "CPU (software)"},
-                p.getBoolean(SET_GPU, true) ? 0 : 1,
-                i -> { p.edit().putBoolean(SET_GPU, i == 0).apply(); apply.run(); }));
-        final int[] caps = NativeBridge.gpuCapabilities();
-        final int maxSamples = caps != null && caps.length > 0 ? caps[0] : 0;
-        final int maxAnisotropy = caps != null && caps.length > 1 ? caps[1] : 0;
-        content.addView(hint("GPU draws the model, the room, the floor, shadows and effects with OpenGL ES 3; "
-                + "lines and bones are drawn on top. Wireframe and UV views always use the CPU. Now: "
-                + NativeBridge.rendererInfo()
-                + (maxSamples > 0 ? "\nThis chip: anti-aliasing up to " + maxSamples + "x, anisotropic filtering "
-                        + (maxAnisotropy > 1 ? "up to " + maxAnisotropy + "x." : "not supported.") : "")));
-        content.addView(choiceRow("Show frames (GPU)", new String[]{"Straight on the screen", "Through a picture"},
-                p.getBoolean(SET_GPU_PRESENT, true) ? 0 : 1,
-                i -> { p.edit().putBoolean(SET_GPU_PRESENT, i == 0).apply(); apply.run(); renderView.renderNow(); }));
-        content.addView(hint("Straight on the screen: the GPU puts the frame on the display itself, without "
-                + "reading it back to the CPU and handing it over again. Frames with lines, markers or bones "
-                + "drawn on them, videos and pictures still go through a picture. Choose \"Through a picture\" "
-                + "if the view stays black or does not change."));
-        content.addView(choiceRow("Shaders (GPU)", new String[]{"DMC3 (the game's)", "Reader's own"},
-                p.getBoolean(SET_DMC3_SHADERS, true) ? 0 : 1,
-                i -> { p.edit().putBoolean(SET_DMC3_SHADERS, i == 0).apply(); apply.run(); renderView.renderNow(); }));
-        content.addView(hint("DMC3: our own shaders that behave like the game's (67 of them, docs/SHADERS.md) draw "
-                + "what the game has a shader for: textured models and stages lit by their vertex colours, "
-                + "with the game's fog. The rest, and every frame with \"Reader's own\", uses the Reader's "
-                + "shaders. Info under Renderer says which ones the last frame used."));
-        content.addView(choiceRow("Stage lights (DMC3 shaders, experimental)", new String[]{"Off", "On"},
-                p.getBoolean(SET_GAME_LIGHTS, false) ? 1 : 0,
-                i -> { p.edit().putBoolean(SET_GAME_LIGHTS, i == 1).apply(); apply.run(); renderView.renderNow(); }));
-        content.addView(hint("On: the light table of the stage's configuration (stNNNcfg.pac, LIG2) lights the "
-                + "stage and the models as the game does: its choice of lights (the stage's point lights, the "
-                + "models' directional ones), its packing and the table's ambient colours. Still experimental: "
-                + "the lights are chosen for the middle of the view and the model's centre, not for each object, "
-                + "and the stage's colour units are the best reading so far. "
-                + "Needs the configuration loaded (⋮ → Stage config (stNNNcfg.pac))."));
-        final int[] msaa = {0, 2, 4, 8};
-        content.addView(choiceRow("Anti-aliasing (MSAA, GPU): smooth edges", new String[]{"Off", "2x", "4x", "8x"},
-                indexOf(msaa, p.getInt(SET_GPU_MSAA, 4), 2),
-                i -> { p.edit().putInt(SET_GPU_MSAA, msaa[i]).apply(); apply.run(); }));
-        content.addView(choiceRow("Mipmaps (GPU): no shimmer on distant textures", new String[]{"On", "Off"},
-                p.getBoolean(SET_GPU_MIPMAPS, true) ? 0 : 1,
-                i -> { p.edit().putBoolean(SET_GPU_MIPMAPS, i == 0).apply(); apply.run(); }));
-        final int[] aniso = {1, 2, 4, 8, 16};
-        content.addView(choiceRow("Anisotropic filtering (GPU, smooth textures): sharp floors at an angle",
-                new String[]{"Off", "2x", "4x", "8x", "16x"},
-                indexOf(aniso, p.getInt(SET_GPU_ANISOTROPY, 8), 3),
-                i -> { p.edit().putInt(SET_GPU_ANISOTROPY, aniso[i]).apply(); apply.run(); }));
-        content.addView(hint("Higher anti-aliasing costs memory at large resolutions: above the chip's limit or "
-                + "about 256 MB of samples the next lower level is used. The CPU renderer ignores these three."));
-        final int[] sides = {360, 540, 720, 1024, 2048, 3840, 5120, 6144, 7680};
-        content.addView(choiceRow("Resolution (longest side, px; 2K-8K render larger than the screen)",
-                new String[]{"360", "540", "720", "1024", "2K", "4K", "5K", "6K", "8K"},
-                indexOf(sides, p.getInt(SET_MAX_SIDE, 720), 2),
-                i -> { p.edit().putInt(SET_MAX_SIDE, sides[i]).apply(); apply.run(); }));
-        content.addView(hint("2K = 2048, 4K = 3840, 5K = 5120, 6K = 6144, 8K = 7680 px. They need a lot of memory "
-                + "and time per frame; while the view moves a small preview is shown. If memory runs out the "
-                + "next lower size is chosen."));
-        content.addView(choiceRow("While moving (drag, flick, animation)",
-                new String[]{"Fast preview (half size)", "Full quality"},
-                p.getBoolean(SET_FAST_PREVIEW, true) ? 0 : 1,
-                i -> { p.edit().putBoolean(SET_FAST_PREVIEW, i == 0).apply(); apply.run(); }));
-        content.addView(choiceRow("Model textures", new String[]{"Pixel (original)", "Smooth"},
-                p.getBoolean(SET_SMOOTH, false) ? 1 : 0,
-                i -> { p.edit().putBoolean(SET_SMOOTH, i == 1).apply(); apply.run(); }));
-        content.addView(choiceRow("Model lighting", new String[]{"Camera light", "Off (flat)"},
-                p.getBoolean(SET_UNLIT, false) ? 1 : 0,
-                i -> { p.edit().putBoolean(SET_UNLIT, i == 1).apply(); apply.run(); }));
-        content.addView(choiceRow("Background", new String[]{"Dark", "Grey", "Light", "Black"},
-                p.getInt(SET_BACKGROUND, 0) & 3,
-                i -> { p.edit().putInt(SET_BACKGROUND, i).apply(); apply.run(); }));
-        content.addView(choiceRow("Shadows when a file opens", new String[]{"On", "Off"},
-                p.getBoolean(SET_SHADOWS, true) ? 0 : 1,
-                i -> { p.edit().putBoolean(SET_SHADOWS, i == 0).apply(); apply.run(); }));
-
-        final LinearLayout.LayoutParams benchParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        benchParams.topMargin = dp(10);
-        content.addView(actionChip("Benchmark: maximum FPS with these settings (10 s)", () -> {
-            dialog.dismiss();
-            runBenchmark();
-        }), benchParams);
-        content.addView(hint("Draws full-size frames back to back for 10 seconds while the camera turns "
-                + "(and the motion plays, if one is playing), without waiting for the screen. Change a "
-                + "setting and run again to compare; results stay listed until the app closes."));
-
-        content.addView(sectionTitle("Graphics: lines and overlays"));
-        final int[] widths = {1, 2, 3, 4, 6};
-        final String[] widthNames = {"1", "2", "3", "4", "6"};
-        content.addView(choiceRow("Mesh line width (wireframe, room meshes, bones; px at 720)", widthNames,
-                indexOf(widths, p.getInt(SET_MESH_LINE, 1), 0),
-                i -> { p.edit().putInt(SET_MESH_LINE, widths[i]).apply(); apply.run(); }));
-        content.addView(choiceRow("Collision line width (HITS, attack shapes; px at 720)", widthNames,
-                indexOf(widths, p.getInt(SET_COLLISION_LINE, 1), 0),
-                i -> { p.edit().putInt(SET_COLLISION_LINE, widths[i]).apply(); apply.run(); }));
-        content.addView(sliderRow("Room mesh lines behind a model (wireframe mode): opacity", 0, 10, 10,
-                p.getInt(SET_ROOM_LINES, 5), value -> value * 10 + "%  " + (value == 0 ? "(hidden)" : ""),
-                value -> { p.edit().putInt(SET_ROOM_LINES, value).apply(); apply.run(); }));
-        addCollisionKinds(content);
-
-        content.addView(sectionTitle("Animation"));
-        final int[] frames = {50, 33, 16};
-        content.addView(choiceRow("Animation frame rate", new String[]{"20 fps", "30 fps", "60 fps"},
-                indexOf(frames, p.getInt(SET_FRAME_MS, 33), 1),
-                i -> { p.edit().putInt(SET_FRAME_MS, frames[i]).apply(); apply.run(); }));
-        final float[] speeds = {0.25f, 0.5f, 1.0f, 2.0f};
-        int speedIndex = 2;
-        for (int i = 0; i < speeds.length; ++i) {
-            if (Math.abs(speeds[i] - p.getFloat(SET_SPEED, 1.0f)) < 0.01f) speedIndex = i;
+        final SettingRow[] rows = settingRows(true);
+        final java.util.Map<String, Runnable> slots = new java.util.HashMap<>();
+        slots.put("slot.benchmark", () -> {
+            final LinearLayout.LayoutParams benchParams = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            benchParams.topMargin = dp(10);
+            content.addView(actionChip("Benchmark: maximum FPS with these settings (10 s)", () -> {
+                dialog.dismiss();
+                runBenchmark();
+            }), benchParams);
+            content.addView(hint("Draws full-size frames back to back for 10 seconds while the camera turns "
+                    + "(and the motion plays, if one is playing), without waiting for the screen. Change a "
+                    + "setting and run again to compare; results stay listed until the app closes."));
+        });
+        slots.put("slot.collisionKinds", () -> addCollisionKinds(content));
+        final java.util.LinkedHashSet<String> sections = new java.util.LinkedHashSet<>();
+        for (SettingRow row : rows) sections.add(row.section);
+        sections.remove("Base room");
+        for (String section : sections) {
+            content.addView(sectionTitle(section));
+            addSettingRows(content, rows, section, slots, apply);
         }
-        content.addView(choiceRow("Playback speed", new String[]{"¼×", "½×", "1×", "2×"},
-                speedIndex, i -> { p.edit().putFloat(SET_SPEED, speeds[i]).apply(); apply.run(); }));
 
         content.addView(sectionTitle("Base room"));
         // Five base rooms to switch between: squares 1-5, the chosen one
@@ -1837,9 +1762,7 @@ public final class MainActivity extends Activity {
         if (roomLoaded) {
             content.addView(choiceRow("Show the room", new String[]{"On", "Off"}, roomShown() ? 0 : 1,
                     i -> { if ((i == 0) != roomShown()) roomToggle(); }));
-            content.addView(choiceRow("Room animation (sky clouds, stage effects)", new String[]{"On", "Off"},
-                    p.getBoolean(SET_ROOM_ANIM, true) ? 0 : 1,
-                    i -> { p.edit().putBoolean(SET_ROOM_ANIM, i == 0).apply(); apply.run(); }));
+            addSettingRows(content, rows, "Base room", slots, apply);
             if (NativeBridge.roomCollisionSourceCount() > 0) {
                 content.addView(choiceRow("HITS room collision", new String[]{"On", "Off"},
                         renderView.isRoomCollisionVisible() ? 0 : 1,

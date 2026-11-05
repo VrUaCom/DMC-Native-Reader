@@ -34,6 +34,7 @@
 #include "dmcresource/spider/camera.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/spider/app_info.h"
+#include "dmcresource/spider/viewer_settings.h"
 #include "dmcresource/spider/companion_menu.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
@@ -1983,66 +1984,113 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_setPresentSurface(JNIEnv* env, jcl
     backend->set_window(window);
 }
 
-// Frames straight to the window (Settings -> Graphics), else read back.
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuPresent(JNIEnv*, jclass, jboolean enabled) {
-    dmcresource::set_gpu_present_enabled(enabled == JNI_TRUE);
+// ---- Settings (spider/viewer_settings.h): the core writes the rows and
+// says what the stored values mean; the shell draws and stores them.
+
+namespace {
+
+namespace viewer_settings = dmcresource::spider::settings;
+
+viewer_settings::Stored stored_settings(JNIEnv* env, jobjectArray keys, jfloatArray values) {
+    viewer_settings::Stored stored;
+    if (keys == nullptr || values == nullptr) return stored;
+    const jsize count = std::min(env->GetArrayLength(keys), env->GetArrayLength(values));
+    std::vector<jfloat> raw(static_cast<std::size_t>(count));
+    if (count > 0) env->GetFloatArrayRegion(values, 0, count, raw.data());
+    for (jsize index = 0; index < count; ++index) {
+        auto* key = static_cast<jstring>(env->GetObjectArrayElement(keys, index));
+        stored.keys.push_back(to_utf8(env, key));
+        stored.values.push_back(raw[static_cast<std::size_t>(index)]);
+        if (key != nullptr) env->DeleteLocalRef(key);
+    }
+    return stored;
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setDmc3Shaders(JNIEnv*, jclass, jboolean enabled) {
-    dmcresource::set_dmc3_shaders_enabled(enabled == JNI_TRUE);
-}
+}  // namespace
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setGameLights(JNIEnv*, jclass, jboolean enabled) {
-    dmcresource::set_game_lights_enabled(enabled == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuRendering(JNIEnv*, jclass, jboolean enabled) {
-    dmcresource::set_gpu_view_enabled(enabled == JNI_TRUE);
-}
-
-// Graphics settings of the GPU pass: MSAA samples (0 = off), mipmaps,
-// anisotropic filtering (1 = off).
-extern "C" JNIEXPORT void JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_setGpuOptions(JNIEnv*, jclass, jint msaa, jboolean mipmaps,
-                                                            jint anisotropy) {
-    dmcresource::set_gpu_view_options({static_cast<int>(msaa), mipmaps == JNI_TRUE, static_cast<int>(anisotropy)});
-}
-
-// The chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU.
-extern "C" JNIEXPORT jintArray JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_gpuCapabilities(JNIEnv* env, jclass) {
-    jint values[2] = {0, 0};
+// SettingRow[]: SettingRow(String key, String section, String label,
+// int control, int storage, String[] choices, float[] values, float fallback,
+// String hint, boolean renderNow, boolean roomOnly). `describe_device` asks
+// the GPU for its limits and frame counts (the Settings window); without it
+// no GPU context is made (applying the stored settings at start).
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_settingsSchema(JNIEnv* env, jclass, jboolean describe_device) {
     try {
         (void)g_gles_backend_installed;
-        if (auto* backend = dmcresource::gpu_view_backend()) {
-            const auto caps = backend->capabilities();
-            values[0] = caps.max_samples;
-            values[1] = static_cast<jint>(caps.max_anisotropy);
+        const auto rows = viewer_settings::viewer_settings(
+            describe_device == JNI_TRUE ? viewer_settings::current_capabilities() : viewer_settings::Capabilities{});
+        jclass type = env->FindClass("com/dmcrengine/nativeviewer/SettingRow");
+        if (type == nullptr) return nullptr;
+        jmethodID make = env->GetMethodID(type, "<init>",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;II[Ljava/lang/String;[FFLjava/lang/String;ZZ)V");
+        if (make == nullptr) return nullptr;
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(rows.size()), type, nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t index = 0; index < rows.size(); ++index) {
+            const auto& row = rows[index];
+            jfloatArray values = env->NewFloatArray(static_cast<jsize>(row.values.size()));
+            if (values == nullptr) return nullptr;
+            if (!row.values.empty()) {
+                env->SetFloatArrayRegion(values, 0, static_cast<jsize>(row.values.size()), row.values.data());
+            }
+            jobject item = env->NewObject(type, make, utf(env, row.key), utf(env, row.section), utf(env, row.label),
+                                          static_cast<jint>(row.control), static_cast<jint>(row.storage),
+                                          utf_array(env, row.choices), values, static_cast<jfloat>(row.fallback),
+                                          utf(env, row.hint), row.render_now ? JNI_TRUE : JNI_FALSE,
+                                          row.room_only ? JNI_TRUE : JNI_FALSE);
+            if (item == nullptr) return nullptr;
+            env->SetObjectArrayElement(out, static_cast<jsize>(index), item);
+            env->DeleteLocalRef(item);
+            env->DeleteLocalRef(values);
         }
-    } catch (...) {}
-    jintArray out = env->NewIntArray(2);
-    if (out != nullptr) env->SetIntArrayRegion(out, 0, 2, values);
-    return out;
+        return out;
+    } catch (...) { return nullptr; }
 }
 
-// "GPU: OpenGL ES 3.2 / Adreno (TM) ...", "CPU (software)", ... plus the
-// frame counts so far.
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_rendererInfo(JNIEnv* env, jclass) {
+// The choice each stored value selects, one per key.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_settingsSelection(JNIEnv* env, jclass, jobjectArray keys,
+                                                                jfloatArray values) {
+    try {
+        const auto stored = stored_settings(env, keys, values);
+        const auto rows = viewer_settings::viewer_settings({});
+        std::vector<int> chosen;
+        for (std::size_t index = 0; index < stored.keys.size(); ++index) {
+            int pick = 0;
+            for (const auto& row : rows) {
+                if (row.key == stored.keys[index]) {
+                    pick = static_cast<int>(viewer_settings::selected_choice(row, stored.values[index]));
+                }
+            }
+            chosen.push_back(pick);
+        }
+        return int_array(env, chosen);
+    } catch (...) { return nullptr; }
+}
+
+// Sets the core's GPU state from the stored values and returns the view's
+// part: {render flags, max side, frame ms, speed in thousandths, shadows,
+// fast preview, mesh line, collision line}.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_applySettings(JNIEnv* env, jclass, jobjectArray keys,
+                                                            jfloatArray values) {
     try {
         (void)g_gles_backend_installed;
-        const auto stats = dmcresource::gpu_view_stats();
-        const auto text = dmcresource::view_renderer_description() + "\nFrames: " +
-            std::to_string(stats.gpu_frames) + " GPU (" + std::to_string(stats.presented_frames) +
-            " shown straight on the screen), " + std::to_string(stats.cpu_frames) + " CPU" +
-            (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks" : "") +
-            "\n" + dmcresource::dmc3_shader_report();
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        const auto applied = viewer_settings::apply_settings(stored_settings(env, keys, values));
+        return int_array(env, {static_cast<int>(applied.render_flags), applied.max_side, applied.frame_ms,
+                               static_cast<int>(std::lround(applied.speed * 1000.0F)), applied.shadows ? 1 : 0,
+                               applied.fast_preview ? 1 : 0, applied.mesh_line, applied.collision_line});
+    } catch (...) { return nullptr; }
+}
+
+// What a benchmark ran with, from the stored values.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkSettings(JNIEnv* env, jclass, jobjectArray keys,
+                                                                jfloatArray values) {
+    try {
+        return utf(env, viewer_settings::benchmark_summary(
+                            viewer_settings::resolve(stored_settings(env, keys, values))));
+    } catch (...) { return utf(env, ""); }
 }
 
 // ---- Frame buffers in native memory ------------------------------------------

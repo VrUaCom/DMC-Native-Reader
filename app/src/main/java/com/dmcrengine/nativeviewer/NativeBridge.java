@@ -22,6 +22,17 @@ public final class NativeBridge {
     public static final int OPENED_AS_STAGE = 3;
     /** {Long handle, Integer OPENED_AS_*, String title, Boolean roomEffects}; null when unreadable. */
     public static native Object[] openResource(int fd, String filename);
+    /** The Settings window's rows, written by the core; describeDevice adds the GPU's limits to the hints. */
+    public static native SettingRow[] settingsSchema(boolean describeDevice);
+    /** The choice each stored value selects, one per key. */
+    public static native int[] settingsSelection(String[] keys, float[] values);
+    /**
+     * Sets the core's GPU state from the stored values; returns {render flags, max side,
+     * frame ms, speed in thousandths, shadows, fast preview, mesh line, collision line}.
+     */
+    public static native int[] applySettings(String[] keys, float[] values);
+    /** What a benchmark ran with. */
+    public static native String benchmarkSettings(String[] keys, float[] values);
     /** Info for the open session; staged holds role, name pairs. */
     public static native String sessionInfoText(long handle, String title, int navigationDepth,
             String backTitle, String[] staged);
@@ -235,22 +246,16 @@ public final class NativeBridge {
     public static native void setRoomBroken(boolean broken);
 
     /** Draws the view on the graphics chip (OpenGL ES 3) when true, else on the CPU. */
-    public static native void setGpuRendering(boolean enabled);
 
     /** The view's window surface the GPU shows frames on (null: none); returns once the old one is let go. */
     public static native void setPresentSurface(android.view.Surface surface);
 
     /** Frames of the view straight onto its window (true) or read back into a picture. */
-    public static native void setGpuPresent(boolean enabled);
 
     /** Draw with the DMC3 (game) shaders where the game has one; the core picks them. */
-    public static native void setDmc3Shaders(boolean enabled);
     /** Light the DMC3 shaders' stage and models with the stage configuration's LIG2 table (experimental). */
-    public static native void setGameLights(boolean enabled);
     /** GPU picture quality: MSAA samples (0 = off), mipmaps, anisotropic filtering (1 = off). */
-    public static native void setGpuOptions(int msaaSamples, boolean mipmaps, int anisotropy);
     /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */
-    public static native int[] gpuCapabilities();
     /** A frame buffer in native memory (not the Java heap); free it once with freeFrameBuffer. */
     public static native java.nio.ByteBuffer allocateFrameBuffer(long bytes);
     public static native void freeFrameBuffer(java.nio.ByteBuffer buffer);
@@ -262,7 +267,6 @@ public final class NativeBridge {
             float zoom, int flags, float panX, float panY, float roomYaw, boolean follow, float dolly,
             float motionStart, float seconds, String settings);
     /** What draws the frames ("GPU: OpenGL ES 3.2 / Adreno ...") and the frame counts. */
-    public static native String rendererInfo();
     // Camera (core camera_control): fly eye, orbit pivot, joystick response.
     /** The fly camera on, where the orbit camera of that view stands. */
     public static native boolean enterFly(long handle, int width, int height, float yaw, float pitch,

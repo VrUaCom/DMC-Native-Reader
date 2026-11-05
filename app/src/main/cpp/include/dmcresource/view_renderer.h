@@ -33,9 +33,12 @@ enum class RenderFlag : std::uint32_t {
     SmoothTextures = 1U << 9U,  // bilinear texture filtering on models
     Unlit = 1U << 10U,          // no camera light on models
     Preview = 1U << 13U,        // fast frame while the view moves: nearest texels
+    RoomAnimate = 1U << 15U,    // the shell ticks the room's clouds and effects
     // Bits 11-12: background (0 dark, 1 grey, 2 light, 3 black).
+    // Bits 28-31: room mesh line opacity in tenths + 1 (0: the default).
 };
 inline constexpr std::uint32_t kRenderBackgroundShift = 11U;
+inline constexpr std::uint32_t kRenderRoomLinesShift = 28U;
 
 using RenderFlags = std::uint32_t;
 

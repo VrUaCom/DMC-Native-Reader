@@ -364,6 +364,16 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v146: Spider first, step 4. The Settings window is the core's
+    (`spider/viewer_settings`): every row's section, label, choices, the
+    value each choice stores, its default, its hint and how the shell keeps
+    it, plus what the stored values mean (GPU state, the render flags with
+    background, room line opacity and room animation, frame size and pace,
+    the benchmark's summary). The Android shell draws the rows generically
+    and fills two slots (the benchmark, the collision kinds); the base room
+    and the game folder stay its own. Stored preferences keep their keys and
+    types. Seven JNI setters give way to `settingsSchema`,
+    `settingsSelection`, `applySettings` and `benchmarkSettings`.
   - v145: Spider first, steps 1 and 2. The open session's Info is written
     by the core (`spider::actions::session_info_text`: STRUCTURE, NOT
     CANONICAL, SESSION / EVIDENCE, NAVIGATION, STAGED COMPANIONS); the
