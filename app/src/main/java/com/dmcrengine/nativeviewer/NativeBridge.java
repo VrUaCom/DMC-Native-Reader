@@ -22,6 +22,8 @@ public final class NativeBridge {
     public static final int OPENED_AS_STAGE = 3;
     /** {Long handle, Integer OPENED_AS_*, String title, Boolean roomEffects}; null when unreadable. */
     public static native Object[] openResource(int fd, String filename);
+    /** The animation strip: the library's MOT cards (withLibrary) and then the staged ones. */
+    public static native MotionCard[] motionStrip(long handle, boolean withLibrary, String[] staged);
     /** The Settings window's rows, written by the core; describeDevice adds the GPU's limits to the hints. */
     public static native SettingRow[] settingsSchema(boolean describeDevice);
     /** The choice each stored value selects, one per key. */
@@ -178,11 +180,8 @@ public final class NativeBridge {
     // Selectable positions of an archive (em000.pac classes and weapons,
     // em028.pac dress states); empty when there is only one look.
     public static native String[] archiveVariantNames(String archiveName);
-    public static native int motionLibraryCount(long handle);
-    public static native String motionLibraryName(long handle, int index);
     // Physical top-level PAC slot containing the nested MOT pack; -1 when the
     // motion did not come from a nested pack. Used only for UI grouping.
-    public static native int motionLibraryPackSlot(long handle, int index);
 
     // MotionScript playback is separate from raw MOT playback. A PAC may own
     // several independent controllers; every script gets its own Play button

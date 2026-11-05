@@ -4,6 +4,7 @@
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/session_actions.h"
+#include "dmcresource/spider/motion_strip.h"
 
 #include <array>
 #include <bit>
@@ -655,6 +656,20 @@ int main() {
     const auto rejected = act::open_resource("junk.bin", nullptr, 0U);
     assert(rejected.as == act::OpenedAs::Rejected && rejected.session == nullptr);
     assert(rejected.title.rfind("junk.bin\nRejected: ", 0) == 0U);
+    // The animation strip is the core's: the library's MOT cards, then the
+    // staged ones behind a source boundary; a child view shows only staged.
+    const auto strip = act::motion_strip(assembled_open.session.get(), true, {"pl000_extra_walk.mot"});
+    assert(strip.size() == 2U);
+    assert(strip[0].library_index == 0 && strip[0].staged_index == -1 && !strip[0].separator_before);
+    assert(strip[0].kind == "MOT" && strip[0].description.rfind("Play raw MOT ", 0) == 0U);
+    assert(strip[1].library_index == -1 && strip[1].staged_index == 0 && strip[1].pack_slot == -2);
+    assert(strip[1].separator_before && strip[1].separator_description == "Animation source boundary");
+    assert(strip[1].kind == "MOT" && strip[1].stem == "PL000_E");
+    for (const auto& button : strip[0].scripts) assert(button.label.rfind("\u25b6\nS", 0) == 0U);
+    const auto child_strip = act::motion_strip(assembled_open.session.get(), false, {"a.MOTX5"});
+    assert(child_strip.size() == 1U && child_strip[0].kind == "MOTX" && child_strip[0].stem == "A");
+    assert(act::motion_strip(nullptr, true, {}).empty());
+
     // A stage effect bank opened on its own also becomes the room's effects.
     assert(act::open_resource("st001_effect.pac", motions_only.data(), motions_only.size()).room_effects);
     assert(act::open_resource("ST10effect.pac", motions_only.data(), motions_only.size()).room_effects);

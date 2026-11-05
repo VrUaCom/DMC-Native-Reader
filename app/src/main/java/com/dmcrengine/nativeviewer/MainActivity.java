@@ -3595,20 +3595,22 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /** The core's animation strip for this session and the staged MOTs. */
+    private MotionCard[] motionStrip() {
+        final ArrayList<StagedAsset> staged = motionAssets();
+        final String[] names = new String[staged.size()];
+        for (int index = 0; index < names.length; ++index) names[index] = staged.get(index).name;
+        final MotionCard[] cards = NativeBridge.motionStrip(session, session != 0 && isRootScene(), names);
+        return cards == null ? new MotionCard[0] : cards;
+    }
+
     private ArrayList<MotionEntry> motionEntries() {
+        final ArrayList<StagedAsset> staged = motionAssets();
         ArrayList<MotionEntry> result = new ArrayList<>();
-        if (session != 0 && isRootScene()) {
-            final int count = NativeBridge.motionLibraryCount(session);
-            for (int index = 0; index < count; ++index) {
-                result.add(new MotionEntry(
-                        NativeBridge.motionLibraryName(session, index),
-                        index,
-                        null,
-                        NativeBridge.motionLibraryPackSlot(session, index)));
-            }
-        }
-        for (StagedAsset asset : motionAssets()) {
-            result.add(new MotionEntry(asset.name, -1, asset.uri, -2));
+        for (MotionCard card : motionStrip()) {
+            final Uri uri = card.stagedIndex >= 0 && card.stagedIndex < staged.size()
+                    ? staged.get(card.stagedIndex).uri : null;
+            result.add(new MotionEntry(card.name, card.libraryIndex, uri, card.packSlot));
         }
         return result;
     }
@@ -3617,64 +3619,38 @@ public final class MainActivity extends Activity {
         if (motionBar == null || motionScroll == null) return;
         motionBar.removeAllViews();
         motionCards.clear();
-        ArrayList<MotionEntry> motions = motionEntries();
-        if (motions.isEmpty() || !isRootScene()) {
+        final MotionCard[] cards = motionStrip();
+        if (cards.length == 0 || !isRootScene()) {
             motionScroll.setVisibility(View.GONE);
-            if (motions.isEmpty()) {
+            if (cards.length == 0) {
                 selectedMotionIndex = -1;
                 selectedScriptIndex = -1;
             }
             return;
         }
 
-        final int scriptCount = session == 0
-                ? 0 : Math.max(0, NativeBridge.motionScriptCount(session));
-        int previousPack = Integer.MIN_VALUE;
-        for (int index = 0; index < motions.size(); ++index) {
+        for (int index = 0; index < cards.length; ++index) {
             final int motionIndex = index;
-            MotionEntry entry = motions.get(index);
-            if (index > 0 && entry.packSlot != previousPack) {
-                addMotionPackSeparator(entry.packSlot);
-            }
-            previousPack = entry.packSlot;
+            final MotionCard card = cards[index];
+            if (card.separatorBefore) addMotionPackSeparator(card.separatorDescription);
 
-            // One visual row per MOT:
-            // [linked Script Play ...] [raw MOT].
-            // A controller without a real link to this MOT is not a disabled
-            // action: it is absent data, so do not spend UI space on it.
+            // One visual row per MOT: [linked Script Play ...] [raw MOT].
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-
-            if (entry.libraryIndex >= 0) {
-                for (int script = 0; script < scriptCount; ++script) {
-                    final int scriptIndex = script;
-                    final int slot = NativeBridge.motionScriptSlot(session, scriptIndex);
-                    final boolean available = NativeBridge.motionScriptCanPlayMotion(
-                            session, scriptIndex, entry.libraryIndex);
-                    if (!available) continue;
-                    final boolean activeScript =
-                            index == selectedMotionIndex &&
-                            scriptIndex == selectedScriptIndex;
-
-                    Button scriptButton = makeSquareButton(
-                            "▶\nS" + (slot >= 0 ? Integer.toString(slot) : "?"),
-                            "Play " + entry.name + " through MotionScript " +
-                                    (slot >= 0 ? "slot " + slot : Integer.toString(scriptIndex)),
-                            9f);
-                    scriptButton.setActivated(activeScript);
-                    scriptButton.setAlpha(activeScript ? 1.0f : 0.78f);
-                    scriptButton.setOnClickListener(
-                            v -> selectMotionScript(motionIndex, scriptIndex));
-                    addToolButton(row, scriptButton);
-                }
+            for (int button = 0; button < card.scriptIndexes.length; ++button) {
+                final int scriptIndex = card.scriptIndexes[button];
+                final boolean activeScript = index == selectedMotionIndex && scriptIndex == selectedScriptIndex;
+                Button scriptButton = makeSquareButton(card.scriptLabels[button], card.scriptDescriptions[button], 9f);
+                scriptButton.setActivated(activeScript);
+                scriptButton.setAlpha(activeScript ? 1.0f : 0.78f);
+                scriptButton.setOnClickListener(v -> selectMotionScript(motionIndex, scriptIndex));
+                addToolButton(row, scriptButton);
             }
 
-            final boolean activeMot =
-                    index == selectedMotionIndex && selectedScriptIndex < 0;
-            Button motButton = makeSquareButton(
-                    "", "Play raw MOT " + entry.name, 11f);
-            motButton.setText(motionCardLabel(entry.name));
+            final boolean activeMot = index == selectedMotionIndex && selectedScriptIndex < 0;
+            Button motButton = makeSquareButton("", card.description, 11f);
+            motButton.setText(motionCardLabel(card.kind, card.stem));
             motButton.setActivated(activeMot);
             motButton.setAlpha(activeMot ? 1.0f : 0.72f);
             motButton.setOnClickListener(v -> selectMotion(motionIndex));
@@ -3690,14 +3666,13 @@ public final class MainActivity extends Activity {
         motionScroll.setVisibility(uiHidden || cameraUi ? View.GONE : View.VISIBLE);
     }
 
-    private void addMotionPackSeparator(int packSlot) {
+    private void addMotionPackSeparator(String description) {
         TextView separator = new TextView(this);
         separator.setText("\u2502");
         separator.setTextColor(0x88ffffff);
         separator.setTextSize(28f);
         separator.setGravity(Gravity.CENTER);
-        separator.setContentDescription(
-                packSlot >= 0 ? "Animation pack slot " + packSlot : "Animation source boundary");
+        separator.setContentDescription(description);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 dp(18), dp(TOOL_SIZE_DP));
         params.setMarginStart(dp(2));
@@ -3705,20 +3680,11 @@ public final class MainActivity extends Activity {
         motionBar.addView(separator, params);
     }
 
-    private CharSequence motionCardLabel(String name) {
-        String stem = withoutExtension(name).toUpperCase(Locale.ROOT);
-        if (stem.length() > 7) stem = stem.substring(0, 7);
-        String extension = "MOT";
-        if (name != null) {
-            int dot = name.lastIndexOf('.');
-            if (dot >= 0 && dot + 1 < name.length()) {
-                extension = name.substring(dot + 1).toUpperCase(Locale.ROOT);
-                if (extension.length() > 4) extension = extension.substring(0, 4);
-            }
-        }
-        SpannableStringBuilder text = new SpannableStringBuilder(extension + "\n" + stem);
-        int split = extension.length() + 1;
-        text.setSpan(new StyleSpan(Typeface.BOLD), 0, extension.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    /** The card's text: its kind in bold over its stem, both from the core. */
+    private CharSequence motionCardLabel(String kind, String stem) {
+        SpannableStringBuilder text = new SpannableStringBuilder(kind + "\n" + stem);
+        int split = kind.length() + 1;
+        text.setSpan(new StyleSpan(Typeface.BOLD), 0, kind.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         text.setSpan(new RelativeSizeSpan(0.70f), split, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         return text;
     }

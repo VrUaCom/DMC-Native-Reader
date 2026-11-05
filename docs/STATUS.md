@@ -364,6 +364,12 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v148: Spider first, step 5a. The animation strip is the core's
+    (`spider::actions::motion_strip`): one card per MOT (the session's
+    library, then the staged ones), the Script Play buttons each really has,
+    the pack boundaries and every label, in one call instead of six natives
+    per card. `motionLibraryCount`, `motionLibraryName` and
+    `motionLibraryPackSlot` are gone.
   - v147: Spider first, step 3. What a new base room keeps is the core's
     (`spider::actions::after_new_room`): its own stage's effect bank and
     configuration stay, another stage's go, and the missing ones of its own

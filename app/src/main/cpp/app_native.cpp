@@ -35,6 +35,7 @@
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/spider/app_info.h"
 #include "dmcresource/spider/viewer_settings.h"
+#include "dmcresource/spider/motion_strip.h"
 #include "dmcresource/spider/companion_menu.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/motion/motion_player.h"
@@ -1066,45 +1067,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
 // concurrently.
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryCount(
-        JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr) return 0;
-    const auto count = session->motion_library.size();
-    return count > static_cast<std::size_t>(std::numeric_limits<jint>::max())
-        ? std::numeric_limits<jint>::max() : static_cast<jint>(count);
-}
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryName(
-        JNIEnv* env, jclass, jlong handle, jint index) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr || index < 0 ||
-        static_cast<std::size_t>(index) >= session->motion_library.size()) {
-        return env->NewStringUTF("");
-    }
-    try {
-        return env->NewStringUTF(
-            session->motion_library[static_cast<std::size_t>(index)].name.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_motionLibraryPackSlot(
-        JNIEnv*, jclass, jlong handle, jint index) {
-    const SessionLock jni_lock{session_mutex()};
-    const Session* session = from_handle(handle);
-    if (session == nullptr || index < 0 ||
-        static_cast<std::size_t>(index) >= session->motion_library.size()) {
-        return -1;
-    }
-    return static_cast<jint>(
-        session->motion_library[static_cast<std::size_t>(index)].pack_slot);
-}
-
-extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_motionScriptCount(
         JNIEnv*, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
@@ -1486,6 +1448,56 @@ jobject menu_object(JNIEnv* env, const stage_actions::Menu& menu) {
 }
 
 }  // namespace
+
+// The animation strip (spider motion_strip): MotionCard[] with
+// MotionCard(String name, int libraryIndex, int stagedIndex, int packSlot,
+// boolean separatorBefore, String separatorDescription, String kind,
+// String stem, String description, int[] scriptIndexes,
+// String[] scriptLabels, String[] scriptDescriptions).
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_motionStrip(JNIEnv* env, jclass, jlong handle,
+                                                          jboolean with_library, jobjectArray staged) {
+    const SessionLock jni_lock{session_mutex()};
+    try {
+        std::vector<std::string> staged_names;
+        const jsize count = staged == nullptr ? 0 : env->GetArrayLength(staged);
+        for (jsize index = 0; index < count; ++index) {
+            auto* name = static_cast<jstring>(env->GetObjectArrayElement(staged, index));
+            staged_names.push_back(to_utf8(env, name));
+            if (name != nullptr) env->DeleteLocalRef(name);
+        }
+        const auto cards = dmcresource::spider::actions::motion_strip(from_handle(handle),
+                                                                      with_library == JNI_TRUE, staged_names);
+        jclass type = env->FindClass("com/dmcrengine/nativeviewer/MotionCard");
+        if (type == nullptr) return nullptr;
+        jmethodID make = env->GetMethodID(type, "<init>",
+            "(Ljava/lang/String;IIIZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+            "[I[Ljava/lang/String;[Ljava/lang/String;)V");
+        if (make == nullptr) return nullptr;
+        jobjectArray out = env->NewObjectArray(static_cast<jsize>(cards.size()), type, nullptr);
+        if (out == nullptr) return nullptr;
+        for (std::size_t index = 0; index < cards.size(); ++index) {
+            const auto& card = cards[index];
+            std::vector<int> scripts;
+            std::vector<std::string> labels, descriptions;
+            for (const auto& button : card.scripts) {
+                scripts.push_back(button.script_index);
+                labels.push_back(button.label);
+                descriptions.push_back(button.description);
+            }
+            jobject item = env->NewObject(type, make, utf(env, card.name), static_cast<jint>(card.library_index),
+                                          static_cast<jint>(card.staged_index), static_cast<jint>(card.pack_slot),
+                                          card.separator_before ? JNI_TRUE : JNI_FALSE,
+                                          utf(env, card.separator_description), utf(env, card.kind),
+                                          utf(env, card.stem), utf(env, card.description), int_array(env, scripts),
+                                          utf_array(env, labels), utf_array(env, descriptions));
+            if (item == nullptr) return nullptr;
+            env->SetObjectArrayElement(out, static_cast<jsize>(index), item);
+            env->DeleteLocalRef(item);
+        }
+        return out;
+    } catch (...) { return nullptr; }
+}
 
 // After a new base room (spider after_new_room): {"1" keep effects or "",
 // "1" keep config or "", effect bank to look for or "", config to look for or ""}.
