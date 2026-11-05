@@ -1886,17 +1886,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_fileHealth(
     const Session* session = from_handle(handle);
     if (session == nullptr) return env->NewStringUTF("0\n");
     try {
-        // Notes added after the file opened (an assembled PAC, a texture
-        // action) are notices too.
-        auto report = session->health;
-        for (const auto& note : session->non_canonical_notes) {
-            bool listed = false;
-            for (const auto& finding : report.findings) listed = listed || finding.detail == note;
-            if (!listed) {
-                report.findings.push_back({dmcresource::file_health::Level::notice,
-                                           "Read in a way the game's data is not specified", note});
-            }
-        }
+        const auto report = dmcresource::file_health::session_report(*session);
         const auto text = std::to_string(static_cast<int>(report.worst())) + "\n" +
                           dmcresource::file_health::format(to_utf8(env, filename), report);
         return env->NewStringUTF(text.c_str());

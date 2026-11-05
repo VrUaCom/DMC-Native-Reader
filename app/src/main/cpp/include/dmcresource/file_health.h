@@ -15,6 +15,10 @@
 // - notice: small mismatches the Reader reads past (a copy suffix in the
 //   name, an extension that does not fit the contents, parts read in a way
 //   the game's data is not specified, no reader for the format).
+namespace dmcresource {
+struct Session;
+}
+
 namespace dmcresource::file_health {
 
 enum class Level : std::uint8_t { fine = 0, notice = 1, problem = 2 };
@@ -37,5 +41,9 @@ struct Report final {
 
 // The report as the Info window shows it.
 [[nodiscard]] std::string format(std::string_view name, const Report& report);
+
+// The session's report now: what was found when it opened, plus the notes
+// added after (an assembled PAC, a texture action), each a notice.
+[[nodiscard]] Report session_report(const Session& session);
 
 }  // namespace dmcresource::file_health

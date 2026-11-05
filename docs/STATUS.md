@@ -364,6 +364,15 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v149: the C API for the Apple shells (`app/src/main/cpp/capi`,
+    `dmc_reader.h`, Swift module `DMCReader`). It mirrors what the Android
+    shell asks over JNI: open (the core's open plan), children, state bits,
+    the welcome and Info text, file health, a texture's own picture, a
+    frame of the view into the caller's buffer (the CPU renderer works on
+    any machine), the settings rows and their meaning, and the animation
+    strip. `c_api_test` uses it from plain C and draws a texture and a
+    model. File health's late notes merge is the core's
+    (`file_health::session_report`), shared by JNI and the C API.
   - v148: Spider first, step 5a. The animation strip is the core's
     (`spider::actions::motion_strip`): one card per MOT (the session's
     library, then the staged ones), the Script Play buttons each really has,

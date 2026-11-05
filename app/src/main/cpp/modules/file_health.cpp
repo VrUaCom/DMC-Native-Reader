@@ -1,6 +1,8 @@
 // File health checks (file_health.h).
 #include "dmcresource/file_health.h"
 
+#include "dmcresource/resource_session.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -203,6 +205,16 @@ std::string format(std::string_view name, const Report& report) {
     } catch (...) {
     }
     return out;
+}
+
+Report session_report(const Session& session) {
+    auto report = session.health;
+    for (const auto& note : session.non_canonical_notes) {
+        bool listed = false;
+        for (const auto& finding : report.findings) listed = listed || finding.detail == note;
+        if (!listed) report.findings.push_back({Level::notice, "Read in a way the game's data is not specified", note});
+    }
+    return report;
 }
 
 }  // namespace dmcresource::file_health

@@ -338,6 +338,14 @@ set_target_properties(dmc_native_reader_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# The C API over the core (capi/include/dmc_reader.h) for shells that are
+# not Android: the Swift shells for macOS and iOS import it as DMCReader.
+add_library(dmc_reader_capi STATIC capi/dmc_reader.cpp)
+target_include_directories(dmc_reader_capi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/capi/include)
+target_link_libraries(dmc_reader_capi PUBLIC DMCNativeReader::Core)
+dmc_native_reader_require_cpp23(dmc_reader_capi PRIVATE)
+set_target_properties(dmc_reader_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Diagnostics build identity shared by platform shells only. Best-effort:
 # source archives/non-git builders fall back to "unknown" without failing.
 if(ANDROID OR WIN32)
@@ -478,4 +486,15 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
             DMC_NATIVE_READER_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../../..")
         add_test(NAME ${test_name} COMMAND ${test_name}_test)
     endforeach()
+
+    # The C API, used from C exactly as a Swift shell sees it.
+    add_executable(c_api_test ../../test/native/c_api_test.c)
+    set_target_properties(c_api_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON LINKER_LANGUAGE CXX)
+    target_link_libraries(c_api_test PRIVATE dmc_reader_capi)
+    if(MSVC)
+        target_compile_options(c_api_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(c_api_test PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME c_api COMMAND c_api_test)
 endif()
