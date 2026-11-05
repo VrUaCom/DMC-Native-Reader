@@ -1,0 +1,266 @@
+package com.dmcrengine.nativeviewer;
+
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.content.Context;
+import android.graphics.Canvas;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
+import android.media.MediaMuxer;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import android.provider.MediaStore;
+import android.view.Surface;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.Locale;
+import java.util.function.Consumer;
+
+/**
+ * Records the view's camera into an MP4 (no sound) as the core's camera plans
+ * it (size, codec, bit rate, frame rate, key frames): Movies/DMC Native
+ * Reader on Android 10+, else the app's movie folder. The frames are drawn on
+ * the main thread at the frame rate; a worker thread writes them out.
+ */
+final class ViewRecorder {
+    /** Draws one frame of the view at the given size. */
+    interface Source {
+        void drawCapture(Canvas canvas, int width, int height);
+    }
+
+
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ContentResolver resolver;
+    private final Source source;
+    private final MediaCodec codec;
+    private final Surface surface;
+    private final MediaMuxer muxer;
+    private final ParcelFileDescriptor descriptor;
+    private final Uri uri;
+    private final String where;
+    private final int width;
+    private final int height;
+    private final int frameMs;
+    private Thread drain;
+    private boolean running;
+    private volatile int samples;
+
+    private final Runnable tick = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            frame();
+            main.postDelayed(this, frameMs);
+        }
+    };
+
+    private ViewRecorder(ContentResolver resolver, Source source, MediaCodec codec, Surface surface, MediaMuxer muxer,
+                         ParcelFileDescriptor descriptor, Uri uri, String where, int width, int height, int fps) {
+        this.resolver = resolver;
+        this.source = source;
+        this.codec = codec;
+        this.surface = surface;
+        this.muxer = muxer;
+        this.descriptor = descriptor;
+        this.uri = uri;
+        this.where = where;
+        this.width = width;
+        this.height = height;
+        this.frameMs = Math.max(1, Math.round(1000.0f / Math.max(1, fps)));
+    }
+
+    /**
+     * Starts a recording as NativeBridge.cameraPlan(1, ...) says ({width, height, codec, bits per
+     * second, fps, key frame ms, ...}); throws when the device cannot.
+     */
+    static ViewRecorder start(Context context, int[] plan, Source source) throws IOException {
+        final int width = plan[0];
+        final int height = plan[1];
+        final String mime = plan[2] == 1 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
+        final MediaFormat format = MediaFormat.createVideoFormat(mime, width, height);
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, plan[3]);
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, plan[4]);
+        format.setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, plan[5] / 1000.0f);
+        // An encoder that takes this size, codec and rate, or a clear no.
+        final String encoder = new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+                .findEncoderForFormat(format);
+        if (encoder == null) {
+            throw new IOException("this phone has no " + (plan[2] == 1 ? "H.265" : "H.264") + " encoder for "
+                    + width + "\u00d7" + height + " at " + plan[4] + " fps");
+        }
+        final String name = "dmc-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                .format(new java.util.Date()) + ".mp4";
+        final ContentResolver resolver = context.getContentResolver();
+        Uri uri = null;
+        ParcelFileDescriptor descriptor = null;
+        MediaMuxer muxer;
+        String where;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            final ContentValues values = new ContentValues();
+            values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
+            values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+            values.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/DMC Native Reader");
+            values.put(MediaStore.Video.Media.IS_PENDING, 1);
+            uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new IOException("no place for the video");
+            descriptor = resolver.openFileDescriptor(uri, "rw");
+            if (descriptor == null) {
+                resolver.delete(uri, null, null);
+                throw new IOException("no place for the video");
+            }
+            muxer = new MediaMuxer(descriptor.getFileDescriptor(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            where = "Movies/DMC Native Reader/" + name;
+        } else {
+            final File dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES);
+            if (dir == null || !(dir.isDirectory() || dir.mkdirs())) throw new IOException("no place for the video");
+            final File file = new File(dir, name);
+            muxer = new MediaMuxer(file.getPath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            where = file.getPath();
+        }
+        MediaCodec codec = null;
+        try {
+            codec = MediaCodec.createByCodecName(encoder);
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            final Surface surface = codec.createInputSurface();
+            codec.start();
+            final ViewRecorder recorder = new ViewRecorder(resolver, source, codec, surface, muxer, descriptor, uri,
+                    where, width, height, plan[4]);
+            recorder.begin();
+            return recorder;
+        } catch (IOException | RuntimeException error) {
+            if (codec != null) codec.release();
+            muxer.release();
+            if (descriptor != null) descriptor.close();
+            if (uri != null) resolver.delete(uri, null, null);
+            throw error instanceof IOException ? (IOException) error : new IOException(error);
+        }
+    }
+
+    private void begin() {
+        running = true;
+        drain = new Thread(this::drainLoop, "view-recorder");
+        drain.start();
+        main.post(tick);
+    }
+
+    /** Draws the view into the next frame of the video. */
+    private void frame() {
+        try {
+            final Canvas canvas = surface.lockHardwareCanvas();
+            try {
+                canvas.drawColor(0xff000000);
+                source.drawCapture(canvas, width, height);
+            } finally {
+                surface.unlockCanvasAndPost(canvas);
+            }
+        } catch (RuntimeException ignored) {
+            // A frame the encoder could not take: the next one follows.
+        }
+    }
+
+    /** Ends the recording; done gets where it was saved, or null when nothing was written. */
+    void stop(Consumer<String> done) {
+        if (!running) return;
+        running = false;
+        main.removeCallbacks(tick);
+        try {
+            codec.signalEndOfInputStream();
+        } catch (RuntimeException ignored) {
+            // The worker below still closes the file.
+        }
+        new Thread(() -> {
+            try {
+                drain.join(5000);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            final String saved = finish();
+            main.post(() -> done.accept(saved));
+        }, "view-recorder-stop").start();
+    }
+
+    private void drainLoop() {
+        final MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        int track = -1;
+        long first = -1L;
+        long idleSince = 0L;
+        while (true) {
+            final int index;
+            try {
+                index = codec.dequeueOutputBuffer(info, 10_000);
+            } catch (RuntimeException error) {
+                return;
+            }
+            if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                // After the end was asked for, give the encoder two seconds at most.
+                if (!running) {
+                    if (idleSince == 0L) idleSince = System.currentTimeMillis();
+                    else if (System.currentTimeMillis() - idleSince > 2000L) return;
+                }
+                continue;
+            }
+            idleSince = 0L;
+            if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                if (track < 0) {
+                    track = muxer.addTrack(codec.getOutputFormat());
+                    muxer.start();
+                }
+                continue;
+            }
+            if (index < 0) continue;
+            final ByteBuffer data = codec.getOutputBuffer(index);
+            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) info.size = 0;
+            if (data != null && info.size > 0 && track >= 0) {
+                if (first < 0L) first = info.presentationTimeUs;
+                info.presentationTimeUs = Math.max(0L, info.presentationTimeUs - first);
+                data.position(info.offset);
+                data.limit(info.offset + info.size);
+                muxer.writeSampleData(track, data, info);
+                samples++;
+            }
+            codec.releaseOutputBuffer(index, false);
+            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return;
+        }
+    }
+
+    private String finish() {
+        boolean written = samples > 0;
+        try {
+            codec.stop();
+        } catch (RuntimeException ignored) {
+            // Already stopped by an error.
+        }
+        codec.release();
+        surface.release();
+        try {
+            if (written) muxer.stop();
+        } catch (RuntimeException error) {
+            written = false;
+        }
+        muxer.release();
+        try {
+            if (descriptor != null) descriptor.close();
+        } catch (IOException ignored) {
+            // The file is complete; only the handle failed to close.
+        }
+        if (uri != null) {
+            if (written) {
+                final ContentValues values = new ContentValues();
+                values.put(MediaStore.Video.Media.IS_PENDING, 0);
+                resolver.update(uri, values, null, null);
+            } else {
+                resolver.delete(uri, null, null);
+            }
+        } else if (!written) {
+            new File(where).delete();
+        }
+        return written ? where : null;
+    }
+}

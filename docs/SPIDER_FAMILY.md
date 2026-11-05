@@ -1,6 +1,6 @@
 # Spider Family — Native Reader architecture
 
-Last updated: 2026-09-10.
+Last updated: 2026-10-21.
 
 Status: canonical responsibility/naming contract for Native Reader 1.x. Spider names describe orchestration roles; they do **not** replace parsers, codecs or direct numerical C++.
 
@@ -52,6 +52,71 @@ Candidate uses:
 - tooling automation where direct handwritten orchestration becomes repetitive.
 
 Tarantula is **not required** for the accepted Native Reader v24 path and must not be inserted into hot inner loops or simple direct operations merely for symmetry.
+
+### First Tarantula workflow: texture format change
+
+DMC Rengine (branch `claude/devil-microy3-decompile-port-2v8pne`, merged with
+`experiment/spider-python-migration`) runs `texture-reencode` as a Tarantula
+workflow and offers an in-memory entry for viewers:
+`spider::tarantula::run_texture_reencode(bytes, request)`.
+
+- **Steps:** acquire → inspect → transform[slot] → assemble → validate →
+  publish.
+- **Replaces:** a scratch Python + etcpak prototype.
+
+The Reader's "Texture format" action is the product counterpart:
+
+- a Crusader plan (select source → re-encode → open result → verify) over
+  the copied `texture_reencode` module;
+- Black Widow flags `CanReencodeTextures` and `CanSaveSource` for the menu.
+
+The output is byte-identical to the Rengine workflow. When the vendored
+Rengine includes the workflow, the action's re-encode step should call it
+and drop the copied modules.
+
+### Plan builder and typed operations
+
+`spider/plan_builder.h` mirrors DMC Rengine `spider/plan_builder.hpp`
+(branch `experiment/spider-python-migration`).
+
+- **Plans:** built from named nodes; dependencies can only point to earlier
+  nodes.
+- **Bad graph:** fails closed with `invalid_plan` before any operation runs.
+- **Labels:** turn an `ExecutionReport` into the step that stopped.
+- **Typed operations:** `spider::cpp23::bind<State, &fn>` adapts
+  `bool fn(State&, operand) noexcept` to the Crusader ABI with plain
+  function pointers.
+
+The texture re-encode action is the first user. Its failures read
+`"<step> failed: <reason>"`. A session opened from a PAC slot carries its
+container natively (`Session::container_source`, Black Widow
+`ReencodeRebuildsContainer`), so the shell passes no container or child
+index.
+
+### Stage configuration, long press, sound and export actions
+
+`spider/stage_actions.h` holds the product actions of the stage
+configuration over a stage, the view's long press, sounds and PNG export.
+
+- **Black Widow** publishes `CanLoadStageConfig`, `StageConfigLoaded`,
+  `StageMarkersShown` and `CanPlaySound`; the shell enables and toggles its
+  tools from these bits only.
+- **Load** is a Crusader plan: read members -> publish (markers placed in
+  stage space by `stage_markers`).
+- **Every action returns a typed outcome**: `ok`, the one platform step left
+  to the shell (`PickStageConfig`, `ShowMarkerCard`, `StartScrub`,
+  `OpenSession`), the line to show, written by the core, and the marker or
+  opened session. Menus and the marker card come as typed rows and buttons
+  with ids the shell sends back.
+- **Long press** policy lives in `hold_view`: a stage-config marker first,
+  then the joint, then scrubbing; the shell passes only the user's gesture
+  settings.
+- **Export**: `export_image_size` / `render_export_image` choose the picture
+  (a UV map at its texture's resolution, anything else its preview).
+- **Platform steps only** stay in Android: the SAF picker, the descriptor,
+  the `AudioTrack` that plays the PCM the core decoded, the dialog that
+  shows the rows. Java records `ActionOutcome`, `NativeMenu`, `MarkerCard`
+  and `SoundPcm` are passive.
 
 ## Hot-path rule
 

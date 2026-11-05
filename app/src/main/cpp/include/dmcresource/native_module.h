@@ -60,6 +60,7 @@ public:
 [[nodiscard]] NativeModule mod_module() noexcept;
 [[nodiscard]] NativeModule texture_module(Format format) noexcept;
 [[nodiscard]] NativeModule evt_module() noexcept;
+[[nodiscard]] NativeModule hits_module() noexcept;
 [[nodiscard]] NativeModule pac_module() noexcept;
 [[nodiscard]] NativeModule mot_module() noexcept;
 [[nodiscard]] NativeModule pnst_module() noexcept;
@@ -71,5 +72,12 @@ public:
 [[nodiscard]] NativeModule colshape_module() noexcept;
 [[nodiscard]] NativeModule colindex_module() noexcept;
 [[nodiscard]] NativeModule effect_bank_module() noexcept;
+[[nodiscard]] NativeModule font_module() noexcept;
+// POS, EVE, CAM, ITM, STE, EST, SEF: one module each, one implementation.
+[[nodiscard]] std::vector<NativeModule> stage_config_modules() noexcept;
+// LIG2, DCA, stage text, .index, SO graph, dbsT, ff&A, HID, SPUMAPDT, VAG.
+[[nodiscard]] std::vector<NativeModule> family_modules() noexcept;
+// Cutscenes: the archive, its cameras (.cam) and its clip texts.
+[[nodiscard]] std::vector<NativeModule> demo_modules() noexcept;
 
 }  // namespace dmcresource

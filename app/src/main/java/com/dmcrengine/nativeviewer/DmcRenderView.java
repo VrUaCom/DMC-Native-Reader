@@ -8,6 +8,8 @@ import android.graphics.RectF;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
@@ -21,6 +23,7 @@ public final class DmcRenderView extends View {
     private static final int RENDER_SHADOWS = 1 << 6;
     private static final int RENDER_COLLISION = 1 << 7;
     private static final int RENDER_ROOM = 1 << 8;
+    private static final int RENDER_ROOM_COLLISION = 1 << 14;
     private static final int RENDER_PREVIEW = 1 << 13;
     // Fast preview: while a finger moves, the view spins or a motion plays,
     // frames render at half size with nearest texels; 150 ms after the last
@@ -46,26 +49,53 @@ public final class DmcRenderView extends View {
     public static final int G_BONE = 1 << 9;       // long press: joint under the finger
     public static final int G_SCREENSHOT = 1 << 10; // three-finger tap: save a PNG
     public static final int G_FOLLOW = 1 << 11;    // four-finger tap: camera follows / stays
-    public static final int G_ALL = (1 << 12) - 1;
+    public static final int G_DOLLY = 1 << 12;     // hold one finger, slide another up / down: move the camera
+    public static final int G_CLOSE_PAN = 1 << 13; // two fingers held together, dragged: move the camera in space
+    public static final int G_TURN = 1 << 14;      // hold one finger, twist two others: turn the camera round
+    public static final int G_ALL = (1 << 15) - 1;
 
     /** What the gestures ask of the activity. */
     public interface GestureListener {
         void onStepMotion(int direction);
         void onStepVariant(int direction);
         void onToggleUi();
-        void onScreenshot(Bitmap image);
+        /** The three-finger tap: a picture, as the camera settings say. */
+        void onTakePicture();
+        /** Camera mode: a camera setting one option up or down (three fingers up / down: the exposure). */
+        void onCameraStep(String settingId, int step);
+        /** Camera mode: the two-finger tap levels the camera. */
+        void onCameraLevel();
+        /** A gesture took a cutscene's camera (its cuts stopped driving the view). */
+        void onCameraTaken();
         void onGestureNotice(String text);
+        /** A native action answered a gesture (a held marker's card, ...). */
+        void onActionOutcome(ActionOutcome outcome);
     }
 
     private GestureListener gestureListener;
     private int gestures = G_ALL;
     private float panX;
     private float panY;
+    // Camera dolly, a fraction of the framing distance (native clamps it).
+    private float dolly;
+    private float dollyBase;      // framing distance in model units (native)
+    private float dollyLimit = 0.9f;
+    private boolean dollyStage;   // a stage scene: no target, the camera just moves
     private float roomYaw;
     private boolean follow;
 
     // Touch state.
     private static final int EDGE_NONE = 0, EDGE_LEFT = 1, EDGE_RIGHT = 2, EDGE_TOP = 3;
+    // Camera mode: the right edge is the focus ring.
+    private static final int EDGE_FOCUS = 4;
+    // Camera mode's own gestures (read when a touch starts): three fingers
+    // roll the camera or step the exposure, a two-finger tap levels it.
+    private boolean cameraGestures;
+    private static final int CAMERA_TRIPLE_UNDECIDED = 0, CAMERA_TRIPLE_ROLL = 1, CAMERA_TRIPLE_EV = 2;
+    private int cameraTriple;
+    private boolean cameraTripleUsed;
+    private float cameraTripleAngle, cameraTripleStartAngle, cameraTripleY, cameraTripleEvY;
+    private float cameraPairX, cameraPairY;
     private static final float EDGE_DP = 48.0f;
     private int edgeStart = EDGE_NONE;
     private int maxPointers;
@@ -77,6 +107,70 @@ public final class DmcRenderView extends View {
     private boolean multiShiftTaken;
     private float twistAngle;
     private int multiCount;
+    // Two fingers: undecided until one moves; then the usual pinch / pan /
+    // twist, or a dolly (one finger holds, the other slides up / down).
+    // Fingers held together (closer than CLOSE_PAIR_MM) that move as one
+    // move the camera in space instead of zooming.
+    private static final int MULTI_UNDECIDED = 0, MULTI_NORMAL = 1, MULTI_DOLLY = 2, MULTI_CLOSE_PAN = 3;
+    private static final float CLOSE_PAIR_MM = 24.0f;
+    private boolean pairStartedClose;
+    // Three fingers: one holds, the other two twist round it -> the camera
+    // turns round the model / the centre (TURN); decided once they move.
+    private static final int TRIPLE_UNDECIDED = 0, TRIPLE_NORMAL = 1, TRIPLE_TURN = 2;
+    private int tripleMode = TRIPLE_NORMAL;
+    private final int[] tripleIds = new int[3];
+    private final float[] tripleStartX = new float[3], tripleStartY = new float[3];
+    private int turnHoldId = MotionEvent.INVALID_POINTER_ID, turnIdA, turnIdB;
+    private float turnAngle, turnTotal;
+    private boolean turnUsed;
+
+    // Fly camera (stages, collision views): the camera stands at its own eye;
+    // a joystick appears under each finger — left half: move (forward / back,
+    // sideways), right half: look (turn, tilt). Flying forward follows the
+    // view, so looking up and pushing forward climbs.
+    private boolean flyMode;
+    // Fly without the sticks is the free camera of camera mode: it stands
+    // at its own eye and the usual gestures turn it where it stands (no
+    // orbit point), pinch zooms, the gyroscope and walking move it.
+    private boolean sticks = true;
+    private final int[] stickId = {MotionEvent.INVALID_POINTER_ID, MotionEvent.INVALID_POINTER_ID};
+    private final float[] stickBaseX = new float[2], stickBaseY = new float[2];
+    private final float[] stickX = new float[2], stickY = new float[2];
+    private long flyLastMs;
+    private final Runnable flyTick = new Runnable() {
+        @Override public void run() {
+            if (!flyMode || (stickId[0] == MotionEvent.INVALID_POINTER_ID
+                    && stickId[1] == MotionEvent.INVALID_POINTER_ID)) {
+                return;
+            }
+            final long now = SystemClock.uptimeMillis();
+            final float dt = Math.max(0.0f, (now - flyLastMs) / 1000.0f);
+            flyLastMs = now;
+            // The core turns the finger offsets into motion (dead zone,
+            // response, boost zones past the ring) and moves its eye.
+            final boolean moveHeld = stickId[0] != MotionEvent.INVALID_POINTER_ID;
+            final boolean lookHeld = stickId[1] != MotionEvent.INVALID_POINTER_ID;
+            final float[] step = NativeBridge.flyTick(session, yaw, pitch,
+                    moveHeld, stickX[0] - stickBaseX[0], stickY[0] - stickBaseY[0],
+                    lookHeld, stickX[1] - stickBaseX[1], stickY[1] - stickBaseY[1],
+                    getResources().getDisplayMetrics().density, dt);
+            if (step != null && step.length >= 4) {
+                final boolean changed = step[0] != yaw || step[1] != pitch || moveHeld;
+                yaw = step[0];
+                pitch = step[1];
+                if (changed) renderThrottled(false);
+            }
+            postOnAnimation(this);
+        }
+    };
+    private int multiMode = MULTI_NORMAL;
+    private int holdId = MotionEvent.INVALID_POINTER_ID, dragId = MotionEvent.INVALID_POINTER_ID;
+    private float pairStartX0, pairStartY0, pairStartX1, pairStartY1;
+    private int pairId0, pairId1;
+    private float zoomAtPair;
+    private float touchZoom = 1.0f;  // the zoom when the touch began
+    private float dragLastY;
+    private final GestureHud hud;
     private boolean scrubbing;
     private boolean scrubWasPlaying;
     private float scrubFrame;
@@ -109,6 +203,8 @@ public final class DmcRenderView extends View {
     private final ScaleGestureDetector scaleDetector;
     private final GestureDetector tapDetector;
     private Bitmap bitmap;
+    // The last frame went straight to the window under this view (the GPU).
+    private boolean directShown;
     private long session;
     // DMC3 models face +Z while the camera looks along +Z, so yaw 0 shows the
     // back. Start from a front three-quarter view.
@@ -120,6 +216,7 @@ public final class DmcRenderView extends View {
     // The chosen room (Settings): kept across sessions; native skips it for
     // stages (SCM / archives holding SCM) and in wireframe / UV views.
     private boolean roomVisible;
+    private boolean roomCollisionVisible;
     private boolean hierarchyAvailable;
     private boolean staticImagePreview;
     private float lastX;
@@ -133,6 +230,25 @@ public final class DmcRenderView extends View {
     // Viewer settings (SettingsDialog): render size, motion frame interval
     // and speed, quality flags (native RenderFlag bits 9-12), shadows at open.
     private int maxRenderSide = 720;
+    // Line widths the user chose (Settings), in pixels of a 720-pixel frame;
+    // the frame's real size scales them so they look the same at 8K.
+    private int meshLineUnits = 1;
+    private int collisionLineUnits = 1;
+    private boolean softwareLayer;
+    private static final int RENDER_ROOM_ANIMATE = 1 << 15;
+    // Redraw about 15 times a second while a room with scrolling textures shows.
+    private final Runnable roomTick = new Runnable() {
+        @Override public void run() {
+            if ((settingsFlags & RENDER_ROOM_ANIMATE) == 0 || session == 0 || staticImagePreview) return;
+            if (!touching && !motionPlaying && spinYaw == 0.0f && spinPitch == 0.0f
+                    && (renderFlags & RENDER_UV_LAYOUT) == 0 && NativeBridge.roomAnimated(session)) {
+                renderNow();
+            }
+            postDelayed(this, 66);
+        }
+    };
+    private java.util.function.IntConsumer resolutionListener;
+    static final int[] RESOLUTION_STEPS = {7680, 6144, 5120, 3840, 2048, 1024, 720, 540, 360};
     private long motionMinFrameMs = 33;
     private float motionSpeed = 1.0f;
     private int settingsFlags;
@@ -145,25 +261,66 @@ public final class DmcRenderView extends View {
         @Override public void run() {
             if (!motionPlaying || session == 0) return;
             final long now = SystemClock.uptimeMillis();
+            // A motion that plays once (a cutscene: its loop starts at its
+            // end) stops on its last frame.
+            final boolean once = motionEndFrame > 0.0f && motionLoopStartFrame >= motionEndFrame;
+            if (once && rawMotionFrame(now) >= motionEndFrame) {
+                lastMotionFrame = motionEndFrame;
+                requestFrame(lastMotionFrame);
+                pauseMotion();
+                return;
+            }
             if (now - lastRequestMs >= motionMinFrameMs) {
                 lastMotionFrame = currentMotionFrame(now);
                 requestFrame(lastMotionFrame);  // posed on the render thread
+                vibrate(NativeBridge.demoVibration(session, lastMotionFrame), now);
             }
             postOnAnimation(this);
         }
     };
+    private long lastVibrateMs;
+    /** A short pulse at the core's strength (a cutscene's PadVibe), renewed while it lasts. */
+    private void vibrate(int amplitude, long now) {
+        if (amplitude <= 0 || now - lastVibrateMs < 60) return;
+        final Vibrator vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        lastVibrateMs = now;
+        vibrator.vibrate(VibrationEffect.createOneShot(80, Math.max(1, Math.min(255, amplitude))));
+    }
+    /** A cutscene's sound, streamed while its timeline plays. */
+    private final CutsceneAudio cutsceneAudio = new CutsceneAudio();
 
     public DmcRenderView(Context context) {
         super(context);
         setBackgroundColor(0xff121216);
+        hud = new GestureHud(getResources().getDisplayMetrics().density,
+                getResources().getDisplayMetrics().scaledDensity);
         scaleDetector = new ScaleGestureDetector(context,
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     @Override public boolean onScale(ScaleGestureDetector detector) {
-                        if (staticImagePreview) return false;
-                        zoom *= detector.getScaleFactor();
-                        zoom = Math.max(0.15f, Math.min(8.0f, zoom));
+                        if (staticImagePreview || (flyMode && sticks) || multiMode == MULTI_DOLLY
+                                || multiMode == MULTI_CLOSE_PAN || tripleMode == TRIPLE_TURN) {
+                            return false;
+                        }
+                        claimCamera();
+                        final float next = Math.max(GestureHud.ZOOM_MIN,
+                                Math.min(GestureHud.ZOOM_MAX, zoom * detector.getScaleFactor()));
+                        // The core keeps zoom, dolly and turn apart: once one
+                        // owns the touch the others wait for every finger to lift.
+                        final boolean settling = multiMode == MULTI_UNDECIDED || tripleMode == TRIPLE_UNDECIDED;
+                        if (!NativeBridge.zoomStep(touchZoom, next, settling)) return false;
+                        zoom = next;
+                        if (multiMode != MULTI_UNDECIDED) {
+                            hud.showZoom(zoom, detector.getFocusX(), detector.getFocusY(), getWidth(), getHeight());
+                            invalidate();
+                        }
                         renderThrottled(false);
                         return true;
+                    }
+
+                    @Override public void onScaleEnd(ScaleGestureDetector detector) {
+                        hud.release();
+                        invalidate();
                     }
                 });
         tapDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
@@ -188,6 +345,16 @@ public final class DmcRenderView extends View {
             }
 
             @Override public boolean onDoubleTap(MotionEvent e) {
+                if (cameraGestures && singleFingerGesture()) {
+                    // Camera mode: focus there.
+                    final float sx = (float) renderWidth() / Math.max(1, getWidth());
+                    final float sy = (float) renderHeight() / Math.max(1, getHeight());
+                    notice(NativeBridge.cameraFocusAt(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
+                            renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly, e.getX() * sx, e.getY() * sy));
+                    performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK);
+                    renderNow();
+                    return true;
+                }
                 if (!singleFingerGesture() || !enabled(G_DOUBLE_TAP)) return false;
                 final String hit = (renderFlags & RENDER_ROOM) != 0 ? pick(e.getX(), e.getY(), true) : "";
                 if (hit.startsWith("placed")) {
@@ -196,6 +363,7 @@ public final class DmcRenderView extends View {
                 } else {
                     panX = 0.0f;
                     panY = 0.0f;
+                    dolly = 0.0f;
                     resetView();
                     notice("View reset");
                 }
@@ -204,22 +372,30 @@ public final class DmcRenderView extends View {
 
             @Override public void onLongPress(MotionEvent e) {
                 if (!singleFingerGesture()) return;
-                String text = "";
-                if (enabled(G_BONE)) {
-                    final String hit = pick(e.getX(), e.getY(), false);
-                    final int bar = hit.indexOf('|');
-                    if (bar >= 0 && bar + 1 < hit.length()) text = "\ud83e\uddb4 " + hit.substring(bar + 1);
+                if (cameraGestures) {
+                    // Camera mode: lock the focus where it is, or let it go.
+                    notice(NativeBridge.cameraFocusLock());
+                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                    renderNow();
+                    return;
                 }
-                if (enabled(G_SCRUB) && session != 0 && NativeBridge.hasMotion(session)) {
+                // The core decides what the press means (a stage-config
+                // marker, then the joint, then scrubbing) and writes the line.
+                final ActionOutcome outcome = hold(e.getX(), e.getY());
+                if (outcome == null) return;
+                if (outcome.step == ActionOutcome.STEP_START_SCRUB) {
                     scrubbing = true;
                     scrubWasPlaying = motionPlaying;
                     pauseMotion();
                     scrubFrame = lastMotionFrame;
-                    text = text.isEmpty() ? "Scrub: drag sideways" : text + " \u00b7 drag to scrub";
                 }
-                if (!text.isEmpty()) {
-                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                    notice(text);
+                if (outcome.step == ActionOutcome.STEP_NONE && outcome.message.isEmpty()) return;
+                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                if (outcome.step == ActionOutcome.STEP_SHOW_MARKER_CARD) {
+                    if (!staticImagePreview) renderNow();
+                    if (gestureListener != null) gestureListener.onActionOutcome(outcome);
+                } else if (!outcome.message.isEmpty()) {
+                    notice(outcome.message);
                 }
             }
         });
@@ -255,12 +431,21 @@ public final class DmcRenderView extends View {
     }
 
     /** What is under a view pixel ("model|joint", "room|…", "placed|…", "none|…"). */
+    private ActionOutcome hold(float viewX, float viewY) {
+        if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return null;
+        final int rw = renderWidth();
+        final int rh = renderHeight();
+        return NativeBridge.holdView(session, rw, rh, yaw, pitch, zoom,
+                renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly,
+                viewX * rw / getWidth(), viewY * rh / getHeight(), enabled(G_BONE), enabled(G_SCRUB));
+    }
+
     private String pick(float viewX, float viewY, boolean place) {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return "none|";
         final int rw = renderWidth();
         final int rh = renderHeight();
         final String hit = NativeBridge.pickView(session, rw, rh, yaw, pitch, zoom,
-                renderFlags | settingsFlags, panX, panY, roomYaw, follow,
+                renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly,
                 viewX * rw / getWidth(), viewY * rh / getHeight(), place);
         return hit == null ? "none|" : hit;
     }
@@ -272,22 +457,79 @@ public final class DmcRenderView extends View {
         motionLoopStartFrame = NativeBridge.motionLoopStartFrame(session);
         motionStartMs = SystemClock.uptimeMillis()
                 - Math.round(Math.max(0.0f, frame) * 1000.0f / (MOTION_FRAMES_PER_SECOND * motionSpeed));
+        cutsceneAudio.play(session, Math.max(0.0f, frame), motionSpeed);
         if (!motionPlaying) {
             motionPlaying = true;
             postOnAnimation(motionTick);
         }
     }
 
-    /** The picture on screen, for a screenshot. */
-    public Bitmap snapshot() {
+    /** The size the view's frames are rendered at: what the camera's sizes start from. */
+    public int[] captureViewSize() {
+        return new int[]{renderWidth(), renderHeight()};
+    }
+
+    /** What a picture is taken of, read on the UI thread; rendered later on a worker. */
+    public static final class CaptureState {
+        long session;
+        int viewWidth, viewHeight;
+        float yaw, pitch, zoom, panX, panY, roomYaw, dolly;
+        boolean follow;
+        int flags;
+        // The motion playing when the shutter was pressed (NaN, 0: still):
+        // a slow shutter blurs it.
+        float motionFrame = Float.NaN;
+        float motionFps;
+        String subtitle;
+        float[] subtitleStyle;
+        Bitmap still;  // a still image is copied as it is
+    }
+
+    /** The view's camera now, for a picture of plan's size (NativeBridge.cameraPlan(0, ...)). */
+    public CaptureState captureState(int[] plan) {
+        final CaptureState state = new CaptureState();
         if (session == 0 || staticImagePreview) {
-            return bitmap == null || bitmap.isRecycled() ? null : bitmap.copy(Bitmap.Config.ARGB_8888, false);
+            state.still = bitmap == null || bitmap.isRecycled() ? null : bitmap.copy(Bitmap.Config.ARGB_8888, false);
+            return state;
         }
-        // A full-quality frame for the picture, rendered right here.
+        state.session = session;
+        state.viewWidth = renderWidth();
+        state.viewHeight = renderHeight();
+        state.yaw = yaw;
+        state.pitch = pitch;
+        state.zoom = zoom;
+        state.panX = panX;
+        state.panY = panY;
+        state.roomYaw = roomYaw;
+        state.dolly = dolly;
+        state.follow = follow;
+        state.flags = renderFlags | settingsFlags | lineFlags(plan[0], plan[1]);
+        if (motionPlaying) {
+            state.motionFrame = currentMotionFrame(SystemClock.uptimeMillis());
+            if (motionEndFrame > 0.0f && motionLoopStartFrame >= motionEndFrame) {
+                state.motionFrame = Math.min(state.motionFrame, motionEndFrame);
+            }
+            state.motionFps = MOTION_FRAMES_PER_SECOND * motionSpeed;
+        }
+        state.subtitle = subtitle;
+        state.subtitleStyle = subtitleStyle;
+        return state;
+    }
+
+    /**
+     * A picture as the core's camera plans it: the view's camera without the interface, framed
+     * for the picture's shape and developed with the camera settings (in tiles past one render).
+     * Safe off the UI thread; null when it could not be made (memory).
+     */
+    public static Bitmap renderPhoto(CaptureState state, int[] plan) {
+        if (state.still != null) return state.still;
+        if (state.session == 0 || plan == null || plan.length < 10) return null;
         try {
-            final Bitmap image = Bitmap.createBitmap(renderWidth(), renderHeight(), Bitmap.Config.ARGB_8888);
-            if (NativeBridge.renderEx(session, image.getWidth(), image.getHeight(), yaw, pitch, zoom,
-                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, image)) {
+            final Bitmap image = Bitmap.createBitmap(plan[0], plan[1], Bitmap.Config.ARGB_8888);
+            if (NativeBridge.renderCapture(state.session, 0, state.viewWidth, state.viewHeight, state.yaw,
+                    state.pitch, state.zoom, state.flags, state.panX, state.panY, state.roomYaw, state.follow,
+                    state.dolly, state.motionFrame, state.motionFps, image)) {
+                if (plan[9] != 0) drawSubtitleOn(new Canvas(image), image.getWidth(), image.getHeight(), state);
                 return image;
             }
             image.recycle();
@@ -295,6 +537,44 @@ public final class DmcRenderView extends View {
             return null;
         }
         return null;
+    }
+
+    /**
+     * A RAW picture (DNG) into the open file fd; developed, when given (plan's size), gets the
+     * developed picture as well (RAW + JPEG).
+     */
+    public static boolean writeRaw(CaptureState state, int fd, Bitmap developed, boolean subtitles) {
+        if (state.session == 0) return false;
+        final boolean ok = NativeBridge.writeCaptureDng(state.session, state.viewWidth, state.viewHeight, state.yaw,
+                state.pitch, state.zoom, state.flags, state.panX, state.panY, state.roomYaw, state.follow,
+                state.dolly, state.motionFrame, state.motionFps, fd, developed);
+        if (ok && developed != null && subtitles && state.subtitle != null) {
+            drawSubtitleOn(new Canvas(developed), developed.getWidth(), developed.getHeight(), state);
+        }
+        return ok;
+    }
+
+    private static void drawSubtitleOn(Canvas canvas, int width, int height, CaptureState state) {
+        drawSubtitleText(canvas, width, height, state.subtitle, state.subtitleStyle,
+                new Paint(Paint.ANTI_ALIAS_FLAG));
+    }
+
+    /**
+     * Frames at the video's size while it records (0 x 0 stops): the render thread draws them
+     * through the core camera, the view shows them in the viewfinder's frame.
+     */
+    public void setRecording(int width, int height, boolean subtitles) {
+        videoWidth = Math.max(0, width);
+        videoHeight = Math.max(0, height);
+        videoSubtitles = subtitles;
+        recordedSeconds = 0;
+        renderNow();
+    }
+
+    /** The recording's clock for the viewfinder. */
+    public void setRecordedSeconds(int seconds) {
+        recordedSeconds = seconds;
+        renderNow();
     }
 
     private boolean canUseStaticImagePreview() {
@@ -362,17 +642,22 @@ public final class DmcRenderView extends View {
 
     /** Applies the viewer settings; a playing motion keeps its frame. */
     public void applySettings(int maxSide, long frameMs, float speed, int flags, boolean shadows,
-                              boolean preview) {
+                              boolean preview, int meshLine, int collisionLine) {
+        meshLineUnits = Math.max(1, Math.min(16, meshLine));
+        collisionLineUnits = Math.max(1, Math.min(16, collisionLine));
         fastPreview = preview;
         final long now = SystemClock.uptimeMillis();
         if (motionPlaying && speed > 0.0f && speed != motionSpeed) {
             final float frame = rawMotionFrame(now);
             motionStartMs = now - Math.round(frame * 1000.0f / (MOTION_FRAMES_PER_SECOND * speed));
+            cutsceneAudio.play(session, frame, speed);
         }
-        maxRenderSide = Math.max(128, Math.min(1024, maxSide));
+        maxRenderSide = Math.max(128, Math.min(7680, maxSide));
         motionMinFrameMs = Math.max(8, frameMs);
         motionSpeed = speed > 0.0f ? speed : 1.0f;
         settingsFlags = flags;
+        removeCallbacks(roomTick);
+        if ((flags & RENDER_ROOM_ANIMATE) != 0) postDelayed(roomTick, 66);
         shadowsAtOpen = shadows;
         if (!staticImagePreview) renderNow();
     }
@@ -392,6 +677,7 @@ public final class DmcRenderView extends View {
         motionLoopStartFrame = NativeBridge.motionLoopStartFrame(session);
         motionStartMs = SystemClock.uptimeMillis();
         lastMotionFrame = 0.0f;
+        cutsceneAudio.play(session, 0.0f, motionSpeed);
         if (!motionPlaying) {
             motionPlaying = true;
             postOnAnimation(motionTick);
@@ -403,6 +689,7 @@ public final class DmcRenderView extends View {
     public void pauseMotion() {
         final boolean was = motionPlaying;
         motionPlaying = false;
+        cutsceneAudio.stop();
         removeCallbacks(motionTick);
         if (was) {
             removeCallbacks(fullFrame);
@@ -414,18 +701,28 @@ public final class DmcRenderView extends View {
         return motionPlaying;
     }
 
+    /** The frame the motion (or cutscene) stands at. */
+    public float motionFrame() {
+        return lastMotionFrame;
+    }
+
     public void setSession(long newSession) {
         pauseMotion();
+        if (flyMode) leaveFly();
+        NativeBridge.resetCamera();
         ++generation;
         synchronized (renderLock) {
             pendingRequest = null;
         }
         session = newSession;
         // Shadows start on; native ignores the flag when no SHW is bound.
-        renderFlags = (shadowsAtOpen ? RENDER_SHADOWS : 0) | (roomVisible ? RENDER_ROOM : 0);
+        renderFlags = (shadowsAtOpen ? RENDER_SHADOWS : 0) |
+                (roomVisible ? RENDER_ROOM : 0) |
+                (roomCollisionVisible ? RENDER_ROOM_COLLISION : 0);
         hierarchyAvailable = false;
         staticImagePreview = false;
         releaseBitmap();
+        setDirectShown(false);
         invalidate();
         if (session == 0) return;
         if (BlackWidowState.fromNative(NativeBridge.blackWidowState(session)).uvMapView) {
@@ -472,12 +769,185 @@ public final class DmcRenderView extends View {
         loadStaticImagePreview();
     }
 
-    public void resetView() {
-        yaw = DEFAULT_YAW;
-        pitch = -0.45f;
-        zoom = 1.0f;
+    // ---- Fly camera ----------------------------------------------------------
+
+    /** Flying with the sticks (the drone), not the free camera. */
+    public boolean isDroneFlying() {
+        return flyMode && sticks;
+    }
+
+    public boolean isFlyMode() {
+        return flyMode;
+    }
+
+    /**
+     * Switches between the orbit camera and the fly camera. The fly camera starts where the orbit
+     * camera stands, looking the same way, so the picture does not jump; back in orbit the camera
+     * frames the model / stage again from the direction it last looked.
+     */
+    public boolean setFlyMode(boolean on) {
+        return setFlyMode(on, true);
+    }
+
+    /**
+     * The camera at its own eye (on) or orbiting again (off); with sticks it is the drone, without
+     * them the free camera of camera mode. Already flying, only the sticks change.
+     */
+    public boolean setFlyMode(boolean on, boolean withSticks) {
+        if (on && flyMode) {
+            if (sticks != withSticks) {
+                for (int side = 0; side < 2; ++side) releaseStick(side);
+                removeCallbacks(flyTick);
+                sticks = withSticks;
+                hud.reset();
+                renderNow();
+            }
+            return true;
+        }
+        if (on == flyMode) return true;
+        if (on) {
+            if (session == 0 || staticImagePreview || isUvLayoutVisible()) return false;
+            claimCamera();
+            // The core puts the fly eye where the orbit camera stands.
+            if (!NativeBridge.enterFly(session, renderWidth(), renderHeight(), yaw, pitch, zoom,
+                    renderFlags | settingsFlags, panX, panY, roomYaw, follow, dolly)) {
+                return false;
+            }
+            // The eye already stands where the pan and dolly put the camera.
+            panX = 0.0f;
+            panY = 0.0f;
+            dolly = 0.0f;
+            removeCallbacks(spinTick);
+            spinYaw = 0.0f;
+            spinPitch = 0.0f;
+            endDolly();
+            hud.reset();
+            flyMode = true;
+            sticks = withSticks;
+        } else {
+            leaveFly();
+        }
+        renderNow();
+        return true;
+    }
+
+    /** Back to orbit: the core leaves the orbit turning round where the flight looked, and says the pose. */
+    private void leaveFly() {
+        flyMode = false;
+        final float[] pose = NativeBridge.leaveFly(session, yaw, pitch);
+        if (pose != null && pose.length >= 5) {
+            yaw = pose[0];
+            pitch = pose[1];
+            panX = pose[2];
+            panY = pose[3];
+            dolly = pose[4];
+        }
+        for (int side = 0; side < 2; ++side) releaseStick(side);
+        removeCallbacks(flyTick);
+        touching = false;
+    }
+
+    /**
+     * A camera gesture on a cutscene whose cuts drive the view: the core
+     * hands the shot's camera over and the gesture continues from it (the
+     * free camera stands at the shot's eye). Nothing happens otherwise.
+     */
+    private void claimCamera() {
+        if (session == 0) return;
+        final float[] view = NativeBridge.demoTakeCamera(session);
+        if (view == null || view.length < 3) return;
+        yaw = view[0];
+        pitch = view[1];
+        zoom = Math.max(GestureHud.ZOOM_MIN, Math.min(GestureHud.ZOOM_MAX, view[2]));
+        touchZoom = zoom;
         panX = 0.0f;
         panY = 0.0f;
+        dolly = 0.0f;
+        if (gestureListener != null) post(gestureListener::onCameraTaken);
+    }
+
+    /** Only the stick is shown: the core puts the knob on the finger, or on the ring past it. */
+    private void showStick(int side) {
+        final float[] knob = NativeBridge.stickKnob(stickX[side] - stickBaseX[side],
+                stickY[side] - stickBaseY[side], getResources().getDisplayMetrics().density);
+        final float kx = knob != null && knob.length >= 2 ? knob[0] : 0.0f;
+        final float ky = knob != null && knob.length >= 2 ? knob[1] : 0.0f;
+        hud.showStick(side, stickBaseX[side], stickBaseY[side], stickBaseX[side] + kx, stickBaseY[side] + ky);
+    }
+
+    private void releaseStick(int side) {
+        stickId[side] = MotionEvent.INVALID_POINTER_ID;
+        hud.releaseStick(side);
+    }
+
+    private boolean onFlyTouch(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                final int index = event.getActionIndex();
+                final float x = event.getX(index), y = event.getY(index);
+                final int side = x < getWidth() * 0.5f ? 0 : 1;
+                if (stickId[side] == MotionEvent.INVALID_POINTER_ID) {
+                    final boolean first = stickId[0] == MotionEvent.INVALID_POINTER_ID
+                            && stickId[1] == MotionEvent.INVALID_POINTER_ID;
+                    stickId[side] = event.getPointerId(index);
+                    stickBaseX[side] = stickX[side] = x;
+                    stickBaseY[side] = stickY[side] = y;
+                    showStick(side);
+                    touching = true;
+                    if (first) {
+                        flyLastMs = SystemClock.uptimeMillis();
+                        postOnAnimation(flyTick);
+                    }
+                }
+                break;
+            }
+            case MotionEvent.ACTION_MOVE:
+                for (int side = 0; side < 2; ++side) {
+                    if (stickId[side] == MotionEvent.INVALID_POINTER_ID) continue;
+                    final int index = event.findPointerIndex(stickId[side]);
+                    if (index < 0) continue;
+                    stickX[side] = event.getX(index);
+                    stickY[side] = event.getY(index);
+                    showStick(side);
+                }
+                break;
+            case MotionEvent.ACTION_POINTER_UP:
+            case MotionEvent.ACTION_UP: {
+                final int id = event.getPointerId(event.getActionIndex());
+                for (int side = 0; side < 2; ++side) {
+                    if (stickId[side] == id) releaseStick(side);
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    for (int side = 0; side < 2; ++side) releaseStick(side);
+                    touching = false;
+                    renderThrottled(true);
+                }
+                break;
+            }
+            case MotionEvent.ACTION_CANCEL:
+                for (int side = 0; side < 2; ++side) releaseStick(side);
+                touching = false;
+                renderThrottled(true);
+                break;
+            default:
+                break;
+        }
+        invalidate();
+        return true;
+    }
+
+    public void resetView() {
+        if (flyMode) leaveFly();
+        NativeBridge.resetCamera();
+        float[] start = session != 0L && !staticImagePreview ? NativeBridge.stageStartView(session) : null;
+        yaw = start != null ? start[0] : DEFAULT_YAW;
+        pitch = start != null ? start[1] : -0.45f;
+        zoom = start != null ? start[2] : 1.0f;
+        panX = 0.0f;
+        panY = 0.0f;
+        dolly = 0.0f;
+        hud.reset();
         roomYaw = 0.0f;
         spinYaw = 0.0f;
         spinPitch = 0.0f;
@@ -532,8 +1002,27 @@ public final class DmcRenderView extends View {
             renderFlags |= RENDER_ROOM;
         } else {
             renderFlags &= ~RENDER_ROOM;
+            roomCollisionVisible = false;
+            renderFlags &= ~RENDER_ROOM_COLLISION;
         }
         if (!staticImagePreview) renderNow();
+    }
+
+    public void setRoomCollisionVisible(boolean visible) {
+        roomCollisionVisible = visible;
+        if (isUvLayoutVisible()) return;
+        if (visible) {
+            roomVisible = true;
+            renderFlags |= RENDER_ROOM | RENDER_ROOM_COLLISION;
+        } else {
+            renderFlags &= ~RENDER_ROOM_COLLISION;
+        }
+        if (!staticImagePreview) renderNow();
+    }
+
+    public boolean isRoomCollisionVisible() {
+        return !staticImagePreview && !isUvLayoutVisible() &&
+                (renderFlags & RENDER_ROOM_COLLISION) != 0;
     }
 
     public void refreshRoom() {
@@ -564,22 +1053,60 @@ public final class DmcRenderView extends View {
         return !staticImagePreview && (renderFlags & RENDER_UV_LAYOUT) != 0;
     }
 
+    /** High resolutions (2K and up) render larger than the screen and are shown scaled down. */
+    private boolean supersampled() {
+        return maxRenderSide > 1024;
+    }
+
+    private float renderScale() {
+        final float w = Math.max(64, getWidth());
+        final float h = Math.max(64, getHeight());
+        final float longest = Math.max(w, h);
+        if (supersampled()) return maxRenderSide / longest;
+        return longest <= maxRenderSide ? 1.0f : maxRenderSide / longest;
+    }
+
     private int renderWidth() {
-        int w = Math.max(64, getWidth());
-        int h = Math.max(64, getHeight());
-        int max = maxRenderSide;
-        if (w <= max && h <= max) return w;
-        float s = Math.min((float) max / w, (float) max / h);
-        return Math.max(64, Math.round(w * s));
+        return Math.max(64, Math.round(Math.max(64, getWidth()) * renderScale()));
     }
 
     private int renderHeight() {
-        int w = Math.max(64, getWidth());
-        int h = Math.max(64, getHeight());
-        int max = maxRenderSide;
-        if (w <= max && h <= max) return h;
-        float s = Math.min((float) max / w, (float) max / h);
-        return Math.max(64, Math.round(h * s));
+        return Math.max(64, Math.round(Math.max(64, getHeight()) * renderScale()));
+    }
+
+    /** A frame while the view moves: half size, and never above about 1024 on the long side. */
+    private float previewScale() {
+        final float half = renderScale() * 0.5f;
+        final float longest = Math.max(64, Math.max(getWidth(), getHeight()));
+        return Math.min(half, Math.max(0.1f, 1024.0f / longest));
+    }
+
+    /** Render flags with the line widths (bits 16-21 meshes, 22-27 collisions) for a frame of this size. */
+    private int lineFlags(int width, int height) {
+        final float k = Math.max(width, height) / 720.0f;
+        final int mesh = Math.max(1, Math.min(63, Math.round(meshLineUnits * Math.max(1.0f, k))));
+        final int collision = Math.max(1, Math.min(63, Math.round(collisionLineUnits * Math.max(1.0f, k))));
+        return (mesh << 16) | (collision << 22);
+    }
+
+    /** One step down the resolution list (memory ran out); the listener stores it. */
+    private void lowerResolution() {
+        int next = 360;
+        for (final int step : RESOLUTION_STEPS) {
+            if (step < maxRenderSide) {
+                next = step;
+                break;
+            }
+        }
+        if (next == maxRenderSide) return;
+        maxRenderSide = next;
+        notice("Not enough memory: resolution lowered to " + next + " px");
+        if (resolutionListener != null) resolutionListener.accept(next);
+        renderNow();
+    }
+
+    void setResolutionListener(java.util.function.IntConsumer listener) {
+        resolutionListener = listener;
     }
 
     // ---- Render thread ----------------------------------------------------
@@ -594,23 +1121,51 @@ public final class DmcRenderView extends View {
         int generation;
         int width;
         int height;
-        float yaw, pitch, zoom, panX, panY, roomYaw, motionFrame;
+        float yaw, pitch, zoom, panX, panY, roomYaw, dolly, motionFrame;
         int flags;
         boolean follow;
         boolean preview;
+        String subtitle;          // the core's subtitle for this frame (null none)
+        float[] subtitleStyle;
+        boolean video;            // a recording's frame, at the video's size
+        int viewWidth, viewHeight;     // the view's render size the camera frames from
+        int screenWidth, screenHeight; // the view on screen, for the viewfinder
+        int recordedSeconds;
+        float[] finder;           // the core's viewfinder for this frame
+        String finderStatus;
     }
 
+    // Pixels live in native memory: ByteBuffer.allocateDirect is limited by the
+    // Java heap, which two 8K frames (2 x ~120 MB) exceed. A buffer is freed
+    // once, when it is neither listed nor on its way to the screen.
     private static final class FrameBuffer {
         final java.nio.ByteBuffer pixels;
         final int width;
         final int height;
         boolean busy;
+        boolean retired;  // dropped while busy: freed when released
+        private boolean freed;
 
         FrameBuffer(int width, int height) {
             this.width = width;
             this.height = height;
-            pixels = java.nio.ByteBuffer.allocateDirect(width * height * 4);
+            pixels = NativeBridge.allocateFrameBuffer((long) width * height * 4L);
+            if (pixels == null) throw new OutOfMemoryError("frame buffer " + width + "x" + height);
         }
+
+        void dispose() {
+            if (freed) return;
+            freed = true;
+            NativeBridge.freeFrameBuffer(pixels);
+        }
+    }
+
+    /** Drops every buffer: free ones now, busy ones when they are released. Holds renderLock. */
+    private void retireFrameBuffers() {
+        for (FrameBuffer buffer : frameBuffers) {
+            if (buffer.busy) buffer.retired = true; else buffer.dispose();
+        }
+        frameBuffers.clear();
     }
 
     private final Object renderLock = new Object();
@@ -645,10 +1200,11 @@ public final class DmcRenderView extends View {
                         for (int k = frameBuffers.size() - 1; k >= 0; --k) {
                             final FrameBuffer old = frameBuffers.get(k);
                             if (!old.busy && (old.width != request.width || old.height != request.height)) {
-                                frameBuffers.remove(k);
+                                frameBuffers.remove(k).dispose();
                             }
                         }
-                        if (frameBuffers.size() >= 4) {
+                        final boolean big = (long) request.width * request.height * 4L > 32L * 1024L * 1024L;
+                        if (frameBuffers.size() >= (big ? 2 : 4)) {
                             // Every buffer is still on its way to the screen:
                             // keep the request; releasing a buffer resumes it.
                             if (pendingRequest == null) pendingRequest = request;
@@ -658,7 +1214,9 @@ public final class DmcRenderView extends View {
                         try {
                             target = new FrameBuffer(request.width, request.height);
                         } catch (OutOfMemoryError error) {
+                            retireFrameBuffers();
                             renderScheduled = false;
+                            post(() -> lowerResolution());
                             return;
                         }
                         frameBuffers.add(target);
@@ -666,9 +1224,22 @@ public final class DmcRenderView extends View {
                     target.busy = true;
                 }
                 target.pixels.clear();
-                final int status = NativeBridge.renderToBuffer(request.session, request.width, request.height,
-                        request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
-                        request.roomYaw, request.follow, request.motionFrame, target.pixels);
+                final int status = request.video
+                        ? NativeBridge.renderVideoFrame(request.session, request.viewWidth, request.viewHeight,
+                                request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
+                                request.roomYaw, request.follow, request.dolly, request.motionFrame, target.pixels)
+                        : NativeBridge.renderToBuffer(request.session, request.width, request.height,
+                                request.yaw, request.pitch, request.zoom, request.flags, request.panX, request.panY,
+                                request.roomYaw, request.follow, request.dolly, request.motionFrame, target.pixels);
+                final Object[] finder = NativeBridge.viewfinder(request.session, request.screenWidth,
+                        request.screenHeight, request.zoom, request.video, request.recordedSeconds);
+                if (finder != null && finder.length == 2) {
+                    request.finder = (float[]) finder[0];
+                    request.finderStatus = (String) finder[1];
+                }
+                // Read with the frame it belongs to (the render thread holds the session).
+                request.subtitle = NativeBridge.demoSubtitle(request.session);
+                request.subtitleStyle = request.subtitle != null ? NativeBridge.demoSubtitleStyle(request.session) : null;
                 final FrameBuffer done = target;
                 post(() -> present(request, done, status));
             }
@@ -678,6 +1249,7 @@ public final class DmcRenderView extends View {
     private void releaseFrame(FrameBuffer buffer) {
         synchronized (renderLock) {
             buffer.busy = false;
+            if (buffer.retired) buffer.dispose();
             if (pendingRequest != null && !renderScheduled && renderHandler != null) {
                 renderScheduled = true;
                 renderHandler.post(renderJob);
@@ -686,18 +1258,50 @@ public final class DmcRenderView extends View {
     }
 
     private void present(FrameRequest request, FrameBuffer buffer, int status) {
+        // Bit 4: the GPU already put the frame on the window under this view.
+        final boolean direct = (status & 4) != 0;
+        status &= 3;
         if (request.generation != generation || status == 0 || staticImagePreview) {
             releaseFrame(buffer);
             return;
         }
+        if (direct) {
+            releaseFrame(buffer);
+            setDirectShown(true);
+            frameShown(request, status);
+            return;
+        }
+        // A bitmap over 100 MB, or one the GPU cannot take as a texture, is
+        // drawn by the software canvas.
+        final boolean large = Math.max(request.width, request.height) > 4096
+                || (long) request.width * request.height * 4L > 90L * 1024L * 1024L;
+        if (large != softwareLayer) {
+            softwareLayer = large;
+            setLayerType(large ? LAYER_TYPE_SOFTWARE : LAYER_TYPE_NONE, null);
+        }
         final Bitmap target = request.preview ? previewTarget(request.width, request.height)
                 : writableBitmap(request.width, request.height);
+        if (target == null && !request.preview && supersampled()) {
+            releaseFrame(buffer);
+            lowerResolution();
+            return;
+        }
         if (target != null) {
             buffer.pixels.rewind();
             target.copyPixelsFromBuffer(buffer.pixels);
             showingPreview = request.preview;
+            setDirectShown(false);
         }
         releaseFrame(buffer);
+        frameShown(request, status);
+    }
+
+    /** What every shown frame brings along: its subtitle, the viewfinder, the end of a motion. */
+    private void frameShown(FrameRequest request, int status) {
+        subtitle = request.subtitle;
+        subtitleStyle = request.subtitleStyle;
+        finderGeometry = request.finder;
+        finderStatus = request.finderStatus;
         if (status == 2 && motionPlaying) {
             motionPlaying = false;
             removeCallbacks(motionTick);
@@ -710,23 +1314,55 @@ public final class DmcRenderView extends View {
         }
     }
 
+    /** Frames straight on the window under the view: the view's own picture steps aside (transparent). */
+    private void setDirectShown(boolean on) {
+        if (directShown == on) return;
+        directShown = on;
+        setBackgroundColor(on ? 0x00000000 : 0xff121216);
+    }
+
+    /** The window under the view is gone: frames come back as pictures again. */
+    public void presentSurfaceGone() {
+        if (!directShown) return;
+        setDirectShown(false);
+        renderNow();
+    }
+
     /** Ask the render thread for a frame; motionFrame NaN keeps the pose. */
     private void requestFrame(float motionFrame) {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0 || staticImagePreview) return;
         final FrameRequest request = new FrameRequest();
-        request.preview = fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
-        request.width = request.preview ? Math.max(64, renderWidth() / 2) : renderWidth();
-        request.height = request.preview ? Math.max(64, renderHeight() / 2) : renderHeight();
+        request.video = videoWidth > 0 && videoHeight > 0;
+        request.preview = !request.video && fastPreview && moving() && (renderFlags & RENDER_UV_LAYOUT) == 0;
+        request.width = request.video ? videoWidth
+                : request.preview ? Math.max(64, Math.round(getWidth() * previewScale())) : renderWidth();
+        request.height = request.video ? videoHeight
+                : request.preview ? Math.max(64, Math.round(getHeight() * previewScale())) : renderHeight();
+        request.viewWidth = renderWidth();
+        request.viewHeight = renderHeight();
+        request.screenWidth = getWidth();
+        request.screenHeight = getHeight();
+        request.recordedSeconds = recordedSeconds;
         request.session = session;
         request.generation = generation;
         request.yaw = yaw;
         request.pitch = pitch;
         request.zoom = zoom;
-        request.flags = renderFlags | settingsFlags | (request.preview ? RENDER_PREVIEW : 0);
+        request.flags = renderFlags | settingsFlags | (request.preview ? RENDER_PREVIEW : 0)
+                | lineFlags(request.width, request.height);
         request.panX = panX;
         request.panY = panY;
         request.roomYaw = roomYaw;
+        request.dolly = dolly;
         request.follow = follow;
+        // While a motion plays, every frame shows where it stands: frequent
+        // camera-only requests (the gyroscope, a drag) must not hold it still.
+        if (Float.isNaN(motionFrame) && motionPlaying) {
+            final float now = currentMotionFrame(SystemClock.uptimeMillis());
+            lastMotionFrame = motionEndFrame > 0.0f && motionLoopStartFrame >= motionEndFrame
+                    ? Math.min(now, motionEndFrame) : now;
+            motionFrame = lastMotionFrame;
+        }
         request.motionFrame = motionFrame;
         lastRequestMs = SystemClock.uptimeMillis();
         synchronized (renderLock) {
@@ -747,6 +1383,47 @@ public final class DmcRenderView extends View {
         }
     }
 
+    public interface BenchmarkListener {
+        void onBenchmarkDone(String report);
+    }
+
+    /**
+     * Maximum frame rate with the current settings: the render thread draws full-size frames back
+     * to back for `seconds` (camera turning, the motion advancing when one plays) without showing
+     * them. A playing motion is paused for the run and resumed after it. False: nothing to measure.
+     */
+    public boolean runBenchmark(float seconds, String settings, BenchmarkListener listener) {
+        if (session == 0 || staticImagePreview || getWidth() <= 0 || getHeight() <= 0) return false;
+        final boolean wasPlaying = motionPlaying;
+        final float motionStart = wasPlaying ? lastMotionFrame : Float.NaN;
+        if (wasPlaying) pauseMotion();
+        final long handle = session;
+        final int width = renderWidth();
+        final int height = renderHeight();
+        final int flags = renderFlags | settingsFlags | lineFlags(width, height);
+        final float y = yaw, p = pitch, z = zoom, px = panX, py = panY, ry = roomYaw, d = dolly;
+        final boolean f = follow;
+        final String what = settings + (wasPlaying ? ", motion playing" : "");
+        synchronized (renderLock) {
+            if (renderHandler == null) {
+                renderThread = new HandlerThread("dmc-render");
+                renderThread.start();
+                renderHandler = new Handler(renderThread.getLooper());
+            }
+            // On the render thread: no viewer frame is drawn at the same time.
+            renderHandler.post(() -> {
+                final String report = NativeBridge.benchmarkView(handle, width, height, y, p, z, flags,
+                        px, py, ry, f, d, motionStart, seconds, what);
+                post(() -> {
+                    if (wasPlaying && session == handle) resumeMotionAt(motionStart);
+                    renderNow();
+                    listener.onBenchmarkDone(report == null ? "Benchmark failed." : report);
+                });
+            });
+        }
+        return true;
+    }
+
     public void renderNow() {
         if (session == 0 || getWidth() <= 0 || getHeight() <= 0) return;
         if (staticImagePreview) {
@@ -761,12 +1438,20 @@ public final class DmcRenderView extends View {
         requestFrame(Float.NaN);
     }
 
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        removeCallbacks(roomTick);
+        if ((settingsFlags & RENDER_ROOM_ANIMATE) != 0) postDelayed(roomTick, 66);
+    }
+
     @Override protected void onDetachedFromWindow() {
+        removeCallbacks(roomTick);
         pauseMotion();
         removeCallbacks(spinTick);
         removeCallbacks(fullFrame);
         synchronized (renderLock) {
             pendingRequest = null;
+            retireFrameBuffers();
             if (renderThread != null) {
                 renderThread.quitSafely();
                 renderThread = null;
@@ -798,13 +1483,134 @@ public final class DmcRenderView extends View {
         }
     }
 
+    private String subtitle;
+    private float[] subtitleStyle;
+    private final Paint subtitlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    // The core's viewfinder over the view: {shown, frame x, y, w, h, grid
+    // lines x0, y0, x1, y1 ...} and its settings line.
+    private float[] finderGeometry;
+    private String finderStatus;
+    private final Paint finderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint finderText = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private int videoWidth;
+    private int videoHeight;
+    private boolean videoSubtitles;
+    private int recordedSeconds;
+
+    private void drawFinder(Canvas canvas) {
+        final float[] f = finderGeometry;
+        if (f == null || f.length < 5 || f[0] == 0.0f) return;
+        final float density = getResources().getDisplayMetrics().density;
+        final float x = f[1], y = f[2], w = f[3], h = f[4];
+        if (videoWidth == 0) {
+            // What the picture leaves out, dimmed.
+            finderPaint.setStyle(Paint.Style.FILL);
+            finderPaint.setColor(0x8c000000);
+            canvas.drawRect(0, 0, getWidth(), y, finderPaint);
+            canvas.drawRect(0, y + h, getWidth(), getHeight(), finderPaint);
+            canvas.drawRect(0, y, x, y + h, finderPaint);
+            canvas.drawRect(x + w, y, getWidth(), y + h, finderPaint);
+        }
+        finderPaint.setStyle(Paint.Style.STROKE);
+        finderPaint.setStrokeWidth(Math.max(1.0f, density));
+        finderPaint.setColor(0x60ffffff);
+        for (int i = 5; i + 3 < f.length; i += 4) canvas.drawLine(f[i], f[i + 1], f[i + 2], f[i + 3], finderPaint);
+        finderPaint.setColor(videoWidth > 0 ? 0xd0ff4040 : 0xc0ffffff);
+        finderPaint.setStrokeWidth(Math.max(1.5f, 1.5f * density));
+        canvas.drawRect(x, y, x + w, y + h, finderPaint);
+        final String status = finderStatus;
+        if (status == null || status.isEmpty()) return;
+        finderText.setTextSize(12.0f * density);
+        finderText.setShadowLayer(3.0f * density, 0, 0, 0xff000000);
+        float line = y + 18.0f * density;
+        for (final String text : status.split("\n")) {
+            finderText.setColor(text.startsWith("\u25cf") ? 0xffff5050 : 0xffffffff);
+            canvas.drawText(text, x + 10.0f * density, line, finderText);
+            line += 16.0f * density;
+        }
+    }
+
+    /** The core's subtitle, drawn as it says: centred lines, an outline in its back colour. */
+    private void drawSubtitle(Canvas canvas) {
+        drawSubtitle(canvas, getWidth(), getHeight());
+    }
+
+    private void drawSubtitle(Canvas canvas, int width, int height) {
+        drawSubtitleText(canvas, width, height, subtitle, subtitleStyle, subtitlePaint);
+    }
+
+    private static void drawSubtitleText(Canvas canvas, int width, int height, String text, float[] s,
+                                         Paint subtitlePaint) {
+        if (text == null || s == null || s.length < 10) return;
+        final float size = Math.max(8.0f, s[2] * height);
+        final int alpha = Math.round(Math.max(0.0f, Math.min(1.0f, s[3])) * 255.0f);
+        subtitlePaint.setTextSize(size);
+        subtitlePaint.setTextAlign(Paint.Align.CENTER);
+        float y = s[1] * height + size;
+        final float x = s[0] * width;
+        for (final String line : text.split("\n")) {
+            subtitlePaint.setStyle(Paint.Style.STROKE);
+            subtitlePaint.setStrokeWidth(Math.max(2.0f, size * 0.14f));
+            subtitlePaint.setColor(android.graphics.Color.argb(alpha, (int) s[7], (int) s[8], (int) s[9]));
+            canvas.drawText(line, x, y, subtitlePaint);
+            subtitlePaint.setStyle(Paint.Style.FILL);
+            subtitlePaint.setColor(android.graphics.Color.argb(alpha, (int) s[4], (int) s[5], (int) s[6]));
+            canvas.drawText(line, x, y, subtitlePaint);
+            y += size * 1.2f;
+        }
+    }
+
+    /** The view's picture with its subtitle, at a size of its own (a video frame). */
+    public void drawCapture(Canvas canvas, int width, int height) {
+        final Bitmap shown = staticImagePreview ? bitmap : (showingPreview ? previewBitmap : bitmap);
+        if (shown == null || shown.isRecycled()) return;
+        // A video frame: drawn whole, the subtitle as the camera settings say.
+        if (!staticImagePreview && videoWidth > 0) {
+            if (shown.getWidth() != videoWidth || shown.getHeight() != videoHeight) return;
+            canvas.drawBitmap(shown, null, new android.graphics.Rect(0, 0, width, height), paint);
+            if (videoSubtitles) drawSubtitle(canvas, width, height);
+            return;
+        }
+        if (staticImagePreview) {
+            final float scale = Math.min((float) width / shown.getWidth(), (float) height / shown.getHeight());
+            final float left = (width - shown.getWidth() * scale) * 0.5f;
+            final float top = (height - shown.getHeight() * scale) * 0.5f;
+            canvas.drawBitmap(shown, null,
+                    new RectF(left, top, left + shown.getWidth() * scale, top + shown.getHeight() * scale), paint);
+            return;
+        }
+        canvas.drawBitmap(shown, null, new android.graphics.Rect(0, 0, width, height), paint);
+        drawSubtitle(canvas, width, height);
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (!staticImagePreview && directShown) {
+            // The frame is on the window under the view: only what goes over it.
+            drawSubtitle(canvas);
+            drawFinder(canvas);
+            hud.draw(canvas);
+            if (hud.needsFrame()) postInvalidateOnAnimation();
+            return;
+        }
         if (!staticImagePreview) {
             final Bitmap shown = showingPreview ? previewBitmap : bitmap;
             if (shown == null || shown.isRecycled()) return;
-            canvas.drawBitmap(shown, null,
-                    new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+            final float[] f = finderGeometry;
+            if (videoWidth > 0 && f != null && f.length >= 5 && f[0] != 0.0f
+                    && shown.getWidth() == videoWidth && shown.getHeight() == videoHeight) {
+                // A recording: the video frame in the viewfinder's frame, black around it.
+                canvas.drawColor(0xff000000);
+                canvas.drawBitmap(shown, null, new RectF(f[1], f[2], f[1] + f[3], f[2] + f[4]), paint);
+            } else {
+                canvas.drawBitmap(shown, null,
+                        new android.graphics.Rect(0, 0, getWidth(), getHeight()), paint);
+            }
+            drawSubtitle(canvas);
+            drawFinder(canvas);
+            hud.draw(canvas);
+            if (hud.needsFrame()) postInvalidateOnAnimation();
             return;
         }
         if (bitmap == null || bitmap.isRecycled()) return;
@@ -822,6 +1628,7 @@ public final class DmcRenderView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (staticImagePreview) return true;
+        if (flyMode && sticks) return onFlyTouch(event);
 
         scaleDetector.onTouchEvent(event);
         // A new touch resets the state below before the tap detector sees it
@@ -844,11 +1651,19 @@ public final class DmcRenderView extends View {
                 downTime = event.getEventTime();
                 maxPointers = 1;
                 scrubbing = false;
+                NativeBridge.endTouch();
+                touchZoom = zoom;
                 multiShift = 0.0f;
                 multiShiftTaken = false;
+                turnUsed = false;
+                tripleMode = TRIPLE_NORMAL;
                 final float edge = EDGE_DP * density;
                 edgeStart = EDGE_NONE;
-                if (enabled(G_TOP_UI) && lastY < edge) {
+                cameraGestures = session != 0 && NativeBridge.cameraMode();
+                cameraTripleUsed = false;
+                if (cameraGestures && lastX > getWidth() - edge && lastY >= edge) {
+                    edgeStart = EDGE_FOCUS;
+                } else if (enabled(G_TOP_UI) && lastY < edge) {
                     edgeStart = EDGE_TOP;
                 } else if (enabled(G_EDGE_MOTION) && lastX < edge) {
                     edgeStart = EDGE_LEFT;
@@ -868,6 +1683,14 @@ public final class DmcRenderView extends View {
                 if (event.getPointerCount() >= 3) {
                     multiStartX = multiX;
                     multiStartY = multiY;
+                    endDolly();
+                    multiMode = MULTI_NORMAL;
+                    if (event.getPointerCount() == 3) beginTriple(event); else endTurn();
+                    if (event.getPointerCount() == 3 && cameraGestures) beginCameraTriple(event);
+                } else if (event.getPointerCount() == 2) {
+                    beginPair(event);
+                    cameraPairX = multiX;
+                    cameraPairY = multiY;
                 }
                 return true;
             case MotionEvent.ACTION_POINTER_UP: {
@@ -886,6 +1709,11 @@ public final class DmcRenderView extends View {
                 }
                 rebaseToPointer(event, activePointerId);
                 beginMulti(event, up);
+                if (event.getPointerCount() == 3) endTurn();
+                if (event.getPointerCount() <= 2) {
+                    endDolly();
+                    multiMode = MULTI_NORMAL;
+                }
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
@@ -905,11 +1733,20 @@ public final class DmcRenderView extends View {
                     final float mx = x - downX, my = y - downY;
                     if (Math.hypot(mx, my) > 16.0f * density) {
                         final boolean along = edgeStart == EDGE_TOP ? (my > Math.abs(mx))
-                                : edgeStart == EDGE_LEFT ? (mx > Math.abs(my)) : (-mx > Math.abs(my));
+                                : edgeStart == EDGE_LEFT ? (mx > Math.abs(my))
+                                : edgeStart == EDGE_FOCUS ? (Math.abs(my) > Math.abs(mx)) : (-mx > Math.abs(my));
                         if (!along) edgeStart = EDGE_NONE;
                     }
                 }
-                if (scrubbing) {
+                if (edgeStart == EDGE_FOCUS && maxPointers == 1) {
+                    // The focus ring: up focuses farther, down nearer (a
+                    // screen height is about twenty times the distance).
+                    final float steps = -(y - lastY) / Math.max(1, getHeight()) * 3.0f;
+                    if (Math.abs(steps) > 0.0005f) {
+                        notice(NativeBridge.cameraFocusRing(steps));
+                        renderThrottled(false);
+                    }
+                } else if (scrubbing) {
                     // About 8 px per frame, clamped to the motion.
                     scrubFrame = Math.max(0.0f, scrubFrame + (x - lastX) / (8.0f * density / 2.5f));
                     final float end = NativeBridge.motionEndFrame(session);
@@ -917,9 +1754,12 @@ public final class DmcRenderView extends View {
                     lastMotionFrame = scrubFrame;
                     requestFrame(scrubFrame);
                 } else if (edgeStart == EDGE_NONE && !scaleDetector.isInProgress()) {
+                    if (Math.hypot(x - downX, y - downY) > 8.0f * density) claimCamera();
                     float dx = x - lastX;
                     float dy = y - lastY;
-                    // Grab-and-turn: the surface under the finger follows it.
+                    // Orbit: grab-and-turn (the surface under the finger follows
+                    // it). The free camera: the finger aims it (right looks
+                    // right, down looks down).
                     yaw -= dx * 0.008f;
                     pitch -= dy * 0.008f;
                     pitch = Math.max(-1.55f, Math.min(1.55f, pitch));
@@ -931,6 +1771,10 @@ public final class DmcRenderView extends View {
             }
             case MotionEvent.ACTION_UP: {
                 touching = false;
+                endTurn();
+                endDolly();
+                multiMode = MULTI_NORMAL;
+                NativeBridge.endTouch();
                 finishGesture(event, density);
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
                 renderThrottled(true);
@@ -938,6 +1782,10 @@ public final class DmcRenderView extends View {
             }
             case MotionEvent.ACTION_CANCEL:
                 touching = false;
+                endTurn();
+                endDolly();
+                multiMode = MULTI_NORMAL;
+                NativeBridge.endTouch();
                 activePointerId = MotionEvent.INVALID_POINTER_ID;
                 scrubbing = false;
                 recycleVelocity();
@@ -978,6 +1826,7 @@ public final class DmcRenderView extends View {
     }
 
     private void moveMulti(MotionEvent event) {
+        claimCamera();
         final int n = event.getPointerCount();
         if (n != multiCount) beginMulti(event, -1);
         float sx = 0.0f, sy = 0.0f;
@@ -986,6 +1835,41 @@ public final class DmcRenderView extends View {
             sy += event.getY(i);
         }
         final float cx = sx / n, cy = sy / n;
+        if (n == 3 && maxPointers == 3 && cameraGestures) {
+            moveCameraTriple(event, cy);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
+        if (n == 3 && maxPointers == 3) {
+            if (tripleMode == TRIPLE_UNDECIDED) decideTriple(event);
+            if (tripleMode == TRIPLE_TURN) moveTurn(event);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
+        if (n == 2 && maxPointers == 2 && multiMode == MULTI_UNDECIDED) decidePair(event);
+        if (n == 2 && maxPointers == 2 && multiMode == MULTI_CLOSE_PAN) {
+            // Camera-plane move only: no zoom, no twist.
+            final float unit = 2.96f / (zoom * Math.max(1, Math.min(getWidth(), getHeight())));
+            panX -= (cx - multiX) * unit;
+            panY += (cy - multiY) * unit;
+            renderThrottled(false);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
+        if (n == 2 && maxPointers == 2 && multiMode == MULTI_DOLLY) {
+            moveDolly(event);
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
+        if (n == 2 && maxPointers == 2 && multiMode == MULTI_UNDECIDED) {
+            multiX = cx;
+            multiY = cy;
+            return;
+        }
         if (n == 2 && maxPointers == 2) {
             boolean changed = false;
             if (enabled(G_PAN)) {
@@ -996,15 +1880,23 @@ public final class DmcRenderView extends View {
                 panY += (cy - multiY) * unit;
                 changed = true;
             }
-            if (enabled(G_TWIST)) {
+            // In camera mode with a polarizer, the twist turns the filter (the core's).
+            final boolean polarizer = NativeBridge.cameraPolarizerTurnable();
+            if (enabled(G_TWIST) || polarizer) {
                 final float angle = (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
                 float delta = angle - twistAngle;
                 if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
                 if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
                 twistAngle = angle;
                 if (Math.abs(delta) > 0.0005f) {
-                    // With a room the model turns in it; without, the view turns.
-                    if ((renderFlags & RENDER_ROOM) != 0) roomYaw -= delta; else yaw -= delta;
+                    if (polarizer) {
+                        NativeBridge.cameraPolarizer(delta);
+                    } else if ((renderFlags & RENDER_ROOM) != 0) {
+                        // With a room the model turns in it; without, the view turns.
+                        roomYaw -= delta;
+                    } else {
+                        yaw -= delta;
+                    }
                     changed = true;
                 }
             }
@@ -1025,20 +1917,40 @@ public final class DmcRenderView extends View {
             recycleVelocity();
             return;
         }
+        if (cameraGestures && maxPointers == 2) {
+            // A short two-finger tap that neither moved nor pinched: level.
+            final boolean still = Math.hypot(multiX - cameraPairX, multiY - cameraPairY) < 12.0f * density
+                    && Math.abs(zoom - touchZoom) < 0.01f;
+            if (still && duration < 300 && gestureListener != null) gestureListener.onCameraLevel();
+            recycleVelocity();
+            return;
+        }
+        if (cameraGestures && maxPointers >= 3) {
+            // Three fingers that only touched take the picture; no variant
+            // swipe and no follow switch in camera mode.
+            if (maxPointers == 3 && !cameraTripleUsed && duration < 500
+                    && Math.hypot(multiX - multiStartX, multiY - multiStartY) < 24.0f * density
+                    && gestureListener != null) {
+                gestureListener.onTakePicture();
+            }
+            recycleVelocity();
+            return;
+        }
         if (maxPointers >= 4) {
             if (enabled(G_FOLLOW) && duration < 500) {
                 follow = !follow;
                 notice(follow ? "\\ud83c\\udfa5 Camera follows the model" : "\\ud83c\\udfa5 Camera stays in place");
                 renderNow();
             }
+        } else if (maxPointers == 3 && turnUsed) {
+            // The fingers turned the camera: no swipe, no screenshot.
         } else if (maxPointers == 3) {
             final float mx = multiShiftTaken ? multiShift : multiX - multiStartX;
             if (enabled(G_THREE_SWIPE) && Math.abs(mx) > 80.0f * density && gestureListener != null) {
                 gestureListener.onStepVariant(mx < 0 ? 1 : -1);
             } else if (enabled(G_SCREENSHOT) && duration < 500 && Math.abs(mx) < 24.0f * density
                     && gestureListener != null) {
-                final Bitmap image = snapshot();
-                if (image != null) gestureListener.onScreenshot(image);
+                gestureListener.onTakePicture();
             }
         } else if (maxPointers == 1) {
             if (edgeStart == EDGE_TOP && dy > 60.0f * density) {
@@ -1060,6 +1972,277 @@ public final class DmcRenderView extends View {
             }
         }
         recycleVelocity();
+    }
+
+    // ---- dolly: one finger holds on one half of the screen, the other slides
+    // up / down on the other half and the camera moves along its view axis.
+
+    // ---- turn: one finger holds, two others twist round it -> the camera
+    // turns round the model (or the centre of the stage).
+
+    private void beginCameraTriple(MotionEvent event) {
+        cameraTriple = CAMERA_TRIPLE_UNDECIDED;
+        cameraTripleStartAngle = (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
+        cameraTripleAngle = cameraTripleStartAngle;
+        cameraTripleY = (event.getY(0) + event.getY(1) + event.getY(2)) / 3.0f;
+        cameraTripleEvY = cameraTripleY;
+    }
+
+    /** Camera mode, three fingers: twisted they roll the camera, moved up / down they step the exposure. */
+    private void moveCameraTriple(MotionEvent event, float cy) {
+        final float density = getResources().getDisplayMetrics().density;
+        final float angle = (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
+        if (cameraTriple == CAMERA_TRIPLE_UNDECIDED) {
+            float turned = angle - cameraTripleStartAngle;
+            if (turned > Math.PI) turned -= (float) (2.0 * Math.PI);
+            if (turned < -Math.PI) turned += (float) (2.0 * Math.PI);
+            if (Math.abs(turned) > 0.15f) {
+                cameraTriple = CAMERA_TRIPLE_ROLL;
+                cameraTripleUsed = true;
+            } else if (Math.abs(cy - cameraTripleY) > 30.0f * density) {
+                cameraTriple = CAMERA_TRIPLE_EV;
+                cameraTripleUsed = true;
+                cameraTripleEvY = cy;
+            }
+        }
+        if (cameraTriple == CAMERA_TRIPLE_ROLL) {
+            float delta = angle - cameraTripleAngle;
+            if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
+            if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
+            // The picture turns with the fingers: the camera the other way.
+            final float roll = NativeBridge.cameraRoll(-delta);
+            notice("Roll " + Math.round(Math.toDegrees(roll)) + "\u00b0");
+            renderThrottled(false);
+        } else if (cameraTriple == CAMERA_TRIPLE_EV && gestureListener != null) {
+            // Every 50 dp up brightens by one step, down darkens.
+            final float step = 50.0f * density;
+            while (cameraTripleEvY - cy >= step) {
+                gestureListener.onCameraStep("exposure_compensation", 1);
+                cameraTripleEvY -= step;
+            }
+            while (cy - cameraTripleEvY >= step) {
+                gestureListener.onCameraStep("exposure_compensation", -1);
+                cameraTripleEvY += step;
+            }
+        }
+        cameraTripleAngle = angle;
+    }
+
+    /** The camera's yaw now (the walk goes the way it faces). */
+    public float viewYaw() {
+        return yaw;
+    }
+
+    /** The gyroscope's turn of the camera (radians). */
+    public void turnBy(float dYaw, float dPitch) {
+        if (session == 0 || staticImagePreview) return;
+        if (dYaw != 0.0f || dPitch != 0.0f) {
+            claimCamera();
+            yaw += dYaw;
+            pitch = Math.max(-1.55f, Math.min(1.55f, pitch + dPitch));
+        }
+        renderThrottled(false);
+    }
+
+    private void beginTriple(MotionEvent event) {
+        tripleMode = enabled(G_TURN) ? TRIPLE_UNDECIDED : TRIPLE_NORMAL;
+        for (int i = 0; i < 3; ++i) {
+            tripleIds[i] = event.getPointerId(i);
+            tripleStartX[i] = event.getX(i);
+            tripleStartY[i] = event.getY(i);
+        }
+    }
+
+    private void decideTriple(MotionEvent event) {
+        final float slop = 11.0f * getResources().getDisplayMetrics().density;
+        final float[] moved = new float[3];
+        int still = -1, stillCount = 0, movedCount = 0;
+        for (int i = 0; i < 3; ++i) {
+            final int index = event.findPointerIndex(tripleIds[i]);
+            if (index < 0) {
+                tripleMode = TRIPLE_NORMAL;
+                return;
+            }
+            moved[i] = (float) Math.hypot(event.getX(index) - tripleStartX[i], event.getY(index) - tripleStartY[i]);
+            if (moved[i] >= slop) ++movedCount;
+            if (moved[i] < slop * 0.8f) {
+                still = i;
+                ++stillCount;
+            }
+        }
+        if (movedCount < 2) {
+            if (movedCount == 1 && stillCount < 2) tripleMode = TRIPLE_NORMAL;  // not two moving round one
+            return;
+        }
+        if (stillCount != 1) {
+            tripleMode = TRIPLE_NORMAL;  // all three moved: a swipe
+            return;
+        }
+        // The two moving fingers must turn, not slide together.
+        final int a = (still + 1) % 3, b = (still + 2) % 3;
+        final int ia = event.findPointerIndex(tripleIds[a]), ib = event.findPointerIndex(tripleIds[b]);
+        final float startAngle = (float) Math.atan2(tripleStartY[b] - tripleStartY[a], tripleStartX[b] - tripleStartX[a]);
+        final float nowAngle = (float) Math.atan2(event.getY(ib) - event.getY(ia), event.getX(ib) - event.getX(ia));
+        float delta = nowAngle - startAngle;
+        if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
+        if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
+        if (Math.abs(delta) < 0.08f) {
+            final float dxA = event.getX(ia) - tripleStartX[a], dxB = event.getX(ib) - tripleStartX[b];
+            if (Math.signum(dxA) == Math.signum(dxB) && Math.abs(dxA) > 2.0f * slop) tripleMode = TRIPLE_NORMAL;
+            return;
+        }
+        if (!NativeBridge.claimGesture(NativeBridge.GESTURE_TURN)) {
+            tripleMode = TRIPLE_NORMAL;  // a pinch or a dolly owns this touch
+            return;
+        }
+        tripleMode = TRIPLE_TURN;
+        zoom = touchZoom;  // undo the pinch detector's provisional zoom
+        hud.reset();
+        turnUsed = true;
+        turnHoldId = tripleIds[still];
+        turnIdA = tripleIds[a];
+        turnIdB = tripleIds[b];
+        turnAngle = startAngle;
+        turnTotal = 0.0f;
+        moveTurn(event);
+    }
+
+    private void moveTurn(MotionEvent event) {
+        final int ia = event.findPointerIndex(turnIdA), ib = event.findPointerIndex(turnIdB);
+        final int ih = event.findPointerIndex(turnHoldId);
+        if (ia < 0 || ib < 0 || ih < 0) return;
+        final float angle = (float) Math.atan2(event.getY(ib) - event.getY(ia), event.getX(ib) - event.getX(ia));
+        float delta = angle - turnAngle;
+        if (delta > Math.PI) delta -= (float) (2.0 * Math.PI);
+        if (delta < -Math.PI) delta += (float) (2.0 * Math.PI);
+        turnAngle = angle;
+        if (Math.abs(delta) > 0.0005f) {
+            // The camera circles the model / the centre; the room stays where it is.
+            yaw -= delta;
+            turnTotal += delta;
+            renderThrottled(false);
+        }
+        hud.showTurn((float) Math.toDegrees(turnTotal), event.getX(ih), event.getY(ih), getWidth(), getHeight());
+        invalidate();
+    }
+
+    private void endTurn() {
+        if (tripleMode == TRIPLE_TURN) {
+            hud.release();
+            invalidate();
+        }
+        tripleMode = TRIPLE_NORMAL;
+        turnHoldId = MotionEvent.INVALID_POINTER_ID;
+    }
+
+    private void beginPair(MotionEvent event) {
+        multiMode = MULTI_UNDECIDED;
+        pairId0 = event.getPointerId(0);
+        pairId1 = event.getPointerId(1);
+        pairStartX0 = event.getX(0);
+        pairStartY0 = event.getY(0);
+        pairStartX1 = event.getX(1);
+        pairStartY1 = event.getY(1);
+        zoomAtPair = zoom;
+        final float mm = (float) Math.hypot(pairStartX1 - pairStartX0, pairStartY1 - pairStartY0)
+                / Math.max(1.0f, getResources().getDisplayMetrics().xdpi) * 25.4f;
+        pairStartedClose = mm < CLOSE_PAIR_MM;
+    }
+
+    private void decidePair(MotionEvent event) {
+        final int i0 = event.findPointerIndex(pairId0), i1 = event.findPointerIndex(pairId1);
+        if (i0 < 0 || i1 < 0) {
+            multiMode = MULTI_NORMAL;
+            return;
+        }
+        final float density = getResources().getDisplayMetrics().density;
+        final float slop = 11.0f * density;
+        final float d0 = (float) Math.hypot(event.getX(i0) - pairStartX0, event.getY(i0) - pairStartY0);
+        final float d1 = (float) Math.hypot(event.getX(i1) - pairStartX1, event.getY(i1) - pairStartY1);
+        if (d0 < slop && d1 < slop) return;  // not decided yet
+        if (pairStartedClose && enabled(G_CLOSE_PAN)) {
+            // Held together: moving as one moves the camera; spreading apart
+            // is still a pinch.
+            final float span0 = (float) Math.hypot(pairStartX1 - pairStartX0, pairStartY1 - pairStartY0);
+            final float span = (float) Math.hypot(event.getX(i1) - event.getX(i0), event.getY(i1) - event.getY(i0));
+            final float travel = (float) Math.hypot(
+                    (event.getX(i0) + event.getX(i1) - pairStartX0 - pairStartX1) * 0.5f,
+                    (event.getY(i0) + event.getY(i1) - pairStartY0 - pairStartY1) * 0.5f);
+            if (Math.abs(span - span0) < 0.6f * travel) {
+                multiMode = MULTI_CLOSE_PAN;
+                zoom = zoomAtPair;  // the pinch detector saw the small span change
+                hud.reset();
+                beginMulti(event, -1);
+                return;
+            }
+        }
+        final boolean firstMoved = d0 >= slop;
+        final boolean secondMoved = d1 >= slop;
+        final int held = firstMoved ? i1 : i0;
+        final int dragged = firstMoved ? i0 : i1;
+        final float dragDx = event.getX(dragged) - (firstMoved ? pairStartX0 : pairStartX1);
+        final float dragDy = event.getY(dragged) - (firstMoved ? pairStartY0 : pairStartY1);
+        final boolean oppositeHalves = (event.getX(held) < getWidth() * 0.5f)
+                != (event.getX(dragged) < getWidth() * 0.5f);
+        if (enabled(G_DOLLY) && !(firstMoved && secondMoved) && oppositeHalves
+                && Math.abs(dragDy) > 1.4f * Math.abs(dragDx) && session != 0
+                && NativeBridge.claimGesture(NativeBridge.GESTURE_DOLLY)) {
+            multiMode = MULTI_DOLLY;
+            holdId = event.getPointerId(held);
+            dragId = event.getPointerId(dragged);
+            dragLastY = pairStartYOf(event, dragId) ;
+            zoom = zoomAtPair;  // the pinch detector saw the span change
+            final float[] metrics = NativeBridge.cameraMetrics(session);
+            dollyBase = metrics != null && metrics.length > 0 ? metrics[0] : 0.0f;
+            dollyLimit = metrics != null && metrics.length > 1 ? metrics[1] : 0.9f;
+            dollyStage = dollyLimit > 1.0f;
+            hud.release();
+            showDolly(event);
+            return;
+        }
+        multiMode = MULTI_NORMAL;
+        hud.reset();
+        beginMulti(event, -1);  // pan and twist start from here, without a jump
+    }
+
+    private float pairStartYOf(MotionEvent event, int pointerId) {
+        return pointerId == pairId0 ? pairStartY0 : pairStartY1;
+    }
+
+    private void moveDolly(MotionEvent event) {
+        final int dragged = event.findPointerIndex(dragId);
+        final int held = event.findPointerIndex(holdId);
+        if (dragged < 0 || held < 0) return;
+        final float y = event.getY(dragged);
+        final float shortSide = Math.max(1, Math.min(getWidth(), getHeight()));
+        // Up = forward. Slower the closer the camera is to its target, so the
+        // approach stays controllable; past a stage anchor it keeps a steady rate.
+        final float rate = Math.max(0.12f, 1.0f - dolly);
+        dolly += (dragLastY - y) / (0.5f * shortSide) * rate;
+        dolly = Math.max(-2.0f, Math.min(dollyLimit, dolly));
+        dragLastY = y;
+        showDolly(event);
+        renderThrottled(false);
+    }
+
+    private void showDolly(MotionEvent event) {
+        final int dragged = event.findPointerIndex(dragId);
+        final int held = event.findPointerIndex(holdId);
+        if (dragged < 0 || held < 0) return;
+        // Bound to a target: its distance; a stage has none: how far the camera moved.
+        final float units = dollyStage ? dollyBase * dolly : dollyBase * (1.0f - dolly);
+        hud.showDolly(units, !dollyStage, dolly, event.getX(held), event.getY(held),
+                event.getX(dragged), event.getY(dragged), getWidth(), getHeight());
+        invalidate();
+    }
+
+    private void endDolly() {
+        if (multiMode == MULTI_DOLLY) {
+            hud.release();
+            invalidate();
+        }
+        holdId = MotionEvent.INVALID_POINTER_ID;
+        dragId = MotionEvent.INVALID_POINTER_ID;
     }
 
     private void rebaseToPointer(MotionEvent event, int pointerId) {

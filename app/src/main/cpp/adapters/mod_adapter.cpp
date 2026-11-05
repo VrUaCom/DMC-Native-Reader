@@ -16,6 +16,7 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmc_rengine/formats/mod_skin.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmcresource/game_material.h"
 #include "dmcresource/mod_bytes.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/motion/skeleton_rig.h"
@@ -530,10 +531,11 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                         "MOD canonical projection rejected mesh topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
-                // Object blend mode (source flags & 0xF, 0x140302640) and, for
-                // EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
+                // The object's material byte (game_material.h: blend mode =
+                // source flags & 0xF, 0x140302640; nearest filter; part alpha)
+                // and, for EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
                 primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
-                                             static_cast<std::uint8_t>(object.source_flags & 0xFU));
+                                             game_material::material_byte(object.source_flags, object.alpha_control));
                 if (view.efm() && source.reserved38 != 0U) {
                     const auto count = primitive.mesh.vertices.size();
                     const auto bytes_span = view.span();

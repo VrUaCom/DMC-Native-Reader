@@ -1,8 +1,10 @@
 #include "dmcresource/native_module.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <span>
 #include <sstream>
 #include <string>
@@ -10,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "dmc_rengine/codecs/dds_bc.hpp"
+#include "dmcresource/dds_bcn.h"
 #include "dmcresource/child_resource.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/spider/crusader.h"
@@ -19,7 +21,6 @@
 namespace dmcresource {
 namespace {
 
-namespace dds_bc = dmc::rengine::codecs::dds_bc;
 namespace crusader = dmcresource::spider::crusader;
 namespace textures = dmcresource::texture_set;
 
@@ -46,8 +47,19 @@ InspectionNode dds_inspection_node(
     node.kind = InspectionKind::Texture;
     node.source_span = SourceSpan{slot.dds_offset, slot.dds.total_size};
     node.properties.push_back({
-        "Compression", dds_bc::compression_name(slot.dds.compression),
+        "Compression", std::string{dds_bcn::format_name(slot.dds.format)},
         EvidenceLevel::DataConfirmed});
+    node.properties.push_back({
+        "Header", slot.dds.dx10_header
+            ? "DX10 (DXGI " + std::to_string(slot.dds.dxgi_format) + ")"
+            : std::string{"legacy FourCC"},
+        EvidenceLevel::DataConfirmed});
+    if (slot.dds.srgb) {
+        node.properties.push_back({"ColorSpace", "sRGB", EvidenceLevel::DataConfirmed});
+    }
+    if (slot.dds.premultiplied) {
+        node.properties.push_back({"Alpha", "premultiplied", EvidenceLevel::DataConfirmed});
+    }
     node.properties.push_back({
         "Width", std::to_string(slot.dds.width),
         EvidenceLevel::StructuralConfirmed});
@@ -65,7 +77,9 @@ InspectionNode dds_inspection_node(
 
 std::string dds_detail(const textures::Slot& slot) {
     std::ostringstream detail;
-    detail << "DDS " << dds_bc::compression_name(slot.dds.compression)
+    detail << "DDS " << dds_bcn::format_name(slot.dds.format)
+           << (slot.dds.dx10_header ? " DX10" : "")
+           << (slot.dds.srgb ? " sRGB" : "")
            << " " << slot.dds.width << "x" << slot.dds.height
            << " mips=" << slot.dds.mip_count
            << " payload=" << slot.dds.payload_size;
@@ -94,6 +108,10 @@ ProbeResult child_dds_probe() noexcept {
         return false;
     }
     out->modules.push_back({"formats.dds.base-mip-preview", true});
+    if (!detail.empty()) {
+        if (!out->detail.empty()) out->detail += "\n";
+        out->detail += detail;
+    }
     return true;
 }
 
@@ -177,17 +195,12 @@ PipelineResult run_ptx_set(
 
     std::uint64_t total_dds_bytes = 0U;
     std::uint64_t gallery_preview_pixels = 0U;
-    std::uint32_t dxt1 = 0U;
-    std::uint32_t dxt5 = 0U;
+    std::map<std::string_view, std::uint32_t> format_counts;
     std::uint32_t previewed = 0U;
 
     for (const auto& slot : set.slots) {
         total_dds_bytes += slot.dds.total_size;
-        if (slot.dds.compression == dds_bc::Compression::dxt1) {
-            ++dxt1;
-        } else {
-            ++dxt5;
-        }
+        ++format_counts[dds_bcn::format_name(slot.dds.format)];
 
         auto child_inspection = dds_inspection_node(
             slot,
@@ -224,9 +237,11 @@ PipelineResult run_ptx_set(
                       "[OK] profiles.dmc3.texture-slot-framing\n"
                       "[OK] formats.dds.child-validation";
 
-        const auto pixels =
+        // Preview pixels: the decoder never exceeds its 4M-pixel budget.
+        const auto pixels = std::min<std::uint64_t>(
             static_cast<std::uint64_t>(slot.dds.width) *
-            static_cast<std::uint64_t>(slot.dds.height);
+                static_cast<std::uint64_t>(slot.dds.height),
+            kMaxPtxGalleryPreviewPixels);
         if (pixels <= kMaxPtxGalleryPreviewPixels &&
             gallery_preview_pixels <= kMaxPtxGalleryPreviewPixels - pixels) {
             std::string decode_detail;
@@ -234,6 +249,10 @@ PipelineResult run_ptx_set(
                     source, slot, &child.image_preview, &decode_detail)) {
                 gallery_preview_pixels += pixels;
                 ++previewed;
+                if (!decode_detail.empty()) {
+                    child.detail += "\n";
+                    child.detail += decode_detail;
+                }
             } else {
                 child.detail += "\nImage preview unavailable";
                 if (!decode_detail.empty()) {
@@ -249,9 +268,9 @@ PipelineResult run_ptx_set(
     }
 
     std::ostringstream detail;
-    detail << "PTX texture bundle | textures=" << set.slots.size()
-           << " dxt1=" << dxt1
-           << " dxt5=" << dxt5
+    detail << "PTX texture bundle | textures=" << set.slots.size();
+    for (const auto& [name, count] : format_counts) detail << " " << name << "=" << count;
+    detail
            << " ddsBytes=" << total_dds_bytes
            << " galleryPreviews=" << previewed;
 
@@ -263,6 +282,16 @@ PipelineResult run_ptx_set(
         out.modules.push_back({"native.ptx-community-descriptors", true});
         out.detail +=
             "\nPTX descriptors written by a community tool: read leniently (header, sector spans, DDS)";
+    }
+    if (set.ptx_single_level) {
+        out.modules.push_back({"native.ptx-single-level", true});
+        out.detail +=
+            "\nPTX textures hold only the base level (no mip chain), as in the interface archives id*.pac";
+    }
+    if (set.ptx_extended_formats) {
+        out.modules.push_back({"native.ptx-extended-formats", true});
+        out.detail +=
+            "\nPTX holds BC1..BC7 / DX10 DDS beyond retail DXT1/DXT5; read with the dmc3.exe load-path checks";
     }
     if (set.ptx_aux_compat_used) {
         out.modules.push_back({"native.ptx-aux-compat", true});

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "dmc_rengine/codecs/dds_bc.hpp"
+#include "dmcresource/dds_bcn.h"
 #include "dmcresource/image_preview.h"
 
 namespace dmcresource::texture_set {
@@ -26,7 +26,8 @@ struct Slot final {
     std::uint32_t sector_span{};
     std::uint32_t secondary_width{};
     std::uint32_t secondary_height{};
-    dmc::rengine::codecs::dds_bc::Document dds;
+    // BC1..BC7, legacy FourCC or DX10 header.
+    dds_bcn::Document dds;
 };
 
 struct ParseResult final {
@@ -35,6 +36,11 @@ struct ParseResult final {
     bool ptx_aux_compat_used{};
     // Bundle accepted through the lenient community-tool descriptor path.
     bool ptx_community_descriptors{};
+    // Retail single-level bundle (DDS base level only, e.g. id*.pac).
+    bool ptx_single_level{};
+    // Bundle whose DDS children use formats beyond retail DXT1/DXT5 (BC2,
+    // BC4..BC7 or a DX10 header), read with the dmc3.exe load-path checks.
+    bool ptx_extended_formats{};
     std::string detail;
 
     [[nodiscard]] bool ok() const noexcept {
@@ -66,6 +72,9 @@ struct ParseResult final {
 // Decode only the requested slot. Callers decide whether/when to spend RGBA
 // memory; parsing and slot validation therefore do not depend on gallery
 // preview budgets. RGBA/detail construction may allocate.
+// The image is mip 0 when it fits 4M pixels, else the first stored mip that
+// fits, else mip 0 box-filtered; on success `detail` names the level used
+// when it is not mip 0 at full size (UVs are unaffected).
 [[nodiscard]] bool decode_base_mip(
     std::span<const std::byte> source,
     const Slot& slot,

@@ -1,7 +1,10 @@
 #include <algorithm>
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/spider/session_actions.h"
+#include "dmcresource/spider/motion_strip.h"
 
 #include <array>
 #include <bit>
@@ -235,6 +238,34 @@ std::vector<std::uint8_t> make_pac(const std::vector<std::vector<std::uint8_t>>&
     return bytes;
 }
 
+std::vector<std::uint8_t> make_pnst(
+    const std::vector<std::vector<std::uint8_t>>& payloads) {
+    std::size_t cursor = 8U + payloads.size() * 4U;
+    cursor = (cursor + 0x0FU) & ~std::size_t{0x0FU};
+    std::vector<std::uint8_t> bytes(cursor, 0U);
+    bytes[0] = 'P';
+    bytes[1] = 'N';
+    bytes[2] = 'S';
+    bytes[3] = 'T';
+    put_u32(bytes, 4U, static_cast<std::uint32_t>(payloads.size()));
+    for (std::size_t index = 0U; index < payloads.size(); ++index) {
+        put_u32(bytes, 8U + index * 4U, static_cast<std::uint32_t>(bytes.size()));
+        bytes.insert(bytes.end(), payloads[index].begin(), payloads[index].end());
+        bytes.resize((bytes.size() + 0x0FU) & ~std::size_t{0x0FU}, 0U);
+    }
+    return bytes;
+}
+
+std::vector<std::uint8_t> make_effect_bank() {
+    const std::string manifest = "V 423\r\n# End\r\n";
+    const std::vector<std::uint8_t> record(64U, 0U);
+    const auto records = make_pnst({record});
+    return make_pnst({
+        std::vector<std::uint8_t>(manifest.begin(), manifest.end()),
+        records,
+    });
+}
+
 }  // namespace
 
 int main() {
@@ -309,6 +340,7 @@ int main() {
         // visual sources while keeping them out of the persistent composite.
         lady_payloads[slot] = mod;
     }
+    lady_payloads[28] = make_effect_bank();
     lady_payloads[32] = lady_body;
     lady_payloads[34] = mod;
     const auto lady_pac = make_pac(lady_payloads);
@@ -358,6 +390,15 @@ int main() {
     assert(lady_first->lady_dynamic_visuals[1].model_slot == 26U);
     assert(lady_first->lady_dynamic_visuals[2].actor == 3U);
     assert(lady_first->lady_dynamic_visuals[2].model_slot == 30U);
+    assert(std::find(lady_first->effect_bank_slots.begin(),
+                     lady_first->effect_bank_slots.end(), 28U) !=
+           lady_first->effect_bank_slots.end());
+    assert(std::any_of(
+        lady_first->effect_resources.begin(), lady_first->effect_resources.end(),
+        [](const auto& resource) {
+            return resource.effect_kind == 'V' && resource.effect_id == 423U &&
+                   resource.resource_slot == 28U;
+        }));
     assert(!lady_first->lady_dynamic_visuals[0].active);
     assert(!lady_first->lady_dynamic_visuals[1].active);
     assert(!lady_first->lady_dynamic_visuals[2].active);
@@ -383,8 +424,8 @@ int main() {
     }
 
     // Exact preset switching works for body-joint components and for
-    // component3's RuntimeBodyRootScaled parent. The latter materializes on
-    // body root node0 and never uses the raw serialized node13 as its parent.
+    // component3's RuntimeJointScaled parent: CEm034+0x43C0 is the body
+    // joint13 world (update 0x140171240), scaled by +0x4400.
     assert(dmcresource::motion::set_lady_component_preset(
         lady_first.get(), lady_first->lady_component_bindings[0],
         dmcresource::motion::LadyPlacementPreset::ActiveDeployed));
@@ -396,7 +437,7 @@ int main() {
     assert(lady_first->lady_component_bindings[3].preset ==
            dmcresource::motion::LadyPlacementPreset::ActiveDeployed);
     assert(lady_first->composite_parts[
-        lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+        lady_first->lady_component_bindings[3].part].placement.attachment_selector == 13U);
     assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.0F);
 
     // State-entry and signal bridge regressions from the canonical CEm034
@@ -428,7 +469,7 @@ int main() {
         assert(enlarge.recognized && enlarge.fully_materialized);
         assert(lady_first->lady_component_bindings[3].runtime_uniform_scale == 1.5F);
         assert(lady_first->composite_parts[
-            lady_first->lady_component_bindings[3].part].placement.attachment_selector == 0U);
+            lady_first->lady_component_bindings[3].part].placement.attachment_selector == 13U);
 
         const auto normalize = dmcresource::motion::apply_lady_signal(
             lady_first.get(), 0x81U, 1U, 1U, 0U);
@@ -518,6 +559,60 @@ int main() {
             lady_first.get(), 0x8FU, 1U, 0U, 1U);
         assert(shl04.recognized && shl04.dynamic_actor == 4);
     }
+    {
+        const auto bindings = dmcresource::motion::em034_effect_bindings();
+        namespace m = dmcresource::motion;
+        assert(bindings.size() == 10U);
+        for (const auto& binding : bindings) {
+            // Copied-matrix V roots (CEm034's V423 muzzle matrix, the shells'
+            // V543/V488 explode matrices) end through their own child graph;
+            // the others are retired with their actor.
+            const bool own_graph = binding.effect_id == 423U ||
+                                   binding.effect_id == 543U ||
+                                   binding.effect_id == 488U ||
+                                   binding.effect_id == 473U ||
+                                   binding.effect_id == 277U;
+            assert(binding.lifetime ==
+                   (own_graph ? m::EffectLifetimeRule::EffectCallback
+                              : m::EffectLifetimeRule::ParentActorRetire));
+            assert(binding.lifetime_evidence == m::EvidenceStatus::EXE_CONFIRMED);
+        }
+        assert(bindings[1].parent == m::RuntimeEffectParent::RuntimeMatrix);
+        assert(bindings[5].actor == 2U && bindings[5].effect_id == 377U &&
+               bindings[5].parent == m::RuntimeEffectParent::ProjectileTransform &&
+               bindings[5].actor_phase == 0U && bindings[5].children.empty());
+        assert(bindings[2].actor == 4U && bindings[2].actor_phase == 2U &&
+               bindings[2].parent == m::RuntimeEffectParent::RuntimeMatrix);
+        assert(bindings[3].actor == 4U && bindings[3].effect_id == 475U &&
+               bindings[3].actor_phase == 1U &&
+               bindings[3].parent == m::RuntimeEffectParent::ProjectileTransform);
+        assert(bindings[7].actor == 4U && bindings[7].effect_kind == 'E' &&
+               bindings[7].effect_id == 765U && bindings[7].actor_phase == 0U);
+        assert(bindings[6].actor == 2U && bindings[6].effect_id == 543U &&
+               bindings[6].parent == m::RuntimeEffectParent::RuntimeMatrix &&
+               bindings[6].actor_phase == 2U);
+        // Stage hits of the straight shells (collider flags & 3 branch).
+        assert(bindings[8].actor == 0U && bindings[8].effect_id == 473U &&
+               bindings[8].parent == m::RuntimeEffectParent::RuntimeMatrix &&
+               bindings[8].actor_phase == 2U);
+        assert(bindings[9].actor == 5U && bindings[9].effect_id == 277U &&
+               bindings[9].parent == m::RuntimeEffectParent::RuntimeMatrix &&
+               bindings[9].actor_phase == 2U);
+        assert(bindings[0].effect_kind == 'V' && bindings[0].effect_id == 463U);
+        assert(bindings[0].children.size() == 1U);
+        assert(bindings[0].children[0].effect_kind == 'E' &&
+               bindings[0].children[0].effect_id == 741U);
+        assert(bindings[1].effect_id == 423U && bindings[1].children.size() == 3U);
+        assert(bindings[1].children[0].effect_id == 752U);
+        assert(bindings[1].children[1].effect_id == 887U);
+        assert(bindings[1].children[2].effect_kind == 'P' &&
+               bindings[1].children[2].effect_id == 337U);
+        assert(bindings[2].effect_id == 488U && bindings[2].children.size() == 6U);
+        assert(bindings[3].effect_id == 475U && bindings[3].children.size() == 1U &&
+               bindings[3].children[0].effect_id == 404U);
+        assert(bindings[4].effect_id == 276U && bindings[4].children.size() == 2U &&
+               bindings[4].children[1].rotation_degrees[2] == 90.0F);
+    }
 
     auto lady_second = assembly::assemble_pac(*lady, &report, "em034.pac", 1U);
     assert(lady_second != nullptr);
@@ -544,5 +639,41 @@ int main() {
     auto no_model = dmcresource::open_session("mot.pac", motions_only.data(), motions_only.size());
     assert(no_model != nullptr);
     assert(assembly::assemble_pac(*no_model) == nullptr);
+
+    // The open plan is the core's: a PAC with MODs opens assembled, one
+    // without opens as itself, an unreadable file is rejected with the reason.
+    namespace act = dmcresource::spider::actions;
+    const auto assembled_open = act::open_resource("pl_test.pac", pac.data(), pac.size());
+    assert(assembled_open.as == act::OpenedAs::AssembledPac && assembled_open.session != nullptr);
+    assert(assembled_open.title == "pl_test.pac \u00b7 assembled");
+    assert(assembled_open.session->motion_library.size() == 1U && !assembled_open.room_effects);
+    const auto plain_open = act::open_resource("mot.pac", motions_only.data(), motions_only.size());
+    assert(plain_open.as == act::OpenedAs::Plain && plain_open.title == "mot.pac");
+    assert(plain_open.session != nullptr && plain_open.session->health.worst() == dmcresource::file_health::Level::fine);
+    const std::vector<std::uint8_t> junk(64U, 0x5AU);
+    const auto raw = act::open_resource("junk.bin", junk.data(), junk.size());
+    assert(raw.as == act::OpenedAs::Plain);  // unknown bytes still open, as raw bytes
+    const auto rejected = act::open_resource("junk.bin", nullptr, 0U);
+    assert(rejected.as == act::OpenedAs::Rejected && rejected.session == nullptr);
+    assert(rejected.title.rfind("junk.bin\nRejected: ", 0) == 0U);
+    // The animation strip is the core's: the library's MOT cards, then the
+    // staged ones behind a source boundary; a child view shows only staged.
+    const auto strip = act::motion_strip(assembled_open.session.get(), true, {"pl000_extra_walk.mot"});
+    assert(strip.size() == 2U);
+    assert(strip[0].library_index == 0 && strip[0].staged_index == -1 && !strip[0].separator_before);
+    assert(strip[0].kind == "MOT" && strip[0].description.rfind("Play raw MOT ", 0) == 0U);
+    assert(strip[1].library_index == -1 && strip[1].staged_index == 0 && strip[1].pack_slot == -2);
+    assert(strip[1].separator_before && strip[1].separator_description == "Animation source boundary");
+    assert(strip[1].kind == "MOT" && strip[1].stem == "PL000_E");
+    for (const auto& button : strip[0].scripts) assert(button.label.rfind("\u25b6\nS", 0) == 0U);
+    const auto child_strip = act::motion_strip(assembled_open.session.get(), false, {"a.MOTX5"});
+    assert(child_strip.size() == 1U && child_strip[0].kind == "MOTX" && child_strip[0].stem == "A");
+    assert(act::motion_strip(nullptr, true, {}).empty());
+
+    // A stage effect bank opened on its own also becomes the room's effects.
+    assert(act::open_resource("st001_effect.pac", motions_only.data(), motions_only.size()).room_effects);
+    assert(act::open_resource("ST10effect.pac", motions_only.data(), motions_only.size()).room_effects);
+    assert(!act::open_resource("pl000.pac", motions_only.data(), motions_only.size()).room_effects);
+    assert(!act::open_resource("steffect.pac", motions_only.data(), motions_only.size()).room_effects);
     return 0;
 }
