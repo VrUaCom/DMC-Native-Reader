@@ -1,4 +1,4 @@
-"""Verify the modular 1.0.45/v72 DMC Native Reader APK."""
+"""Verify the modular DMC Native Reader APK of the version app/build.gradle.kts declares."""
 import argparse
 import hashlib
 import json
@@ -11,10 +11,12 @@ import subprocess
 import tempfile
 import zipfile
 
-MAX_APK_BYTES = 4 * 1024 * 1024
-MAX_NATIVE_BYTES = 4 * 1024 * 1024
+# 8 MiB since v149: the 4 MiB of v72 predates video playback (FFmpeg), the
+# 67 DMC3 shaders and cutscenes; one stripped DSO with --gc-sections still.
+MAX_APK_BYTES = 8 * 1024 * 1024
+MAX_NATIVE_BYTES = 8 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024
-MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
+MAX_INSTALLED_APP_BYTES = 8 * 1024 * 1024
 DUPLICATE_PAYLOAD_MIN_BYTES = 64 * 1024
 NDK_VERSION = "30.0.16248370"
 CPP_STANDARD = "C++23"
@@ -180,6 +182,15 @@ def load_segment_alignments(elf_reader: str, native_path: Path):
     return alignments
 
 
+def declared_version() -> tuple[str, str]:
+    """versionCode and versionName as app/build.gradle.kts declares them."""
+    gradle = (Path(__file__).resolve().parents[1] / "app/build.gradle.kts").read_text(encoding="utf-8")
+    code = re.search(r"^\s*versionCode = (\d+)$", gradle, re.M)
+    name = re.search(r'^\s*versionName = "([^"]+)"$', gradle, re.M)
+    require(code is not None and name is not None, "No version in app/build.gradle.kts")
+    return code.group(1), name.group(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk", type=Path)
@@ -206,8 +217,9 @@ def main():
     badging = run(str(aapt2), "dump", "badging", str(args.apk))
     require("package: name='com.dmcrengine.nativereader'" in badging,
             "Wrong application ID")
-    require("versionCode='72' versionName='1.0.45'" in badging,
-            "Wrong release identity")
+    code, name = declared_version()
+    require(f"versionCode='{code}' versionName='{name}'" in badging,
+            f"Wrong release identity: expected {code} / {name}")
     require("native-code: 'arm64-v8a'" in badging, "Wrong ABI")
 
     manifest = run(str(aapt2), "dump", "xmltree", str(args.apk),
@@ -257,17 +269,20 @@ def main():
         libs = sorted(
             name for name in entry_names
             if name.startswith("lib/") and name.endswith(".so"))
-        expected_libs = ["lib/arm64-v8a/libdmcviewer.so"]
+        # The Reader's own code is one DSO; the other two come with the
+        # optional ARCore dependency (camera mode walking, since v106).
+        own_lib = "lib/arm64-v8a/libdmcviewer.so"
+        expected_libs = sorted([
+            own_lib,
+            "lib/arm64-v8a/libarcore_sdk_c.so",
+            "lib/arm64-v8a/libarcore_sdk_jni.so",
+        ])
         require(libs == expected_libs,
-                "Modular APK must contain exactly one native DSO: libdmcviewer.so; "
+                "Modular APK must contain libdmcviewer.so and ARCore's two DSOs only; "
                 "found: " + ", ".join(libs))
-        native_entries = [
-            info for info in entries
-            if info.filename.startswith("lib/") and info.filename.endswith(".so")
-        ]
-        require(len(native_entries) == 1 and
-                native_entries[0].filename == expected_libs[0],
-                "APK must contain exactly one physical native library entry")
+        native_entries = [info for info in entries if info.filename == own_lib]
+        require(len(native_entries) == 1,
+                "APK must contain exactly one physical libdmcviewer.so entry")
         require(not any(
             marker in name.lower()
             for name in entry_names
@@ -406,7 +421,8 @@ def main():
             "NativeBridge must use android.graphics.Bitmap")
     for required_method in (
         "composeMods", "compositePartCount", "compositePartName",
-        "attachPtxToPart", "render"):
+        "attachPtxToPart", "renderToBuffer", "openResource", "sessionInfoText",
+        "settingsSchema", "motionStrip"):
         require(re.search(r"\bnative\b[^;]*\b" + re.escape(required_method) +
                           r"\s*\(", bridge, re.DOTALL),
                 "Current Java/JNI API missing method: " + required_method)
@@ -426,9 +442,12 @@ def main():
     android_link = re.search(
         r"target_link_libraries\s*\(\s*dmcviewer\s+PRIVATE(?P<body>.*?)\)",
         cmake, re.DOTALL)
-    core_link = re.search(
-        r"target_link_libraries\s*\(\s*dmc_native_reader_core(?P<body>.*?)\)",
-        cmake, re.DOTALL)
+    # The core has several link calls (FFmpeg, when built, comes first).
+    core_link = next((
+        match for match in re.finditer(
+            r"target_link_libraries\s*\(\s*dmc_native_reader_core\b(?P<body>.*?)\)",
+            cmake, re.DOTALL)
+        if "DMCRengine::ReaderCore" in match.group("body")), None)
     require(android_link and "DMCNativeReader::Core" in android_link.group("body") and
             "jnigraphics" in android_link.group("body"),
             "Android JNI target must link the portable core and jnigraphics")
@@ -516,7 +535,7 @@ def main():
         "installed_size_measurement": "required-on-device-via-StorageStats.getAppBytes",
         "installed_size_tool": "tools/measure_installed_footprint.py",
         "historical_v26_growth_comparable": False,
-        "size_acceptance_authority": "absolute-package-metrics+StorageStats.getAppBytes<=4MiB",
+        "size_acceptance_authority": "absolute-package-metrics+StorageStats.getAppBytes<=8MiB",
         "modular_native_architecture": "pass",
         "device_test": "pending",
     }, indent=2))
