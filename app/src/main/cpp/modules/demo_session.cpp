@@ -1,3 +1,4 @@
+#include "dmcresource/scm_layout_compat.h"
 #include "dmcresource/demo_session.h"
 
 #include <algorithm>
@@ -235,7 +236,7 @@ void update_shot(Player& p) {
 [[nodiscard]] std::shared_ptr<StageMotion> make_stage_motion(const Session& piece, std::span<const std::uint8_t> bytes) {
     namespace scm = dmc::rengine::formats::scm;
     const auto parsed = scm::Parser::parse(std::as_bytes(bytes));
-    if (!parsed.ok()) return nullptr;
+    if (!parsed.ok() && !scm_layout_compat::readable_despite_placement(parsed, bytes.size())) return nullptr;
     const auto& transforms = parsed.document.scene_nodes.transform_by_node_index;
     const std::size_t count = transforms.size();
     if (count == 0U || count != piece.scene.nodes.size()) return nullptr;

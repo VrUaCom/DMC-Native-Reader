@@ -96,6 +96,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/environment_collision.cpp
     modules/session_gallery.cpp
     modules/file_health.cpp
+    modules/scm_layout_compat.cpp
     modules/view_benchmark.cpp
     modules/session_inspection.cpp
     modules/uv_gallery.cpp

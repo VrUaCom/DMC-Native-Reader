@@ -364,6 +364,14 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v150: an SCM whose streams are laid out mesh by mesh (positions,
+    normals, UVs and colours of one mesh, then the next) opens as its model
+    instead of the raw description. The canonical parser reads every stream
+    through its record offset and rejects such a file for placement alone;
+    `scm_layout_compat` accepts it when placement is the only error, every
+    stream was read in full and no two streams overlap, and the session
+    carries a non-canonical note (the orange dot). Checked on a 5-object,
+    67-mesh statue (sm0994): it draws whole from every side.
   - v149: the C API for the Apple shells (`app/src/main/cpp/capi`,
     `dmc_reader.h`, Swift module `DMCReader`). It mirrors what the Android
     shell asks over JNI: open (the core's open plan), children, state bits,

@@ -273,6 +273,35 @@ int main() {
     assert(trace_contains(scm_result, "canonical.scm.scene-hierarchy"));
     assert(trace_contains(scm_result, "native.uv-projection"));
     assert(trace_contains(scm_result, "render-scene-contract"));
+    assert(!trace_contains(scm_result, "native.scm-community-layout"));
+
+    // Streams in another order (normals before positions, both records
+    // pointing at them) are readable: the model opens, with a note.
+    {
+        auto swapped = scm;
+        std::vector<std::uint8_t> positions(scm.begin() + 0xD0, scm.begin() + 0xD0 + 36);
+        std::vector<std::uint8_t> normals(scm.begin() + 0x100, scm.begin() + 0x100 + 36);
+        std::copy(normals.begin(), normals.end(), swapped.begin() + 0xD0);
+        std::copy(positions.begin(), positions.end(), swapped.begin() + 0x100);
+        put_u64(swapped, 0x90U, 0x100U);
+        put_u64(swapped, 0x98U, 0xD0U);
+        const auto community = run_decode_pipeline("community.scm", swapped.data(), swapped.size());
+        assert(community.accepted && community.renderable);
+        assert(trace_contains(community, "native.scm-community-layout"));
+        auto session = dmcresource::open_session("community.scm", swapped.data(), swapped.size());
+        assert(session && session->renderable && session->non_canonical_notes.size() == 1U);
+        assert(session->non_canonical_notes.front().find("mesh by mesh") != std::string::npos);
+        assert(session->scene.has_geometry());
+        assert(community.scene.meshes.size() == scm_result.scene.meshes.size());
+        assert(community.scene.meshes.front().mesh.vertices.size() ==
+               scm_result.scene.meshes.front().mesh.vertices.size());
+
+        // Overlapping streams are not a layout choice: still rejected.
+        auto overlapping = swapped;
+        put_u64(overlapping, 0x90U, 0xD8U);
+        const auto rejected = run_decode_pipeline("overlap.scm", overlapping.data(), overlapping.size());
+        assert(!rejected.accepted);
+    }
     assert(scm_result.scene.meshes.size() == 1U);
     assert(scm_result.scene.meshes[0].node_index == 0);
     assert(scm_result.scene.meshes[0].mesh.vertices.size() == 3U);

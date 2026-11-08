@@ -1,4 +1,5 @@
 #include "dmcresource/resource_session.h"
+#include "dmcresource/scm_layout_compat.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/frame_profile.h"
 #include "dmcresource/texture_reencode.h"
@@ -621,10 +622,14 @@ std::unique_ptr<Session> open_session_unchecked(std::string_view name, const std
     }
 
     bool community_ptx = false;
+    bool community_scm = false;
     for (const auto& module : pipeline.modules) {
         if (module.name != nullptr &&
             std::string_view{module.name} == "native.ptx-community-descriptors") {
             community_ptx = true;
+        }
+        if (module.name != nullptr && std::string_view{module.name} == scm_layout_compat::kModuleName) {
+            community_scm = true;
         }
     }
     auto trace = pipeline_trace(pipeline);
@@ -634,6 +639,12 @@ std::unique_ptr<Session> open_session_unchecked(std::string_view name, const std
             std::string{name} +
             ": texture descriptors were written by a community tool; the canonical "
             "validator rejects them, the viewer reads header, sector spans and DDS only");
+    }
+    if (session && community_scm) {
+        session->non_canonical_notes.push_back(
+            std::string{name} +
+            ": mesh streams are laid out mesh by mesh, not in the game's stream order; "
+            "every stream is read through its record offset, the canonical layout check rejects the order");
     }
     if (session && session->probe.format == Format::Hits && bytes != nullptr) {
         if (auto parsed = environment_collision::parse(name, 0U, std::span<const std::uint8_t>{bytes, size})) {
