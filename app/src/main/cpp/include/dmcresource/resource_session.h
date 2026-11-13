@@ -300,6 +300,12 @@ struct Session {
 
 [[nodiscard]] std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size);
+// The file as its description only: the byte profile, strings and hex view
+// every unknown file gets, with `reason` shown as why. No format module
+// parses the bytes and nothing is drawn from them, so a file that stopped
+// the viewer before still opens.
+[[nodiscard]] std::unique_ptr<Session> open_description_session(std::string_view name,
+    const std::uint8_t* bytes, std::size_t size, std::string_view reason);
 // Checks the bytes a session opened from as a file on disk (file_health.h),
 // with the session's non-canonical notes; open_session does it.
 void assess_health(Session* session, std::string_view name, std::span<const std::uint8_t> bytes);

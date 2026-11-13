@@ -669,6 +669,30 @@ int main() {
     const auto child_strip = act::motion_strip(assembled_open.session.get(), false, {"a.MOTX5"});
     assert(child_strip.size() == 1U && child_strip[0].kind == "MOTX" && child_strip[0].stem == "A");
     assert(act::motion_strip(nullptr, true, {}).empty());
+    // Names are cut between characters: a Cyrillic or Japanese name keeps
+    // whole letters (a half letter is not text; Android's JNI stops on it).
+    const auto named = act::motion_strip(nullptr, false,
+        {"\xD0\xB0\xD0\xBD\xD1\x96\xD0\xBC\xD0\xB0\xD1\x86\xD1\x96\xD1\x8F.mot",
+         "\xE6\xAD\xA9\xE3\x81\x8F\xE3\x83\xA2\xE3\x83\xBC\xE3\x82\xB7\xE3\x83\xA7\xE3\x83\xB3.mot",
+         "bad\xFFname.mot"});
+    assert(named.size() == 3U);
+    assert(named[0].stem == "\xD0\xB0\xD0\xBD\xD1\x96\xD0\xBC\xD0\xB0\xD1\x86\xD1\x96" && named[0].kind == "MOT");
+    assert(named[1].stem == "\xE6\xAD\xA9\xE3\x81\x8F\xE3\x83\xA2\xE3\x83\xBC\xE3\x82\xB7\xE3\x83\xA7\xE3\x83\xB3");
+    assert(named[2].stem == "BAD?NAM");
+
+    // A file the viewer closed on opens as its description only: nothing is
+    // parsed or drawn, the reason is in Info, and it is not renderable.
+    const auto described = act::open_resource_description("pl_test.pac", pac.data(), pac.size());
+    assert(described.as == act::OpenedAs::Plain && described.session != nullptr);
+    assert(described.title == "pl_test.pac \u00b7 description");
+    assert(!described.session->renderable && described.session->children.empty());
+    assert(described.session->motion_library.empty());
+    bool reason_shown = false;
+    for (const auto& property : described.session->inspection.root.properties) {
+        reason_shown = reason_shown || property.value.find("the viewer closed while opening this file") != std::string::npos;
+    }
+    assert(reason_shown);
+    assert(act::open_resource_description("empty.mod", nullptr, 0U).as == act::OpenedAs::Rejected);
 
     // A stage effect bank opened on its own also becomes the room's effects.
     assert(act::open_resource("st001_effect.pac", motions_only.data(), motions_only.size()).room_effects);

@@ -5,13 +5,30 @@
 
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/text_utf8.h"
 
 namespace dmcresource::spider::actions {
 namespace {
 
+// The first `limit` characters of UTF-8 `text`, ASCII letters in upper case.
+// Cut between characters, never inside one: a half character is not valid
+// text for a shell (Android's JNI stops the app on it).
 [[nodiscard]] std::string upper(std::string_view text, std::size_t limit) {
     std::string out;
-    for (const char c : text.substr(0, limit)) out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    std::size_t characters = 0;
+    for (std::size_t at = 0; at < text.size() && characters < limit; ++characters) {
+        const std::size_t length = text::utf8_character(text, at);
+        if (length == 0U) {  // not UTF-8 here: one '?' stands for the byte
+            out += '?';
+            ++at;
+        } else if (length == 1U) {
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(text[at])));
+            ++at;
+        } else {
+            out.append(text.substr(at, length));
+            at += length;
+        }
+    }
     return out;
 }
 

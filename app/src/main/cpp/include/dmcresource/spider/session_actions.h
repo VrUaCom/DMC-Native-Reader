@@ -86,5 +86,10 @@ struct OpenedResource final {
 
 [[nodiscard]] OpenedResource open_resource(std::string_view name, const std::uint8_t* bytes,
                                            std::size_t size) noexcept;
+// The same file as its description only (open_description_session): the
+// shell asks for it when the viewer closed on this file the last time.
+// `as` is Plain, the title says "description".
+[[nodiscard]] OpenedResource open_resource_description(std::string_view name, const std::uint8_t* bytes,
+                                                       std::size_t size) noexcept;
 
 }  // namespace dmcresource::spider::actions

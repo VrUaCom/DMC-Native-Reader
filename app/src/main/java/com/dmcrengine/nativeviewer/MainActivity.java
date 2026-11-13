@@ -245,6 +245,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashReports.install(this);
         buildUi();
         applyViewerSettings();
         // A gesture added later is on for a mask stored before it existed.
@@ -261,13 +262,141 @@ public final class MainActivity extends Activity {
         }
         renderView.setGestures(prefs().getInt(PREF_GESTURES, DmcRenderView.G_ALL));
         renderView.setResolutionListener(side -> prefs().edit().putInt(SET_MAX_SIDE, side).apply());
+        // What the last run left if it closed by itself; read before a file
+        // opens, so that file is already known as the one it closed on.
+        final String closedReport = CrashReports.collect(this,
+                BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ")", nativeBuildIdentity(),
+                recentDiagnostics(8));
         loadRoomPreset(null);
+        testCrashKind = testCrashKind(getIntent());
+        // One window for both: the report and, if the file of this start is
+        // the one it closed on, the way to draw it again.
+        closedDialogPending = closedReport != null;
         handleIncomingIntent(getIntent());
+        closedDialogPending = false;
+        if (closedReport != null) showClosedDialog(closedReport, null);
+    }
+
+    private boolean closedDialogPending;
+
+    @Override protected void onStop() {
+        // Leaving while a file opens is not the reader closing by itself.
+        CrashReports.left(this);
+        super.onStop();
+    }
+
+    // ---- The reader closed by itself: the report, the description, drawing again.
+
+    /** "java" / "native": the emulator check of the crash notes; debuggable builds only. */
+    private String testCrashKind;
+
+    private String testCrashKind(Intent intent) {
+        final boolean debuggable = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        return debuggable && intent != null ? intent.getStringExtra("dmc.test.crash") : null;
+    }
+
+    /** The last lines of the open log, for the report. */
+    private java.util.List<String> recentDiagnostics(int count) {
+        final ArrayList<String> lines = new ArrayList<>();
+        try {
+            final java.util.List<String> all = java.nio.file.Files.readAllLines(diagnosticsFile().toPath());
+            for (String line : all) if (line.startsWith("[")) lines.add(line);
+        } catch (Exception ignored) {
+            return lines;
+        }
+        return lines.size() <= count ? lines : new ArrayList<>(lines.subList(lines.size() - count, lines.size()));
+    }
+
+    /**
+     * After the reader closed by itself: what happened and the report to
+     * share; and, for a file opened as its description because of it, the
+     * way to draw it again. Either part may be absent.
+     */
+    private void showClosedDialog(String report, Uri describedUri) {
+        final PanelRef dialog = new PanelRef();
+        final LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(12), dp(16), dp(16));
+        final TextView text = new TextView(this);
+        text.setTextColor(0xffc8ccd6);
+        text.setTextSize(14f);
+        final StringBuilder message = new StringBuilder();
+        if (report != null) {
+            message.append("The reader closed by itself the last time. The report says where; "
+                    + "sharing it is the fastest way to get that fixed.");
+        }
+        final Uri described = describedUri != null ? describedUri : this.describedUri;
+        if (described != null) {
+            if (message.length() > 0) message.append("\n\n");
+            message.append(displayName(described)).append(" is shown as a description: the reader closed while "
+                    + "opening it. Nothing is parsed or drawn from it until you ask.");
+        }
+        text.setText(message);
+        content.addView(text);
+        final LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        chipParams.topMargin = dp(10);
+        if (report != null) {
+            content.addView(actionChip("Share the report", () -> shareText("DMC Native Reader report", report)),
+                    chipParams);
+        }
+        if (described != null) {
+            content.addView(actionChip("Draw this file again", () -> {
+                dialog.dismiss();
+                CrashReports.forgive(this);
+                openUri(described, "retry");
+            }), chipParams);
+        }
+        if (report != null) {
+            final TextView body = new TextView(this);
+            body.setTextColor(0xff8c909c);
+            body.setTextSize(11f);
+            body.setTypeface(Typeface.MONOSPACE);
+            body.setTextIsSelectable(true);
+            body.setPadding(0, dp(12), 0, 0);
+            body.setText(report);
+            content.addView(body);
+        }
+        dialog.dialog = showPanel(report != null ? "The reader closed last time" : "Shown as a description",
+                content, null, null, null);
+    }
+
+    private void shareText(String subject, String text) {
+        final Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT, subject);
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(send, subject));
+        } catch (RuntimeException error) {
+            notice("No app to share with", Toast.LENGTH_LONG);
+        }
+    }
+
+    /** Everything the app saved (base rooms, settings, the game folder), as a fresh install. */
+    private void confirmResetSavedData() {
+        new PanelBuilder()
+                .setTitle("Reset saved data?")
+                .setMessage("Base rooms 1-5 with their effects and configurations, every setting, the game "
+                        + "folder and the gestures go back to a fresh install. The app closes; your game files "
+                        + "are not touched.")
+                .setPositiveButton("Reset", (d, w) -> {
+                    final android.app.ActivityManager manager =
+                            (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                    if (manager == null || !manager.clearApplicationUserData()) {
+                        notice("Could not reset: use the system's app settings, Storage, Clear data",
+                                Toast.LENGTH_LONG);
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        testCrashKind = testCrashKind(intent);
         handleIncomingIntent(intent);
     }
 
@@ -1802,6 +1931,17 @@ public final class MainActivity extends Activity {
             }), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         }
         content.addView(folderActions);
+
+        content.addView(sectionTitle("Saved data"));
+        content.addView(hint("If the reader misbehaves after an update, saved data of an older version can be "
+                + "the reason. A reset does what reinstalling does, without reinstalling."));
+        final LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        resetParams.topMargin = dp(6);
+        content.addView(actionChip("Reset saved data\u2026", () -> {
+            dialog.dismiss();
+            confirmResetSavedData();
+        }), resetParams);
 
         dialog.dialog = showPanel("Settings", content, null, null, null);
     }
@@ -5167,14 +5307,25 @@ public final class MainActivity extends Activity {
         String name = displayName(uri);
         titleView.setText(name);
 
+        // A file the reader closed on opens as its description until the user
+        // asks to draw it again; a crash from here to its first frame is this
+        // file's.
+        final String fileName = name;
+        final boolean describe = CrashReports.closedOn(this, fileName);
+        describedUri = describe ? uri : null;
+        CrashReports.opening(this, fileName);
+        if ("java".equals(testCrashKind)) throw new IllegalStateException("test crash (dmc.test.crash=java)");
+        if ("native".equals(testCrashKind)) NativeBridge.testCrash();
+
         // The core decides how the file opens (spider open_resource): an
         // assembled PAC, a stage's room, or the file itself.
         Object[] result;
         try (ParcelFileDescriptor pfd = openReadOnlyDescriptor(uri)) {
             if (pfd == null) throw new FileNotFoundException("No file descriptor");
-            result = NativeBridge.openResource(pfd.getFd(), name);
+            result = NativeBridge.openResource(pfd.getFd(), name, describe);
             if (result == null) throw new java.io.IOException("Could not map the file");
         } catch (Exception error) {
+            CrashReports.shown(this, fileName);
             appendDiagnostics(route, name, 0,
                     "platform transport failure: " + error.getClass().getSimpleName());
             setInfo(name + "\nOpen failed: " + error);
@@ -5187,6 +5338,7 @@ public final class MainActivity extends Activity {
         final String openedTitle = (String) result[2];
 
         if (opened == 0) {
+            CrashReports.shown(this, fileName);
             appendDiagnostics(route, name, 0, "not accepted by any native module");
             setInfo(openedTitle);
             applyResourceUiState();
@@ -5206,7 +5358,20 @@ public final class MainActivity extends Activity {
             modelPartUris.add(uri);
             modelPartPtxUris.add(null);
         }
+        // "Opened" is when it is on the screen: a picture at once, a model
+        // with its first frame (or after a while, for a view that draws none).
+        final Runnable shown = () -> CrashReports.shown(this, fileName);
+        if (renderView.showsStaticPicture()) {
+            shown.run();
+        } else {
+            renderView.whenNextShown(shown);
+            renderView.postDelayed(shown, 15000);
+        }
+        if (describe && !closedDialogPending) showClosedDialog(null, uri);
     }
+
+    /** The file now open as a description because the reader closed on it; null otherwise. */
+    private Uri describedUri;
 
     private void composeCurrentWithAdditionalMods(ArrayList<Uri> requested, String route) {
         if (session == 0 || requested == null || requested.isEmpty()) return;

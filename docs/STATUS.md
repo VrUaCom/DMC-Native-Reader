@@ -364,6 +364,24 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - v151: after a v150 report of the reader closing on every MOD and SCM
+    (gone after a reinstall, so saved data of an older version; not
+    reproduced), the reader no longer closes without a trace.
+    - A fatal native signal (`crash_recorder`) and an uncaught Java exception
+      each leave a note; the file being opened is remembered until its first
+      frame. The next start joins them into one report with a Share button.
+    - The file the reader closed on opens as its description
+      (`open_resource_description`: no format module runs, nothing is drawn)
+      with "Draw this file again".
+    - Settings has "Reset saved data", the same as a reinstall.
+    - Defects of the review: animation card names are cut by characters, not
+      bytes; every string to Java goes through one UTF-8 check
+      (`text_utf8.h`); the open plan runs under the session lock again; JNI
+      local references are freed per row.
+    - `tools/emulator_smoke.sh` runs an APK on an Android emulator (start,
+      open each test file, the crash notes and the description reopen);
+      `-PdmcAbi=x86_64` builds for it; `tools/check_jni_signatures.py`
+      compares the 147 natives on both sides. v151 passed all three.
   - v150: an SCM whose streams are laid out mesh by mesh (positions,
     normals, UVs and colours of one mesh, then the next) opens as its model
     instead of the raw description. The canonical parser reads every stream

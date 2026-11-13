@@ -97,6 +97,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/session_gallery.cpp
     modules/file_health.cpp
     modules/scm_layout_compat.cpp
+    modules/crash_recorder.cpp
     modules/view_benchmark.cpp
     modules/session_inspection.cpp
     modules/uv_gallery.cpp
@@ -459,7 +460,7 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         em028_corpus_contract effect_visualization gdata_legacy mod_spatial_adapter module_registry
         png_export_session ptx_model_texture ptx_runtime_compat ptx_transaction render_scene scm_authority
         spider_event_execution spider_model_execution uv_gallery session_inspection tm2_legacy workspace_graph
-        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level bcn_formats gallery_mosaic texture_reencode_action gpu_view_frame view_benchmark fly_camera font stage_config families camera_control demo video photo_camera dmc3_shaders effect_sites game_material game_lights file_health viewer_settings
+        effect_runtime motion_playback pac_assembly player_coat particle generator enemy_effects ptx_single_level bcn_formats gallery_mosaic texture_reencode_action gpu_view_frame view_benchmark fly_camera font stage_config families camera_control demo video photo_camera dmc3_shaders effect_sites game_material game_lights file_health viewer_settings crash_recorder text_utf8
     )
     set(_dmc_native_reader_tests_unique ${DMC_NATIVE_READER_TESTS})
     list(REMOVE_DUPLICATES _dmc_native_reader_tests_unique)

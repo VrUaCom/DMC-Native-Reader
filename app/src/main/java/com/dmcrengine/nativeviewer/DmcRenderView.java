@@ -1109,6 +1109,24 @@ public final class DmcRenderView extends View {
         resolutionListener = listener;
     }
 
+    /** The session is shown as its own picture (a texture, a description), not as rendered frames. */
+    boolean showsStaticPicture() {
+        return staticImagePreview;
+    }
+
+    // Runs once, when the next frame or picture of the session is on the screen.
+    private Runnable whenShown;
+
+    void whenNextShown(Runnable action) {
+        whenShown = action;
+    }
+
+    private void notifyShown() {
+        final Runnable action = whenShown;
+        whenShown = null;
+        if (action != null) action.run();
+    }
+
     // ---- Render thread ----------------------------------------------------
     //
     // The UI thread only describes the frame it wants (camera, flags, motion
@@ -1308,6 +1326,7 @@ public final class DmcRenderView extends View {
         }
         lastRenderMs = SystemClock.uptimeMillis();
         invalidate();
+        notifyShown();
         if (request.preview) {
             removeCallbacks(fullFrame);
             postDelayed(fullFrame, 150);

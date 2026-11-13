@@ -34,6 +34,8 @@
 #include "dmcresource/spider/camera.h"
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/spider/app_info.h"
+#include "dmcresource/crash_recorder.h"
+#include "dmcresource/text_utf8.h"
 #include "dmcresource/spider/viewer_settings.h"
 #include "dmcresource/spider/motion_strip.h"
 #include "dmcresource/spider/companion_menu.h"
@@ -59,6 +61,17 @@
 namespace {
 
 constexpr auto kMaxMappedBytes = dmcresource::resource_limits::kMaxResourceBytes;
+
+// Every string the core hands to Java: JNI takes UTF-8 only and, in a
+// debuggable build, stops the app on anything else. File names and strings
+// read from game files can hold any bytes; those become '?'.
+jstring new_utf(JNIEnv* env, const char* text) noexcept {
+    if (text == nullptr) return env->NewStringUTF("");
+    try {
+        if (dmcresource::text::is_utf8(text)) return env->NewStringUTF(text);
+        return env->NewStringUTF(dmcresource::text::as_utf8(text).c_str());
+    } catch (...) { return env->NewStringUTF(""); }
+}
 
 std::string to_utf8(JNIEnv* env, jstring value) {
     if (value == nullptr) return {};
@@ -250,16 +263,23 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_open(
 
 // A picked file opened the way the core decides (spider open_resource):
 // {Long handle (0 when rejected), Integer OpenedAs, String title,
-// Boolean room_effects}.
+// Boolean room_effects}. `describe_only`: the file as its description, with
+// no format module run (the viewer closed on it the last time).
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_openResource(
-        JNIEnv* env, jclass, jint fd, jstring filename) {
+        JNIEnv* env, jclass, jint fd, jstring filename, jboolean describe_only) {
     if (fd < 0) return nullptr;
     ReadOnlyMap mapped(fd);
     if (!mapped.valid()) return nullptr;
     try {
         const auto name = to_utf8(env, filename);
-        auto opened = dmcresource::spider::actions::open_resource(name, mapped.data(), mapped.size());
+        // The whole open plan runs under the session lock, as its steps did
+        // when the shell called them one by one: nothing else reads or
+        // changes sessions and stage state meanwhile.
+        const SessionLock open_lock{session_mutex()};
+        auto opened = describe_only == JNI_TRUE
+            ? dmcresource::spider::actions::open_resource_description(name, mapped.data(), mapped.size())
+            : dmcresource::spider::actions::open_resource(name, mapped.data(), mapped.size());
         jobjectArray out = env->NewObjectArray(4, env->FindClass("java/lang/Object"), nullptr);
         if (out == nullptr) return nullptr;
         jclass long_class = env->FindClass("java/lang/Long");
@@ -269,7 +289,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openResource(
                                     static_cast<jint>(opened.as));
         jobject effects = env->NewObject(boolean_class, env->GetMethodID(boolean_class, "<init>", "(Z)V"),
                                          opened.room_effects ? JNI_TRUE : JNI_FALSE);
-        jstring title = env->NewStringUTF(opened.title.c_str());
+        jstring title = new_utf(env, opened.title.c_str());
         if (as == nullptr || effects == nullptr || title == nullptr) return nullptr;
         // The session becomes a live handle last, so a failure above frees it.
         const jlong value = opened.session ? to_handle(opened.session.release()) : 0;
@@ -337,7 +357,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_close(
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_buildIdentity(
         JNIEnv* env, jclass) {
-    return env->NewStringUTF(DMC_NATIVE_READER_BUILD_SHA);
+    return new_utf(env, DMC_NATIVE_READER_BUILD_SHA);
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -346,8 +366,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_diagnostics(
     try {
         const auto text =
             dmcresource::describe_session_diagnostics(from_handle(handle));
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, text.c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -376,8 +396,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartName(
     const SessionLock jni_lock{session_mutex()};
     try {
         const auto name = dmcresource::session_composite_part_name(from_handle(handle), index);
-        return env->NewStringUTF(name.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, name.c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -386,8 +406,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartState(
     try {
         const auto text =
             dmcresource::describe_composite_part_state(from_handle(handle), index);
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, text.c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -407,8 +427,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeName(
     try {
         const auto name = dmcresource::session_composite_part_node_name(
             from_handle(handle), part_index, node_index);
-        return env->NewStringUTF(name.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, name.c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -431,23 +451,23 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachModPartToHostJoint(
         JNIEnv* env, jclass, jlong handle, jint host_part_index,
         jint child_part_index, jint host_joint_index) {
     if (host_part_index < 0 || child_part_index < 0 || host_joint_index < 0) {
-        return env->NewStringUTF("invalid-part-index");
+        return new_utf(env, "invalid-part-index");
     }
     const auto result = dmcresource::spider::actions::attach_mod_part_to_host_joint(
         from_handle(handle),
         static_cast<std::size_t>(host_part_index),
         static_cast<std::size_t>(child_part_index),
         static_cast<std::uint32_t>(host_joint_index));
-    return env->NewStringUTF(dmcresource::composite_placement::to_string(result.status));
+    return new_utf(env, dmcresource::composite_placement::to_string(result.status));
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_resetModPartPlacement(
         JNIEnv* env, jclass, jlong handle, jint child_part_index) {
-    if (child_part_index < 0) return env->NewStringUTF("invalid-part-index");
+    if (child_part_index < 0) return new_utf(env, "invalid-part-index");
     const auto result = dmcresource::spider::actions::reset_mod_part_placement(
         from_handle(handle), static_cast<std::size_t>(child_part_index));
-    return env->NewStringUTF(dmcresource::composite_placement::to_string(result.status));
+    return new_utf(env, dmcresource::composite_placement::to_string(result.status));
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -564,8 +584,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_textureAttachmentInfo(
         JNIEnv* env, jclass, jlong handle) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
-    if (session == nullptr) return env->NewStringUTF("");
-    return env->NewStringUTF(session->texture_attachment_detail.c_str());
+    if (session == nullptr) return new_utf(env, "");
+    return new_utf(env, session->texture_attachment_detail.c_str());
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -589,8 +609,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_childResourceTitle(
     const SessionLock jni_lock{session_mutex()};
     try {
         const auto title = dmcresource::session_child_title(from_handle(handle), index);
-        return env->NewStringUTF(title.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, title.c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -709,7 +729,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraSettings(JNIEnv* env, jclass
             const auto& s = list[i];
             std::string row = s.id + "\t" + s.section + "\t" + s.label + "\t" + s.hint + "\t" + std::to_string(s.start);
             for (const auto& option : s.options) row += "\t" + option;
-            jstring text = env->NewStringUTF(row.c_str());
+            jstring text = new_utf(env, row.c_str());
             env->SetObjectArrayElement(out, static_cast<jsize>(i), text);
             env->DeleteLocalRef(text);
         }
@@ -844,7 +864,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFollowUps(JNIEnv* env, jclas
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(rows.size()), env->FindClass("java/lang/String"), nullptr);
         if (out == nullptr) return nullptr;
         for (std::size_t i = 0; i < rows.size(); ++i) {
-            jstring text = env->NewStringUTF(rows[i].c_str());
+            jstring text = new_utf(env, rows[i].c_str());
             env->SetObjectArrayElement(out, static_cast<jsize>(i), text);
             env->DeleteLocalRef(text);
         }
@@ -878,7 +898,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraDials(JNIEnv* env, jclass) {
             std::string keys = std::to_string(static_cast<int>(dials[i].key));
             for (const auto key : dials[i].with) keys += "," + std::to_string(static_cast<int>(key));
             const std::string row = keys + "\t" + dials[i].title + "\t" + dials[i].value;
-            jstring text = env->NewStringUTF(row.c_str());
+            jstring text = new_utf(env, row.c_str());
             env->SetObjectArrayElement(out, static_cast<jsize>(i), text);
             env->DeleteLocalRef(text);
         }
@@ -943,8 +963,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFocusAt(
         const float units = cam::focus_at(from_handle(handle), width, height, yaw, pitch, zoom,
                                           static_cast<std::uint32_t>(render_flags),
                                           view_controls(pan_x, pan_y, room_yaw, follow, dolly), x, y);
-        return env->NewStringUTF(cam::focus_message(units).c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, cam::focus_message(units).c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -952,13 +972,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFocusLock(JNIEnv* env, jclas
     namespace cam = dmcresource::spider::camera;
     const bool locked = cam::toggle_focus_lock();
     const std::string text = locked ? "AF lock: " + cam::focus_message(cam::focus_point()) : "Auto focus";
-    return env->NewStringUTF(text.c_str());
+    return new_utf(env, text.c_str());
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_cameraFocusRing(JNIEnv* env, jclass, jfloat steps) {
     namespace cam = dmcresource::spider::camera;
-    return env->NewStringUTF(cam::focus_message(cam::turn_focus_ring(steps)).c_str());
+    return new_utf(env, cam::focus_message(cam::turn_focus_ring(steps)).c_str());
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -1003,7 +1023,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_viewfinder(JNIEnv* env, jclass, jl
         if (floats == nullptr) return nullptr;
         env->SetFloatArrayRegion(floats, 0, static_cast<jsize>(numbers.size()), numbers.data());
         env->SetObjectArrayElement(out, 0, floats);
-        jstring status = env->NewStringUTF(finder.status.c_str());
+        jstring status = new_utf(env, finder.status.c_str());
         env->SetObjectArrayElement(out, 1, status);
         return out;
     } catch (...) { return nullptr; }
@@ -1045,7 +1065,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_pickView(
             kind = "placed";
         }
         const auto text = kind + "|" + pick.joint_name;
-        return env->NewStringUTF(text.c_str());
+        return new_utf(env, text.c_str());
     } catch (...) { return nullptr; }
 }
 
@@ -1056,8 +1076,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
     try {
         const auto document = dmcresource::inspect_session(from_handle(handle),
             static_cast<dmcresource::InspectionTopic>(topic));
-        return env->NewStringUTF(dmcresource::format_inspection_tree(document).c_str());
-    } catch (...) { return env->NewStringUTF("Information unavailable"); }
+        return new_utf(env, dmcresource::format_inspection_tree(document).c_str());
+    } catch (...) { return new_utf(env, "Information unavailable"); }
 }
 
 // --- Read-only PAC assembly and MOT playback (v34) -------------------------
@@ -1108,16 +1128,16 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotionScript(
         JNIEnv* env, jclass, jlong handle, jint script_index, jint motion_index) {
     const SessionLock jni_lock{session_mutex()};
     if (script_index < 0 || motion_index < 0) {
-        return env->NewStringUTF("MotionScript: invalid index");
+        return new_utf(env, "MotionScript: invalid index");
     }
     try {
         auto report = dmcresource::motion::load_scripted_motion(
             from_handle(handle),
             static_cast<std::size_t>(script_index),
             static_cast<std::size_t>(motion_index));
-        return env->NewStringUTF(report.detail.c_str());
+        return new_utf(env, report.detail.c_str());
     } catch (...) {
-        return env->NewStringUTF("MotionScript: load failed");
+        return new_utf(env, "MotionScript: load failed");
     }
 }
 
@@ -1128,13 +1148,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadLibraryMotion(
     Session* session = from_handle(handle);
     if (session == nullptr || index < 0 ||
         static_cast<std::size_t>(index) >= session->motion_library.size()) {
-        return env->NewStringUTF("Motion: invalid library index");
+        return new_utf(env, "Motion: invalid library index");
     }
     try {
         const auto report = dmcresource::motion::load_library_motion(
             session, static_cast<std::size_t>(index));
-        return env->NewStringUTF(report.detail.c_str());
-    } catch (...) { return env->NewStringUTF("Motion: load failed"); }
+        return new_utf(env, report.detail.c_str());
+    } catch (...) { return new_utf(env, "Motion: load failed"); }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -1142,15 +1162,15 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadMotion(
         JNIEnv* env, jclass, jlong handle, jint fd, jstring filename) {
     const SessionLock jni_lock{session_mutex()};
     Session* session = from_handle(handle);
-    if (session == nullptr || fd < 0) return env->NewStringUTF("Motion: no model session");
+    if (session == nullptr || fd < 0) return new_utf(env, "Motion: no model session");
     try {
         ReadOnlyMap mapped(fd);
-        if (!mapped.valid()) return env->NewStringUTF("Motion: could not map selected file");
+        if (!mapped.valid()) return new_utf(env, "Motion: could not map selected file");
         const auto name = to_utf8(env, filename);
         const auto report = dmcresource::motion::load_motion(
             session, name, mapped.data(), mapped.size());
-        return env->NewStringUTF(report.detail.c_str());
-    } catch (...) { return env->NewStringUTF("Motion: load failed"); }
+        return new_utf(env, report.detail.c_str());
+    } catch (...) { return new_utf(env, "Motion: load failed"); }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -1174,7 +1194,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoom(
         if (!room) return nullptr;
         const auto detail = room->detail;
         dmcresource::stage_room::set_current(std::move(room));
-        return env->NewStringUTF(detail.c_str());
+        return new_utf(env, detail.c_str());
     } catch (...) { return nullptr; }
 }
 
@@ -1194,7 +1214,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_loadRoomEffects(
         dmcresource::stage_room::set_effect_host(slot == 1 ? dmcresource::StageSlot::scene
                                                            : dmcresource::StageSlot::base,
                                                  std::move(host));
-        return env->NewStringUTF(detail.c_str());
+        return new_utf(env, detail.c_str());
     } catch (...) { return nullptr; }
 }
 
@@ -1219,14 +1239,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_stageStem(JNIEnv* env, jclass, jlo
     const SessionLock jni_lock{session_mutex()};
     try {
         const auto* session = from_handle(handle);
-        if (session == nullptr || session->stage == nullptr) return env->NewStringUTF("");
+        if (session == nullptr || session->stage == nullptr) return new_utf(env, "");
         int number = dmcresource::stage_markers::stage_number(session->stage->name);
         if (number < 0) number = dmcresource::stage_markers::stage_number(session->source_name);
-        if (number < 0 || number > 999) return env->NewStringUTF("");
+        if (number < 0 || number > 999) return new_utf(env, "");
         char stem[8];
         std::snprintf(stem, sizeof stem, "st%03d", number);
-        return env->NewStringUTF(stem);
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, stem);
+    } catch (...) { return new_utf(env, ""); }
 }
 
 // Clears one slot's stage configuration (a stage scene opens clean).
@@ -1247,8 +1267,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_stageArchives(JNIEnv* env, jclass,
         const auto archives = dmcresource::stage_markers::stage_archives(text);
         jobjectArray out = env->NewObjectArray(archives ? 2 : 0, env->FindClass("java/lang/String"), nullptr);
         if (archives) {
-            jstring effects = env->NewStringUTF(archives->effects.c_str());
-            jstring config = env->NewStringUTF(archives->config.c_str());
+            jstring effects = new_utf(env, archives->effects.c_str());
+            jstring config = new_utf(env, archives->config.c_str());
             env->SetObjectArrayElement(out, 0, effects);
             env->SetObjectArrayElement(out, 1, config);
             env->DeleteLocalRef(effects);
@@ -1267,7 +1287,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_baseSpawnPoints(JNIEnv* env, jclas
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(points.size()),
                                                env->FindClass("java/lang/String"), nullptr);
         for (std::size_t i = 0; i < points.size(); ++i) {
-            jstring title = env->NewStringUTF(points[i].title.c_str());
+            jstring title = new_utf(env, points[i].title.c_str());
             env->SetObjectArrayElement(out, static_cast<jsize>(i), title);
             env->DeleteLocalRef(title);
         }
@@ -1313,7 +1333,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_collisionKinds(JNIEnv* env, jclass
                           kinds[i].floors, kinds[i].walls, kinds[i].ceilings,
                           (static_cast<unsigned>(color[0]) << 16U) | (static_cast<unsigned>(color[1]) << 8U) |
                               static_cast<unsigned>(color[2]));
-            env->SetObjectArrayElement(out, static_cast<jsize>(i), env->NewStringUTF(text));
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), new_utf(env, text));
         }
         return out;
     } catch (...) { return nullptr; }
@@ -1344,7 +1364,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_collisionReport(JNIEnv* env, jclas
         jclass string_class = env->FindClass("java/lang/String");
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(entries.size()), string_class, nullptr);
         for (std::size_t i = 0; i < entries.size(); ++i) {
-            env->SetObjectArrayElement(out, static_cast<jsize>(i), env->NewStringUTF(entries[i].c_str()));
+            env->SetObjectArrayElement(out, static_cast<jsize>(i), new_utf(env, entries[i].c_str()));
         }
         return out;
     } catch (...) { return nullptr; }
@@ -1354,10 +1374,35 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_collisionReport(JNIEnv* env, jclas
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_welcomeText(JNIEnv* env, jclass, jstring app_version) {
     try {
-        return env->NewStringUTF(
+        return new_utf(env, 
             dmcresource::spider::actions::welcome_text(to_utf8(env, app_version), DMC_NATIVE_READER_BUILD_SHA)
                 .c_str());
     } catch (...) { return nullptr; }
+}
+
+// ---- Crash notes (crash_recorder.h): a fatal signal leaves a note in
+// `path`; the shell shows it at the next start.
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_installCrashRecorder(JNIEnv* env, jclass, jstring path) {
+    try {
+        dmcresource::crash_recorder::install(to_utf8(env, path));
+    } catch (...) {}
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_setCrashContext(JNIEnv* env, jclass, jstring text) {
+    try {
+        dmcresource::crash_recorder::set_context(to_utf8(env, text));
+    } catch (...) {}
+}
+
+// Stops the process the way a native fault would, for the emulator check of
+// the crash notes. The shell calls it only in a debuggable build, on an
+// explicit test extra.
+extern "C" JNIEXPORT void JNICALL
+Java_com_dmcrengine_nativeviewer_NativeBridge_testCrash(JNIEnv*, jclass) {
+    std::abort();
 }
 
 // The open session's Info, written by spider::actions::session_info_text:
@@ -1384,8 +1429,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_sessionInfoText(
             if (name != nullptr) env->DeleteLocalRef(name);
         }
         const auto text = dmcresource::spider::actions::session_info_text(from_handle(handle), context);
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF("Information unavailable"); }
+        return new_utf(env, text.c_str());
+    } catch (...) { return new_utf(env, "Information unavailable"); }
 }
 
 // ---- Spider stage / sound / export actions (spider/stage_actions.h) ----
@@ -1398,7 +1443,7 @@ namespace {
 
 namespace stage_actions = dmcresource::spider::actions;
 
-jstring utf(JNIEnv* env, const std::string& text) { return env->NewStringUTF(text.c_str()); }
+jstring utf(JNIEnv* env, const std::string& text) { return new_utf(env, text.c_str()); }
 
 jobjectArray utf_array(JNIEnv* env, const std::vector<std::string>& values) {
     jclass string_class = env->FindClass("java/lang/String");
@@ -1485,12 +1530,15 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_motionStrip(JNIEnv* env, jclass, j
                 labels.push_back(button.label);
                 descriptions.push_back(button.description);
             }
+            // One frame per card: its strings and arrays go when the card is stored.
+            if (env->PushLocalFrame(16) != 0) return nullptr;
             jobject item = env->NewObject(type, make, utf(env, card.name), static_cast<jint>(card.library_index),
                                           static_cast<jint>(card.staged_index), static_cast<jint>(card.pack_slot),
                                           card.separator_before ? JNI_TRUE : JNI_FALSE,
                                           utf(env, card.separator_description), utf(env, card.kind),
                                           utf(env, card.stem), utf(env, card.description), int_array(env, scripts),
                                           utf_array(env, labels), utf_array(env, descriptions));
+            item = env->PopLocalFrame(item);
             if (item == nullptr) return nullptr;
             env->SetObjectArrayElement(out, static_cast<jsize>(index), item);
             env->DeleteLocalRef(item);
@@ -1740,11 +1788,11 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_nextBaseSpot(JNIEnv* env, jclass) {
     try {
         const auto next = dmcresource::spider::actions::next_base_spot();
-        if (next.index < 0) return env->NewStringUTF("");
+        if (next.index < 0) return new_utf(env, "");
         const auto text = std::string{next.spawn ? "spawn" : "floor"} + "\t" + std::to_string(next.index) + "\t" +
                           std::to_string(next.count) + "\t" + next.title;
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, text.c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -1776,9 +1824,9 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_selectCollisionAttack(
     const SessionLock jni_lock{session_mutex()};
     try {
         auto* session = from_handle(handle);
-        if (!dmcresource::collision::select_collision_attack(session, attack)) return env->NewStringUTF("");
-        return env->NewStringUTF(dmcresource::collision::describe_collision_selection(*session).c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        if (!dmcresource::collision::select_collision_attack(session, attack)) return new_utf(env, "");
+        return new_utf(env, dmcresource::collision::describe_collision_selection(*session).c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jobjectArray JNICALL
@@ -1792,7 +1840,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_classEventNames(
         jobjectArray out = env->NewObjectArray(static_cast<jsize>(names.size()), string_class, nullptr);
         if (out == nullptr) return nullptr;
         for (std::size_t index = 0U; index < names.size(); ++index) {
-            jstring value = env->NewStringUTF(names[index]);
+            jstring value = new_utf(env, names[index]);
             if (value == nullptr) return nullptr;
             env->SetObjectArrayElement(out, static_cast<jsize>(index), value);
             env->DeleteLocalRef(value);
@@ -1868,7 +1916,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_archiveVariantNames(
                                                string_class, nullptr);
         if (out == nullptr) return nullptr;
         for (std::size_t index = 0U; index < variants.size(); ++index) {
-            jstring value = env->NewStringUTF(variants[index].label.c_str());
+            jstring value = new_utf(env, variants[index].label.c_str());
             if (value == nullptr) return nullptr;
             env->SetObjectArrayElement(out, static_cast<jsize>(index), value);
             env->DeleteLocalRef(value);
@@ -1884,13 +1932,13 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_fileHealth(
         JNIEnv* env, jclass, jlong handle, jstring filename) {
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
-    if (session == nullptr) return env->NewStringUTF("0\n");
+    if (session == nullptr) return new_utf(env, "0\n");
     try {
         const auto report = dmcresource::file_health::session_report(*session);
         const auto text = std::to_string(static_cast<int>(report.worst())) + "\n" +
                           dmcresource::file_health::format(to_utf8(env, filename), report);
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF("0\n"); }
+        return new_utf(env, text.c_str());
+    } catch (...) { return new_utf(env, "0\n"); }
 }
 
 // ---- Texture format change (Spider texture re-encode action) ----
@@ -1908,7 +1956,7 @@ jobjectArray to_string_array(JNIEnv* env, const std::vector<std::string>& values
     jobjectArray out = env->NewObjectArray(static_cast<jsize>(values.size()), string_class, nullptr);
     if (out == nullptr) return nullptr;
     for (std::size_t i = 0U; i < values.size(); ++i) {
-        jstring s = env->NewStringUTF(values[i].c_str());
+        jstring s = new_utf(env, values[i].c_str());
         env->SetObjectArrayElement(out, static_cast<jsize>(i), s);
         if (s != nullptr) env->DeleteLocalRef(s);
     }
@@ -1959,8 +2007,8 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_reencodeTexturesDetail(JNIEnv* env, jclass) {
     const SessionLock jni_lock{session_mutex()};
     try {
-        return env->NewStringUTF(last_reencode_detail().c_str());
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, last_reencode_detail().c_str());
+    } catch (...) { return new_utf(env, ""); }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -1968,8 +2016,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_sourceFileName(JNIEnv* env, jclass
     const SessionLock jni_lock{session_mutex()};
     const Session* session = from_handle(handle);
     try {
-        return env->NewStringUTF(session != nullptr ? session->source_name.c_str() : "");
-    } catch (...) { return env->NewStringUTF(""); }
+        return new_utf(env, session != nullptr ? session->source_name.c_str() : "");
+    } catch (...) { return new_utf(env, ""); }
 }
 
 // Writes the session's file (an authored result) to a writable descriptor.
@@ -2056,11 +2104,14 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_settingsSchema(JNIEnv* env, jclass
             if (!row.values.empty()) {
                 env->SetFloatArrayRegion(values, 0, static_cast<jsize>(row.values.size()), row.values.data());
             }
+            // One frame per row: its strings and arrays go when the row is stored.
+            if (env->PushLocalFrame(16) != 0) return nullptr;
             jobject item = env->NewObject(type, make, utf(env, row.key), utf(env, row.section), utf(env, row.label),
                                           static_cast<jint>(row.control), static_cast<jint>(row.storage),
                                           utf_array(env, row.choices), values, static_cast<jfloat>(row.fallback),
                                           utf(env, row.hint), row.render_now ? JNI_TRUE : JNI_FALSE,
                                           row.room_only ? JNI_TRUE : JNI_FALSE);
+            item = env->PopLocalFrame(item);
             if (item == nullptr) return nullptr;
             env->SetObjectArrayElement(out, static_cast<jsize>(index), item);
             env->DeleteLocalRef(item);
@@ -2158,7 +2209,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
         {
             const SessionLock jni_lock{session_mutex()};
             const Session* session = from_handle(handle);
-            if (session == nullptr) return env->NewStringUTF("Nothing to draw.");
+            if (session == nullptr) return new_utf(env, "Nothing to draw.");
             if (std::isfinite(motion_start)) {
                 end_frame = dmcresource::motion::motion_end_frame(session);
                 loop_start = dmcresource::motion::motion_loop_start_frame(session);
@@ -2212,8 +2263,8 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_benchmarkView(
         // Where the time went, stage by stage (warm-up frames included).
         const auto stages = dmcresource::frame_profile::per_frame_line();
         if (!stages.empty()) text += "\n" + stages;
-        return env->NewStringUTF(text.c_str());
-    } catch (...) { return env->NewStringUTF("Benchmark failed."); }
+        return new_utf(env, text.c_str());
+    } catch (...) { return new_utf(env, "Benchmark failed."); }
 }
 
 // ---- Fly camera ---------------------------------------------------------------
@@ -2321,7 +2372,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_demoSubtitle(JNIEnv* env, jclass, 
         if (!text.empty()) text.push_back('\n');
         text += line;
     }
-    return env->NewStringUTF(text.c_str());
+    return new_utf(env, text.c_str());
 }
 
 // How to draw it (messages::layout): {centre x, top, size} as fractions of

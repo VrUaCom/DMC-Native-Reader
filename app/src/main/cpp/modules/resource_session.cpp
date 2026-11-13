@@ -612,6 +612,19 @@ std::unique_ptr<Session> open_session(std::string_view name,
     return session;
 }
 
+std::unique_ptr<Session> open_description_session(std::string_view name, const std::uint8_t* bytes,
+                                                  std::size_t size, std::string_view reason) {
+    if (bytes == nullptr || size == 0U) return nullptr;
+    PipelineResult described;
+    // The identity comes from the name and the first bytes only (probe); the
+    // module that would parse the file is not run.
+    described.probe = probe(name, bytes, size);
+    described.detail = std::string{reason};
+    auto session = open_binary_session(name, std::span<const std::uint8_t>{bytes, size}, described);
+    if (session) assess_health(session.get(), name, std::span<const std::uint8_t>{bytes, size});
+    return session;
+}
+
 namespace {
 
 std::unique_ptr<Session> open_session_unchecked(std::string_view name, const std::uint8_t* bytes, std::size_t size) {

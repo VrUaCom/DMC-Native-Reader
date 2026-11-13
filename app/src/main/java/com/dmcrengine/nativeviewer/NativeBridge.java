@@ -20,8 +20,17 @@ public final class NativeBridge {
     public static final int OPENED_AS_PLAIN = 1;
     public static final int OPENED_AS_ASSEMBLED_PAC = 2;
     public static final int OPENED_AS_STAGE = 3;
-    /** {Long handle, Integer OPENED_AS_*, String title, Boolean roomEffects}; null when unreadable. */
-    public static native Object[] openResource(int fd, String filename);
+    /**
+     * {Long handle, Integer OPENED_AS_*, String title, Boolean roomEffects}; null when unreadable.
+     * describeOnly: the file as its description, nothing parsed or drawn (the reader closed on it last time).
+     */
+    public static native Object[] openResource(int fd, String filename, boolean describeOnly);
+    /** A fatal native signal leaves a note in this file (crash_recorder.h). */
+    public static native void installCrashRecorder(String path);
+    /** What the shell is doing now, for that note. */
+    public static native void setCrashContext(String text);
+    /** Stops the process as a native fault would; the emulator check of the crash notes only. */
+    public static native void testCrash();
     /** The animation strip: the library's MOT cards (withLibrary) and then the staged ones. */
     public static native MotionCard[] motionStrip(long handle, boolean withLibrary, String[] staged);
     /** The Settings window's rows, written by the core; describeDevice adds the GPU's limits to the hints. */

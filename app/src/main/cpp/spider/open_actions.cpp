@@ -72,4 +72,28 @@ OpenedResource open_resource(std::string_view name, const std::uint8_t* bytes, s
     }
 }
 
+OpenedResource open_resource_description(std::string_view name, const std::uint8_t* bytes,
+                                         std::size_t size) noexcept {
+    OpenedResource out;
+    try {
+        out.title = std::string{name};
+        out.session = open_description_session(
+            name, bytes, size,
+            "Shown as a description: the viewer closed while opening this file the last time. "
+            "Nothing is parsed or drawn from it until it is asked to draw again.");
+        if (!out.session) {
+            out.title += "\nRejected: the file is empty or could not be read.";
+            return out;
+        }
+        out.as = OpenedAs::Plain;
+        out.title += " \u00b7 description";
+        return out;
+    } catch (...) {
+        out.session.reset();
+        out.as = OpenedAs::Rejected;
+        out.title = std::string{name} + "\nOpen failed in the core.";
+        return out;
+    }
+}
+
 }  // namespace dmcresource::spider::actions
