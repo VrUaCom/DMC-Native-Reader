@@ -1,0 +1,9 @@
+module CDMCReader [system] {
+    header "../../../app/src/main/cpp/capi/include/dmc_reader.h"
+    link "dmc_reader_capi"
+    link "dmc_native_reader_core"
+    link "dmc_native_reader_rengine_viewer"
+    link "dmc_rengine_reader_core"
+    link "dmc_native_reader_stb_vorbis"
+    export *
+}

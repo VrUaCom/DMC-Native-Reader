@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -51,6 +52,38 @@ struct EffectResourceRef final {
     EvidenceStatus evidence{EvidenceStatus::PRESERVED_UNDECODED};
 };
 
+struct EffectChildRef;
+
+// A read-only view of child effects (pointer + count), used where a type
+// holds its own children. std::span<const EffectChildRef> inside
+// EffectChildRef itself compiles with libstdc++ but not with libc++ (Apple,
+// Android's NDK): its span checks the complete type while the struct is
+// still being declared. This view only needs the type where it is used.
+class EffectChildSpan final {
+public:
+    constexpr EffectChildSpan() noexcept = default;
+    constexpr EffectChildSpan(const EffectChildRef* data, std::size_t size) noexcept : data_(data), size_(size) {}
+    // From a span or vector of children (anything with data() and size()).
+    // The other way, std::span takes this view as the contiguous range it is.
+    template <typename Range>
+        requires requires(const Range& range) {
+            { range.data() } -> std::convertible_to<const EffectChildRef*>;
+            { range.size() } -> std::convertible_to<std::size_t>;
+        }
+    constexpr EffectChildSpan(const Range& range) noexcept  // NOLINT: implicit, as std::span
+        : data_(range.data()), size_(range.size()) {}
+
+    [[nodiscard]] constexpr const EffectChildRef* data() const noexcept { return data_; }
+    [[nodiscard]] constexpr std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] constexpr bool empty() const noexcept { return size_ == 0U; }
+    [[nodiscard]] const EffectChildRef* begin() const noexcept { return data_; }
+    [[nodiscard]] const EffectChildRef* end() const noexcept;
+    [[nodiscard]] const EffectChildRef& operator[](std::size_t index) const noexcept;
+private:
+    const EffectChildRef* data_{};
+    std::size_t size_{};
+};
+
 // One EXE-dispatched child in a V composite. The transform stays in the
 // corpus's local translation/degree-rotation/scale domain; presentation code
 // composes it with the runtime parent only after resolving the child key.
@@ -71,8 +104,11 @@ struct EffectChildRef final {
     // Recursive V children keep their canonical dependency graph. A nested
     // graph is checked by the resource gate; it is not flattened into a
     // synthetic filename or semantic effect name.
-    std::span<const EffectChildRef> children{};
+    EffectChildSpan children{};
 };
+
+inline const EffectChildRef* EffectChildSpan::end() const noexcept { return data_ + size_; }
+inline const EffectChildRef& EffectChildSpan::operator[](std::size_t index) const noexcept { return data_[index]; }
 
 enum class RuntimeEffectParent : std::uint8_t {
     World,
@@ -161,7 +197,7 @@ struct EffectBinding final {
     EvidenceStatus evidence{EvidenceStatus::PRESERVED_UNDECODED};
     EffectLifetimeRule lifetime{EffectLifetimeRule::PreservedUndecoded};
     EvidenceStatus lifetime_evidence{EvidenceStatus::PRESERVED_UNDECODED};
-    std::span<const EffectChildRef> children{};
+    EffectChildSpan children{};
     // Actor phase that spawns this effect (DynamicActorEvent::actor_phase).
     std::uint8_t actor_phase{};
 };
@@ -214,7 +250,7 @@ struct RuntimeEffectSpawn final {
     EvidenceStatus evidence{EvidenceStatus::PRESERVED_UNDECODED};
     EffectLifetimeRule lifetime{EffectLifetimeRule::PreservedUndecoded};
     EvidenceStatus lifetime_evidence{EvidenceStatus::PRESERVED_UNDECODED};
-    std::span<const EffectChildRef> children{};
+    EffectChildSpan children{};
 };
 
 struct RuntimeEffectInstance final {

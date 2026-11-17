@@ -364,6 +364,18 @@ APK verifier.
       lights) and the models' rig, through the game's choice of the four
       lights (`game_lights.h`). Off by default; that LIG2 is the game's
       live light source is not proven (research dmc3-gates-archive-v124.md).
+  - macOS 0.1 (`apple/`): a SwiftUI shell over the C API for Apple silicon
+    and Intel Macs, built by `apple/build-mac.sh` (CMake for the core with
+    FFmpeg off, SwiftPM for the shell, an ad-hoc signed .app). It opens
+    files (⌘O, drop, Finder), shows a texture's picture or the 3D view
+    drawn by the CPU renderer (drag to turn, pinch to zoom), lists an
+    archive's files with Back, and shows Info with the file health dot.
+    The core now builds with libc++ (Apple's library): `EffectChildSpan`
+    replaces a std::span of EffectChildRef inside EffectChildRef, and the
+    crash recorder reads Apple's signal context. Checked on Linux: the core
+    and its 54 tests with clang + libc++, and the Swift wrapper
+    (`ReaderCore.swift`) against the real core on MOD, SCM, PAC and stage
+    files. Not yet built on a Mac.
   - v151: after a v150 report of the reader closing on every MOD and SCM
     (gone after a reinstall, so saved data of an older version; not
     reproduced), the reader no longer closes without a trace.

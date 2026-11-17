@@ -1,0 +1,37 @@
+# DMC Native Reader for macOS
+
+A SwiftUI shell over the reader's C++ core, through its C API
+(`app/src/main/cpp/capi/include/dmc_reader.h`). The core decides everything
+as on Android; this shell reads files, shows what the core draws and keeps the
+window.
+
+## Build and run
+
+Needs the Xcode command line tools and CMake:
+
+```sh
+xcode-select --install    # once
+brew install cmake        # once
+apple/build-mac.sh --open
+```
+
+The app is `apple/.build/DMC Native Reader.app`, signed for this Mac only.
+Everything the build writes stays in `apple/.build`.
+
+## What it does now (0.1)
+
+- Opens MOD, SCM, PAC, PTX, DDS, MOT and the rest of the core's families:
+  ⌘O, drag and drop onto the window, or Open With from Finder.
+- Shows a texture as its picture and a model, a stage or an assembled PAC as
+  its 3D view. Drag turns the camera, pinch zooms; Reset view.
+- An archive's files (a PAC's slots, a PTX's textures) are listed on the
+  left; each opens on its own, Back returns.
+- Info is written by the core; the Info button carries the file health dot
+  (orange, red) and its report.
+
+## Not yet
+
+- The view is drawn by the core's CPU renderer; a Metal backend comes next.
+- Animations, the base room, stage configurations, settings, effects,
+  cutscenes, videos (the core is built without FFmpeg here), the photo
+  camera and fly mode are on Android only for now.

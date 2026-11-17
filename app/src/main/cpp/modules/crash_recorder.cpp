@@ -17,9 +17,13 @@ void set_context(std::string_view) noexcept {}
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <ucontext.h>
 #include <unistd.h>
 #include <unwind.h>
+#if defined(__APPLE__)
+#include <sys/ucontext.h>  // <ucontext.h> is the deprecated user-context API there
+#else
+#include <ucontext.h>
+#endif
 
 namespace dmcresource::crash_recorder {
 namespace {
@@ -126,7 +130,11 @@ _Unwind_Reason_Code on_frame(struct _Unwind_Context* context, void* argument) {
 [[nodiscard]] std::uintptr_t fault_pc(void* raw) noexcept {
     if (raw == nullptr) return 0;
     const auto* context = static_cast<const ucontext_t*>(raw);
-#if defined(__aarch64__)
+#if defined(__APPLE__) && defined(__aarch64__)
+    return context->uc_mcontext != nullptr ? static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__pc) : 0;
+#elif defined(__APPLE__) && defined(__x86_64__)
+    return context->uc_mcontext != nullptr ? static_cast<std::uintptr_t>(context->uc_mcontext->__ss.__rip) : 0;
+#elif defined(__aarch64__)
     return static_cast<std::uintptr_t>(context->uc_mcontext.pc);
 #elif defined(__x86_64__)
     return static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RIP]);
