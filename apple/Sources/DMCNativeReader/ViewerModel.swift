@@ -381,6 +381,47 @@ final class ViewerModel: ObservableObject {
             ? "Saved \(url.lastPathComponent)." : "The camera took no RAW picture of this view."
     }
 
+    // MARK: Camera settings and viewfinder
+
+    let cameraRows = ReaderCore.cameraSettings()
+    @Published private(set) var cameraChoices: [Int] = []
+    @Published private(set) var viewfinder: Viewfinder?
+    @Published private(set) var dials: [(title: String, value: String)] = []
+    /// The frame size the viewfinder was laid out for (pixels).
+    private(set) var finderFrameSize = CGSize(width: 1, height: 1)
+
+    func loadCameraChoices() {
+        let stored = UserDefaults.standard.dictionary(forKey: "camera") as? [String: Int] ?? [:]
+        cameraChoices = cameraRows.map { stored[$0.id] ?? $0.start }
+        ReaderCore.setCameraChoices(cameraChoices)
+        refreshFinder()
+    }
+
+    func setCamera(_ row: CameraSettingRow, option: Int) {
+        guard let index = cameraRows.firstIndex(of: row) else { return }
+        if cameraChoices.count != cameraRows.count { cameraChoices = cameraRows.map(\.start) }
+        cameraChoices[index] = option
+        var stored = UserDefaults.standard.dictionary(forKey: "camera") as? [String: Int] ?? [:]
+        stored[row.id] = option
+        UserDefaults.standard.set(stored, forKey: "camera")
+        ReaderCore.setCameraChoices(cameraChoices)
+        refreshFinder()
+        requestFrame()
+    }
+
+    /// The viewfinder and the dials, when the camera mode is on.
+    func refreshFinder() {
+        guard let session, !isPicture, dmc_camera_mode() else {
+            if viewfinder != nil { viewfinder = nil }
+            if !dials.isEmpty { dials = [] }
+            return
+        }
+        let (width, height) = frameSize()
+        finderFrameSize = CGSize(width: width, height: height)
+        viewfinder = session.viewfinder(width: width, height: height, zoom: camera.zoom, recording: recording, seconds: 0)
+        dials = ReaderCore.cameraDials()
+    }
+
     private let recorder = ViewRecorder()
     @Published private(set) var recording = false
 
@@ -482,6 +523,7 @@ final class ViewerModel: ObservableObject {
 
     private func requestFrame() {
         guard let session, !isPicture else { return }
+        if dmc_camera_mode() || viewfinder != nil { refreshFinder() }
         if drawing {
             pending = true
             return

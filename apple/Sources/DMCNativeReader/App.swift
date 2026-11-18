@@ -17,7 +17,10 @@ struct DMCNativeReaderApp: App {
                 .onOpenURL { model.open(url: $0) }
         }
         Settings {
-            SettingsView(model: model)
+            TabView {
+                SettingsView(model: model).tabItem { Label("View", systemImage: "eye") }
+                CameraSettingsView(model: model).tabItem { Label("Camera", systemImage: "camera") }
+            }
         }
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -102,7 +105,7 @@ struct ContentView: View {
             }
             return true
         }
-        .onAppear { FlyKeys.install(model: model) }
+        .onAppear { FlyKeys.install(model: model); model.loadCameraChoices() }
         .sheet(isPresented: $showInfo) { InfoSheet(model: model) }
         .sheet(item: $model.markerCard) { card in MarkerCardSheet(model: model, card: card) }
     }
@@ -200,6 +203,31 @@ struct ContentView: View {
         }
     }
 
+    /// The viewfinder the core lays out in frame pixels, scaled to the view.
+    private func viewfinderView(_ finder: Viewfinder, in size: CGSize) -> some View {
+        let sx = size.width / max(1, model.finderFrameSize.width)
+        let sy = size.height / max(1, model.finderFrameSize.height)
+        return ZStack(alignment: .topLeading) {
+            Path { path in
+                path.addRect(CGRect(x: finder.frame.minX * sx, y: finder.frame.minY * sy,
+                                    width: finder.frame.width * sx, height: finder.frame.height * sy))
+                for line in finder.lines {
+                    path.move(to: CGPoint(x: line.minX * sx, y: line.minY * sy))
+                    path.addLine(to: CGPoint(x: line.maxX * sx, y: line.maxY * sy))
+                }
+            }
+            .stroke(Color.white.opacity(0.8), lineWidth: 1)
+            if !finder.status.isEmpty {
+                Text(finder.status)
+                    .font(.system(.caption, design: .monospaced))
+                    .padding(4)
+                    .background(.black.opacity(0.5))
+                    .position(x: size.width / 2, y: max(12, finder.frame.minY * sy - 12))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
     /// A cutscene subtitle where and how the core lays it out (fractions of the view).
     private func subtitleView(_ s: Subtitle, in size: CGSize) -> some View {
         let color = { (c: (UInt8, UInt8, UInt8)) in Color(red: Double(c.0) / 255, green: Double(c.1) / 255, blue: Double(c.2) / 255) }
@@ -231,6 +259,22 @@ struct ContentView: View {
             .overlay(alignment: .topLeading) {
                 if let subtitle = model.subtitle, !subtitle.text.isEmpty {
                     subtitleView(subtitle, in: geometry.size)
+                }
+            }
+            .overlay { if let finder = model.viewfinder { viewfinderView(finder, in: geometry.size) } }
+            .overlay(alignment: .bottom) {
+                if !model.dials.isEmpty {
+                    HStack(spacing: 14) {
+                        ForEach(Array(model.dials.enumerated()), id: \.offset) { _, dial in
+                            VStack(spacing: 1) {
+                                Text(dial.title).font(.caption2).foregroundStyle(.secondary)
+                                Text(dial.value).font(.system(.caption, design: .monospaced))
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 10)
                 }
             }
             .contentShape(Rectangle())
@@ -527,5 +571,40 @@ enum FlyKeys {
             guard let c = event.charactersIgnoringModifiers?.lowercased(), ["w", "a", "s", "d"].contains(c) else { return nil }
             return c
         }
+    }
+}
+
+/// The photo camera's settings: the core's schema, each choice stored and handed to the core.
+struct CameraSettingsView: View {
+    @ObservedObject var model: ViewerModel
+
+    private var sections: [String] {
+        var seen: [String] = []
+        for row in model.cameraRows where !seen.contains(row.section) { seen.append(row.section) }
+        return seen
+    }
+
+    var body: some View {
+        Form {
+            ForEach(sections, id: \.self) { section in
+                Section(section) {
+                    ForEach(model.cameraRows.filter { $0.section == section }) { row in
+                        Picker(selection: Binding(
+                            get: { choice(of: row) },
+                            set: { model.setCamera(row, option: $0) })) {
+                            ForEach(row.options.indices, id: \.self) { Text(row.options[$0]).tag($0) }
+                        } label: { Text(row.label) }
+                        .help(row.hint)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 520, minHeight: 480)
+    }
+
+    private func choice(of row: CameraSettingRow) -> Int {
+        guard let index = model.cameraRows.firstIndex(of: row), index < model.cameraChoices.count else { return row.start }
+        return model.cameraChoices[index]
     }
 }

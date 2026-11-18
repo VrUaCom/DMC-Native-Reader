@@ -237,6 +237,24 @@ struct MenuRow: Identifiable, Hashable {
     let icon: String
 }
 
+/// One photo camera setting of the core's schema.
+struct CameraSettingRow: Identifiable, Hashable {
+    let key: Int
+    let id: String
+    let section: String
+    let label: String
+    let hint: String
+    let options: [String]
+    let start: Int
+}
+
+/// The viewfinder over the view: frame and guide lines in view pixels, the status line.
+struct Viewfinder: Equatable {
+    let frame: CGRect
+    let lines: [CGRect]          // (x0, y0) as origin, (x1 - x0, y1 - y0) as size
+    let status: String
+}
+
 /// A cutscene's subtitle: text and its layout in fractions of the view.
 struct Subtitle: Equatable {
     let text: String
@@ -448,6 +466,21 @@ extension ReaderSession {
 
     func flyLeave(yaw: Float, pitch: Float) { dmc_fly_leave(handle, yaw, pitch) }
 
+    /// The viewfinder of a width x height frame (nil when the camera mode does not show one).
+    func viewfinder(width: Int, height: Int, zoom: Float, recording: Bool, seconds: Int) -> Viewfinder? {
+        var finder = dmc_viewfinder(handle, Int32(width), Int32(height), zoom, recording, Int32(seconds))
+        defer { dmc_finder_free(&finder) }
+        guard finder.shown else { return nil }
+        var lines: [CGRect] = []
+        for i in 0..<finder.line_count {
+            let p = finder.lines + i * 4
+            lines.append(CGRect(x: CGFloat(p[0]), y: CGFloat(p[1]), width: CGFloat(p[2] - p[0]), height: CGFloat(p[3] - p[1])))
+        }
+        return Viewfinder(frame: CGRect(x: CGFloat(finder.frame.0), y: CGFloat(finder.frame.1),
+                                        width: CGFloat(finder.frame.2), height: CGFloat(finder.frame.3)),
+                          lines: lines, status: finder.status.map { String(cString: $0) } ?? "")
+    }
+
     /// The core's diagnostics text for the Info window.
     func diagnostics() -> String { takeString(dmc_diagnostics(handle)) ?? "" }
 }
@@ -553,6 +586,34 @@ enum ReaderCore {
                               marker: result.marker, title: String(cString: result.title), opened: nil)
         if let opened { outcome.opened = ReaderSession(adopting: opened, title: outcome.title.isEmpty ? "File" : outcome.title) }
         return outcome
+    }
+
+    /// The photo camera's settings (the core's schema): id, section, label, hint, options, start.
+    static func cameraSettings() -> [CameraSettingRow] {
+        guard let list = dmc_camera_settings_list() else { return [] }
+        defer { dmc_camera_settings_free(list) }
+        return (0..<dmc_camera_settings_count(list)).compactMap { index in
+            guard let s = dmc_camera_settings_at(list, index)?.pointee else { return nil }
+            let options = (0..<s.option_count).map { s.options[$0].map { String(cString: $0) } ?? "" }
+            return CameraSettingRow(key: Int(s.key), id: String(cString: s.id), section: String(cString: s.section),
+                                    label: String(cString: s.label), hint: String(cString: s.hint),
+                                    options: options, start: Int(s.start))
+        }
+    }
+
+    static func setCameraChoices(_ choices: [Int]) {
+        let values = choices.map { Int32($0) }
+        values.withUnsafeBufferPointer { dmc_camera_set_choices($0.baseAddress, values.count) }
+    }
+
+    /// The camera bar's dials: title and value as a camera shows them.
+    static func cameraDials() -> [(title: String, value: String)] {
+        guard let list = dmc_camera_dials_list() else { return [] }
+        defer { dmc_camera_dials_free(list) }
+        return (0..<dmc_camera_dials_count(list)).compactMap { index in
+            guard let d = dmc_camera_dials_at(list, index)?.pointee else { return nil }
+            return (String(cString: d.title), String(cString: d.value))
+        }
     }
 
     /// The stored values (key -> value) applied: what they mean for the view.

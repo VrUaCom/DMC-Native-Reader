@@ -49,7 +49,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   capture), and a video of the view (.mov; the core's frames at its plan's
   size and rate, encoded by AVAssetWriter in H.264 or HEVC). Fly (F): W A S D move, the arrow keys look, the core's fly eye.
 - Settings (⌘,): the core's settings schema, the same rows as Android, each
-  choice stored and applied at once.
+  choice stored and applied at once; a Camera tab holds the photo camera's
+  settings (the core's schema). In camera mode the core's viewfinder (frame,
+  guide lines, status) is drawn over the view, with its dials below.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
   action opens is shown, Back returns. A stage starts from the game's camera
   at its first spawn point, and Reset view goes back there.
@@ -57,5 +59,5 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- The camera's viewfinder and dials, and the game's WMV movies (the core is
-  built without FFmpeg here), are on Android only for now.
+- The game's WMV movies are on Android only for now (the core is built
+  without FFmpeg here).
