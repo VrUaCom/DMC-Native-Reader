@@ -186,7 +186,15 @@
 | `motionScriptSlot` | MainActivity | так | `dmc_motion_strip (поля картки)` | стрічка вже несе ці відповіді |
 | `triggerClassEvent` | MainActivity | так | `dmc_class_events / dmc_trigger_class_event` |  |
 
-### 4. Стейджі — 27
+### 4. Стейджі — 27 (додано в C API)
+
+У C API:
+- кімната (стан ядра, власний лок, без сесії): `dmc_room_load`, `dmc_room_clear`, `dmc_room_set_broken`, `dmc_room_spot_count`, `dmc_room_collision_source_count`, `dmc_room_animated`, `dmc_base_spawn_points`, `dmc_place_at_spawn`, `dmc_next_base_spot`, `dmc_after_new_room`, `dmc_preset_label`, `dmc_base_room_menu` → `dmc_menu` (з позначками ready / warn);
+- ефекти й конфігурація: `dmc_room_effects_load` / `_clear`, `dmc_stage_config_load` / `_clear`, `dmc_stage_archives`, `dmc_stage_slot`, `dmc_stage_start_view`, `dmc_stage_stem`;
+- колізії: `dmc_stage_collision_source_count`, `dmc_collision_kinds`, `dmc_collision_attack_ids`, `dmc_select_collision_attack`, `dmc_collision_report` → `dmc_report`;
+- картки маркерів: `dmc_marker_card` → `dmc_card`, `dmc_run_card_action` (відкритий файл — нова сесія того, хто кличе).
+
+Спільні типи `dmc_menu`, `dmc_card`, `dmc_report` підуть і в групу 5. B8 у цій групі: слот передається явно (`slot` 0 / 1) у завантаження й очищення; `dmc_stage_config_load` ще ставить активний слот, як і JNI, бо так його читає `load_stage_config`.
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|

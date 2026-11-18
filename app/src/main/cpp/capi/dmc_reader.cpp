@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -32,6 +33,12 @@
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/view_gesture.h"
+#include "dmcresource/stage_markers.h"
+#include "dmcresource/stage_slot.h"
+#include "dmcresource/collision_debug.h"
+#include "dmcresource/environment_collision.h"
+#include "dmcresource/spider/collision_report.h"
+#include "dmcresource/spider/companion_menu.h"
 
 struct dmc_session {
     std::unique_ptr<dmcresource::Session> session;
@@ -1016,6 +1023,348 @@ bool dmc_trigger_class_event(dmc_session* session, size_t index) {
         const std::lock_guard lock{api_mutex()};
         return dmcresource::motion::trigger_class_event(core(session), index);
     } catch (...) { return false; }
+}
+
+}  // extern "C"
+
+/* ---- Menus and cards; group 4: stages, the base room, collision ---------- */
+
+struct dmc_menu {
+    std::string title, message;
+    std::vector<std::string> labels, icons;
+    std::vector<dmc_menu_item> items;
+    std::vector<int> ready, warn;
+};
+
+struct dmc_report {
+    std::string title, summary;
+    std::vector<std::string> headings, lines;
+    std::vector<dmc_report_group> groups;
+};
+
+struct dmc_card {
+    std::string title;
+    std::vector<std::pair<std::string, std::string>> rows;
+    dmc_menu actions;
+};
+
+namespace {
+
+void fill_menu(dmc_menu& out, const dmcresource::spider::actions::Menu& menu) {
+    out.title = menu.title;
+    out.message = menu.message;
+    out.labels.clear();
+    out.icons.clear();
+    for (const auto& item : menu.items) {
+        out.labels.push_back(item.label);
+        out.icons.push_back(item.icon);
+    }
+    out.items.clear();
+    for (std::size_t i = 0; i < menu.items.size(); ++i)
+        out.items.push_back({menu.items[i].id, out.labels[i].c_str(), out.icons[i].c_str()});
+}
+
+dmcresource::StageSlot slot_of(int slot) noexcept {
+    return slot == 1 ? dmcresource::StageSlot::scene : dmcresource::StageSlot::base;
+}
+
+std::uint32_t rgb_of(const std::array<std::uint8_t, 3>& c) noexcept {
+    return (static_cast<std::uint32_t>(c[0]) << 16U) | (static_cast<std::uint32_t>(c[1]) << 8U) | c[2];
+}
+
+}  // namespace
+
+extern "C" {
+
+const char* dmc_menu_title(const dmc_menu* menu) { return menu == nullptr ? "" : menu->title.c_str(); }
+const char* dmc_menu_message(const dmc_menu* menu) { return menu == nullptr ? "" : menu->message.c_str(); }
+size_t dmc_menu_count(const dmc_menu* menu) { return menu == nullptr ? 0U : menu->items.size(); }
+const dmc_menu_item* dmc_menu_at(const dmc_menu* menu, size_t index) {
+    return menu == nullptr || index >= menu->items.size() ? nullptr : &menu->items[index];
+}
+bool dmc_menu_ready(const dmc_menu* menu, int id) {
+    return menu != nullptr && std::find(menu->ready.begin(), menu->ready.end(), id) != menu->ready.end();
+}
+bool dmc_menu_warn(const dmc_menu* menu, int id) {
+    return menu != nullptr && std::find(menu->warn.begin(), menu->warn.end(), id) != menu->warn.end();
+}
+void dmc_menu_free(dmc_menu* menu) { delete menu; }
+
+char* dmc_room_load(const char* name, const uint8_t* bytes, size_t size) {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto room = dmcresource::stage_room::build_room(text_or_empty(name), bytes, size);
+        if (!room) return nullptr;
+        const auto detail = room->detail;
+        dmcresource::stage_room::set_current(std::move(room));
+        return copy_string(detail);
+    } catch (...) { return nullptr; }
+}
+
+void dmc_room_clear(void) { dmcresource::stage_room::set_current(nullptr); }
+void dmc_room_set_broken(bool broken) { dmcresource::stage_room::set_broken(broken); }
+
+size_t dmc_room_spot_count(void) {
+    const auto room = dmcresource::stage_room::current();  // one snapshot (B3)
+    return room ? room->spots.size() : 0U;
+}
+
+size_t dmc_room_collision_source_count(void) {
+    const auto room = dmcresource::stage_room::current();
+    return room ? room->collision_sources.size() : 0U;
+}
+
+bool dmc_room_animated(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::room_animated(core(session));
+    } catch (...) { return false; }
+}
+
+dmc_strings* dmc_base_spawn_points(void) {
+    try {
+        auto out = std::make_unique<dmc_strings>();
+        for (const auto& point : dmcresource::stage_markers::spawn_points(dmcresource::StageSlot::base))
+            out->items.push_back(point.title);
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+bool dmc_place_at_spawn(int index) { return actions::choose_base_spawn(index); }
+
+dmc_base_spot dmc_next_base_spot(void) {
+    dmc_base_spot out{};
+    out.index = -1;
+    try {
+        const auto next = actions::next_base_spot();
+        out.spawn = next.spawn;
+        out.index = next.index;
+        out.count = next.count;
+        out.title = copy_string(next.index < 0 ? std::string{} : next.title);
+    } catch (...) {
+        if (out.title == nullptr) out.title = copy_string({});
+    }
+    return out;
+}
+
+void dmc_base_spot_free(dmc_base_spot* spot) {
+    if (spot == nullptr) return;
+    std::free(spot->title);
+    spot->title = nullptr;
+}
+
+dmc_room_change dmc_after_new_room(const char* room, const char* effects, const char* config) {
+    dmc_room_change out{};
+    try {
+        const auto change = actions::after_new_room(text_or_empty(room), text_or_empty(effects), text_or_empty(config));
+        out.keep_effects = change.keep_effects;
+        out.keep_config = change.keep_config;
+        out.find_effects = copy_string(change.find_effects);
+        out.find_config = copy_string(change.find_config);
+    } catch (...) {}
+    if (out.find_effects == nullptr) out.find_effects = copy_string({});
+    if (out.find_config == nullptr) out.find_config = copy_string({});
+    return out;
+}
+
+void dmc_room_change_free(dmc_room_change* change) {
+    if (change == nullptr) return;
+    std::free(change->find_effects);
+    std::free(change->find_config);
+    change->find_effects = nullptr;
+    change->find_config = nullptr;
+}
+
+char* dmc_preset_label(const char* room) {
+    try { return copy_string(actions::preset_label(text_or_empty(room))); } catch (...) { return copy_string({}); }
+}
+
+dmc_menu* dmc_base_room_menu(bool room_loaded) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto menu = actions::base_room_menu({.root_scene = true, .room_loaded = room_loaded, .room_shown = true});
+        auto out = std::make_unique<dmc_menu>();
+        fill_menu(*out, {.title = {}, .message = {}, .items = menu.stage_ops});
+        out->ready = menu.stage_ops_ready;
+        out->warn = menu.stage_ops_warn;
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+char* dmc_room_effects_load(const char* name, const uint8_t* bytes, size_t size, int slot) {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto host = dmcresource::stage_room::make_effect_host(text_or_empty(name), bytes, size);
+        if (!host || host->effect_banks.empty()) return nullptr;
+        const std::string detail = std::to_string(host->effect_banks.front().bank.records.size()) +
+                                   " effect records, " +
+                                   std::to_string(host->effect_banks.front().textures.size()) + " textures";
+        dmcresource::stage_room::set_effect_host(slot_of(slot), std::move(host));
+        return copy_string(detail);
+    } catch (...) { return nullptr; }
+}
+
+void dmc_room_effects_clear(int slot) { dmcresource::stage_room::set_effect_host(slot_of(slot), nullptr); }
+
+dmc_outcome dmc_stage_config_load(const char* name, const uint8_t* bytes, size_t size, int slot) {
+    try {
+        // Into the base room's set or the opened stage's (stage_slot.h).
+        dmcresource::set_active_slot(slot_of(slot));
+        const std::lock_guard lock{api_mutex()};
+        return outcome_of(actions::load_stage_config(text_or_empty(name), bytes, bytes == nullptr ? 0U : size));
+    } catch (...) { return outcome_of({}); }
+}
+
+void dmc_stage_config_clear(int slot) { dmcresource::stage_markers::set_current(slot_of(slot), nullptr); }
+
+bool dmc_stage_archives(const char* stage_name, char** effects, char** config) {
+    try {
+        const auto archives = dmcresource::stage_markers::stage_archives(text_or_empty(stage_name));
+        if (!archives) return false;
+        if (effects != nullptr) *effects = copy_string(archives->effects);
+        if (config != nullptr) *config = copy_string(archives->config);
+        return true;
+    } catch (...) { return false; }
+}
+
+int dmc_stage_slot(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::slot_for(core(session)) == dmcresource::StageSlot::scene ? 1 : 0;
+    } catch (...) { return 0; }
+}
+
+bool dmc_stage_start_view(dmc_session* session, float out[3]) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto view = actions::stage_start_view(core(session));
+        if (!view) return false;
+        if (out != nullptr) for (int i = 0; i < 3; ++i) out[i] = (*view)[static_cast<std::size_t>(i)];
+        return true;
+    } catch (...) { return false; }
+}
+
+char* dmc_stage_stem(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto* s = core(session);
+        if (s == nullptr || s->stage == nullptr) return copy_string({});
+        int number = dmcresource::stage_markers::stage_number(s->stage->name);
+        if (number < 0) number = dmcresource::stage_markers::stage_number(s->source_name);
+        if (number < 0 || number > 999) return copy_string({});
+        char stem[8];
+        std::snprintf(stem, sizeof stem, "st%03d", number);
+        return copy_string(stem);
+    } catch (...) { return copy_string({}); }
+}
+
+size_t dmc_stage_collision_source_count(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto* s = core(session);
+        return s != nullptr && s->stage != nullptr ? s->stage->collision_sources.size() : 0U;
+    } catch (...) { return 0U; }
+}
+
+size_t dmc_collision_kinds(const dmc_session* session, dmc_collision_kind* out, size_t capacity) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto kinds = actions::shown_hits_kinds(core(session));
+        for (std::size_t i = 0; out != nullptr && i < kinds.size() && i < capacity; ++i) {
+            out[i] = {kinds[i].flags, kinds[i].count, kinds[i].floors, kinds[i].walls, kinds[i].ceilings,
+                      rgb_of(dmcresource::collision_class_color(dmcresource::collision_color_class(kinds[i].flags)))};
+        }
+        return kinds.size();
+    } catch (...) { return 0U; }
+}
+
+size_t dmc_collision_attack_ids(const dmc_session* session, int* out, size_t capacity) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto* s = core(session);
+        if (s == nullptr) return 0U;
+        const auto ids = dmcresource::collision::collision_attack_ids(*s);
+        for (std::size_t i = 0; out != nullptr && i < ids.size() && i < capacity; ++i) out[i] = ids[i];
+        return ids.size();
+    } catch (...) { return 0U; }
+}
+
+char* dmc_select_collision_attack(dmc_session* session, int attack) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto* s = core(session);
+        if (!dmcresource::collision::select_collision_attack(s, attack)) return copy_string({});
+        return copy_string(dmcresource::collision::describe_collision_selection(*s));
+    } catch (...) { return copy_string({}); }
+}
+
+dmc_report* dmc_collision_report(const dmc_session* session, bool attack) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto report = attack ? actions::attack_collision_report(core(session))
+                                   : actions::stage_collision_report(core(session));
+        auto out = std::make_unique<dmc_report>();
+        out->title = report.title;
+        out->summary = report.summary;
+        for (const auto& group : report.groups) {
+            out->headings.push_back(group.heading);
+            std::string lines;
+            for (std::size_t i = 0; i < group.lines.size(); ++i) {
+                if (i > 0U) lines.push_back('\n');
+                lines += group.lines[i];
+            }
+            out->lines.push_back(std::move(lines));
+        }
+        for (std::size_t i = 0; i < report.groups.size(); ++i) {
+            const auto& group = report.groups[i];
+            out->groups.push_back({group.coloured ? static_cast<std::int64_t>(rgb_of(group.colour)) : -1,
+                                   out->headings[i].c_str(), out->lines[i].c_str()});
+        }
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+const char* dmc_report_title(const dmc_report* report) { return report == nullptr ? "" : report->title.c_str(); }
+const char* dmc_report_summary(const dmc_report* report) { return report == nullptr ? "" : report->summary.c_str(); }
+size_t dmc_report_group_count(const dmc_report* report) { return report == nullptr ? 0U : report->groups.size(); }
+const dmc_report_group* dmc_report_group_at(const dmc_report* report, size_t index) {
+    return report == nullptr || index >= report->groups.size() ? nullptr : &report->groups[index];
+}
+void dmc_report_free(dmc_report* report) { delete report; }
+
+dmc_card* dmc_marker_card(int marker) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto card = actions::marker_card(marker);
+        if (card.title.empty()) return nullptr;
+        auto out = std::make_unique<dmc_card>();
+        out->title = card.title;
+        out->rows = card.rows;
+        fill_menu(out->actions, {.title = card.title, .message = {}, .items = card.actions});
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+const char* dmc_card_title(const dmc_card* card) { return card == nullptr ? "" : card->title.c_str(); }
+size_t dmc_card_row_count(const dmc_card* card) { return card == nullptr ? 0U : card->rows.size(); }
+bool dmc_card_row(const dmc_card* card, size_t index, const char** name, const char** value) {
+    if (card == nullptr || index >= card->rows.size()) return false;
+    if (name != nullptr) *name = card->rows[index].first.c_str();
+    if (value != nullptr) *value = card->rows[index].second.c_str();
+    return true;
+}
+const dmc_menu* dmc_card_actions(const dmc_card* card) { return card == nullptr ? nullptr : &card->actions; }
+void dmc_card_free(dmc_card* card) { delete card; }
+
+dmc_outcome dmc_run_card_action(int marker, int id, dmc_session** opened) {
+    if (opened != nullptr) *opened = nullptr;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        std::unique_ptr<dmcresource::Session> session;
+        const auto outcome = actions::run_marker_card_action(marker, id, &session);
+        if (opened != nullptr && session) *opened = wrap(std::move(session));
+        return outcome_of(outcome);
+    } catch (...) { return outcome_of({}); }
 }
 
 }  // extern "C"

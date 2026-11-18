@@ -371,6 +371,76 @@ int main(void) {
     assert(!dmc_trigger_class_event(model.session, 0));
     assert(dmc_render(model.session, W, H, &view, pixels, (size_t)W * H * 4) == 1);  /* still draws */
 
+    /* Group 4: no room and no stage loaded. The room is the core's state:
+     * junk is refused, counts are zero, menus and reports still come back. */
+    dmc_room_clear();
+    assert(dmc_room_load("junk.pac", junk, sizeof junk) == NULL && dmc_room_load("x", NULL, 0) == NULL);
+    assert(dmc_room_spot_count() == 0 && dmc_room_collision_source_count() == 0);
+    assert(!dmc_room_animated(model.session) && !dmc_room_animated(NULL));
+    dmc_room_set_broken(true);
+    dmc_room_set_broken(false);
+    dmc_strings* spawns = dmc_base_spawn_points();
+    assert(spawns != NULL && dmc_strings_count(spawns) == 0);
+    dmc_strings_free(spawns);
+    assert(!dmc_place_at_spawn(3));
+    dmc_base_spot spot = dmc_next_base_spot();
+    assert(spot.index == -1 && spot.title != NULL && spot.title[0] == '\0');
+    dmc_base_spot_free(&spot);
+    dmc_room_change change = dmc_after_new_room("st006.pac", "", "");
+    assert(change.find_effects != NULL && change.find_config != NULL);
+    dmc_room_change_free(&change);
+    char* label = dmc_preset_label("st001.pac");
+    assert(label != NULL);
+    dmc_string_free(label);
+    dmc_menu* ops = dmc_base_room_menu(false);
+    assert(ops != NULL && dmc_menu_count(ops) == 4 && dmc_menu_at(ops, 4) == NULL);
+    for (size_t i = 0; i < dmc_menu_count(ops); ++i) {
+        const dmc_menu_item* item = dmc_menu_at(ops, i);
+        assert(item->label != NULL && strlen(item->label) > 0 && item->icon != NULL);
+        assert(!dmc_menu_ready(ops, item->id));  /* nothing loaded */
+    }
+    assert(dmc_menu_title(ops) != NULL && dmc_menu_message(ops) != NULL);
+    dmc_menu_free(ops);
+    assert(dmc_room_effects_load("junk.pac", junk, sizeof junk, 0) == NULL);
+    dmc_room_effects_clear(0);
+    dmc_room_effects_clear(1);
+    dmc_outcome config = dmc_stage_config_load("junk.pac", junk, sizeof junk, 0);
+    assert(!config.ok && config.message != NULL && strlen(config.message) > 0);
+    dmc_outcome_free(&config);
+    dmc_stage_config_clear(0);
+    char* fx = NULL;
+    char* cfg = NULL;
+    assert(dmc_stage_archives("st006.pac", &fx, &cfg) && fx != NULL && cfg != NULL);
+    assert(strstr(fx, "006") != NULL && strstr(cfg, "006") != NULL);
+    dmc_string_free(fx);
+    dmc_string_free(cfg);
+    assert(!dmc_stage_archives("tri.mod", NULL, NULL));
+    assert(dmc_stage_slot(model.session) == 0);
+    float start_view[3] = {9, 9, 9};
+    assert(!dmc_stage_start_view(model.session, start_view) && start_view[0] == 9);
+    char* stem = dmc_stage_stem(model.session);
+    assert(stem != NULL && stem[0] == '\0');
+    dmc_string_free(stem);
+    assert(dmc_stage_collision_source_count(model.session) == 0);
+    dmc_collision_kind kinds[4];
+    assert(dmc_collision_kinds(model.session, kinds, 4) == 0);
+    int ids[4];
+    assert(dmc_collision_attack_ids(model.session, ids, 4) == 0);
+    char* selected = dmc_select_collision_attack(model.session, 5);
+    assert(selected != NULL && selected[0] == '\0');
+    dmc_string_free(selected);
+    dmc_report* hits = dmc_collision_report(model.session, false);
+    assert(hits != NULL && strlen(dmc_report_title(hits)) > 0 && dmc_report_group_at(hits, dmc_report_group_count(hits)) == NULL);
+    dmc_report_free(hits);
+    dmc_report* attacks = dmc_collision_report(model.session, true);
+    assert(attacks != NULL && strlen(dmc_report_title(attacks)) > 0);
+    dmc_report_free(attacks);
+    assert(dmc_marker_card(0) == NULL);  /* no configuration, no markers */
+    dmc_session* card_file = (dmc_session*)1;
+    dmc_outcome card_outcome = dmc_run_card_action(0, 1, &card_file);
+    assert(card_file == NULL && card_outcome.message != NULL);
+    dmc_outcome_free(&card_outcome);
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);

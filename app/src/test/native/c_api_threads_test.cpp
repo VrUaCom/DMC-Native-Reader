@@ -127,6 +127,13 @@ int main() {
         dmc_string_free(report);
         float end_frame = 0.0F, loop_start = 0.0F;
         (void)dmc_motion_range(composite, &end_frame, &loop_start);
+        // Group 4 between frames: the room (core state, own lock) and the collision report.
+        dmc_room_clear();
+        dmc_room_set_broken((round & 2) != 0);
+        (void)dmc_room_spot_count();
+        dmc_report* hits = dmc_collision_report(composite, false);
+        dmc_report_free(hits);
+        (void)dmc_stage_slot(composite);
         if (round % 50 == 0) {
             dmc_image* photo = dmc_render_capture(composite, false, kSide, kSide, &view, 30.0F);
             dmc_image_free(photo);

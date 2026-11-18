@@ -397,6 +397,129 @@ bool dmc_motion_range(const dmc_session* session, float* end_frame, float* loop_
 dmc_strings* dmc_class_events(const dmc_session* session);
 bool dmc_trigger_class_event(dmc_session* session, size_t index);
 
+/* ---- Menus and cards (shared by groups 4 and 5) -------------------------- *
+ * A menu the core wrote: a title, a message and items with stable ids the
+ * shell sends back. A snapshot, valid until freed. */
+typedef struct dmc_menu_item {
+    int id;
+    const char* label;
+    const char* icon;            /* a glyph for square shortcuts; "" for rows */
+} dmc_menu_item;
+
+typedef struct dmc_menu dmc_menu;
+const char* dmc_menu_title(const dmc_menu* menu);
+const char* dmc_menu_message(const dmc_menu* menu);
+size_t dmc_menu_count(const dmc_menu* menu);
+const dmc_menu_item* dmc_menu_at(const dmc_menu* menu, size_t index);  /* NULL past the end */
+/* Item ids the menu marks: ready (the archive is loaded) / warn (another stage's). */
+bool dmc_menu_ready(const dmc_menu* menu, int id);
+bool dmc_menu_warn(const dmc_menu* menu, int id);
+void dmc_menu_free(dmc_menu* menu);
+
+/* ---- Group 4: stages, the base room, collision ---------------------------- *
+ * The base room, its effects and the stage configurations are the core's
+ * own state, not a session's (stage_room / stage_markers, each with its own
+ * lock): those calls take no session. `slot` is 0 for the base room's set,
+ * 1 for the opened stage's (stage_slot.h). */
+
+/* The base room every model stands in: a stNNN file read from `bytes`.
+ * Returns the core's one-line detail, NULL when it is not a room. */
+char* dmc_room_load(const char* name, const uint8_t* bytes, size_t size);
+void dmc_room_clear(void);
+void dmc_room_set_broken(bool broken);
+size_t dmc_room_spot_count(void);
+size_t dmc_room_collision_source_count(void);
+/* The room draws animated set objects for this session's view. */
+bool dmc_room_animated(const dmc_session* session);
+
+/* The base room's spawn points (its configuration's), by title. */
+dmc_strings* dmc_base_spawn_points(void);
+/* Stands the model on spawn point `index` (-1: the room's own floor spot). */
+bool dmc_place_at_spawn(int index);
+
+typedef struct dmc_base_spot {
+    bool spawn;                  /* a configuration's spawn point, not a floor spot */
+    int index;                   /* -1 when there is none */
+    int count;
+    char* title;
+} dmc_base_spot;
+/* "Next spot": the next spawn point, else the next floor spot. */
+dmc_base_spot dmc_next_base_spot(void);
+void dmc_base_spot_free(dmc_base_spot* spot);
+
+/* A new base room was loaded: which of the current effect bank and
+ * configuration stay, and which files of its own stage to look for. */
+typedef struct dmc_room_change {
+    bool keep_effects;
+    bool keep_config;
+    char* find_effects;
+    char* find_config;
+} dmc_room_change;
+dmc_room_change dmc_after_new_room(const char* room, const char* effects, const char* config);
+void dmc_room_change_free(dmc_room_change* change);
+/* What a room preset square shows under its number ("st001"; "" none). */
+char* dmc_preset_label(const char* room);
+/* The base room's Stage Ops (room, effect bank, configuration, sounds). */
+dmc_menu* dmc_base_room_menu(bool room_loaded);
+
+/* A stage's effect bank onto slot `slot`; the core's detail, NULL when refused. */
+char* dmc_room_effects_load(const char* name, const uint8_t* bytes, size_t size, int slot);
+void dmc_room_effects_clear(int slot);
+
+/* A stNNNcfg.pac (or one member) as slot `slot`'s configuration. */
+dmc_outcome dmc_stage_config_load(const char* name, const uint8_t* bytes, size_t size, int slot);
+void dmc_stage_config_clear(int slot);
+/* The effect bank and configuration a stage's files are named (false: not a stage name). */
+bool dmc_stage_archives(const char* stage_name, char** effects, char** config);
+/* Which slot a session draws into (0 base, 1 scene). */
+int dmc_stage_slot(const dmc_session* session);
+/* A stage session's start view: yaw, pitch, zoom. False for other sessions. */
+bool dmc_stage_start_view(dmc_session* session, float out[3]);
+/* "st006" for a stage session; "" otherwise. */
+char* dmc_stage_stem(const dmc_session* session);
+
+/* Collision of a stage (HITS) or a model's attacks (hitboxes). */
+size_t dmc_stage_collision_source_count(const dmc_session* session);
+
+typedef struct dmc_collision_kind {
+    uint32_t flags;
+    size_t count, floors, walls, ceilings;
+    uint32_t rgb;                /* its drawing colour, 0xRRGGBB */
+} dmc_collision_kind;
+/* The kinds of HITS the session shows; returns how many there are, writes
+ * at most `capacity`. */
+size_t dmc_collision_kinds(const dmc_session* session, dmc_collision_kind* out, size_t capacity);
+/* The attack ids with hitboxes; returns how many there are, writes at most `capacity`. */
+size_t dmc_collision_attack_ids(const dmc_session* session, int* out, size_t capacity);
+/* Shows only `attack`'s hitboxes (-1: all); the core's description, "" when refused. */
+char* dmc_select_collision_attack(dmc_session* session, int attack);
+
+typedef struct dmc_report_group {
+    int64_t rgb;                 /* 0xRRGGBB, -1 when the group has no colour */
+    const char* heading;
+    const char* lines;           /* the group's lines joined by '\n' */
+} dmc_report_group;
+typedef struct dmc_report dmc_report;
+/* The stage's collision report, or the attack one (`attack`). */
+dmc_report* dmc_collision_report(const dmc_session* session, bool attack);
+const char* dmc_report_title(const dmc_report* report);
+const char* dmc_report_summary(const dmc_report* report);
+size_t dmc_report_group_count(const dmc_report* report);
+const dmc_report_group* dmc_report_group_at(const dmc_report* report, size_t index);
+void dmc_report_free(dmc_report* report);
+
+/* A configuration marker's card: title, name/value rows and its buttons. */
+typedef struct dmc_card dmc_card;
+dmc_card* dmc_marker_card(int marker);   /* NULL when the marker has no card */
+const char* dmc_card_title(const dmc_card* card);
+size_t dmc_card_row_count(const dmc_card* card);
+bool dmc_card_row(const dmc_card* card, size_t index, const char** name, const char** value);
+const dmc_menu* dmc_card_actions(const dmc_card* card);  /* owned by the card */
+void dmc_card_free(dmc_card* card);
+/* A card button; "Open file" hands the file back in *opened (the caller's,
+ * closed with dmc_close) with DMC_STEP_OPEN_SESSION. */
+dmc_outcome dmc_run_card_action(int marker, int id, dmc_session** opened);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {
