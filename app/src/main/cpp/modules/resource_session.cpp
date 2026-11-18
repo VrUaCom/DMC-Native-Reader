@@ -1,3 +1,4 @@
+#include "dmcresource/slot_inflate.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/scm_layout_compat.h"
 #include "dmcresource/spider/stage_actions.h"
@@ -608,6 +609,17 @@ void assess_health(Session* session, std::string_view name, std::span<const std:
 
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
+    // An archive of zlib-compressed files opens as the archive they make.
+    if (bytes != nullptr) {
+        if (auto inflated = slot_inflate::expand(std::span<const std::uint8_t>{bytes, size})) {
+            auto session = open_session(name, inflated->data(), inflated->size());
+            if (session) {
+                if (!session->detail.empty()) session->detail += "\n";
+                session->detail += "Its files are stored zlib-compressed; they are shown inflated.";
+            }
+            return session;
+        }
+    }
     auto session = open_session_unchecked(name, bytes, size);
     if (session && bytes != nullptr) assess_health(session.get(), name, std::span<const std::uint8_t>{bytes, size});
     return session;

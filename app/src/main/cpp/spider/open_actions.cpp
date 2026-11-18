@@ -6,6 +6,7 @@
 
 #include "dmcresource/file_health.h"
 #include "dmcresource/pac_assembly.h"
+#include "dmcresource/slot_inflate.h"
 #include "dmcresource/stage_room.h"
 
 namespace dmcresource::spider::actions {
@@ -30,6 +31,13 @@ namespace {
 OpenedResource open_resource(std::string_view name, const std::uint8_t* bytes, std::size_t size) noexcept {
     OpenedResource out;
     try {
+        // An archive of zlib-compressed files opens as the archive they make
+        // (assembled, as a stage, or as its files).
+        if (bytes != nullptr) {
+            if (auto inflated = slot_inflate::expand(std::span<const std::uint8_t>{bytes, size})) {
+                return open_resource(name, inflated->data(), inflated->size());
+            }
+        }
         out.title = std::string{name};
         auto opened = open_session(name, bytes, size);
         if (!opened) {
