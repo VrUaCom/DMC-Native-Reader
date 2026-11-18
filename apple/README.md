@@ -18,6 +18,9 @@ apple/build-mac.sh --open
 The app is `apple/.build/DMC Native Reader.app`, signed for this Mac only.
 Everything the build writes stays in `apple/.build`.
 
+Built and started on Apple M1 (macOS 15, Swift 6.1, Apple clang 17): the core passes its 55 host
+tests there and `apple/build-mac.sh` produces the app without Swift warnings.
+
 ## What it does now (0.1)
 
 - Opens MOD, SCM, PAC, PTX, DDS, MOT and the rest of the core's families:

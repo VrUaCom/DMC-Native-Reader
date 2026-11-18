@@ -42,9 +42,12 @@ struct AppliedSettings {
     var shadows: Bool
 }
 
-/// One open resource of the core. Not thread-safe by itself: the viewer
-/// uses it from one queue at a time (the C API also serialises its calls).
-final class ReaderSession {
+/// One open resource of the core. Its stored properties are immutable and every
+/// call goes through the C API, which takes the core's session lock for the whole
+/// call (`session_lock.h`, checked by `c_api_threads_test`); a frame on the render
+/// queue and a change from the main thread therefore never overlap. That contract
+/// is what makes it safe to hand the session to the render queue.
+final class ReaderSession: @unchecked Sendable {
     let handle: OpaquePointer
     let title: String
     let openedAs: OpenedAs
