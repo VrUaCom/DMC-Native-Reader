@@ -299,4 +299,4 @@ Java не змінюється. Змінюється лише тіло кожн�
 | Вібрація катсцени | `Vibrator` | — | Core Haptics | — |
 | Звук (до miniaudio) | `AudioTrack` | AVAudioEngine | AVAudioEngine | WASAPI |
 | Звіт падіння | `CrashReports` (Java) + `crash_recorder` | `crash_recorder` + показ при запуску | те саме | SEH-фільтр (треба дописати) |
-| Підпис | тестовий ключ | ad-hoc | безкоштовний Apple ID, 7 днів | без підпису |
+| Роздача | APK, тестовий ключ | `.app`, ad-hoc | непідписаний `.ipa`, ставить сама людина | `.exe` без підпису |
