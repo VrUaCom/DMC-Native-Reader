@@ -16,9 +16,11 @@ apple/build-mac.sh --open
 ```
 
 The app is `apple/.build/DMC Native Reader.app`, signed for this Mac only.
-Everything the build writes stays in `apple/.build`.
+Everything the build writes stays in `apple/.build`. The first build also
+downloads and builds the core's minimal FFmpeg (WMV movies, a few minutes);
+`DMC_FFMPEG=OFF apple/build-mac.sh` builds without it.
 
-Built and started on Apple M1 (macOS 15, Swift 6.1, Apple clang 17): the core passes its 55 host
+Built and started on Apple M1 (macOS 15, Swift 6.1, Apple clang 17): the core passes its 56 host
 tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 
 ## What it does now (0.1)
@@ -59,5 +61,3 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- The game's WMV movies are on Android only for now (the core is built
-  without FFmpeg here).

@@ -283,6 +283,12 @@ if(DMC_NATIVE_READER_FFMPEG AND NOT MSVC)
         list(APPEND DMC_FFMPEG_CONFIGURE --disable-x86asm)
     endif()
     find_program(DMC_MAKE NAMES gmake make REQUIRED)
+    if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET)
+        # The same minimum macOS as the core, or the linker warns on every object.
+        list(APPEND DMC_FFMPEG_CONFIGURE
+            --extra-cflags=-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}
+            --extra-ldflags=-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
+    endif()
     set(_dmc_ffmpeg_download_options "")
     if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
         list(APPEND _dmc_ffmpeg_download_options DOWNLOAD_EXTRACT_TIMESTAMP ON)

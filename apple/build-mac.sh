@@ -26,7 +26,7 @@ echo "== C++ core"
 cmake -S "$repo/app/src/main/cpp" -B "$core" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-    -DDMC_NATIVE_READER_FFMPEG=OFF \
+    -DDMC_NATIVE_READER_FFMPEG="${DMC_FFMPEG:-ON}" \
     -DDMC_NATIVE_READER_BUILD_TESTS=OFF >/dev/null
 cmake --build "$core" --target dmc_reader_capi -j "$jobs"
 
@@ -36,6 +36,11 @@ for lib in dmc_reader_capi dmc_native_reader_core dmc_native_reader_rengine_view
     found="$(find "$core" -name "lib$lib.a" -print -quit)"
     [ -n "$found" ] || { echo "lib$lib.a was not built" >&2; exit 1; }
     cp "$found" "$libs/"
+done
+# The game's WMV movies: the core's minimal FFmpeg (DMC_FFMPEG=OFF builds without it).
+for lib in avformat avcodec avutil; do
+    found="$(find "$core" -path "*ffmpeg-install/lib/lib$lib.a" -print -quit)"
+    [ -z "$found" ] || cp "$found" "$libs/"
 done
 
 echo "== SwiftUI shell"

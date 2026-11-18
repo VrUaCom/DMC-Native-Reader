@@ -7,6 +7,9 @@ import PackageDescription
 
 let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let coreLibs = "\(here)/.build/core-libs"
+// The core's minimal FFmpeg (WMV movies), when build-mac.sh built it.
+let ffmpeg: [LinkerSetting] = FileManager.default.fileExists(atPath: "\(coreLibs)/libavcodec.a")
+    ? ["avformat", "avcodec", "avutil"].map { .linkedLibrary($0) } : []
 
 let package = Package(
     name: "DMCNativeReader",
@@ -21,7 +24,7 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-L\(coreLibs)"]),
                 .linkedLibrary("c++"),
-            ]
+            ] + ffmpeg
         ),
     ]
 )
