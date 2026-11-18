@@ -23,6 +23,12 @@
 #include "dmcresource/spider/motion_strip.h"
 #include "dmcresource/spider/session_actions.h"
 #include "dmcresource/spider/viewer_settings.h"
+#include "dmcresource/spider/stage_actions.h"
+#include "dmcresource/stage_room.h"
+#include "dmcresource/frame_profile.h"
+#include "dmcresource/view_benchmark.h"
+#include "dmcresource/view_gpu.h"
+#include "dmcresource/view_renderer.h"
 
 struct dmc_session {
     std::unique_ptr<dmcresource::Session> session;
@@ -57,6 +63,44 @@ dmc_session* wrap(std::unique_ptr<dmcresource::Session> session) {
     if (!session) return nullptr;
     auto* out = new dmc_session{};
     out->session = std::move(session);
+    return out;
+}
+
+// The view's controls as the core reads them: the shell's pan, room yaw,
+// follow and dolly, plus the camera's own state (fly eye, pivot).
+dmcresource::ViewControls controls_of(const dmc_view& view) {
+    dmcresource::ViewControls controls{view.pan_x, view.pan_y, view.room_yaw, view.follow, view.dolly};
+    const auto camera = dmcresource::camera::current();
+    controls.fly = camera.fly;
+    controls.eye = camera.eye;
+    controls.has_pivot = camera.has_pivot;
+    controls.pivot = camera.pivot;
+    return controls;
+}
+
+bool valid_side(int side) noexcept { return side >= DMC_RENDER_MIN_SIDE && side <= DMC_RENDER_MAX_SIDE; }
+
+dmc_image* image_of(const dmcresource::RgbaImage& image) {
+    if (image.width <= 0 || image.height <= 0 || image.pixels.empty()) return nullptr;
+    const auto bytes = static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U;
+    if (image.pixels.size() < bytes) return nullptr;
+    auto* out = static_cast<dmc_image*>(std::calloc(1U, sizeof(dmc_image)));
+    if (out == nullptr) return nullptr;
+    out->rgba = static_cast<std::uint8_t*>(std::malloc(bytes));
+    if (out->rgba == nullptr) { std::free(out); return nullptr; }
+    std::memcpy(out->rgba, image.pixels.data(), bytes);
+    out->width = image.width;
+    out->height = image.height;
+    return out;
+}
+
+dmc_outcome outcome_of(const dmcresource::spider::actions::ActionOutcome& o) {
+    dmc_outcome out{};
+    out.ok = o.ok;
+    out.step = static_cast<int>(o.step);
+    out.message = copy_string(o.message);
+    out.marker = o.marker;
+    out.title = copy_string(o.title);
     return out;
 }
 
@@ -416,19 +460,19 @@ int dmc_render(dmc_session* session, int width, int height, const dmc_view* view
             !dmcresource::motion::apply_motion_frame(session->session.get(), view->motion_frame)) {
             status = 2;
         }
-        dmcresource::ViewControls controls{view->pan_x, view->pan_y, view->room_yaw, view->follow, view->dolly};
-        const auto camera = dmcresource::camera::current();
-        controls.fly = camera.fly;
-        controls.eye = camera.eye;
-        controls.has_pivot = camera.has_pivot;
-        controls.pivot = camera.pivot;
+        const auto controls = controls_of(*view);
         const auto image = dmcresource::spider::camera::render_view_frame(
             session->session.get(), width, height, view->yaw, view->pitch, view->zoom, view->render_flags, controls);
-        if (image.width != width || image.height != height || image.pixels.size() > capacity ||
-            image.pixels.empty()) {
-            return 0;
+        if (image.width != width || image.height != height) return 0;
+        if (image.pixels.empty()) {
+            // Only a frame drawn straight to an attached window comes back without pixels.
+            if (!controls.present) return 0;
+            dmcresource::frame_profile::frame_done();
+            return status | DMC_RENDER_SHOWN;
         }
+        if (image.pixels.size() > capacity) return 0;
         std::memcpy(rgba, image.pixels.data(), image.pixels.size());
+        dmcresource::frame_profile::frame_done();
         return status;
     } catch (...) { return 0; }
 }
@@ -544,5 +588,289 @@ const dmc_motion_card* dmc_motion_strip_card(const dmc_motion_strip* strip, size
 }
 
 void dmc_motion_strip_free(dmc_motion_strip* strip) { delete strip; }
+
+/* ---- Group 2: picking, holding, camera, fly, export, capture ------------- */
+
+dmc_pick_result dmc_pick(dmc_session* session, int width, int height, const dmc_view* view, float x, float y,
+                         bool place) {
+    dmc_pick_result out{};
+    out.joint = -1;
+    out.marker = -1;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (core(session) == nullptr || view == nullptr || !valid_side(width) || !valid_side(height)) {
+            out.joint_name = copy_string({});
+            out.marker_title = copy_string({});
+            return out;
+        }
+        const auto pick = dmcresource::pick_session(core(session), width, height, view->yaw, view->pitch,
+                                                    view->zoom, view->render_flags, controls_of(*view), x, y);
+        out.kind = pick.model ? DMC_PICK_MODEL : pick.room ? DMC_PICK_ROOM : DMC_PICK_NONE;
+        if (pick.room && pick.room_floor && !pick.model && place) {
+            dmcresource::stage_room::place_at(pick.room_point);
+            out.kind = DMC_PICK_PLACED;
+        }
+        out.joint = pick.joint;
+        out.marker = pick.marker;
+        out.room_point[0] = pick.room_point.x;
+        out.room_point[1] = pick.room_point.y;
+        out.room_point[2] = pick.room_point.z;
+        out.joint_name = copy_string(pick.joint_name);
+        out.marker_title = copy_string(pick.marker_title);
+    } catch (...) {
+        if (out.joint_name == nullptr) out.joint_name = copy_string({});
+        if (out.marker_title == nullptr) out.marker_title = copy_string({});
+    }
+    return out;
+}
+
+void dmc_pick_result_free(dmc_pick_result* result) {
+    if (result == nullptr) return;
+    std::free(result->joint_name);
+    std::free(result->marker_title);
+    result->joint_name = nullptr;
+    result->marker_title = nullptr;
+}
+
+void dmc_outcome_free(dmc_outcome* outcome) {
+    if (outcome == nullptr) return;
+    std::free(outcome->message);
+    std::free(outcome->title);
+    outcome->message = nullptr;
+    outcome->title = nullptr;
+}
+
+dmc_outcome dmc_hold(const dmc_session* session, int width, int height, const dmc_view* view, float x, float y,
+                     bool joints, bool scrub) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (view == nullptr) return outcome_of({});
+        return outcome_of(actions::hold_view(core(session), width, height, view->yaw, view->pitch, view->zoom,
+                                             view->render_flags, controls_of(*view), x, y, joints, scrub));
+    } catch (...) { return outcome_of({}); }
+}
+
+bool dmc_camera_metrics(const dmc_session* session, float* distance, float* dolly_limit) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (core(session) == nullptr) return false;
+        if (distance != nullptr) *distance = dmcresource::session_camera_distance(core(session));
+        if (dolly_limit != nullptr) *dolly_limit = dmcresource::session_dolly_limit(core(session));
+        return true;
+    } catch (...) { return false; }
+}
+
+bool dmc_camera_mode(void) { return dmcresource::spider::camera::finder_on(); }
+
+bool dmc_claim_gesture(int gesture) {
+    if (gesture < DMC_GESTURE_NONE || gesture > DMC_GESTURE_TURN) return false;
+    return dmcresource::camera::claim_gesture(static_cast<dmcresource::camera::Gesture>(gesture));
+}
+
+void dmc_end_touch(void) { dmcresource::camera::end_touch(); }
+void dmc_camera_reset(void) { dmcresource::camera::reset(); }
+
+bool dmc_zoom_step(float touch_zoom, float next, bool settling) {
+    return dmcresource::camera::zoom_step(touch_zoom, next, settling);
+}
+
+void dmc_camera_level(void) { dmcresource::spider::camera::level_camera(); }
+float dmc_camera_roll(float radians) { return dmcresource::spider::camera::turn_roll(radians); }
+bool dmc_camera_holds_orientation(void) { return dmcresource::spider::camera::holds_screen_orientation(); }
+
+bool dmc_gyro_active(void) { return dmcresource::spider::camera::gyro_active(); }
+void dmc_gyro_reset(void) { dmcresource::spider::camera::gyro_reset(); }
+
+void dmc_gyro_turn(float heading, float elevation, float roll, float out[2]) {
+    if (out == nullptr) return;
+    const auto turn = dmcresource::spider::camera::gyro_turn(heading, elevation, roll);
+    out[0] = turn[0];
+    out[1] = turn[1];
+}
+
+bool dmc_fly_enter(const dmc_session* session, int width, int height, const dmc_view* view) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (view == nullptr) return false;
+        const auto eye = dmcresource::session_camera_eye(core(session), width, height, view->yaw, view->pitch,
+                                                         view->zoom, view->render_flags, controls_of(*view));
+        if (!eye) return false;
+        dmcresource::camera::enter_fly(*eye);
+        return true;
+    } catch (...) { return false; }
+}
+
+dmc_fly_step dmc_fly_tick(const dmc_session* session, float yaw, float pitch, bool move_held, float move_dx,
+                          float move_dy, bool look_held, float look_dx, float look_dy, float density, float dt) {
+    namespace camera = dmcresource::camera;
+    const auto move = move_held ? camera::stick_response(move_dx, move_dy, density) : camera::StickResponse{};
+    const auto look = look_held ? camera::stick_response(look_dx, look_dy, density) : camera::StickResponse{};
+    float speed = 1.0F;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        // Full stick crosses the framed distance in about two seconds.
+        speed = std::max(1.0F, dmcresource::session_camera_distance(core(session)) * 0.5F);
+    } catch (...) {}
+    const auto step = camera::fly_tick(yaw, pitch, move, look, dt, speed);
+    return {step.yaw, step.pitch, move.boost, move.zone};
+}
+
+void dmc_fly_leave(const dmc_session* session, float yaw, float pitch) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        dmcresource::camera::leave_fly(yaw, pitch, dmcresource::session_camera_distance(core(session)));
+    } catch (...) {}
+}
+
+void dmc_stick_knob(float dx, float dy, float density, float out[2]) {
+    if (out == nullptr) return;
+    const auto knob = dmcresource::camera::stick_knob(dx, dy, density);
+    out[0] = knob.first;
+    out[1] = knob.second;
+}
+
+bool dmc_walk(float yaw, float forward, float right, float up) {
+    return dmcresource::spider::camera::walk(yaw, forward, right, up);
+}
+
+bool dmc_walk_active(void) { return dmcresource::spider::camera::walk_active(); }
+
+dmc_finder dmc_viewfinder(const dmc_session* session, int width, int height, float zoom, bool recording,
+                          int recorded_seconds) {
+    dmc_finder out{};
+    try {
+        dmcresource::spider::camera::Finder finder;
+        {
+            const std::lock_guard lock{api_mutex()};
+            finder = dmcresource::spider::camera::viewfinder(core(session), width, height, zoom, recording,
+                                                              recorded_seconds);
+        }
+        out.shown = finder.shown;
+        out.frame[0] = finder.frame.x;
+        out.frame[1] = finder.frame.y;
+        out.frame[2] = finder.frame.width;
+        out.frame[3] = finder.frame.height;
+        if (!finder.lines.empty()) {
+            out.lines = static_cast<float*>(std::malloc(finder.lines.size() * 4U * sizeof(float)));
+            if (out.lines != nullptr) {
+                for (std::size_t i = 0; i < finder.lines.size(); ++i)
+                    std::memcpy(out.lines + i * 4U, finder.lines[i].data(), 4U * sizeof(float));
+                out.line_count = finder.lines.size();
+            }
+        }
+        out.status = copy_string(finder.status);
+    } catch (...) {
+        if (out.status == nullptr) out.status = copy_string({});
+    }
+    return out;
+}
+
+void dmc_finder_free(dmc_finder* finder) {
+    if (finder == nullptr) return;
+    std::free(finder->lines);
+    std::free(finder->status);
+    finder->lines = nullptr;
+    finder->status = nullptr;
+    finder->line_count = 0;
+}
+
+void dmc_image_free(dmc_image* image) {
+    if (image == nullptr) return;
+    std::free(image->rgba);
+    std::free(image);
+}
+
+bool dmc_export_image_size(const dmc_session* session, int* width, int* height) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto [w, h] = actions::export_image_size(core(session));
+        if (width != nullptr) *width = w;
+        if (height != nullptr) *height = h;
+        return w > 0 && h > 0;
+    } catch (...) { return false; }
+}
+
+dmc_image* dmc_render_export(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (core(session) == nullptr) return nullptr;
+        return image_of(actions::render_export_image(core(session)));
+    } catch (...) { return nullptr; }
+}
+
+dmc_image* dmc_render_capture(dmc_session* session, bool video, int view_width, int view_height,
+                              const dmc_view* view, float motion_fps) {
+    namespace cam = dmcresource::spider::camera;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (core(session) == nullptr || view == nullptr) return nullptr;
+        // The scene moving while the shutter is open: the playing motion.
+        const cam::SceneMotion motion{view->motion_frame, motion_fps};
+        return image_of(cam::render_capture(core(session), video ? cam::Kind::Video : cam::Kind::Photo,
+                                            view_width, view_height, view->yaw, view->pitch, view->zoom,
+                                            view->render_flags, controls_of(*view), motion));
+    } catch (...) { return nullptr; }
+}
+
+char* dmc_benchmark(dmc_session* session, int width, int height, const dmc_view* view, float motion_start,
+                    float seconds, const char* settings) {
+    dmcresource::ViewBenchmarkResult result;
+    int out_width = 0, out_height = 0;
+    try {
+        if (view == nullptr) return copy_string("Nothing to draw.");
+        const auto controls = controls_of(*view);
+        float end_frame = 0.0F, loop_start = 0.0F;
+        {
+            const std::lock_guard lock{api_mutex()};
+            if (core(session) == nullptr) return copy_string("Nothing to draw.");
+            if (std::isfinite(motion_start)) {
+                end_frame = dmcresource::motion::motion_end_frame(core(session));
+                loop_start = dmcresource::motion::motion_loop_start_frame(core(session));
+            }
+        }
+        dmcresource::ViewBenchmarkOptions options;
+        options.seconds = std::clamp(static_cast<double>(seconds), 1.0, 120.0);
+        dmcresource::frame_profile::reset();
+        result = dmcresource::run_view_benchmark(options, [&](int index) {
+            // The lock is taken per frame, as a render thread does, so other calls are never kept waiting
+            // for the whole run.
+            const std::lock_guard lock{api_mutex()};
+            dmcresource::Session* s = core(session);
+            if (s == nullptr) return false;
+            if (std::isfinite(motion_start)) {
+                // One game frame (60 per second) per drawn frame, looping like the viewer.
+                float frame = motion_start + static_cast<float>(index);
+                if (end_frame > 0.0F && frame > end_frame) {
+                    const float span = end_frame - loop_start;
+                    frame = span > 0.0F ? loop_start + std::fmod(frame - end_frame, span) : end_frame;
+                }
+                const dmcresource::frame_profile::Scope timed{dmcresource::frame_profile::Stage::Pose};
+                (void)dmcresource::motion::apply_motion_frame(s, frame);
+            }
+            const auto image = dmcresource::spider::camera::render_view_frame(
+                s, width, height, dmcresource::benchmark_yaw(view->yaw, index), view->pitch, view->zoom,
+                view->render_flags, controls);
+            if (image.pixels.empty()) return false;
+            out_width = image.width;
+            out_height = image.height;
+            dmcresource::frame_profile::frame_done();
+            return true;
+        });
+        // Leave the pose where the run started.
+        if (std::isfinite(motion_start)) {
+            const std::lock_guard lock{api_mutex()};
+            if (dmcresource::Session* s = core(session)) (void)dmcresource::motion::apply_motion_frame(s, motion_start);
+        }
+    } catch (...) {
+        result.stopped = true;
+    }
+    try {
+        auto text = dmcresource::format_view_benchmark(result, dmcresource::view_renderer_description(), out_width,
+                                                       out_height, text_or_empty(settings));
+        const auto stages = dmcresource::frame_profile::per_frame_line();
+        if (!stages.empty()) text += "\n" + stages;
+        return copy_string(text);
+    } catch (...) { return copy_string("Benchmark failed."); }
+}
 
 }  // extern "C"

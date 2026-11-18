@@ -1,6 +1,7 @@
 // The C API's thread contract: frames drawn on one thread while another
 // changes the same session (parts attached and reset, part lists read) never
-// overlap. Run under ThreadSanitizer this fails on any unlocked access.
+// overlap; group 2's picks, long presses, metrics and captures in between. Run under
+// ThreadSanitizer this fails on any unlocked access.
 #include "dmc_reader.h"
 
 #include <atomic>
@@ -113,6 +114,17 @@ int main() {
         (void)dmc_set_info_preview(composite, (round & 1) != 0);
         char* info = dmc_info_text(composite, "composite", 0, nullptr, nullptr, 0);
         dmc_string_free(info);
+        // Group 2 between frames: picks, a long press, metrics, a capture (poses the session).
+        dmc_pick_result pick = dmc_pick(composite, kSide, kSide, &view, 32.0F, 32.0F, false);
+        dmc_pick_result_free(&pick);
+        dmc_outcome held = dmc_hold(composite, kSide, kSide, &view, 32.0F, 32.0F, true, false);
+        dmc_outcome_free(&held);
+        float distance = 0.0F, dolly = 0.0F;
+        assert(dmc_camera_metrics(composite, &distance, &dolly) && distance > 0.0F);
+        if (round % 50 == 0) {
+            dmc_image* photo = dmc_render_capture(composite, false, kSide, kSide, &view, 30.0F);
+            dmc_image_free(photo);
+        }
     }
     while (frames.load() < 3) std::this_thread::yield();
     done = true;

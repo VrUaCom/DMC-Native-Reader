@@ -188,6 +188,161 @@ bool dmc_image_preview(const dmc_session* session, uint8_t* rgba, size_t capacit
 int dmc_render(dmc_session* session, int width, int height, const dmc_view* view, uint8_t* rgba,
                size_t capacity);
 
+/* Bit 4 of dmc_render's result: the frame went straight to the window the core
+ * draws into (dmc_gpu_attach, later); nothing was copied into `rgba`. */
+#define DMC_RENDER_SHOWN 4
+
+/* ---- Group 2: picking, holding, camera, fly, export, capture ------------- *
+ * Every decision is the core's; a shell sends the touch, the stick or the
+ * sensor reading and shows what comes back. Calls without a session work on
+ * the core's camera state (camera_control), which has its own lock. */
+
+/* What lies under point (x, y) of a width x height view. */
+typedef enum dmc_pick_kind {
+    DMC_PICK_NONE = 0,
+    DMC_PICK_MODEL = 1,
+    DMC_PICK_ROOM = 2,
+    DMC_PICK_PLACED = 3          /* `place` was set and the room's actor now stands there */
+} dmc_pick_kind;
+
+typedef struct dmc_pick_result {
+    int kind;                    /* dmc_pick_kind */
+    int joint;                   /* the model's joint under the point, -1 none */
+    char* joint_name;            /* "" when none */
+    int marker;                  /* a stage configuration marker held, -1 none */
+    char* marker_title;
+    float room_point[3];         /* where the ray met the room (kind ROOM / PLACED) */
+} dmc_pick_result;
+
+/* With `place`, a point on the room's floor (and no model in front) moves the
+ * room's actor there. Free the strings with dmc_pick_result_free. */
+dmc_pick_result dmc_pick(dmc_session* session, int width, int height, const dmc_view* view, float x, float y,
+                         bool place);
+void dmc_pick_result_free(dmc_pick_result* result);
+
+/* What the core tells a shell after an action: show `message`, then take one
+ * platform step. Free the strings with dmc_outcome_free. */
+typedef enum dmc_shell_step {
+    DMC_STEP_NONE = 0,
+    DMC_STEP_PICK_STAGE_CONFIG = 1,
+    DMC_STEP_SHOW_MARKER_CARD = 2,
+    DMC_STEP_START_SCRUB = 3,
+    DMC_STEP_OPEN_SESSION = 4,
+    DMC_STEP_LEAVE_FLY = 5,
+    DMC_STEP_PICK_CUTSCENE_SOUND = 6,
+    DMC_STEP_RESET_VIEW = 7
+} dmc_shell_step;
+
+typedef struct dmc_outcome {
+    bool ok;
+    int step;                    /* dmc_shell_step */
+    char* message;               /* the core's text; "" when there is nothing to say */
+    int marker;                  /* SHOW_MARKER_CARD: which marker, else -1 */
+    char* title;                 /* OPEN_SESSION: the opened session's title */
+} dmc_outcome;
+
+void dmc_outcome_free(dmc_outcome* outcome);
+
+/* The view's long press at (x, y): a joint's card, a marker's card, or a
+ * scrub of the motion under the finger (`joints`, `scrub`: what the shell's
+ * view offers right now). */
+dmc_outcome dmc_hold(const dmc_session* session, int width, int height, const dmc_view* view, float x, float y,
+                     bool joints, bool scrub);
+
+/* The framed distance and how far the camera may dolly, model units. */
+bool dmc_camera_metrics(const dmc_session* session, float* distance, float* dolly_limit);
+
+/* Camera mode: the viewfinder is on (the photo camera's view). */
+bool dmc_camera_mode(void);
+
+/* Touch gestures (camera_control). A gesture is claimed when it starts; only
+ * the claimed one moves the camera until dmc_end_touch. */
+typedef enum dmc_gesture {
+    DMC_GESTURE_NONE = 0,
+    DMC_GESTURE_ZOOM = 1,
+    DMC_GESTURE_DOLLY = 2,
+    DMC_GESTURE_TURN = 3
+} dmc_gesture;
+
+bool dmc_claim_gesture(int gesture);
+void dmc_end_touch(void);
+void dmc_camera_reset(void);
+/* A pinch's zoom `next` after `touch_zoom`; `settling` while the fingers lift.
+ * False when the core keeps the zoom where it is. */
+bool dmc_zoom_step(float touch_zoom, float next, bool settling);
+/* Levels the camera (no roll); turns the roll by `radians` and returns the roll now. */
+void dmc_camera_level(void);
+float dmc_camera_roll(float radians);
+/* The camera keeps the screen's orientation (the shell then locks rotation). */
+bool dmc_camera_holds_orientation(void);
+
+/* The gyroscope: the shell reads the sensor, the core turns the camera. */
+bool dmc_gyro_active(void);
+void dmc_gyro_reset(void);
+/* The device's attitude now; out[0], out[1]: the yaw and pitch to show. */
+void dmc_gyro_turn(float heading, float elevation, float roll, float out[2]);
+
+/* Fly mode: the eye moves with two on-screen sticks. */
+bool dmc_fly_enter(const dmc_session* session, int width, int height, const dmc_view* view);
+
+typedef struct dmc_fly_step {
+    float yaw;
+    float pitch;
+    float boost;                 /* the move stick's speed factor (outer ring) */
+    int zone;                    /* 0 inside the dead band, then 1.. per zone reached */
+} dmc_fly_step;
+
+/* One tick of `dt` seconds: each stick held or not, its finger offset in
+ * pixels from the stick's base on a screen of `density`. */
+dmc_fly_step dmc_fly_tick(const dmc_session* session, float yaw, float pitch, bool move_held, float move_dx,
+                          float move_dy, bool look_held, float look_dx, float look_dy, float density, float dt);
+void dmc_fly_leave(const dmc_session* session, float yaw, float pitch);
+/* Where the stick's knob is drawn for a finger offset; out[0], out[1] in pixels. */
+void dmc_stick_knob(float dx, float dy, float density, float out[2]);
+/* Walks the fly eye (model units) along the ground; false when not flying. */
+bool dmc_walk(float yaw, float forward, float right, float up);
+bool dmc_walk_active(void);
+
+/* The viewfinder over a width x height view: frame and guide lines in view
+ * pixels, and the status line. Free with dmc_finder_free. */
+typedef struct dmc_finder {
+    bool shown;
+    float frame[4];              /* x, y, width, height */
+    size_t line_count;
+    float* lines;                /* 4 floats per line: x0, y0, x1, y1 */
+    char* status;
+} dmc_finder;
+
+dmc_finder dmc_viewfinder(const dmc_session* session, int width, int height, float zoom, bool recording,
+                          int recorded_seconds);
+void dmc_finder_free(dmc_finder* finder);
+
+/* An RGBA8 picture made by the core (rows top down). Free with dmc_image_free. */
+typedef struct dmc_image {
+    int width;
+    int height;
+    uint8_t* rgba;               /* width * height * 4 bytes */
+} dmc_image;
+
+void dmc_image_free(dmc_image* image);
+
+/* PNG export of the view: its size, then the picture (NULL when the session
+ * has nothing to export). The shell encodes and saves it. */
+bool dmc_export_image_size(const dmc_session* session, int* width, int* height);
+dmc_image* dmc_render_export(const dmc_session* session);
+
+/* The photo camera's picture (`video` false) or video frame (true), full
+ * size, for a view of view_width x view_height. view->motion_frame and
+ * `motion_fps` say how the scene moves while the shutter is open. */
+dmc_image* dmc_render_capture(dmc_session* session, bool video, int view_width, int view_height,
+                              const dmc_view* view, float motion_fps);
+
+/* Draws the view for `seconds` (1..120) and returns the core's report; with a
+ * finite `motion_start` the motion plays from there, one game frame per drawn
+ * frame. `settings` is the shell's line of active settings for the report. */
+char* dmc_benchmark(dmc_session* session, int width, int height, const dmc_view* view, float motion_start,
+                    float seconds, const char* settings);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {

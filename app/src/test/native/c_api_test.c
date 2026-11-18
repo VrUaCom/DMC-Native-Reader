@@ -224,6 +224,105 @@ int main(void) {
     dmc_strings* none = dmc_variant_names("unknown.pac");
     assert(none != NULL && dmc_strings_count(none) <= 1);
     dmc_strings_free(none);
+    /* Group 2: what the finger is on. A pixel of the drawn triangle picks the
+     * model; a background corner picks nothing; a bad size picks nothing. */
+    assert(dmc_render(model.session, W, H, &view, pixels, (size_t)W * H * 4) == 1);
+    int hit_x = -1, hit_y = -1;
+    for (int y = 0; y < H && hit_x < 0; ++y) {
+        for (int x = 0; x < W; ++x) {
+            if (memcmp(pixels + ((size_t)y * W + (size_t)x) * 4, pixels, 4) != 0) { hit_x = x; hit_y = y; break; }
+        }
+    }
+    assert(hit_x >= 0);
+    dmc_pick_result on_model = dmc_pick(model.session, W, H, &view, (float)hit_x + 0.5f, (float)hit_y + 0.5f, false);
+    dmc_pick_result on_nothing = dmc_pick(model.session, W, H, &view, 0.5f, 0.5f, false);
+    dmc_pick_result bad_size = dmc_pick(model.session, 1, H, &view, 0.5f, 0.5f, true);
+    assert(on_nothing.kind == DMC_PICK_NONE && on_nothing.joint_name != NULL && on_nothing.marker_title != NULL);
+    assert(bad_size.kind == DMC_PICK_NONE && bad_size.joint_name != NULL && bad_size.marker == -1);
+    assert(on_model.kind == DMC_PICK_MODEL || on_model.kind == DMC_PICK_NONE);  /* an anti-aliased edge */
+    /* Over a grid: the model is found, and only where something was drawn. */
+    int model_hits = 0;
+    for (int gy = 4; gy < H; gy += 4) {
+        for (int gx = 4; gx < W; gx += 4) {
+            dmc_pick_result g = dmc_pick(model.session, W, H, &view, (float)gx, (float)gy, false);
+            if (g.kind == DMC_PICK_MODEL) {
+                ++model_hits;
+                assert(memcmp(pixels + ((size_t)gy * W + (size_t)gx) * 4, pixels, 4) != 0);
+            }
+            dmc_pick_result_free(&g);
+        }
+    }
+    assert(model_hits > 0);
+    dmc_pick_result_free(&on_model);
+    dmc_pick_result_free(&on_nothing);
+    dmc_pick_result_free(&bad_size);
+    dmc_pick_result_free(NULL);
+
+    /* The long press: the core's outcome, strings always there to free. */
+    dmc_outcome held = dmc_hold(model.session, W, H, &view, (float)hit_x + 0.5f, (float)hit_y + 0.5f, true, false);
+    assert(held.message != NULL && held.title != NULL);
+    assert(held.step >= DMC_STEP_NONE && held.step <= DMC_STEP_RESET_VIEW);
+    dmc_outcome_free(&held);
+    dmc_outcome no_view = dmc_hold(model.session, W, H, NULL, 1.0f, 1.0f, true, true);
+    assert(!no_view.ok && no_view.step == DMC_STEP_NONE && no_view.message != NULL);
+    dmc_outcome_free(&no_view);
+
+    /* Camera metrics come from the session; without one there are none. */
+    float distance = -1.0f, dolly = -1.0f;
+    assert(dmc_camera_metrics(model.session, &distance, &dolly) && distance > 0.0f && dolly >= 0.0f);
+    assert(!dmc_camera_metrics(NULL, &distance, &dolly));
+
+    /* Gestures: only claimed ones move the camera; ids outside the enum are refused. */
+    assert(!dmc_claim_gesture(9) && !dmc_claim_gesture(-1));
+    dmc_end_touch();
+    dmc_camera_reset();
+    float knob[2] = {1.0f, 1.0f};
+    dmc_stick_knob(0.0f, 0.0f, 2.0f, knob);
+    assert(knob[0] == 0.0f && knob[1] == 0.0f);
+    dmc_stick_knob(0.0f, 0.0f, 2.0f, NULL);
+    float turn[2] = {NAN, NAN};
+    dmc_gyro_turn(0.0f, 0.0f, 0.0f, turn);
+    assert(isfinite(turn[0]) && isfinite(turn[1]));
+    assert(!dmc_gyro_active());
+
+    /* Fly: enter from the framed view, tick a held move stick, leave. */
+    assert(!dmc_fly_enter(model.session, W, H, NULL));
+    assert(dmc_fly_enter(model.session, W, H, &view));
+    {
+        const dmc_fly_step still = dmc_fly_tick(model.session, 0.3f, 0.1f, false, 0, 0, false, 0, 0, 2.0f, 0.016f);
+        assert(isfinite(still.yaw) && isfinite(still.pitch) && still.zone == 0);
+        const dmc_fly_step moved = dmc_fly_tick(model.session, 0.3f, 0.1f, true, 0.0f, -400.0f, false, 0, 0, 2.0f, 0.016f);
+        assert(isfinite(moved.yaw) && moved.zone >= 1 && moved.boost >= 1.0f);
+        dmc_fly_leave(model.session, 0.3f, 0.1f);
+    }
+    dmc_camera_reset();
+
+    /* The viewfinder of a model view: its status line, lines four floats each. */
+    dmc_finder finder = dmc_viewfinder(model.session, W, H, 1.0f, false, 0);
+    assert(finder.status != NULL && (finder.line_count == 0 || finder.lines != NULL));
+    dmc_finder_free(&finder);
+    assert(finder.status == NULL && finder.lines == NULL && finder.line_count == 0);
+
+    /* Export and capture: the core's picture, or nothing; never a picture of another size. */
+    int ew = 0, eh = 0;
+    const bool exportable = dmc_export_image_size(model.session, &ew, &eh);
+    dmc_image* exported = dmc_render_export(model.session);
+    assert(!exportable && ew == 0 && eh == 0 && exported == NULL);  /* PNG export is a stage's; a model has none */
+    assert(dmc_render_export(NULL) == NULL && !dmc_export_image_size(NULL, &ew, &eh));
+    dmc_image* photo = dmc_render_capture(model.session, false, W, H, &view, 30.0f);
+    assert(photo != NULL && photo->width > 0 && photo->height > 0 && photo->rgba != NULL);
+    dmc_image_free(photo);
+    assert(dmc_render_capture(model.session, false, W, H, NULL, 30.0f) == NULL);
+    dmc_image_free(NULL);
+
+    /* The benchmark draws for a second and reports in the core's words. */
+    char* bench = dmc_benchmark(model.session, W, H, &view, NAN, 1.0f, "test");
+    assert(bench != NULL && strlen(bench) > 10);
+    dmc_string_free(bench);
+    char* nothing = dmc_benchmark(NULL, W, H, &view, NAN, 1.0f, NULL);
+    assert(nothing != NULL && strcmp(nothing, "Nothing to draw.") == 0);
+    dmc_string_free(nothing);
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);
