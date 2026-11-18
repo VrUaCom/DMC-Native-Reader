@@ -54,6 +54,5 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
--
-  videos (the core is built without FFmpeg here), the photo camera and fly
+- Videos (the core is built without FFmpeg here), the photo camera and fly
   mode are on Android only for now; the C API already has all of them.
