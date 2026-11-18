@@ -405,6 +405,42 @@ extension ReaderSession {
                         back: (s.back.0, s.back.1, s.back.2))
     }
 
+    /// The dmc_view of a camera, a frame's flags and the motion frame.
+    func view(of camera: ViewCamera, flags: UInt32, motionFrame: Float = .nan) -> dmc_view {
+        var view = dmc_view()
+        view.yaw = camera.yaw; view.pitch = camera.pitch; view.zoom = camera.zoom
+        view.render_flags = flags; view.pan_x = camera.panX; view.pan_y = camera.panY
+        view.room_yaw = camera.roomYaw; view.motion_frame = motionFrame
+        return view
+    }
+
+    /// The photo camera's picture of a view_width x view_height view (full size, the core's).
+    func capturePhoto(viewWidth: Int, viewHeight: Int, camera: ViewCamera, flags: UInt32, motionFrame: Float) -> RGBAImage? {
+        var v = view(of: camera, flags: flags, motionFrame: motionFrame)
+        guard let image = dmc_render_capture(handle, false, Int32(viewWidth), Int32(viewHeight), &v, 60) else { return nil }
+        defer { dmc_image_free(image) }
+        return RGBAImage(copying: image.pointee)
+    }
+
+    /// A RAW (DNG) picture written to `fd`.
+    func captureDNG(viewWidth: Int, viewHeight: Int, camera: ViewCamera, flags: UInt32, motionFrame: Float, fd: Int32) -> Bool {
+        var v = view(of: camera, flags: flags, motionFrame: motionFrame)
+        return dmc_capture_dng(handle, Int32(viewWidth), Int32(viewHeight), &v, 60, fd, nil)
+    }
+
+    /// Fly mode: enter from the view, one tick of the sticks, leave.
+    func flyEnter(width: Int, height: Int, camera: ViewCamera, flags: UInt32) -> Bool {
+        var v = view(of: camera, flags: flags)
+        return dmc_fly_enter(handle, Int32(width), Int32(height), &v)
+    }
+
+    func flyTick(yaw: Float, pitch: Float, move: (Float, Float)?, look: (Float, Float)?, dt: Float) -> dmc_fly_step {
+        dmc_fly_tick(handle, yaw, pitch, move != nil, move?.0 ?? 0, move?.1 ?? 0,
+                     look != nil, look?.0 ?? 0, look?.1 ?? 0, 1, dt)
+    }
+
+    func flyLeave(yaw: Float, pitch: Float) { dmc_fly_leave(handle, yaw, pitch) }
+
     /// The core's diagnostics text for the Info window.
     func diagnostics() -> String { takeString(dmc_diagnostics(handle)) ?? "" }
 }

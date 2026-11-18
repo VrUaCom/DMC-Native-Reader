@@ -45,6 +45,8 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Cutscenes: their sound streamed from the core's mix (AVAudioEngine, looping
   with the motion), the subtitles where the core lays them out, and the
   cutscene's .ogg when the core asks for it.
+- Camera menu: the photo camera's picture as PNG, or RAW as DNG (the core's
+  capture). Fly (F): W A S D move, the arrow keys look, the core's fly eye.
 - Settings (⌘,): the core's settings schema, the same rows as Android, each
   choice stored and applied at once.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
@@ -54,5 +56,5 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- Videos (the core is built without FFmpeg here), the photo camera and fly
-  mode are on Android only for now; the C API already has all of them.
+- Videos of the view and the camera's viewfinder and dials are on Android
+  only for now (the core is built without FFmpeg here); the C API has them.

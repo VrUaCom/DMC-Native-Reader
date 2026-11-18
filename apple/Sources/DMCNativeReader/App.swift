@@ -102,6 +102,7 @@ struct ContentView: View {
             }
             return true
         }
+        .onAppear { FlyKeys.install(model: model) }
         .sheet(isPresented: $showInfo) { InfoSheet(model: model) }
         .sheet(item: $model.markerCard) { card in MarkerCardSheet(model: model, card: card) }
     }
@@ -352,6 +353,25 @@ struct ContentView: View {
                 Button("Load stage configuration…") { OpenPanel.choose { model.loadStageConfig(url: $0) } }
                     .disabled(model.session == nil)
             } label: { Label(model.roomName ?? "Room", systemImage: "cube.transparent") }
+            Menu {
+                Button("Take picture (PNG)…") {
+                    let panel = NSSavePanel()
+                    panel.allowedContentTypes = [.png]
+                    panel.nameFieldStringValue = (model.session?.title ?? "photo") + " photo.png"
+                    if panel.runModal() == .OK, let url = panel.url { model.savePhoto(to: url) }
+                }
+                Button("Take RAW picture (DNG)…") {
+                    let panel = NSSavePanel()
+                    panel.nameFieldStringValue = (model.session?.title ?? "photo") + ".dng"
+                    if panel.runModal() == .OK, let url = panel.url { model.saveDNG(to: url) }
+                }
+            } label: { Label("Camera", systemImage: "camera") }
+                .disabled(model.session == nil || model.isPicture)
+            Button { model.toggleFly() } label: {
+                Label(model.flying ? "Stop flying" : "Fly", systemImage: model.flying ? "airplane.circle.fill" : "airplane")
+            }
+            .keyboardShortcut("f", modifiers: [])
+            .disabled(model.session == nil || model.isPicture)
             Button {
                 let panel = NSSavePanel()
                 panel.allowedContentTypes = [.png]
@@ -473,5 +493,32 @@ struct MarkerCardSheet: View {
         }
         .padding()
         .frame(minWidth: 420)
+    }
+}
+
+/// Keys for fly mode: held keys go to the core as the two sticks (see ViewerModel.flyStep).
+@MainActor
+enum FlyKeys {
+    private static var monitor: Any?
+
+    static func install(model: ViewerModel) {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak model] event in
+            guard let model, model.flying, let key = name(of: event) else { return event }
+            model.flyKey(key, down: event.type == .keyDown)
+            return nil  // the keys steer while flying
+        }
+    }
+
+    private static func name(of event: NSEvent) -> String? {
+        switch event.keyCode {
+        case 123: return "left"
+        case 124: return "right"
+        case 125: return "down"
+        case 126: return "up"
+        default:
+            guard let c = event.charactersIgnoringModifiers?.lowercased(), ["w", "a", "s", "d"].contains(c) else { return nil }
+            return c
+        }
     }
 }

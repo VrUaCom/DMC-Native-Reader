@@ -348,6 +348,92 @@ final class ViewerModel: ObservableObject {
         }
     }
 
+    // MARK: Photo camera and fly mode
+
+    /// The photo camera's picture saved as PNG.
+    func savePhoto(to url: URL) {
+        guard let session else { return }
+        let (width, height) = frameSize()
+        guard let photo = session.capturePhoto(viewWidth: width, viewHeight: height, camera: camera,
+                                               flags: settings.renderFlags, motionFrame: motionFrame),
+              let picture = Self.cgImage(photo),
+              let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            message = "The camera took no picture of this view."
+            return
+        }
+        CGImageDestinationAddImage(destination, picture, nil)
+        message = CGImageDestinationFinalize(destination)
+            ? "Saved \(url.lastPathComponent) (\(picture.width) × \(picture.height))." : "Could not write \(url.lastPathComponent)."
+    }
+
+    /// The photo camera's RAW picture saved as DNG.
+    func saveDNG(to url: URL) {
+        guard let session else { return }
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        guard let handle = try? FileHandle(forWritingTo: url) else {
+            message = "Could not write \(url.lastPathComponent)."
+            return
+        }
+        defer { try? handle.close() }
+        let (width, height) = frameSize()
+        message = session.captureDNG(viewWidth: width, viewHeight: height, camera: camera, flags: settings.renderFlags,
+                                     motionFrame: motionFrame, fd: handle.fileDescriptor)
+            ? "Saved \(url.lastPathComponent)." : "The camera took no RAW picture of this view."
+    }
+
+    @Published private(set) var flying = false
+    private var flyTimer: Timer?
+    private var flyKeys = Set<String>()
+    private var flyLast = Date()
+
+    func toggleFly() {
+        guard let session else { return }
+        if flying {
+            flyTimer?.invalidate()
+            flyTimer = nil
+            session.flyLeave(yaw: camera.yaw, pitch: camera.pitch)
+            flying = false
+            requestFrame()
+            return
+        }
+        let (width, height) = frameSize()
+        guard session.flyEnter(width: width, height: height, camera: camera, flags: settings.renderFlags) else {
+            message = "This view has no eye to fly from."
+            return
+        }
+        flying = true
+        flyLast = Date()
+        message = "Fly: W A S D move, arrow keys look, F leaves."
+        flyTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.flyStep() }
+        }
+    }
+
+    /// Keys held while flying (a lowercase letter, or "up"/"down"/"left"/"right").
+    func flyKey(_ key: String, down: Bool) {
+        if down { flyKeys.insert(key) } else { flyKeys.remove(key) }
+    }
+
+    /// The keys as the two on-screen sticks Android has: pixels from the stick's base.
+    private func flyStep() {
+        guard flying, let session else { return }
+        let now = Date()
+        let dt = Float(min(0.1, now.timeIntervalSince(flyLast)))
+        flyLast = now
+        let reach: Float = 120
+        func stick(_ left: String, _ right: String, _ up: String, _ down: String) -> (Float, Float)? {
+            let x: Float = (flyKeys.contains(right) ? reach : 0) - (flyKeys.contains(left) ? reach : 0)
+            let y: Float = (flyKeys.contains(down) ? reach : 0) - (flyKeys.contains(up) ? reach : 0)
+            return x == 0 && y == 0 ? nil : (x, y)
+        }
+        let step = session.flyTick(yaw: camera.yaw, pitch: camera.pitch, move: stick("a", "d", "w", "s"),
+                                   look: stick("left", "right", "up", "down"), dt: dt)
+        if step.yaw != camera.yaw || step.pitch != camera.pitch || !flyKeys.isEmpty {
+            camera.yaw = step.yaw
+            camera.pitch = step.pitch
+        }
+    }
+
     private func refreshAfterChange() {
         guard let session else { return }
         let menu = session.companionRows()
