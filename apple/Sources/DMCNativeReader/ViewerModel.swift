@@ -17,7 +17,22 @@ final class ViewerModel: ObservableObject {
 
     /// Sessions under the current one (Back returns to the last).
     private(set) var stack: [ReaderSession] = []
-    private let settings = ReaderCore.applyDefaultSettings()
+    /// The settings schema and the user's stored choices (UserDefaults), applied by the core.
+    let settingRows = ReaderCore.settingsSchema()
+    @Published private(set) var stored: [String: Float] =
+        (UserDefaults.standard.dictionary(forKey: "settings") as? [String: Float]) ?? [:]
+    private lazy var settings = ReaderCore.apply(stored: stored)
+
+    /// The value a setting has now (stored, else the core's fallback).
+    func value(of row: SettingRow) -> Float { stored[row.key] ?? row.fallback }
+
+    /// A setting chosen: stored, applied by the core, and the view drawn again.
+    func set(_ row: SettingRow, to value: Float) {
+        stored[row.key] = value
+        UserDefaults.standard.set(stored, forKey: "settings")
+        settings = ReaderCore.apply(stored: stored)
+        requestFrame()
+    }
     private let renderQueue = DispatchQueue(label: "dmc.render", qos: .userInitiated)
     private var viewSize = CGSize(width: 800, height: 600)
     private var scale: CGFloat = 2

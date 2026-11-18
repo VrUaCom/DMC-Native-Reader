@@ -330,6 +330,20 @@ struct OpenFailure: Error {
     let message: String
 }
 
+/// One row of the core's settings (spider/viewer_settings): the same schema Android shows.
+struct SettingRow: Identifiable, Hashable {
+    let key: String
+    let section: String
+    let label: String
+    let isSlot: Bool               // a piece the shell draws itself
+    let choices: [String]
+    let values: [Float]
+    let fallback: Float
+    let hint: String
+    let roomOnly: Bool
+    var id: String { key }
+}
+
 enum ReaderCore {
     /// The start screen's text, written by the core from its module registry.
     static func welcomeText(version: String) -> String {
@@ -337,8 +351,41 @@ enum ReaderCore {
     }
 
     /// Applies the settings' defaults (nothing stored yet on this Mac).
-    static func applyDefaultSettings() -> AppliedSettings {
-        let applied = dmc_apply_settings(nil, nil, 0)
+    static func applyDefaultSettings() -> AppliedSettings { apply(stored: [:]) }
+
+    /// The settings schema, described for this device.
+    static func settingsSchema() -> [SettingRow] {
+        guard let schema = dmc_settings_schema(true) else { return [] }
+        defer { dmc_settings_free(schema) }
+        var rows: [SettingRow] = []
+        for index in 0..<dmc_settings_count(schema) {
+            guard let row = dmc_settings_row(schema, index)?.pointee else { continue }
+            var choices: [String] = []
+            var values: [Float] = []
+            for c in 0..<row.choice_count {
+                choices.append(row.choices[c].map { String(cString: $0) } ?? "")
+                values.append(row.values[c])
+            }
+            rows.append(SettingRow(key: String(cString: row.key), section: String(cString: row.section),
+                                   label: String(cString: row.label),
+                                   isSlot: row.control == Int32(DMC_SETTING_SLOT.rawValue),
+                                   choices: choices, values: values, fallback: row.fallback,
+                                   hint: row.hint.map { String(cString: $0) } ?? "", roomOnly: row.room_only))
+        }
+        return rows
+    }
+
+    /// The stored values (key -> value) applied: what they mean for the view.
+    static func apply(stored: [String: Float]) -> AppliedSettings {
+        let keys = Array(stored.keys)
+        let values = keys.map { stored[$0] ?? 0 }
+        let cKeys = keys.map { strdup($0) }
+        defer { cKeys.forEach { free($0) } }
+        let applied = cKeys.map { UnsafePointer($0) }.withUnsafeBufferPointer { keyBuffer in
+            values.withUnsafeBufferPointer { valueBuffer in
+                dmc_apply_settings(keyBuffer.baseAddress, valueBuffer.baseAddress, keys.count)
+            }
+        }
         return AppliedSettings(renderFlags: applied.render_flags, maxSide: Int(applied.max_side),
                                shadows: applied.shadows)
     }

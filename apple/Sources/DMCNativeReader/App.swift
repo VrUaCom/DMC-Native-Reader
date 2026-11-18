@@ -16,6 +16,9 @@ struct DMCNativeReaderApp: App {
                 .onAppear { appDelegate.model = model }
                 .onOpenURL { model.open(url: $0) }
         }
+        Settings {
+            SettingsView(model: model)
+        }
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { OpenPanel.choose { model.open(url: $0) } }
@@ -355,4 +358,42 @@ struct InfoSheet: View {
     }
 
     private var text: String { showHealth ? model.healthReport() : model.infoText() }
+}
+
+/// The core's settings schema, grouped by section; each choice is stored and applied at once.
+struct SettingsView: View {
+    @ObservedObject var model: ViewerModel
+
+    private var sections: [String] {
+        var seen: [String] = []
+        for row in model.settingRows where !row.isSlot && !seen.contains(row.section) { seen.append(row.section) }
+        return seen
+    }
+
+    var body: some View {
+        Form {
+            ForEach(sections, id: \.self) { section in
+                Section(section) {
+                    ForEach(model.settingRows.filter { $0.section == section && !$0.isSlot }) { row in
+                        Picker(selection: Binding(
+                            get: { closest(row) },
+                            set: { model.set(row, to: row.values[$0]) })) {
+                            ForEach(row.choices.indices, id: \.self) { Text(row.choices[$0]).tag($0) }
+                        } label: {
+                            Text(row.label)
+                        }
+                        .help(row.hint)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minWidth: 520, minHeight: 480)
+    }
+
+    /// The choice whose stored value is the current one (the core's dmc_settings_selected rule).
+    private func closest(_ row: SettingRow) -> Int {
+        let value = model.value(of: row)
+        return row.values.indices.min { abs(row.values[$0] - value) < abs(row.values[$1] - value) } ?? 0
+    }
 }

@@ -36,6 +36,8 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Animations: the core's animation strip under the view (the library's
   motions; a card with MotionScripts lists them in its menu), play / pause,
   looping like Android; Load motion picks a MOT or motion PAC.
+- Settings (⌘,): the core's settings schema, the same rows as Android, each
+  choice stored and applied at once.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
   action opens is shown, Back returns. A stage starts from the game's camera
   at its first spawn point, and Reset view goes back there.
@@ -43,6 +45,6 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- The base room, stage configurations, settings, effects, cutscenes,
+- The base room, stage configurations, effects, cutscenes,
   videos (the core is built without FFmpeg here), the photo camera and fly
   mode are on Android only for now; the C API already has all of them.
