@@ -1,6 +1,7 @@
 // DMC Native Reader for macOS: one window, the file's picture or 3D view,
 // Info and file health; files open from ⌘O, by drag and drop, or from Finder.
 import AppKit
+import CDMCReader
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -59,8 +60,10 @@ enum OpenPanel {
 struct ContentView: View {
     @ObservedObject var model: ViewerModel
     @State private var showInfo = false
-    @State private var dragStart: ViewCamera?
+    @State private var dragLast: CGSize?
     @State private var zoomStart: Float?
+    @State private var twistLast: Double?
+    @State private var spinTimer: Timer?
 
     var body: some View {
         ZStack {
@@ -146,6 +149,7 @@ struct ContentView: View {
             .contentShape(Rectangle())
             .gesture(orbit)
             .simultaneousGesture(magnify)
+            .simultaneousGesture(twist)
             .onAppear { model.viewChanged(size: geometry.size, scale: NSScreen.main?.backingScaleFactor ?? 2) }
             .onChange(of: geometry.size) { size in
                 model.viewChanged(size: size, scale: NSScreen.main?.backingScaleFactor ?? 2)
@@ -153,29 +157,66 @@ struct ContentView: View {
         }
     }
 
-    /// Drag turns the camera round the model.
+    /// Drag turns the camera round the model (the core's grab-and-turn); a
+    /// flick keeps it turning and slowing down.
     private var orbit: some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
-                let start = dragStart ?? model.camera
-                if dragStart == nil { dragStart = start }
-                var camera = start
-                camera.yaw = start.yaw + Float(value.translation.width) * 0.01
-                camera.pitch = min(1.5, max(-1.5, start.pitch + Float(value.translation.height) * 0.01))
-                model.camera = camera
+                stopSpin()
+                let last = dragLast ?? .zero
+                dragLast = value.translation
+                model.camera.drag(dx: Float(value.translation.width - last.width),
+                                  dy: Float(value.translation.height - last.height))
             }
-            .onEnded { _ in dragStart = nil }
+            .onEnded { value in
+                dragLast = nil
+                // The flick's speed in points per second, from where the drag would have ended.
+                let vx = Float(value.predictedEndTranslation.width - value.translation.width) * 4
+                let vy = Float(value.predictedEndTranslation.height - value.translation.height) * 4
+                var spin = dmc_spin()
+                if dmc_fling(vx, vy, 1, &spin) { startSpin(spin) }
+            }
     }
 
-    /// Pinch on the trackpad zooms.
+    private func startSpin(_ first: dmc_spin) {
+        stopSpin()
+        var spin = first
+        var last = Date()
+        spinTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { timer in
+            Task { @MainActor in
+                let now = Date()
+                let dt = Float(now.timeIntervalSince(last))
+                last = now
+                if !model.camera.spin(&spin, dt: dt) { timer.invalidate() }
+            }
+        }
+    }
+
+    private func stopSpin() {
+        spinTimer?.invalidate()
+        spinTimer = nil
+    }
+
+    /// Pinch on the trackpad zooms (the core's limits).
     private var magnify: some Gesture {
         MagnificationGesture()
             .onChanged { scale in
                 let start = zoomStart ?? model.camera.zoom
                 if zoomStart == nil { zoomStart = start }
-                model.camera.zoom = min(40, max(0.05, start * Float(scale)))
+                model.camera.pinch(startZoom: start, scale: Float(scale))
             }
             .onEnded { _ in zoomStart = nil }
+    }
+
+    /// Two fingers turning on the trackpad turn the view.
+    private var twist: some Gesture {
+        RotationGesture()
+            .onChanged { angle in
+                let last = twistLast ?? 0
+                twistLast = angle.radians
+                model.camera.twist(radians: dmc_angle_delta(Float(last), Float(angle.radians)), roomShown: false)
+            }
+            .onEnded { _ in twistLast = nil }
     }
 
     @ToolbarContentBuilder

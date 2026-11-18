@@ -323,6 +323,28 @@ int main(void) {
     assert(nothing != NULL && strcmp(nothing, "Nothing to draw.") == 0);
     dmc_string_free(nothing);
 
+    /* #45: the touch math is the core's; a shell only reports the fingers. */
+    dmc_view touch = view;
+    touch.render_flags = 77u;
+    dmc_view_reset(&touch);
+    assert(fabsf(touch.yaw - (3.14159265f - 0.65f)) < 1e-5f && fabsf(touch.pitch + 0.45f) < 1e-5f);
+    assert(touch.zoom == 1.0f && touch.pan_x == 0.0f && touch.render_flags == 77u);  /* flags untouched */
+    const float yaw_before = touch.yaw;
+    assert(dmc_view_drag(&touch, 100.0f, 0.0f) && fabsf(touch.yaw - (yaw_before - 0.8f)) < 1e-5f);
+    assert(!dmc_view_drag(&touch, 0.0f, 0.0f) && !dmc_view_drag(NULL, 1.0f, 1.0f));
+    assert(dmc_view_pan(&touch, 74.0f, 0.0f, 740, 1000) && fabsf(touch.pan_x + 0.296f) < 1e-5f);
+    assert(dmc_view_twist(&touch, 0.5f, true) && fabsf(touch.room_yaw + 0.5f) < 1e-5f);
+    assert(fabsf(dmc_angle_delta(3.0f, -3.0f) - (6.2831853f - 6.0f)) < 1e-4f);
+    assert(dmc_pinch_zoom(1.0f, 100.0f) == DMC_ZOOM_MAX && dmc_pinch_zoom(1.0f, 0.0001f) == DMC_ZOOM_MIN);
+    dmc_spin spin;
+    assert(!dmc_fling(10.0f, 0.0f, 1.0f, &spin) && spin.yaw_rate == 0.0f);
+    assert(dmc_fling(2000.0f, 0.0f, 1.0f, &spin) && spin.yaw_rate > 0.0f);
+    int spun = 0;
+    while (dmc_spin_step(&touch, &spin, 0.016f)) ++spun;
+    assert(spun > 10 && spin.yaw_rate == 0.0f);
+    /* A frame of the touched view still draws. */
+    assert(dmc_render(model.session, W, H, &touch, pixels, (size_t)W * H * 4) >= 1);
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);

@@ -20,13 +20,72 @@ struct RGBAImage {
     let pixels: [UInt8]
 }
 
-/// The camera of one frame.
+/// The camera of one frame. Its numbers change only through the core's touch
+/// math (#45: `dmc_view_*`), so a drag, a pinch, a twist or a flick moves a
+/// model here exactly as it does on Android.
 struct ViewCamera: Equatable {
-    var yaw: Float = 0.6
-    var pitch: Float = 0.25
-    var zoom: Float = 1.0
+    var yaw: Float
+    var pitch: Float
+    var zoom: Float
     var panX: Float = 0
     var panY: Float = 0
+    var roomYaw: Float = 0
+
+    /// The core's start view: a front three-quarter view.
+    init() {
+        var view = dmc_view()
+        dmc_view_reset(&view)
+        yaw = view.yaw
+        pitch = view.pitch
+        zoom = view.zoom
+    }
+
+    private var view: dmc_view {
+        var v = dmc_view()
+        v.yaw = yaw; v.pitch = pitch; v.zoom = zoom
+        v.pan_x = panX; v.pan_y = panY; v.room_yaw = roomYaw
+        return v
+    }
+
+    private mutating func take(_ v: dmc_view) {
+        yaw = v.yaw; pitch = v.pitch; zoom = v.zoom
+        panX = v.pan_x; panY = v.pan_y; roomYaw = v.room_yaw
+    }
+
+    /// The pointer moved by dx, dy points: grab-and-turn.
+    @discardableResult mutating func drag(dx: Float, dy: Float) -> Bool {
+        var v = view
+        guard dmc_view_drag(&v, dx, dy) else { return false }
+        take(v)
+        return true
+    }
+
+    /// Two fingers on the trackpad moved together over a width x height view.
+    @discardableResult mutating func pan(dx: Float, dy: Float, width: Int, height: Int) -> Bool {
+        var v = view
+        guard dmc_view_pan(&v, dx, dy, Int32(width), Int32(height)) else { return false }
+        take(v)
+        return true
+    }
+
+    /// Two fingers turned by `radians`.
+    @discardableResult mutating func twist(radians: Float, roomShown: Bool) -> Bool {
+        var v = view
+        guard dmc_view_twist(&v, radians, roomShown) else { return false }
+        take(v)
+        return true
+    }
+
+    /// A pinch by `scale` since the gesture began at `startZoom`.
+    mutating func pinch(startZoom: Float, scale: Float) { zoom = dmc_pinch_zoom(startZoom, scale) }
+
+    /// One step of the inertia after a flick; false once it has stopped.
+    mutating func spin(_ spin: inout dmc_spin, dt: Float) -> Bool {
+        var v = view
+        let going = dmc_spin_step(&v, &spin, dt)
+        take(v)
+        return going
+    }
 }
 
 /// Black Widow state bits (spider/black_widow.h) the shell reads.
@@ -126,6 +185,7 @@ final class ReaderSession: @unchecked Sendable {
         view.render_flags = flags
         view.pan_x = camera.panX
         view.pan_y = camera.panY
+        view.room_yaw = camera.roomYaw
         view.motion_frame = Float.nan
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let status = pixels.withUnsafeMutableBufferPointer { buffer in

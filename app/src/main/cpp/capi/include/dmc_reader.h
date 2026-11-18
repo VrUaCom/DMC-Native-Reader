@@ -343,6 +343,40 @@ dmc_image* dmc_render_capture(dmc_session* session, bool video, int view_width, 
 char* dmc_benchmark(dmc_session* session, int width, int height, const dmc_view* view, float motion_start,
                     float seconds, const char* settings);
 
+/* ---- The view's touch math (#45): every shell moves the camera alike ---- *
+ * A shell reports what the fingers or the pointer did; the core changes the
+ * view's yaw, pitch, zoom, pan and room yaw. No session, no lock. Functions
+ * returning bool say whether the view changed (draw a new frame then). */
+
+/* A model's start view: a front three-quarter view, zoom 1, no pan. Leaves
+ * render_flags, follow, dolly and motion_frame as they are. */
+void dmc_view_reset(dmc_view* view);
+/* One finger or the pointer moved by dx, dy pixels: grab-and-turn. */
+bool dmc_view_drag(dmc_view* view, float dx, float dy);
+/* Two fingers moved together over a width x height view: the content follows. */
+bool dmc_view_pan(dmc_view* view, float dx, float dy, int width, int height);
+/* The signed turn between two finger angles (radians), the short way round. */
+float dmc_angle_delta(float from, float to);
+/* Two fingers turned: with the room drawn the model turns in it, else the view. */
+bool dmc_view_twist(dmc_view* view, float radians, bool room_shown);
+/* A pinch by `scale` since the touch began at `touch_zoom`: the new zoom,
+ * within DMC_ZOOM_MIN..DMC_ZOOM_MAX. */
+#define DMC_ZOOM_MIN 0.15f
+#define DMC_ZOOM_MAX 8.0f
+float dmc_pinch_zoom(float touch_zoom, float scale);
+
+/* Inertia after a flick: velocity in pixels per second, density in pixels
+ * per dp (1 for a desktop pointer). */
+typedef struct dmc_spin {
+    float yaw_rate;
+    float pitch_rate;
+} dmc_spin;
+
+/* True when the flick was fast enough to spin the view. */
+bool dmc_fling(float velocity_x, float velocity_y, float density, dmc_spin* spin);
+/* Advances the spin by dt seconds; false once it has stopped. */
+bool dmc_spin_step(dmc_view* view, dmc_spin* spin, float dt);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {

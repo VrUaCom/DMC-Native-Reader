@@ -26,7 +26,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Opens MOD, SCM, PAC, PTX, DDS, MOT and the rest of the core's families:
   ⌘O, drag and drop onto the window, or Open With from Finder.
 - Shows a texture as its picture and a model, a stage or an assembled PAC as
-  its 3D view. Drag turns the camera, pinch zooms; Reset view.
+  its 3D view. Drag turns the camera (a flick keeps it turning), pinch zooms,
+  a two-finger rotation turns the view; Reset view. The numbers are the core's
+  touch math (`dmc_view_*`, #45), the same as on Android.
 - An archive's files (a PAC's slots, a PTX's textures) are listed on the
   left; each opens on its own, Back returns.
 - Info is written by the core; the Info button carries the file health dot

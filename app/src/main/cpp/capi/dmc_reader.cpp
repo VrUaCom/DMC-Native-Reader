@@ -29,6 +29,7 @@
 #include "dmcresource/view_benchmark.h"
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/view_gesture.h"
 
 struct dmc_session {
     std::unique_ptr<dmcresource::Session> session;
@@ -871,6 +872,74 @@ char* dmc_benchmark(dmc_session* session, int width, int height, const dmc_view*
         if (!stages.empty()) text += "\n" + stages;
         return copy_string(text);
     } catch (...) { return copy_string("Benchmark failed."); }
+}
+
+}  // extern "C"
+
+/* ---- The view's touch math (#45) ----------------------------------------- */
+
+namespace {
+dmcresource::view_gesture::Orbit orbit_of(const dmc_view& v) noexcept {
+    return {v.yaw, v.pitch, v.zoom, v.pan_x, v.pan_y, v.room_yaw};
+}
+void store(dmc_view& v, const dmcresource::view_gesture::Orbit& o) noexcept {
+    v.yaw = o.yaw;
+    v.pitch = o.pitch;
+    v.zoom = o.zoom;
+    v.pan_x = o.pan_x;
+    v.pan_y = o.pan_y;
+    v.room_yaw = o.room_yaw;
+}
+}  // namespace
+
+extern "C" {
+
+void dmc_view_reset(dmc_view* view) {
+    if (view != nullptr) store(*view, dmcresource::view_gesture::default_orbit());
+}
+
+bool dmc_view_drag(dmc_view* view, float dx, float dy) {
+    if (view == nullptr) return false;
+    auto o = orbit_of(*view);
+    if (!dmcresource::view_gesture::drag(o, dx, dy)) return false;
+    store(*view, o);
+    return true;
+}
+
+bool dmc_view_pan(dmc_view* view, float dx, float dy, int width, int height) {
+    if (view == nullptr) return false;
+    auto o = orbit_of(*view);
+    if (!dmcresource::view_gesture::pan(o, dx, dy, width, height)) return false;
+    store(*view, o);
+    return true;
+}
+
+float dmc_angle_delta(float from, float to) { return dmcresource::view_gesture::angle_delta(from, to); }
+
+bool dmc_view_twist(dmc_view* view, float radians, bool room_shown) {
+    if (view == nullptr) return false;
+    auto o = orbit_of(*view);
+    if (!dmcresource::view_gesture::twist(o, radians, room_shown)) return false;
+    store(*view, o);
+    return true;
+}
+
+float dmc_pinch_zoom(float touch_zoom, float scale) { return dmcresource::view_gesture::pinch_zoom(touch_zoom, scale); }
+
+bool dmc_fling(float velocity_x, float velocity_y, float density, dmc_spin* spin) {
+    const auto s = dmcresource::view_gesture::fling(velocity_x, velocity_y, density);
+    if (spin != nullptr) *spin = {s.yaw_rate, s.pitch_rate};
+    return s.active();
+}
+
+bool dmc_spin_step(dmc_view* view, dmc_spin* spin, float dt) {
+    if (view == nullptr || spin == nullptr) return false;
+    auto o = orbit_of(*view);
+    dmcresource::view_gesture::Spin s{spin->yaw_rate, spin->pitch_rate};
+    const bool going = dmcresource::view_gesture::spin_step(o, s, dt);
+    store(*view, o);
+    *spin = {s.yaw_rate, s.pitch_rate};
+    return going;
 }
 
 }  // extern "C"
