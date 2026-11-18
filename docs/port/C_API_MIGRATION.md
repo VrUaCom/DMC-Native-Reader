@@ -239,7 +239,9 @@
 | `soundMenu` | MainActivity | так | `dmc_menu(kind) / dmc_run_action(id)` | одна форма меню на всі: рядки, ✕, дії |
 | `soundPcm` | MainActivity | так | `dmc_sound_pcm → dmc_pcm` | або відтворення в ядрі (miniaudio) |
 
-### 6. Катсцени — 9
+### 6. Катсцени — 9 (додано в C API)
+
+У C API: `dmc_camera_follows_cuts`, `dmc_cutscene_audio_format` / `_position` / `_read` (оболонка стрімить змішаний звук, доки звук не в ядрі), `dmc_cutscene_subtitle` → `dmc_subtitle` (текст і розкладка), `dmc_cutscene_take_camera`, `dmc_cutscene_vibration`, `dmc_cutscene_sound_load`.
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|
@@ -253,7 +255,9 @@
 | `demoVibration` | DmcRenderView | так | `dmc_cutscene_*` | вібрацію виконує оболонка |
 | `loadCutsceneSound` | MainActivity | так | `dmc_cutscene_audio_*` | з miniaudio зникають з межі |
 
-### 7. Відео — 2
+### 7. Відео — 2 (додано в C API)
+
+У C API: `dmc_video_begin`, `dmc_video_frame_size` (розмір за планом камери), `dmc_video_frame`.
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|

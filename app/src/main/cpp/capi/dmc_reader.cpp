@@ -39,6 +39,8 @@
 #include "dmcresource/environment_collision.h"
 #include "dmcresource/spider/collision_report.h"
 #include "dmcresource/spider/companion_menu.h"
+#include "dmcresource/demo_session.h"
+#include "dmcresource/messages.h"
 
 struct dmc_session {
     std::unique_ptr<dmcresource::Session> session;
@@ -1472,6 +1474,151 @@ void dmc_pcm_free(dmc_pcm* pcm) {
     pcm->samples = nullptr;
     pcm->message = nullptr;
     pcm->sample_count = 0;
+}
+
+}  // extern "C"
+
+/* ---- Group 6: cutscenes; group 7: video ---------------------------------- */
+
+extern "C" {
+
+bool dmc_camera_follows_cuts(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::spider::camera::follows_cuts(core(session));
+    } catch (...) { return false; }
+}
+
+bool dmc_cutscene_audio_format(const dmc_session* session, uint32_t* sample_rate, uint32_t* channels) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto format = dmcresource::demo::audio_format(core(session));
+        if (!format) return false;
+        if (sample_rate != nullptr) *sample_rate = format->sample_rate;
+        if (channels != nullptr) *channels = format->channels;
+        return true;
+    } catch (...) { return false; }
+}
+
+int64_t dmc_cutscene_audio_position(const dmc_session* session, float frame) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::demo::audio_position(core(session), frame);
+    } catch (...) { return 0; }
+}
+
+size_t dmc_cutscene_audio_read(const dmc_session* session, int64_t position, size_t frames, int16_t* out,
+                               size_t capacity) {
+    try {
+        std::vector<std::int16_t> samples;
+        {
+            const std::lock_guard lock{api_mutex()};
+            samples = dmcresource::demo::audio_read(core(session), position, frames);
+        }
+        if (out == nullptr || samples.empty()) return 0U;
+        const std::size_t n = std::min(samples.size(), capacity);
+        std::memcpy(out, samples.data(), n * sizeof(int16_t));
+        return n;
+    } catch (...) { return 0U; }
+}
+
+bool dmc_cutscene_subtitle(const dmc_session* session, dmc_subtitle* out) {
+    if (out == nullptr) return false;
+    *out = dmc_subtitle{};
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto* s = core(session);
+        const auto shown = s != nullptr ? dmcresource::demo::subtitle(*s) : std::nullopt;
+        if (!shown) return false;
+        std::string text;
+        for (const auto& line : shown->lines) {
+            if (!text.empty()) text.push_back('\n');
+            text += line;
+        }
+        const auto l = dmcresource::messages::layout(*shown);
+        out->text = copy_string(text);
+        out->centre_x = l.centre_x;
+        out->top = l.top;
+        out->size = l.size;
+        out->alpha = l.alpha;
+        for (int i = 0; i < 3; ++i) {
+            out->front[i] = l.front[static_cast<std::size_t>(i)];
+            out->back[i] = l.back[static_cast<std::size_t>(i)];
+        }
+        return out->text != nullptr;
+    } catch (...) { return false; }
+}
+
+void dmc_subtitle_free(dmc_subtitle* subtitle) {
+    if (subtitle == nullptr) return;
+    std::free(subtitle->text);
+    subtitle->text = nullptr;
+}
+
+bool dmc_cutscene_take_camera(dmc_session* session, float out[3]) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto view = dmcresource::demo::take_camera(core(session));
+        if (!view) return false;
+        dmcresource::camera::enter_fly(view->eye);
+        if (out != nullptr) {
+            out[0] = view->yaw;
+            out[1] = view->pitch;
+            out[2] = view->zoom;
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+int dmc_cutscene_vibration(const dmc_session* session, float frame) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto* s = core(session);
+        return s != nullptr ? dmcresource::demo::vibration(*s, frame) : 0;
+    } catch (...) { return 0; }
+}
+
+dmc_outcome dmc_cutscene_sound_load(dmc_session* session, const char* name, const uint8_t* bytes, size_t size) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return outcome_of(actions::load_cutscene_sound(core(session), text_or_empty(name), bytes,
+                                                       bytes == nullptr ? 0U : size));
+    } catch (...) { return outcome_of({}); }
+}
+
+void dmc_video_begin(void) {
+    try { dmcresource::spider::camera::begin_video(); } catch (...) {}
+}
+
+bool dmc_video_frame_size(int view_width, int view_height, int* width, int* height) {
+    namespace cam = dmcresource::spider::camera;
+    const auto p = cam::plan(cam::Kind::Video, view_width, view_height);
+    if (width != nullptr) *width = p.width;
+    if (height != nullptr) *height = p.height;
+    return p.width > 0 && p.height > 0;
+}
+
+int dmc_video_frame(dmc_session* session, int view_width, int view_height, const dmc_view* view, uint8_t* rgba,
+                    size_t capacity) {
+    namespace cam = dmcresource::spider::camera;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto* s = core(session);
+        if (s == nullptr || view == nullptr || rgba == nullptr) return 0;
+        int status = 1;
+        if (std::isfinite(view->motion_frame) && !dmcresource::motion::apply_motion_frame(s, view->motion_frame)) {
+            status = 2;
+        }
+        const auto p = cam::plan(cam::Kind::Video, view_width, view_height);
+        const auto image = cam::render_capture(s, cam::Kind::Video, view_width, view_height, view->yaw, view->pitch,
+                                               view->zoom, view->render_flags, controls_of(*view));
+        if (image.width != p.width || image.height != p.height || image.pixels.size() > capacity ||
+            image.pixels.empty()) {
+            return 0;
+        }
+        std::memcpy(rgba, image.pixels.data(), image.pixels.size());
+        return status;
+    } catch (...) { return 0; }
 }
 
 }  // extern "C"

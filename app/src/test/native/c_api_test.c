@@ -475,6 +475,30 @@ int main(void) {
     assert(action_file == NULL && nothing_chosen.message != NULL);
     dmc_outcome_free(&nothing_chosen);
 
+    /* Groups 6 and 7: a model is no cutscene; a video frame has the plan's size. */
+    assert(!dmc_camera_follows_cuts(model.session));
+    uint32_t rate = 7, channels = 7;
+    assert(!dmc_cutscene_audio_format(model.session, &rate, &channels) && rate == 7);
+    int16_t audio[64];
+    assert(dmc_cutscene_audio_read(model.session, 0, 16, audio, 64) == 0);
+    dmc_subtitle subtitle;
+    assert(!dmc_cutscene_subtitle(model.session, &subtitle) && subtitle.text == NULL);
+    dmc_subtitle_free(&subtitle);
+    float take[3];
+    assert(!dmc_cutscene_take_camera(model.session, take));
+    assert(dmc_cutscene_vibration(model.session, 10.0f) == 0);
+    dmc_outcome ogg = dmc_cutscene_sound_load(model.session, "x.ogg", junk, sizeof junk);
+    assert(!ogg.ok && ogg.message != NULL);
+    dmc_outcome_free(&ogg);
+    dmc_video_begin();
+    int vw = 0, vh = 0;
+    assert(dmc_video_frame_size(W, H, &vw, &vh) && vw > 0 && vh > 0);
+    uint8_t* video_frame = calloc((size_t)vw * (size_t)vh * 4, 1);
+    assert(video_frame != NULL);
+    assert(dmc_video_frame(model.session, W, H, &view, video_frame, 8) == 0);  /* too small */
+    assert(dmc_video_frame(model.session, W, H, &view, video_frame, (size_t)vw * (size_t)vh * 4) == 1);
+    free(video_frame);
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);

@@ -566,6 +566,45 @@ typedef struct dmc_pcm {
 dmc_pcm dmc_sound_pcm(const dmc_session* session, int index);
 void dmc_pcm_free(dmc_pcm* pcm);
 
+/* ---- Group 6: cutscenes (demo) ------------------------------------------- */
+
+/* The camera cuts with the cutscene's director (the shell may vibrate on cuts). */
+bool dmc_camera_follows_cuts(const dmc_session* session);
+/* The cutscene's mixed sound the shell streams: rate and channels (false: none). */
+bool dmc_cutscene_audio_format(const dmc_session* session, uint32_t* sample_rate, uint32_t* channels);
+/* The sample frame that plays at motion frame `frame`. */
+int64_t dmc_cutscene_audio_position(const dmc_session* session, float frame);
+/* Reads up to `frames` sample frames from `position` into `out` (interleaved,
+ * `capacity` int16 values); returns the values written. */
+size_t dmc_cutscene_audio_read(const dmc_session* session, int64_t position, size_t frames, int16_t* out,
+                               size_t capacity);
+
+/* The subtitle shown now and how it is drawn (fractions of the view). */
+typedef struct dmc_subtitle {
+    char* text;                  /* lines joined by '\n' */
+    float centre_x, top, size, alpha;
+    uint8_t front[3], back[3];   /* text and outline colours */
+} dmc_subtitle;
+bool dmc_cutscene_subtitle(const dmc_session* session, dmc_subtitle* out);
+void dmc_subtitle_free(dmc_subtitle* subtitle);
+/* Takes the director's camera into the user's (fly eye there): yaw, pitch, zoom. */
+bool dmc_cutscene_take_camera(dmc_session* session, float out[3]);
+/* Vibration strength at `frame` (0 none). */
+int dmc_cutscene_vibration(const dmc_session* session, float frame);
+/* A cutscene's .ogg chosen by the user. */
+dmc_outcome dmc_cutscene_sound_load(dmc_session* session, const char* name, const uint8_t* bytes, size_t size);
+
+/* ---- Group 7: video of the view ------------------------------------------ */
+
+/* A new recording starts (the motion blur forgets earlier frames). */
+void dmc_video_begin(void);
+/* The size a video frame of a view_width x view_height view is recorded at. */
+bool dmc_video_frame_size(int view_width, int view_height, int* width, int* height);
+/* One video frame into `rgba` (dmc_video_frame_size). Returns 0 on failure,
+ * 1 drawn, 2 drawn but the motion could not be posed. */
+int dmc_video_frame(dmc_session* session, int view_width, int view_height, const dmc_view* view, uint8_t* rgba,
+                    size_t capacity);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {
