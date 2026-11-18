@@ -7,8 +7,19 @@
  *
  * Strings returned as `char*` are the caller's and go back through
  * dmc_string_free. Lists (settings, the motion strip) are owned by their
- * handle and stay valid until it is freed. A session is used by one thread
- * at a time; the API serialises its own calls.
+ * handle and stay valid until it is freed.
+ *
+ * Threads: every call that takes a session holds the core's session lock
+ * for its whole use (the JNI shell takes the same lock), so a frame drawn on
+ * a render thread and a change made on the UI thread never overlap. A call
+ * waits while a frame is being drawn. The stage room and the camera are the
+ * core's own state, not a session's, and have their own locks.
+ *
+ * Ownership: a session from dmc_open, dmc_open_source, dmc_open_child,
+ * dmc_assemble, dmc_compose or dmc_open_uv_gallery is the caller's and is
+ * closed once with dmc_close. A session built from others (a child, an
+ * assembly, a composition) owns copies of what it needs: its sources may be
+ * closed before it.
  */
 #ifndef DMC_READER_H
 #define DMC_READER_H
@@ -48,6 +59,84 @@ void dmc_close(dmc_session* session);
 size_t dmc_child_count(const dmc_session* session);
 char* dmc_child_title(const dmc_session* session, size_t index);
 dmc_session* dmc_open_child(const dmc_session* session, size_t index);
+
+/* A file opened as a source for dmc_assemble or dmc_compose: the file
+ * itself, without open_resource's decisions (no stage fallback, no PAC
+ * assembly). NULL when no module accepts it. */
+dmc_session* dmc_open_source(const char* name, const uint8_t* bytes, size_t size);
+
+/* ---- Lists of strings ---------------------------------------------------- */
+
+typedef struct dmc_strings dmc_strings;
+
+size_t dmc_strings_count(const dmc_strings* list);
+const char* dmc_strings_at(const dmc_strings* list, size_t index);  /* NULL past the end */
+void dmc_strings_free(dmc_strings* list);
+
+/* ---- Assembling and composing (spider session actions) ------------------ */
+
+/* A character's PACs as one scene (pac_assembly): `archives` are sources,
+ * `names` their file names; `enemy_variant` picks the class of an archive
+ * shared by several (dmc_variant_names lists them). NULL when nothing could
+ * be assembled. */
+dmc_session* dmc_assemble(const dmc_session* const* archives, const char* const* names, size_t count,
+                          size_t enemy_variant);
+
+/* The classes an archive holds, by its file name (em000.pac: CEm000...);
+ * empty for an archive of one class. */
+dmc_strings* dmc_variant_names(const char* archive_name);
+
+/* MODs as one composite model; part 0 is the host the others attach to.
+ * At least two parts. */
+dmc_session* dmc_compose(const dmc_session* const* parts, const char* const* names, size_t count);
+
+/* A PTX's textures onto the model (part < 0) or onto one composite part.
+ * On false, dmc_info_text tells why. */
+bool dmc_attach_ptx(dmc_session* session, int part, const char* name, const uint8_t* bytes, size_t size);
+
+/* ---- Composite parts ----------------------------------------------------- */
+
+typedef struct dmc_part {
+    const char* name;
+    const char* state;               /* the core's one-line description */
+    size_t node_count;
+    const char* const* node_names;
+    int default_attachment;          /* the joint it hangs from by default; -1 none */
+} dmc_part;
+
+typedef struct dmc_parts dmc_parts;
+
+/* The composite's parts now (a snapshot: build it again after a change). */
+dmc_parts* dmc_parts_list(const dmc_session* session);
+size_t dmc_parts_count(const dmc_parts* parts);
+const dmc_part* dmc_parts_at(const dmc_parts* parts, size_t index);
+void dmc_parts_free(dmc_parts* parts);
+
+/* Hangs part `child` from joint `joint` of part `host`, or puts it back in
+ * its source coordinates. Returns the core's status name ("applied",
+ * "reset", or why not), freed with dmc_string_free. */
+char* dmc_part_attach(dmc_session* session, size_t host, size_t child, uint32_t joint);
+char* dmc_part_reset(dmc_session* session, size_t child);
+
+/* ---- Children's pictures, UV maps, the Info picture --------------------- */
+
+/* Child `index`'s thumbnail: its size (0 x 0 when it has none), then RGBA8. */
+bool dmc_child_preview_size(const dmc_session* session, size_t index, int* width, int* height);
+bool dmc_child_preview(const dmc_session* session, size_t index, uint8_t* rgba, size_t capacity);
+
+/* The model's UV maps as a session of their own (one child per map). */
+dmc_session* dmc_open_uv_gallery(const dmc_session* session);
+
+/* A session with two pictures (a model's texture and its Info picture)
+ * shows the Info one while it is set; dmc_image_preview follows. */
+bool dmc_has_dual_preview(const dmc_session* session);
+bool dmc_info_preview_active(const dmc_session* session);
+bool dmc_set_info_preview(dmc_session* session, bool info);
+
+/* The file a session was built from, when it is one the user may save (an
+ * assembled or re-encoded file): its name and bytes, borrowed until the
+ * session changes or closes. False when there is nothing to save. */
+bool dmc_source(const dmc_session* session, const char** name, const uint8_t** bytes, size_t* size);
 
 /* Black Widow state bits (spider/black_widow.h): what the session can do. */
 uint64_t dmc_state_flags(const dmc_session* session);
@@ -91,7 +180,11 @@ bool dmc_image_preview_size(const dmc_session* session, int* width, int* height)
 bool dmc_image_preview(const dmc_session* session, uint8_t* rgba, size_t capacity);
 
 /* Draws a frame into `rgba` (width * height * 4 bytes, rows top down).
+ * Each side is DMC_RENDER_MIN_SIDE..DMC_RENDER_MAX_SIDE pixels; a shell
+ * scales a smaller view up from the smallest frame.
  * Returns 0 on failure, 1 drawn, 2 drawn but the motion could not be posed. */
+#define DMC_RENDER_MIN_SIDE 64
+#define DMC_RENDER_MAX_SIDE 8192
 int dmc_render(dmc_session* session, int width, int height, const dmc_view* view, uint8_t* rgba,
                size_t capacity);
 

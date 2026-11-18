@@ -98,6 +98,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/file_health.cpp
     modules/scm_layout_compat.cpp
     modules/crash_recorder.cpp
+    modules/session_lock.cpp
     modules/view_benchmark.cpp
     modules/session_inspection.cpp
     modules/uv_gallery.cpp
@@ -499,4 +500,15 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
         target_compile_options(c_api_test PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME c_api COMMAND c_api_test)
+
+    # Its thread contract: frames and changes of one session never overlap.
+    add_executable(c_api_threads_test ../../test/native/c_api_threads_test.cpp)
+    target_link_libraries(c_api_threads_test PRIVATE dmc_reader_capi)
+    dmc_native_reader_require_cpp23(c_api_threads_test PRIVATE)
+    if(MSVC)
+        target_compile_options(c_api_threads_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(c_api_threads_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME c_api_threads COMMAND c_api_threads_test)
 endif()

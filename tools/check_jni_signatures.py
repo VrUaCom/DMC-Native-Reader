@@ -2,6 +2,8 @@
 """Every `native` method of NativeBridge.java has a JNI function in
 app_native.cpp with the same return and parameter types, and the other way
 round. A mismatch compiles on both sides and fails only on the device.
+It also checks that every JNI function that turns a handle into a session
+takes the session lock first: the render thread draws under that lock.
 
     python3 tools/check_jni_signatures.py \
         app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java \
@@ -40,5 +42,13 @@ for name, (ret, types) in sorted(decl.items()):
         print('MISMATCH', name, '\n   java:', ret, types, '\n   c++ :', cret, ctypes); bad += 1
 for name in sorted(set(defs) - set(decl)):
     print('C++ only (no Java declaration):', name); bad += 1
+# A handle is used only under the session lock (from_handle's rule).
+for m in re.finditer(r'NativeBridge_(\w+)\s*\([^)]*\)\s*\{', cpp):
+    depth, i = 1, m.end()
+    while depth and i < len(cpp):
+        depth += {'{': 1, '}': -1}.get(cpp[i], 0); i += 1
+    body = cpp[m.end():i]
+    if 'from_handle(' in body and 'SessionLock' not in body.split('from_handle(')[0]:
+        print('NO SESSION LOCK before from_handle:', m.group(1)); bad += 1
 print(len(decl), 'Java natives,', len(defs), 'C++ definitions,', bad, 'problems')
 sys.exit(1 if bad else 0)

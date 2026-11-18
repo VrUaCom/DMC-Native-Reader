@@ -158,6 +158,7 @@ int main(void) {
     uint8_t* pixels = calloc((size_t)W * H * 4, 1);
     assert(pixels != NULL);
     assert(dmc_render(model.session, W, H, &view, pixels, 16) == 0);  /* too small a buffer */
+    assert(dmc_render(model.session, DMC_RENDER_MIN_SIDE - 1, H, &view, pixels, (size_t)W * H * 4) == 0);
     assert(dmc_render(model.session, W, H, &view, pixels, (size_t)W * H * 4) == 1);
     size_t differing = 0;
     for (size_t i = 0; i < (size_t)W * H; ++i) {
@@ -165,6 +166,64 @@ int main(void) {
     }
     assert(differing > 0);  /* not one flat background */
     assert(dmc_render(opened.session, W, H, &view, pixels, (size_t)W * H * 4) == 0);  /* a texture: no 3D view */
+
+    /* Group 1: two MODs opened as sources compose into one model of two parts. */
+    dmc_session* base = dmc_open_source("base.mod", mod, mod_size);
+    dmc_session* extra = dmc_open_source("extra.mod", mod, mod_size);
+    assert(base != NULL && extra != NULL && dmc_open_source("empty.bin", NULL, 0) == NULL);
+    const dmc_session* sources[2] = {base, extra};
+    const char* source_names[2] = {"base.mod", "extra.mod"};
+    assert(dmc_compose(sources, source_names, 1) == NULL);  /* one part is not a composition */
+    dmc_session* composite = dmc_compose(sources, source_names, 2);
+    assert(composite != NULL);
+    dmc_close(extra);  /* the composite owns what it needs */
+    dmc_parts* parts = dmc_parts_list(composite);
+    assert(parts != NULL && dmc_parts_count(parts) == 2 && dmc_parts_at(parts, 2) == NULL);
+    const dmc_part* host_part = dmc_parts_at(parts, 0);
+    assert(host_part->name != NULL && host_part->state != NULL && strlen(host_part->state) > 0);
+    assert(host_part->node_count == 0 || host_part->node_names[0] != NULL);
+    char* same = dmc_part_attach(composite, 1, 1, 0);
+    assert(same != NULL && strcmp(same, "same-part") == 0);
+    dmc_string_free(same);
+    char* outside = dmc_part_attach(composite, 0, 7, 0);
+    assert(outside != NULL && strcmp(outside, "invalid-part-index") == 0);
+    dmc_string_free(outside);
+    char* reset = dmc_part_reset(composite, 1);
+    assert(reset != NULL && strcmp(reset, "reset") == 0);
+    dmc_string_free(reset);
+    dmc_parts_free(parts);
+    uint8_t* frame = calloc((size_t)W * H * 4, 1);
+    assert(frame != NULL && dmc_render(composite, W, H, &view, frame, (size_t)W * H * 4) == 1);
+    free(frame);
+    /* A PTX that is not one is refused; the model stays as it was. */
+    const uint8_t junk[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    assert(!dmc_attach_ptx(composite, -1, "junk.ptx", junk, sizeof junk));
+    assert(!dmc_attach_ptx(composite, 0, "junk.ptx", junk, sizeof junk));
+    /* Nothing of its own to save; no thumbnails, no Info picture. */
+    const char* source_name = "x";
+    const uint8_t* source_bytes = junk;
+    size_t source_size = 1;
+    assert(!dmc_source(composite, &source_name, &source_bytes, &source_size));
+    assert(source_name == NULL && source_bytes == NULL && source_size == 0);
+    assert(!dmc_child_preview_size(composite, 0, &pw, &ph) && pw == 0 && ph == 0);
+    assert(!dmc_has_dual_preview(composite) && !dmc_info_preview_active(composite));
+    dmc_close(composite);
+    /* A single MOD is not an archive set to assemble. */
+    const dmc_session* lone[1] = {base};
+    const char* lone_name[1] = {"base.mod"};
+    dmc_session* assembled = dmc_assemble(lone, lone_name, 1, 0);
+    dmc_close(assembled);
+    assert(dmc_assemble(NULL, NULL, 0, 0) == NULL);
+    dmc_close(base);
+
+    /* em000.pac holds several enemy classes; an unknown archive holds one. */
+    dmc_strings* variants = dmc_variant_names("em000.pac");
+    assert(variants != NULL && dmc_strings_count(variants) > 1);
+    assert(dmc_strings_at(variants, 0) != NULL && dmc_strings_at(variants, dmc_strings_count(variants)) == NULL);
+    dmc_strings_free(variants);
+    dmc_strings* none = dmc_variant_names("unknown.pac");
+    assert(none != NULL && dmc_strings_count(none) <= 1);
+    dmc_strings_free(none);
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);

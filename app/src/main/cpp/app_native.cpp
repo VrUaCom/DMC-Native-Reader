@@ -26,6 +26,7 @@
 #include "dmcresource/collision_debug.h"
 #include "dmcresource/environment_collision.h"
 #include "dmcresource/resource_session.h"
+#include "dmcresource/session_lock.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/stage_markers.h"
 #include "dmcresource/camera_control.h"
@@ -130,17 +131,14 @@ using dmcresource::Session;
 // changes and closes them: every JNI entry that touches a session holds
 // this lock, and a handle is only honoured while it is registered (a render
 // queued for a session that has since been closed finds nothing).
-std::recursive_mutex& session_mutex() noexcept {
-    static std::recursive_mutex mutex;
-    return mutex;
-}
+using dmcresource::session_mutex;  // shared with the C API (session_lock.h)
 
 std::unordered_set<Session*>& live_sessions() noexcept {
     static std::unordered_set<Session*> live;
     return live;
 }
 
-using SessionLock = std::lock_guard<std::recursive_mutex>;
+using dmcresource::SessionLock;
 
 // Fly camera of the view (stages, collision views): set from the UI thread,
 // read by every frame, pick and benchmark so they all see the same camera.
@@ -155,6 +153,9 @@ dmcresource::ViewControls view_controls(float pan_x, float pan_y, float room_yaw
     return controls;
 }
 
+// The session of a handle. Call it with session_mutex() held for the whole
+// use of the session: the render thread draws under that lock, and a
+// session changed or read without it races with the frame being drawn.
 Session* from_handle(jlong handle) noexcept {
     auto* session = reinterpret_cast<Session*>(static_cast<std::uintptr_t>(handle));
     if (session == nullptr) return nullptr;
@@ -363,6 +364,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_buildIdentity(
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_diagnostics(
         JNIEnv* env, jclass, jlong handle) {
+    const SessionLock jni_lock{session_mutex()};
     try {
         const auto text =
             dmcresource::describe_session_diagnostics(from_handle(handle));
@@ -403,6 +405,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartName(
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartState(
         JNIEnv* env, jclass, jlong handle, jint index) {
+    const SessionLock jni_lock{session_mutex()};
     try {
         const auto text =
             dmcresource::describe_composite_part_state(from_handle(handle), index);
@@ -413,6 +416,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartState(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeCount(
         JNIEnv*, jclass, jlong handle, jint part_index) {
+    const SessionLock jni_lock{session_mutex()};
     try {
         const auto count = dmcresource::session_composite_part_node_count(
             from_handle(handle), part_index);
@@ -424,6 +428,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeCount(
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeName(
         JNIEnv* env, jclass, jlong handle, jint part_index, jint node_index) {
+    const SessionLock jni_lock{session_mutex()};
     try {
         const auto name = dmcresource::session_composite_part_node_name(
             from_handle(handle), part_index, node_index);
@@ -434,6 +439,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartNodeName(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_compositePartDefaultAttachmentSelector(
         JNIEnv*, jclass, jlong handle, jint part_index) {
+    const SessionLock jni_lock{session_mutex()};
     try {
         const auto selector =
             dmcresource::session_composite_part_default_attachment_selector(
@@ -450,6 +456,7 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_attachModPartToHostJoint(
         JNIEnv* env, jclass, jlong handle, jint host_part_index,
         jint child_part_index, jint host_joint_index) {
+    const SessionLock jni_lock{session_mutex()};
     if (host_part_index < 0 || child_part_index < 0 || host_joint_index < 0) {
         return new_utf(env, "invalid-part-index");
     }
@@ -464,6 +471,7 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_attachModPartToHostJoint(
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_resetModPartPlacement(
         JNIEnv* env, jclass, jlong handle, jint child_part_index) {
+    const SessionLock jni_lock{session_mutex()};
     if (child_part_index < 0) return new_utf(env, "invalid-part-index");
     const auto result = dmcresource::spider::actions::reset_mod_part_placement(
         from_handle(handle), static_cast<std::size_t>(child_part_index));
@@ -2033,7 +2041,12 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_writeSource(JNIEnv*, jclass, jlong
         if (n <= 0) return JNI_FALSE;
         written += static_cast<std::size_t>(n);
     }
-    return ::ftruncate(fd, static_cast<off_t>(bytes.size())) == 0 || written == bytes.size() ? JNI_TRUE : JNI_FALSE;
+    // A file that was longer keeps its old tail unless it is cut; a pipe or a
+    // provider stream cannot be cut and has no tail.
+    struct stat info{};
+    const bool regular = ::fstat(fd, &info) == 0 && S_ISREG(info.st_mode);
+    if (regular && ::ftruncate(fd, static_cast<off_t>(bytes.size())) != 0) return JNI_FALSE;
+    return JNI_TRUE;
 }
 
 // ---- Renderer: GPU (OpenGL ES 3 on the device's graphics chip) or CPU.

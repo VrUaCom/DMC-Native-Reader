@@ -442,6 +442,8 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
     } catch (...) {
         sounds = 0U;
     }
+    // One snapshot of the room: another thread may change it meanwhile.
+    const auto room = stage_room::current();
     return dmcresource::spider::black_widow::evaluate_model_session({
         .capabilities = session->capabilities,
         .renderable = session->renderable,
@@ -464,7 +466,7 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .authored_source_available = session->authored && session->source_bytes != nullptr,
         .reencode_rebuilds_container = session->container_source != nullptr,
         .stage_drawn = session->renderable &&
-                       (session->stage != nullptr || stage_room::current() != nullptr),
+                       (session->stage != nullptr || room != nullptr),
         .stage_uv = session->stage != nullptr && !demo::is_demo(session) && session->stage->mesh.has_uv0() &&
                     !session->stage->textures.empty(),
         .stage_config_loaded = stage_markers::current() != nullptr,
@@ -477,10 +479,9 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
         .stage_collision = session->stage != nullptr && !session->stage->collision_sources.empty(),
         .fly_space = session->renderable &&
                      (session->stage != nullptr || stage_room::is_stage_session(*session) ||
-                      session->hits != nullptr || stage_room::current() != nullptr),
+                      session->hits != nullptr || room != nullptr),
         .breakable = session->stage != nullptr ? session->stage->broken != nullptr
-                                               : (stage_room::current() != nullptr &&
-                                                  stage_room::current()->broken != nullptr),
+                                               : (room != nullptr && room->broken != nullptr),
         .broken = stage_room::broken(),
         .game_camera = session->stage != nullptr && !demo::is_demo(session) &&
                        stage_markers::current_matches(session->stage->name) &&

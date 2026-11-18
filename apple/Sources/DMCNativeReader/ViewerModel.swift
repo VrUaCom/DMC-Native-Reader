@@ -2,6 +2,7 @@
 // the camera, and the picture on the screen. Frames are drawn by the core on
 // a background queue; only the newest request is drawn.
 import AppKit
+import CDMCReader
 import CoreGraphics
 import Foundation
 
@@ -68,19 +69,16 @@ final class ViewerModel: ObservableObject {
     }
 
     private func show(_ next: ReaderSession) {
+        // The picture is known before the camera resets: resetting it asks
+        // for a frame, and a picture session draws none.
+        let picture = next.picture()
+        isPicture = picture != nil
+        image = picture.flatMap(Self.cgImage)
         session = next
         message = nil
-        camera = ViewCamera()
         healthLevel = next.health().level
         children = (0..<next.childCount).map { ChildFile(index: $0, title: next.childTitle($0)) }
-        if let picture = next.picture() {
-            isPicture = true
-            image = Self.cgImage(picture)
-        } else {
-            isPicture = false
-            image = nil
-            requestFrame()
-        }
+        camera = ViewCamera()  // draws the first frame of a 3D session
     }
 
     // MARK: Info
@@ -145,7 +143,8 @@ final class ViewerModel: ObservableObject {
     /// Nothing to draw and no picture: the session is only its files or its Info.
     var drawsNothing: Bool { session != nil && image == nil && message != nil }
 
-    /// The view's size in pixels, the longest side capped by the settings.
+    /// The view's size in pixels, the longest side capped by the settings and
+    /// each side within what the core draws (a thin view is scaled up from it).
     private func frameSize() -> (Int, Int) {
         var width = max(1, viewSize.width * scale)
         var height = max(1, viewSize.height * scale)
@@ -155,7 +154,10 @@ final class ViewerModel: ObservableObject {
             width *= cap / longest
             height *= cap / longest
         }
-        return (Int(width.rounded()), Int(height.rounded()))
+        let side = { (value: CGFloat) in
+            min(Int(DMC_RENDER_MAX_SIDE), max(Int(DMC_RENDER_MIN_SIDE), Int(value.rounded())))
+        }
+        return (side(width), side(height))
     }
 
     nonisolated private static func cgImage(_ image: RGBAImage) -> CGImage? {

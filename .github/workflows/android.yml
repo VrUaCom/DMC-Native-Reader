@@ -71,6 +71,12 @@ jobs:
       - name: Run package and installed-footprint policy regressions
         run: python3 tools/test_verify_device_apk.py
 
+      - name: Check JNI signatures and the session lock
+        run: >-
+          python3 tools/check_jni_signatures.py
+          app/src/main/java/com/dmcrengine/nativeviewer/NativeBridge.java
+          app/src/main/cpp/app_native.cpp
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
