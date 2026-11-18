@@ -283,7 +283,9 @@
 | `setCameraPolarizer` | MainActivity | — | `dmc_camera_focus_* / dmc_camera_polarizer_*` |  |
 | `writeCaptureDng` | DmcRenderView | так | `dmc_capture_dng → bytes` | запис файлу — оболонка |
 
-### 9. Діагностика — 11
+### 9. Діагностика — 11 (додано в C API)
+
+У C API: `dmc_build_identity` (ідентичність збірки тепер рахується для всіх платформ), `dmc_benchmark_settings`, `dmc_diagnostics`, `dmc_inspect`, `dmc_crash_install`, `dmc_crash_context`, `dmc_test_crash`, `dmc_texture_format_names` / `_labels`, `dmc_reencode_textures` (нова сесія і звіт ядра). Додано `dmc_api_version()` / `DMC_API_VERSION` (2).
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|
@@ -327,7 +329,9 @@ Java не змінюється. Змінюється лише тіло кожн�
 
 JNI обох груп досі кличе ядро напряму. Щоб він став обгорткою над C API, `jlong` має стати `dmc_session*`: реєстр `live_sessions` триматиме `dmc_session*`. Це одна зміна для всіх груп разом, і її треба перевірити Android-збіркою та емулятором.
 
-**Наступний крок:** #45 (математика жестів у ядро), далі групи 3–9.
+**Групи 3–9** теж додані; #45 зроблено (див. групу 2), `dmc_api_version()` є. C API тепер має відповідник кожної функції JNI, крім групи 10 (буфер кадру, вікно GPU).
+
+**Наступний крок:** JNI як обгортка над C API (`jlong` ↔ `dmc_session*`, перевірка Android-збіркою й емулятором), `dmc_gpu_attach`.
 
 ## 5. Що оболонка робить сама на кожній платформі
 

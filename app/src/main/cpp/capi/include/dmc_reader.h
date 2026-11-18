@@ -678,6 +678,33 @@ void dmc_camera_set_polarizer(float radians);
 bool dmc_capture_dng(dmc_session* session, int view_width, int view_height, const dmc_view* view, float motion_fps,
                      int fd, dmc_image** developed);
 
+/* ---- Group 9: diagnostics, crash notes, texture re-encoding --------------- */
+
+/* The commit the core was built from ("unknown" outside git). */
+char* dmc_build_identity(void);
+/* The settings line a benchmark report carries, from the stored values. */
+char* dmc_benchmark_settings(const char* const* keys, const float* values, size_t count);
+/* The session's diagnostics text, and one inspection topic (1 UV, 2 meshes, 3 hierarchy). */
+char* dmc_diagnostics(const dmc_session* session);
+char* dmc_inspect(const dmc_session* session, int topic);
+/* The native crash note: where it is written, and what the app is doing now
+ * (the note's "Doing:" line). Async-signal-safe once installed. */
+void dmc_crash_install(const char* path);
+void dmc_crash_context(const char* text);
+/* Ends the process with SIGABRT, to try the crash note (a debug menu's). */
+void dmc_test_crash(void);
+/* The texture formats a model's textures can be re-encoded to (names the core
+ * reads, labels the user reads; same order). */
+dmc_strings* dmc_texture_format_names(void);
+dmc_strings* dmc_texture_format_labels(void);
+/* The model with its textures re-encoded to `format` (a name above); a new
+ * session, the caller's. *detail (when given) receives the core's report. */
+dmc_session* dmc_reencode_textures(const dmc_session* session, const char* format, bool force_dx10, char** detail);
+
+/* The C API's version: a shell checks it was built against the same core. */
+#define DMC_API_VERSION 2
+int dmc_api_version(void);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {

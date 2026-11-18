@@ -41,6 +41,9 @@
 #include "dmcresource/spider/companion_menu.h"
 #include "dmcresource/demo_session.h"
 #include "dmcresource/messages.h"
+#include "dmcresource/crash_recorder.h"
+#include "dmcresource/session_inspection.h"
+#include "dmcresource/inspection_format.h"
 
 struct dmc_session {
     std::unique_ptr<dmcresource::Session> session;
@@ -1775,5 +1778,87 @@ bool dmc_capture_dng(dmc_session* session, int view_width, int view_height, cons
         return true;
     } catch (...) { return false; }
 }
+
+}  // extern "C"
+
+/* ---- Group 9: diagnostics, crash notes, texture re-encoding -------------- */
+
+#ifndef DMC_NATIVE_READER_BUILD_SHA
+#define DMC_NATIVE_READER_BUILD_SHA "unknown"
+#endif
+
+extern "C" {
+
+char* dmc_build_identity(void) { return copy_string(DMC_NATIVE_READER_BUILD_SHA); }
+
+char* dmc_benchmark_settings(const char* const* keys, const float* values, size_t count) {
+    try {
+        settings::Stored stored;
+        for (size_t index = 0; keys != nullptr && values != nullptr && index < count; ++index) {
+            stored.keys.push_back(text_or_empty(keys[index]));
+            stored.values.push_back(values[index]);
+        }
+        return copy_string(settings::benchmark_summary(settings::resolve(stored)));
+    } catch (...) { return copy_string({}); }
+}
+
+char* dmc_diagnostics(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return copy_string(dmcresource::describe_session_diagnostics(core(session)));
+    } catch (...) { return copy_string({}); }
+}
+
+char* dmc_inspect(const dmc_session* session, int topic) {
+    try {
+        if (topic < 1 || topic > 3) return copy_string("Information unavailable");
+        const std::lock_guard lock{api_mutex()};
+        const auto document =
+            dmcresource::inspect_session(core(session), static_cast<dmcresource::InspectionTopic>(topic));
+        return copy_string(dmcresource::format_inspection_tree(document));
+    } catch (...) { return copy_string("Information unavailable"); }
+}
+
+void dmc_crash_install(const char* path) {
+    try { dmcresource::crash_recorder::install(text_or_empty(path)); } catch (...) {}
+}
+
+void dmc_crash_context(const char* text) {
+    try { dmcresource::crash_recorder::set_context(text_or_empty(text)); } catch (...) {}
+}
+
+void dmc_test_crash(void) { std::abort(); }
+
+dmc_strings* dmc_texture_format_names(void) {
+    try {
+        auto out = std::make_unique<dmc_strings>();
+        for (const auto& c : actions::texture_format_choices()) out->items.push_back(c.name);
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+dmc_strings* dmc_texture_format_labels(void) {
+    try {
+        auto out = std::make_unique<dmc_strings>();
+        for (const auto& c : actions::texture_format_choices()) out->items.push_back(c.label);
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+dmc_session* dmc_reencode_textures(const dmc_session* session, const char* format, bool force_dx10, char** detail) {
+    if (detail != nullptr) *detail = nullptr;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        std::string text;
+        auto result = actions::reencode_textures(core(session), text_or_empty(format), force_dx10, &text);
+        if (detail != nullptr) *detail = copy_string(text);
+        return wrap(std::move(result));
+    } catch (...) {
+        if (detail != nullptr && *detail == nullptr) *detail = copy_string("Re-encoding failed");
+        return nullptr;
+    }
+}
+
+int dmc_api_version(void) { return DMC_API_VERSION; }
 
 }  // extern "C"

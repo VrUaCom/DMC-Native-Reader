@@ -357,9 +357,9 @@ target_link_libraries(dmc_reader_capi PUBLIC DMCNativeReader::Core)
 dmc_native_reader_require_cpp23(dmc_reader_capi PRIVATE)
 set_target_properties(dmc_reader_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Diagnostics build identity shared by platform shells only. Best-effort:
-# source archives/non-git builders fall back to "unknown" without failing.
-if(ANDROID OR WIN32)
+# Diagnostics build identity shared by every shell (the C API reports it too).
+# Best-effort: source archives/non-git builders fall back to "unknown".
+if(TRUE)
     set(DMC_NATIVE_READER_BUILD_SHA "unknown")
     find_package(Git QUIET)
     if(GIT_EXECUTABLE)
@@ -378,6 +378,9 @@ if(ANDROID OR WIN32)
         unset(_dmc_native_reader_git_result)
     endif()
 endif()
+target_compile_definitions(dmc_reader_capi PRIVATE
+    DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
+)
 
 # Android is deliberately a thin shell. It owns JNI/FD/lifecycle integration
 # and direct Bitmap transport only; application decisions, resource parsing,

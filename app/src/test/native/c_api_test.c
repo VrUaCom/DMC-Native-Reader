@@ -567,6 +567,39 @@ int main(void) {
     assert((head[0] == 'I' && head[1] == 'I' && head[2] == 42) || (head[0] == 'M' && head[1] == 'M' && head[3] == 42));
     fclose(dng);
 
+    /* Group 9: diagnostics in the core's words, the build identity, the API version. */
+    assert(dmc_api_version() == DMC_API_VERSION);
+    char* identity = dmc_build_identity();
+    assert(identity != NULL && strlen(identity) > 0);
+    dmc_string_free(identity);
+    char* bench_line = dmc_benchmark_settings(keys, values, stored);
+    assert(bench_line != NULL);
+    dmc_string_free(bench_line);
+    char* diagnostics = dmc_diagnostics(model.session);
+    assert(diagnostics != NULL && strlen(diagnostics) > 0);
+    dmc_string_free(diagnostics);
+    for (int topic = 1; topic <= 3; ++topic) {
+        char* inspected = dmc_inspect(model.session, topic);
+        assert(inspected != NULL && strlen(inspected) > 0);
+        dmc_string_free(inspected);
+    }
+    char* unknown_topic = dmc_inspect(model.session, 9);
+    assert(strcmp(unknown_topic, "Information unavailable") == 0);
+    dmc_string_free(unknown_topic);
+    dmc_strings* format_names = dmc_texture_format_names();
+    dmc_strings* format_labels = dmc_texture_format_labels();
+    assert(format_names != NULL && format_labels != NULL && dmc_strings_count(format_names) > 0);
+    assert(dmc_strings_count(format_names) == dmc_strings_count(format_labels));
+    char* reencode_detail = NULL;
+    dmc_session* reencoded = dmc_reencode_textures(model.session, dmc_strings_at(format_names, 0), false, &reencode_detail);
+    assert(reencode_detail != NULL);  /* a textureless model: the core says why, or re-encodes nothing */
+    dmc_string_free(reencode_detail);
+    dmc_close(reencoded);
+    dmc_strings_free(format_names);
+    dmc_strings_free(format_labels);
+    dmc_crash_context("c_api_test");
+    dmc_crash_context(NULL);
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);
