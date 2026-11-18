@@ -185,7 +185,16 @@ void on_fatal_signal(int signal, siginfo_t* info, void* context) {
     // Hand the signal on: the handler from before (Android's crash reporter,
     // or the default action) ends the process as it would have.
     restore_previous();
-    const bool sent = info != nullptr && info->si_code <= 0;  // raise(), abort(), kill()
+#if defined(__APPLE__)
+    // Darwin's si_code does not tell raise()/kill() from a fault (raise(SIGILL) arrives with code 2), and
+    // there is no system crash reporter to hand the faulting context to: send the signal again, now with the
+    // default action, so every fatal signal ends the process with that signal.
+    const bool sent = true;
+#else
+    // Linux/Android mark raise(), abort() and kill() with si_code <= 0; those do not happen again on return.
+    // A fault of the code itself returns to the faulting instruction so Android's reporter sees the real context.
+    const bool sent = info != nullptr && info->si_code <= 0;
+#endif
     if (sent || signal == SIGABRT) ::raise(signal);
     // A fault of the code itself happens again on return and is now theirs.
 }

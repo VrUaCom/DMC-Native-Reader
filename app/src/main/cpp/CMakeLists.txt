@@ -7,6 +7,13 @@ project(dmcviewer LANGUAGES C CXX)
 if(ANDROID AND NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_options(-O2)
 endif()
+# The same arithmetic on every CPU: clang on arm64 (Apple, iOS, Android devices) fuses a*b+c into one
+# rounding by default, which moved a particle colour from 60 to 59 against the x86 references in the host
+# tests. Keep every multiply and add rounded on its own.
+if(NOT MSVC)
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-ffp-contract=off>)
+endif()
+
 # The renderer rasterises row bands on several cores.
 find_package(Threads REQUIRED)
 
