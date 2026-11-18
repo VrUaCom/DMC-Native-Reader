@@ -422,6 +422,13 @@ extension ReaderSession {
         return RGBAImage(copying: image.pointee)
     }
 
+    /// One video frame of the view (dmc_video_frame) into `rgba`.
+    func videoFrame(viewWidth: Int, viewHeight: Int, camera: ViewCamera, flags: UInt32, motionFrame: Float,
+                    rgba: UnsafeMutablePointer<UInt8>, capacity: Int) -> Bool {
+        var v = view(of: camera, flags: flags, motionFrame: motionFrame)
+        return dmc_video_frame(handle, Int32(viewWidth), Int32(viewHeight), &v, rgba, capacity) != 0
+    }
+
     /// A RAW (DNG) picture written to `fd`.
     func captureDNG(viewWidth: Int, viewHeight: Int, camera: ViewCamera, flags: UInt32, motionFrame: Float, fd: Int32) -> Bool {
         var v = view(of: camera, flags: flags, motionFrame: motionFrame)

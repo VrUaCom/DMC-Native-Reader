@@ -381,6 +381,27 @@ final class ViewerModel: ObservableObject {
             ? "Saved \(url.lastPathComponent)." : "The camera took no RAW picture of this view."
     }
 
+    private let recorder = ViewRecorder()
+    @Published private(set) var recording = false
+
+    /// Starts or stops a video of the view (the core's frames, AVAssetWriter's file).
+    func toggleRecording(to url: URL? = nil) {
+        if recording {
+            recorder.stop { [weak self] text in self?.message = text }
+            recording = false
+            return
+        }
+        guard let session, let url else { return }
+        let (width, height) = frameSize()
+        let error = recorder.start(url: url, viewWidth: width, viewHeight: height) { [weak self] rgba, capacity in
+            guard let self else { return false }
+            return session.videoFrame(viewWidth: width, viewHeight: height, camera: self.camera,
+                                      flags: self.settings.renderFlags, motionFrame: self.motionFrame,
+                                      rgba: rgba, capacity: capacity)
+        }
+        if let error { message = error } else { recording = true; message = "Recording… (Camera menu → Stop recording)" }
+    }
+
     @Published private(set) var flying = false
     private var flyTimer: Timer?
     private var flyKeys = Set<String>()

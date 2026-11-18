@@ -360,6 +360,13 @@ struct ContentView: View {
                     panel.nameFieldStringValue = (model.session?.title ?? "photo") + " photo.png"
                     if panel.runModal() == .OK, let url = panel.url { model.savePhoto(to: url) }
                 }
+                Button(model.recording ? "Stop recording" : "Record video…") {
+                    if model.recording { model.toggleRecording(); return }
+                    let panel = NSSavePanel()
+                    panel.allowedContentTypes = [.quickTimeMovie]
+                    panel.nameFieldStringValue = (model.session?.title ?? "view") + ".mov"
+                    if panel.runModal() == .OK, let url = panel.url { model.toggleRecording(to: url) }
+                }
                 Button("Take RAW picture (DNG)…") {
                     let panel = NSSavePanel()
                     panel.nameFieldStringValue = (model.session?.title ?? "photo") + ".dng"

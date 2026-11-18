@@ -46,7 +46,8 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   with the motion), the subtitles where the core lays them out, and the
   cutscene's .ogg when the core asks for it.
 - Camera menu: the photo camera's picture as PNG, or RAW as DNG (the core's
-  capture). Fly (F): W A S D move, the arrow keys look, the core's fly eye.
+  capture), and a video of the view (.mov; the core's frames at its plan's
+  size and rate, encoded by AVAssetWriter in H.264 or HEVC). Fly (F): W A S D move, the arrow keys look, the core's fly eye.
 - Settings (⌘,): the core's settings schema, the same rows as Android, each
   choice stored and applied at once.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
@@ -56,5 +57,5 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- Videos of the view and the camera's viewfinder and dials are on Android
-  only for now (the core is built without FFmpeg here); the C API has them.
+- The camera's viewfinder and dials, and the game's WMV movies (the core is
+  built without FFmpeg here), are on Android only for now.
