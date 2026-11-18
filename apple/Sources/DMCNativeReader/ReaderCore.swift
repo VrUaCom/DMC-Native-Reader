@@ -119,6 +119,11 @@ final class ReaderSession: @unchecked Sendable {
         self.fileName = fileName
     }
 
+    /// A session the core made (an action's opened file); this object closes it.
+    convenience init(adopting handle: OpaquePointer, title: String) {
+        self.init(handle: handle, title: title, openedAs: .plain, fileName: title)
+    }
+
     deinit { dmc_close(handle) }
 
     /// Opens `bytes` named `name`; on rejection the core's reason comes back as text.
@@ -176,7 +181,8 @@ final class ReaderSession: @unchecked Sendable {
     }
 
     /// A frame of the 3D view, or nil when the session draws none.
-    func render(width: Int, height: Int, camera: ViewCamera, flags: UInt32) -> RGBAImage? {
+    func render(width: Int, height: Int, camera: ViewCamera, flags: UInt32,
+                motionFrame: Float = .nan) -> RGBAImage? {
         guard width > 0, height > 0 else { return nil }
         var view = dmc_view()
         view.yaw = camera.yaw
@@ -186,12 +192,137 @@ final class ReaderSession: @unchecked Sendable {
         view.pan_x = camera.panX
         view.pan_y = camera.panY
         view.room_yaw = camera.roomYaw
-        view.motion_frame = Float.nan
+        view.motion_frame = motionFrame
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let status = pixels.withUnsafeMutableBufferPointer { buffer in
             dmc_render(handle, Int32(width), Int32(height), &view, buffer.baseAddress, buffer.count)
         }
         return status == 0 ? nil : RGBAImage(width: width, height: height, pixels: pixels)
+    }
+}
+
+/// One card of the animation strip (spider/motion_strip): a motion of the
+/// session's library or a staged file, with the MotionScripts that drive it.
+struct MotionCard: Identifiable, Hashable {
+    struct Script: Hashable {
+        let scriptIndex: Int
+        let slot: Int
+        let label: String
+        let description: String
+    }
+    let id: Int
+    let name: String
+    let libraryIndex: Int
+    let stagedIndex: Int
+    let kind: String
+    let stem: String
+    let description: String
+    let separatorBefore: Bool
+    let scripts: [Script]
+}
+
+/// A row of a menu the core wrote: a stable id the shell sends back.
+struct MenuRow: Identifiable, Hashable {
+    let id: Int
+    let label: String
+    let icon: String
+}
+
+/// What the core tells the shell after an action.
+struct Outcome {
+    let ok: Bool
+    let step: Int32
+    let message: String
+    let marker: Int32
+    let title: String
+    var opened: ReaderSession?
+}
+
+extension ReaderSession {
+    /// The animation strip: the library's motions and the scripts that drive them.
+    func motionCards() -> [MotionCard] {
+        guard let strip = dmc_motion_strip_build(handle, true, nil, 0) else { return [] }
+        defer { dmc_motion_strip_free(strip) }
+        var cards: [MotionCard] = []
+        for index in 0..<dmc_motion_strip_count(strip) {
+            guard let card = dmc_motion_strip_card(strip, index)?.pointee else { continue }
+            var scripts: [MotionCard.Script] = []
+            for s in 0..<card.script_count {
+                let button = card.scripts[s]
+                scripts.append(.init(scriptIndex: Int(button.script_index), slot: Int(button.slot),
+                                     label: String(cString: button.label),
+                                     description: String(cString: button.description)))
+            }
+            cards.append(MotionCard(id: index, name: String(cString: card.name),
+                                    libraryIndex: Int(card.library_index), stagedIndex: Int(card.staged_index),
+                                    kind: String(cString: card.kind), stem: String(cString: card.stem),
+                                    description: String(cString: card.description),
+                                    separatorBefore: card.separator_before, scripts: scripts))
+        }
+        return cards
+    }
+
+    func loadLibraryMotion(_ index: Int) -> String {
+        takeString(dmc_load_library_motion(handle, index)) ?? ""
+    }
+
+    func loadScriptedMotion(script: Int, motion: Int) -> String {
+        takeString(dmc_load_scripted_motion(handle, script, motion)) ?? ""
+    }
+
+    func loadMotion(name: String, bytes: Data) -> String {
+        bytes.withUnsafeBytes { raw in
+            takeString(dmc_load_motion(handle, name, raw.bindMemory(to: UInt8.self).baseAddress, raw.count)) ?? ""
+        }
+    }
+
+    /// The loaded motion's last frame and loop start; nil without a motion.
+    func motionRange() -> (end: Float, loopStart: Float)? {
+        var end: Float = 0
+        var loop: Float = 0
+        return dmc_motion_range(handle, &end, &loop) ? (end, loop) : nil
+    }
+
+    /// A stage's start view (the game's camera at its first spawn point).
+    func stageStartView() -> (yaw: Float, pitch: Float, zoom: Float)? {
+        var out: [Float] = [0, 0, 0]
+        let ok = out.withUnsafeMutableBufferPointer { dmc_stage_start_view(handle, $0.baseAddress) }
+        return ok ? (out[0], out[1], out[2]) : nil
+    }
+
+    /// The companion menu's rows and its folded "Other actions".
+    func companionRows() -> (rows: [MenuRow], more: [MenuRow]) {
+        var facts = dmc_shell_facts()
+        facts.root_scene = true
+        facts.room_shown = true
+        guard let menu = dmc_companion_menu(handle, &facts) else { return ([], []) }
+        defer { dmc_companion_free(menu) }
+        return (rows(of: dmc_companion_get(menu, Int32(DMC_COMPANION_ROWS.rawValue))),
+                rows(of: dmc_companion_get(menu, Int32(DMC_COMPANION_MORE.rawValue))))
+    }
+
+    func runCompanionAction(_ id: Int) -> Outcome {
+        var opened: OpaquePointer?
+        var result = dmc_run_companion_action(handle, Int32(id), &opened)
+        defer { dmc_outcome_free(&result) }
+        var outcome = Outcome(ok: result.ok, step: result.step, message: String(cString: result.message),
+                              marker: result.marker, title: String(cString: result.title), opened: nil)
+        if let opened {
+            let title = outcome.title.isEmpty ? self.title : outcome.title
+            outcome.opened = ReaderSession(adopting: opened, title: title)
+        }
+        return outcome
+    }
+
+    /// The core's diagnostics text for the Info window.
+    func diagnostics() -> String { takeString(dmc_diagnostics(handle)) ?? "" }
+}
+
+private func rows(of menu: OpaquePointer?) -> [MenuRow] {
+    guard let menu else { return [] }
+    return (0..<dmc_menu_count(menu)).compactMap { index in
+        guard let item = dmc_menu_at(menu, index)?.pointee else { return nil }
+        return MenuRow(id: Int(item.id), label: String(cString: item.label), icon: String(cString: item.icon))
     }
 }
 

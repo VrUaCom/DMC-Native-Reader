@@ -33,6 +33,21 @@ final class ViewerModel: ObservableObject {
     /// The files inside the open session (a PAC's slots, a PTX's textures).
     @Published private(set) var children: [ChildFile] = []
 
+    // MARK: Animation state
+    /// The animation strip of the open session (its motions and scripts).
+    @Published private(set) var motionCards: [MotionCard] = []
+    /// The card whose motion is loaded, if any.
+    @Published private(set) var activeCard: Int?
+    @Published private(set) var playing = false
+    /// The motion frame shown (60 per second), NaN: the pose as it is.
+    private(set) var motionFrame: Float = .nan
+    private var motionRange: (end: Float, loopStart: Float)?
+    private var playTimer: Timer?
+    private var lastTick = Date()
+    /// The companion menu of the open session, written by the core.
+    @Published private(set) var actions: [MenuRow] = []
+    @Published private(set) var moreActions: [MenuRow] = []
+
     // MARK: Opening
 
     func open(url: URL) {
@@ -78,7 +93,15 @@ final class ViewerModel: ObservableObject {
         message = nil
         healthLevel = next.health().level
         children = (0..<next.childCount).map { ChildFile(index: $0, title: next.childTitle($0)) }
-        camera = ViewCamera()  // draws the first frame of a 3D session
+        stopMotion()
+        motionFrame = .nan
+        motionRange = nil
+        activeCard = nil
+        motionCards = isPicture ? [] : next.motionCards()
+        let menu = next.companionRows()
+        actions = menu.rows
+        moreActions = menu.more
+        camera = startCamera(of: next)  // draws the first frame of a 3D session
     }
 
     // MARK: Info
@@ -99,7 +122,106 @@ final class ViewerModel: ObservableObject {
         requestFrame()
     }
 
-    func resetCamera() { camera = ViewCamera() }
+    func resetCamera() {
+        guard let session else { camera = ViewCamera(); return }
+        camera = startCamera(of: session)
+    }
+
+    /// A model's start view, or a stage's (the game's camera at its first spawn point).
+    private func startCamera(of session: ReaderSession) -> ViewCamera {
+        var start = ViewCamera()
+        if let stage = session.stageStartView() {
+            start.yaw = stage.yaw
+            start.pitch = stage.pitch
+            start.zoom = stage.zoom
+        }
+        return start
+    }
+
+    // MARK: Animations
+
+    /// Loads a card's motion (the library's, or driven by one of its scripts) and plays it.
+    func play(card: MotionCard, script: MotionCard.Script? = nil) {
+        guard let session, card.libraryIndex >= 0 else { return }
+        let report = script.map { session.loadScriptedMotion(script: $0.scriptIndex, motion: card.libraryIndex) }
+            ?? session.loadLibraryMotion(card.libraryIndex)
+        if !report.isEmpty { message = report }
+        motionRange = session.motionRange()
+        activeCard = card.id
+        motionFrame = motionRange == nil ? .nan : 0
+        if motionRange != nil { startMotion() } else { requestFrame() }
+    }
+
+    /// A motion file the user picked onto the model.
+    func loadMotion(url: URL) {
+        guard let session else { return }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            message = "Could not read \(url.lastPathComponent)."
+            return
+        }
+        message = session.loadMotion(name: url.lastPathComponent, bytes: data)
+        motionRange = session.motionRange()
+        motionCards = session.motionCards()
+        motionFrame = motionRange == nil ? .nan : 0
+        if motionRange != nil { startMotion() } else { requestFrame() }
+    }
+
+    func togglePlaying() {
+        if playing { stopMotion() } else if motionRange != nil { startMotion() }
+    }
+
+    private func startMotion() {
+        stopMotion()
+        playing = true
+        lastTick = Date()
+        playTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    private func stopMotion() {
+        playTimer?.invalidate()
+        playTimer = nil
+        playing = false
+    }
+
+    /// One step of the playing motion: 60 game frames per second, looping like Android.
+    private func tick() {
+        guard playing, let range = motionRange else { return }
+        let now = Date()
+        let dt = Float(min(0.1, now.timeIntervalSince(lastTick)))
+        lastTick = now
+        var frame = (motionFrame.isFinite ? motionFrame : 0) + dt * 60
+        if range.end > 0, frame > range.end {
+            let span = range.end - range.loopStart
+            frame = span > 0 ? range.loopStart + (frame - range.end).truncatingRemainder(dividingBy: span) : range.end
+        }
+        motionFrame = frame
+        requestFrame()
+    }
+
+    // MARK: Actions
+
+    /// A companion menu row chosen: the core runs it and says what is left to do.
+    func run(action: MenuRow) {
+        guard let session else { return }
+        let outcome = session.runCompanionAction(action.id)
+        if !outcome.message.isEmpty { message = outcome.message }
+        if let opened = outcome.opened {
+            stack.append(session)
+            show(opened)
+            return
+        }
+        if outcome.step == Int32(DMC_STEP_RESET_VIEW.rawValue) { resetCamera() }
+        // The session may have changed (a part attached, a texture re-encoded): refresh what depends on it.
+        let menu = session.companionRows()
+        actions = menu.rows
+        moreActions = menu.more
+        motionCards = session.motionCards()
+        requestFrame()
+    }
 
     private func requestFrame() {
         guard let session, !isPicture else { return }
@@ -118,8 +240,10 @@ final class ViewerModel: ObservableObject {
             flags |= RenderFlag.shadows
         }
         let camera = self.camera
+        let motionFrame = self.motionFrame
         renderQueue.async { [weak self] in
-            let frame = session.render(width: width, height: height, camera: camera, flags: flags)
+            let frame = session.render(width: width, height: height, camera: camera, flags: flags,
+                                       motionFrame: motionFrame)
             let picture = frame.flatMap(Self.cgImage)
             Task { @MainActor in
                 guard let self else { return }

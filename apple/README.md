@@ -33,10 +33,16 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   left; each opens on its own, Back returns.
 - Info is written by the core; the Info button carries the file health dot
   (orange, red) and its report.
+- Animations: the core's animation strip under the view (the library's
+  motions; a card with MotionScripts lists them in its menu), play / pause,
+  looping like Android; Load motion picks a MOT or motion PAC.
+- Actions: the core's companion menu (rows and "Other actions"); a file an
+  action opens is shown, Back returns. A stage starts from the game's camera
+  at its first spawn point, and Reset view goes back there.
 
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- Animations, the base room, stage configurations, settings, effects,
-  cutscenes, videos (the core is built without FFmpeg here), the photo
-  camera and fly mode are on Android only for now.
+- The base room, stage configurations, settings, effects, cutscenes,
+  videos (the core is built without FFmpeg here), the photo camera and fly
+  mode are on Android only for now; the C API already has all of them.

@@ -133,7 +133,69 @@ struct ContentView: View {
         }
     }
 
+    /// The view, with the animation strip under it when the session has motions.
     private var viewer: some View {
+        VStack(spacing: 0) {
+            viewport
+            if !model.motionCards.isEmpty {
+                Divider()
+                motionStrip
+            }
+        }
+    }
+
+    /// The animation strip: one card per motion; a card's scripts are in its menu.
+    private var motionStrip: some View {
+        HStack(spacing: 8) {
+            Button { model.togglePlaying() } label: {
+                Image(systemName: model.playing ? "pause.fill" : "play.fill")
+            }
+            .help(model.playing ? "Pause" : "Play")
+            .disabled(model.activeCard == nil)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(model.motionCards) { card in
+                        if card.separatorBefore { Divider().frame(height: 22) }
+                        motionCardButton(card)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 44)
+        .background(Color(nsColor: NSColor(calibratedWhite: 0.12, alpha: 1)))
+    }
+
+    @ViewBuilder
+    private func motionCardButton(_ card: MotionCard) -> some View {
+        let label = Text(card.stem.isEmpty ? card.name : card.stem)
+            .font(.system(.caption, design: .monospaced))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(model.activeCard == card.id ? Color.accentColor.opacity(0.35) : Color.white.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 6))
+        if card.scripts.isEmpty {
+            Button { model.play(card: card) } label: { label }
+                .buttonStyle(.plain)
+                .help(card.description)
+                .disabled(card.libraryIndex < 0)
+        } else {
+            Menu {
+                Button("Play \(card.name)") { model.play(card: card) }
+                Divider()
+                ForEach(card.scripts, id: \.self) { script in
+                    Button(script.label) { model.play(card: card, script: script) }
+                        .help(script.description)
+                }
+            } label: { label }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(card.description)
+        }
+    }
+
+    private var viewport: some View {
         GeometryReader { geometry in
             ZStack {
                 if let image = model.image {
@@ -229,6 +291,24 @@ struct ContentView: View {
             Button { OpenPanel.choose { model.open(url: $0) } } label: { Label("Open", systemImage: "folder") }
             Button { model.resetCamera() } label: { Label("Reset view", systemImage: "scope") }
                 .disabled(model.session == nil || model.isPicture)
+            Button {
+                OpenPanel.choose { model.loadMotion(url: $0) }
+            } label: { Label("Load motion", systemImage: "figure.walk") }
+                .help("Load a motion file (MOT, a motion PAC) onto the model")
+                .disabled(model.session == nil || model.isPicture)
+            Menu {
+                ForEach(model.actions) { row in
+                    Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.run(action: row) }
+                }
+                if !model.moreActions.isEmpty {
+                    Menu("Other actions") {
+                        ForEach(model.moreActions) { row in
+                            Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.run(action: row) }
+                        }
+                    }
+                }
+            } label: { Label("Actions", systemImage: "ellipsis.circle") }
+                .disabled(model.actions.isEmpty && model.moreActions.isEmpty)
             Button { showInfo = true } label: {
                 Label("Info", systemImage: "info.circle")
                     .overlay(alignment: .topTrailing) {
