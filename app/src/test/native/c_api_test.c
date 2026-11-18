@@ -345,6 +345,32 @@ int main(void) {
     /* A frame of the touched view still draws. */
     assert(dmc_render(model.session, W, H, &touch, pixels, (size_t)W * H * 4) >= 1);
 
+    /* Group 3: a model without motions. Loads report in the core's words and
+     * never fail silently; out-of-range indices are refused. */
+    float end_frame = -1.0f, loop_start = -1.0f;
+    assert(!dmc_motion_range(model.session, &end_frame, &loop_start) && end_frame == -1.0f);
+    char* junk_motion = dmc_load_motion(model.session, "junk.mot", junk, sizeof junk);
+    assert(junk_motion != NULL && strlen(junk_motion) > 0);
+    dmc_string_free(junk_motion);
+    char* empty_motion = dmc_load_motion(model.session, "empty.mot", NULL, 0);
+    assert(empty_motion != NULL && strcmp(empty_motion, "Motion: empty file") == 0);
+    dmc_string_free(empty_motion);
+    char* no_model = dmc_load_motion(NULL, "a.mot", junk, sizeof junk);
+    assert(no_model != NULL && strcmp(no_model, "Motion: no model session") == 0);
+    dmc_string_free(no_model);
+    char* library = dmc_load_library_motion(model.session, 99);
+    assert(library != NULL && strcmp(library, "Motion: invalid library index") == 0);
+    dmc_string_free(library);
+    char* scripted = dmc_load_scripted_motion(model.session, 0, 0);
+    assert(scripted != NULL);
+    dmc_string_free(scripted);
+    assert(!dmc_motion_script_can_play(model.session, 0, 0) && dmc_motion_script_slot(model.session, 0) == -1);
+    dmc_strings* events = dmc_class_events(model.session);
+    assert(events != NULL && dmc_strings_count(events) == 0);
+    dmc_strings_free(events);
+    assert(!dmc_trigger_class_event(model.session, 0));
+    assert(dmc_render(model.session, W, H, &view, pixels, (size_t)W * H * 4) == 1);  /* still draws */
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);

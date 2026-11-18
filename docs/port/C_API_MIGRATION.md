@@ -50,7 +50,7 @@
 | B3 | `resource_session.cpp`, `black_widow_state` | `current() != nullptr && current()->broken`: кімнату читали двічі. Якщо між двома читаннями інший потік її прибере (`clearRoom`), буде звертання до null. Цей стан читають і потік рендера, і UI. | виправлено: один знімок |
 | B4 | `writeSource` | Умова «`ftruncate(...) == 0` або `written == size`» завжди істинна. Якщо файл, поверх якого зберігають, був довшим і обрізати його не вдалося, старий хвіст лишається, а відповідь — «успіх». | виправлено: звичайний файл, який не вдалося обрізати, дає помилку; потік без довжини (pipe, provider) — ні |
 | B5 | macOS `ViewerModel.show` | Скидання камери просило кадр ще до того, як модель дізнавалася, що сесія — картинка: зайвий рендер у черзі. | виправлено |
-| B6 | `motionScriptCount` | Мертва функція: Java її не кличе. | прибрати разом із переходом групи 3 |
+| B6 | `motionScriptCount` | Мертва функція: Java її не кличе. | прибрано з JNI і `NativeBridge.java` (146 функцій) |
 | B7 | `openResource`, `dmc_open` | Лок тримається, поки йде все відкриття. Великий PAC зупиняє кадри на час розбору. | план: розбирати файл без локу (розбір нічого спільного не змінює), а лок брати лише на зміну глобального стану стейджа |
 | B8 | `black_widow_state` | Запит стану має побічну дію: `set_active_slot(slot_for(session))`. Якщо кадр однієї сесії і меню іншої читають стан одночасно, активний слот стейджа може переключитися. | план: слот передавати явно в групі 4 |
 | B9 | C API | Немає реєстру handle: подвійне `dmc_close` — це UB. | правило з розділу 1; у debug-збірці можна додати реєстр, як у JNI |
@@ -168,7 +168,9 @@
 | `walkActive` | MainActivity | — | `dmc_fly_*` | стан камери вже в ядрі (camera_control, атомарні) |
 | `zoomStep` | DmcRenderView | — | `dmc_gesture_* / dmc_camera_reset` | математика жестів #45: з DmcRenderView у ядро |
 
-### 3. Анімації — 11
+### 3. Анімації — 11 (додано в C API)
+
+У C API: `dmc_load_motion`, `dmc_load_library_motion`, `dmc_load_scripted_motion` (звіт ядра одним рядком), `dmc_motion_script_can_play`, `dmc_motion_script_slot`, `dmc_motion_range` (кінець і початок петлі, false без руху), `dmc_class_events` → `dmc_strings`, `dmc_trigger_class_event`. `hasMotion` — біт `dmc_state_flags` і `dmc_motion_range`. Перевірено в `c_api_test.c` і `c_api_threads_test.cpp` (завантаження руху між кадрами іншого потоку).
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|

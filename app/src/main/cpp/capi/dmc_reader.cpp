@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -12,6 +13,7 @@
 #include "dmcresource/camera_control.h"
 #include "dmcresource/file_health.h"
 #include "dmcresource/motion/motion_player.h"
+#include "dmcresource/motion/enemy_effects.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/pac_assembly.h"
 #include "dmcresource/resource_session.h"
@@ -940,6 +942,80 @@ bool dmc_spin_step(dmc_view* view, dmc_spin* spin, float dt) {
     store(*view, o);
     *spin = {s.yaw_rate, s.pitch_rate};
     return going;
+}
+
+}  // extern "C"
+
+/* ---- Group 3: animations ------------------------------------------------- */
+
+extern "C" {
+
+char* dmc_load_motion(dmc_session* session, const char* name, const uint8_t* bytes, size_t size) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (core(session) == nullptr) return copy_string("Motion: no model session");
+        if (bytes == nullptr || size == 0U) return copy_string("Motion: empty file");
+        const auto report = dmcresource::motion::load_motion(core(session), text_or_empty(name), bytes, size);
+        return copy_string(report.detail);
+    } catch (...) { return copy_string("Motion: load failed"); }
+}
+
+char* dmc_load_library_motion(dmc_session* session, size_t index) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto* s = core(session);
+        if (s == nullptr || index >= s->motion_library.size()) return copy_string("Motion: invalid library index");
+        return copy_string(dmcresource::motion::load_library_motion(s, index).detail);
+    } catch (...) { return copy_string("Motion: load failed"); }
+}
+
+char* dmc_load_scripted_motion(dmc_session* session, size_t script, size_t motion) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return copy_string(dmcresource::motion::load_scripted_motion(core(session), script, motion).detail);
+    } catch (...) { return copy_string("MotionScript: load failed"); }
+}
+
+bool dmc_motion_script_can_play(const dmc_session* session, size_t script, size_t motion) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::motion::motion_script_can_play_motion(core(session), script, motion);
+    } catch (...) { return false; }
+}
+
+int dmc_motion_script_slot(const dmc_session* session, size_t script) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto slot = dmcresource::motion::motion_script_slot(core(session), script);
+        return slot > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ? -1 : static_cast<int>(slot);
+    } catch (...) { return -1; }
+}
+
+bool dmc_motion_range(const dmc_session* session, float* end_frame, float* loop_start) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (core(session) == nullptr || !dmcresource::motion::has_motion(core(session))) return false;
+        if (end_frame != nullptr) *end_frame = dmcresource::motion::motion_end_frame(core(session));
+        if (loop_start != nullptr) *loop_start = dmcresource::motion::motion_loop_start_frame(core(session));
+        return true;
+    } catch (...) { return false; }
+}
+
+dmc_strings* dmc_class_events(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto out = std::make_unique<dmc_strings>();
+        for (const char* name : dmcresource::motion::class_event_names(core(session)))
+            out->items.emplace_back(name == nullptr ? "" : name);
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+bool dmc_trigger_class_event(dmc_session* session, size_t index) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::motion::trigger_class_event(core(session), index);
+    } catch (...) { return false; }
 }
 
 }  // extern "C"

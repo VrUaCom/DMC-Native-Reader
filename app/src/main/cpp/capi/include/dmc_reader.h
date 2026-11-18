@@ -377,6 +377,26 @@ bool dmc_fling(float velocity_x, float velocity_y, float density, dmc_spin* spin
 /* Advances the spin by dt seconds; false once it has stopped. */
 bool dmc_spin_step(dmc_view* view, dmc_spin* spin, float dt);
 
+/* ---- Group 3: animations (motion_player) --------------------------------- *
+ * Each load returns the core's one-line report (dmc_string_free). */
+
+/* A motion file the user picked (MOT, a motion PAC) onto the model. */
+char* dmc_load_motion(dmc_session* session, const char* name, const uint8_t* bytes, size_t size);
+/* Motion `index` of the session's own library (dmc_motion_strip: library_index). */
+char* dmc_load_library_motion(dmc_session* session, size_t index);
+/* Motion `motion` driven by MotionScript `script` (dmc_motion_strip: the card's scripts). */
+char* dmc_load_scripted_motion(dmc_session* session, size_t script, size_t motion);
+/* Whether script `script` can play library motion `motion`. */
+bool dmc_motion_script_can_play(const dmc_session* session, size_t script, size_t motion);
+/* The slot script `script` drives, -1 none. */
+int dmc_motion_script_slot(const dmc_session* session, size_t script);
+/* The loaded motion's last frame and the frame its loop goes back to (60 per
+ * second); false when no motion is loaded. */
+bool dmc_motion_range(const dmc_session* session, float* end_frame, float* loop_start);
+/* An enemy class's own events (effects it fires), by name; firing one by index. */
+dmc_strings* dmc_class_events(const dmc_session* session);
+bool dmc_trigger_class_event(dmc_session* session, size_t index);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {

@@ -121,6 +121,12 @@ int main() {
         dmc_outcome_free(&held);
         float distance = 0.0F, dolly = 0.0F;
         assert(dmc_camera_metrics(composite, &distance, &dolly) && distance > 0.0F);
+        // Group 3 between frames: a motion load (refused here) and the range read.
+        const std::uint8_t junk[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        char* report = dmc_load_motion(composite, "junk.mot", junk, sizeof junk);
+        dmc_string_free(report);
+        float end_frame = 0.0F, loop_start = 0.0F;
+        (void)dmc_motion_range(composite, &end_frame, &loop_start);
         if (round % 50 == 0) {
             dmc_image* photo = dmc_render_capture(composite, false, kSide, kSide, &view, 30.0F);
             dmc_image_free(photo);

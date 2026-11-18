@@ -1095,16 +1095,6 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_inspectionTopic(
 // concurrently.
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_dmcrengine_nativeviewer_NativeBridge_motionScriptCount(
-        JNIEnv*, jclass, jlong handle) {
-    const SessionLock jni_lock{session_mutex()};
-    const auto count = dmcresource::motion::motion_script_count(from_handle(handle));
-    return count > static_cast<std::size_t>(std::numeric_limits<jint>::max())
-        ? std::numeric_limits<jint>::max()
-        : static_cast<jint>(count);
-}
-
-extern "C" JNIEXPORT jint JNICALL
 Java_com_dmcrengine_nativeviewer_NativeBridge_motionScriptSlot(
         JNIEnv*, jclass, jlong handle, jint script_index) {
     const SessionLock jni_lock{session_mutex()};

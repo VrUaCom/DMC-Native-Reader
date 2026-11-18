@@ -195,7 +195,6 @@ public final class NativeBridge {
     // MotionScript playback is separate from raw MOT playback. A PAC may own
     // several independent controllers; every script gets its own Play button
     // beside each MOT it can actually address.
-    public static native int motionScriptCount(long handle);
     public static native int motionScriptSlot(long handle, int scriptIndex);
     public static native boolean motionScriptCanPlayMotion(
             long handle, int scriptIndex, int motionIndex);
