@@ -441,6 +441,40 @@ int main(void) {
     assert(card_file == NULL && card_outcome.message != NULL);
     dmc_outcome_free(&card_outcome);
 
+    /* Group 5: the companion menu of a model: rows exist, every item has a
+     * label; the effect and sound menus of a model without them. */
+    dmc_shell_facts facts;
+    memset(&facts, 0, sizeof facts);
+    facts.root_scene = true;
+    dmc_companion* companion = dmc_companion_menu(model.session, &facts);
+    assert(companion != NULL && dmc_companion_get(companion, 4) == NULL && dmc_companion_get(companion, -1) == NULL);
+    const dmc_menu* rows = dmc_companion_get(companion, DMC_COMPANION_ROWS);
+    assert(rows != NULL && dmc_menu_count(rows) > 0);
+    for (int part = 0; part < 4; ++part) {
+        const dmc_menu* m = dmc_companion_get(companion, part);
+        for (size_t i = 0; i < dmc_menu_count(m); ++i) assert(strlen(dmc_menu_at(m, i)->label) > 0);
+    }
+    dmc_companion_free(companion);
+    dmc_companion* no_facts = dmc_companion_menu(model.session, NULL);
+    assert(no_facts != NULL);
+    dmc_companion_free(no_facts);
+    dmc_menu* effects = dmc_effect_menu(model.session);
+    assert(effects != NULL);
+    dmc_menu_free(effects);
+    dmc_outcome played = dmc_play_effect(model.session, 12345);
+    assert(played.message != NULL);
+    dmc_outcome_free(&played);
+    dmc_menu* sounds = dmc_sound_menu(model.session);
+    assert(sounds != NULL && dmc_menu_count(sounds) == 0);
+    dmc_menu_free(sounds);
+    dmc_pcm pcm = dmc_sound_pcm(model.session, 0);
+    assert(pcm.sample_count == 0 && pcm.samples == NULL && pcm.message != NULL && strlen(pcm.message) > 0);
+    dmc_pcm_free(&pcm);
+    dmc_session* action_file = (dmc_session*)1;
+    dmc_outcome nothing_chosen = dmc_run_companion_action(model.session, -12345, &action_file);
+    assert(action_file == NULL && nothing_chosen.message != NULL);
+    dmc_outcome_free(&nothing_chosen);
+
     dmc_close(model.session);
     free(pixels);
     dmc_settings_free(schema);

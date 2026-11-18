@@ -226,7 +226,9 @@
 | `stageStartView` | DmcRenderView | так | `dmc_stage_*` |  |
 | `stageStem` | MainActivity | так | `dmc_stage_*` |  |
 
-### 5. Меню і дії — 6
+### 5. Меню і дії — 6 (додано в C API)
+
+У C API: `dmc_companion_menu(session, dmc_shell_facts)` → `dmc_companion` (частини SHORTCUTS / ROWS / MORE / STAGE_OPS як `dmc_menu`, `dmc_companion_dimmed`), `dmc_run_companion_action` (відкритий файл — нова сесія того, хто кличе), `dmc_effect_menu`, `dmc_play_effect`, `dmc_sound_menu`, `dmc_sound_pcm` → `dmc_pcm` (16-біт моно; відтворює оболонка, доки звук не в ядрі).
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|

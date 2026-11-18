@@ -520,6 +520,52 @@ void dmc_card_free(dmc_card* card);
  * closed with dmc_close) with DMC_STEP_OPEN_SESSION. */
 dmc_outcome dmc_run_card_action(int marker, int id, dmc_session** opened);
 
+/* ---- Group 5: the companion menu, effects, sounds -------------------------- */
+
+/* What only the shell knows when it asks for the menu. */
+typedef struct dmc_shell_facts {
+    bool root_scene;             /* nothing navigated into */
+    bool assembled_pac_source;   /* the assembled PAC's document is kept */
+    bool stage_source;           /* the stage archive's document is kept */
+    bool room_loaded;
+    bool room_shown;
+    bool recording;              /* a video of the view is being recorded */
+} dmc_shell_facts;
+
+typedef enum dmc_companion_part {
+    DMC_COMPANION_SHORTCUTS = 0, /* squares with a glyph */
+    DMC_COMPANION_ROWS = 1,
+    DMC_COMPANION_MORE = 2,      /* under a folded "Other actions" row */
+    DMC_COMPANION_STAGE_OPS = 3  /* the four archives of a stage (dmc_menu_ready / _warn) */
+} dmc_companion_part;
+
+typedef struct dmc_companion dmc_companion;
+/* The menu of what can be done with the session now, decided by the core. */
+dmc_companion* dmc_companion_menu(const dmc_session* session, const dmc_shell_facts* facts);
+const dmc_menu* dmc_companion_get(const dmc_companion* menu, int part);  /* owned by the companion */
+/* A shortcut drawn dimmed (the room while hidden). */
+bool dmc_companion_dimmed(const dmc_companion* menu, int id);
+void dmc_companion_free(dmc_companion* menu);
+/* An item chosen; a file it opens comes back in *opened (the caller's). */
+dmc_outcome dmc_run_companion_action(dmc_session* session, int id, dmc_session** opened);
+
+/* Every effect the view can play, and playing one (or stopping, id -1). */
+dmc_menu* dmc_effect_menu(const dmc_session* session);
+dmc_outcome dmc_play_effect(dmc_session* session, int id);
+
+/* The session's sounds (a VAG's chunks) and one of them as 16-bit PCM. The
+ * shell plays the samples; `message` is the core's line when there are none. */
+dmc_menu* dmc_sound_menu(const dmc_session* session);
+
+typedef struct dmc_pcm {
+    uint32_t sample_rate;
+    size_t sample_count;
+    int16_t* samples;            /* mono */
+    char* message;
+} dmc_pcm;
+dmc_pcm dmc_sound_pcm(const dmc_session* session, int index);
+void dmc_pcm_free(dmc_pcm* pcm);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {

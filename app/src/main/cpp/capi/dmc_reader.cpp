@@ -1368,3 +1368,110 @@ dmc_outcome dmc_run_card_action(int marker, int id, dmc_session** opened) {
 }
 
 }  // extern "C"
+
+/* ---- Group 5: the companion menu, effects, sounds ------------------------ */
+
+struct dmc_companion {
+    dmc_menu parts[4];
+    std::vector<int> dimmed;
+};
+
+extern "C" {
+
+dmc_companion* dmc_companion_menu(const dmc_session* session, const dmc_shell_facts* facts) {
+    try {
+        const dmc_shell_facts f = facts != nullptr ? *facts : dmc_shell_facts{};
+        const std::lock_guard lock{api_mutex()};
+        const auto menu = actions::companion_menu(core(session), {.root_scene = f.root_scene,
+                                                                  .assembled_pac_source = f.assembled_pac_source,
+                                                                  .stage_source = f.stage_source,
+                                                                  .room_loaded = f.room_loaded,
+                                                                  .room_shown = f.room_shown,
+                                                                  .recording = f.recording});
+        auto out = std::make_unique<dmc_companion>();
+        fill_menu(out->parts[DMC_COMPANION_SHORTCUTS], {.title = {}, .message = {}, .items = menu.shortcuts});
+        fill_menu(out->parts[DMC_COMPANION_ROWS], {.title = {}, .message = {}, .items = menu.rows});
+        fill_menu(out->parts[DMC_COMPANION_MORE], {.title = {}, .message = {}, .items = menu.more});
+        fill_menu(out->parts[DMC_COMPANION_STAGE_OPS], {.title = {}, .message = {}, .items = menu.stage_ops});
+        out->parts[DMC_COMPANION_STAGE_OPS].ready = menu.stage_ops_ready;
+        out->parts[DMC_COMPANION_STAGE_OPS].warn = menu.stage_ops_warn;
+        out->dimmed = menu.dimmed;
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+const dmc_menu* dmc_companion_get(const dmc_companion* menu, int part) {
+    return menu == nullptr || part < 0 || part > 3 ? nullptr : &menu->parts[part];
+}
+
+bool dmc_companion_dimmed(const dmc_companion* menu, int id) {
+    return menu != nullptr && std::find(menu->dimmed.begin(), menu->dimmed.end(), id) != menu->dimmed.end();
+}
+
+void dmc_companion_free(dmc_companion* menu) { delete menu; }
+
+dmc_outcome dmc_run_companion_action(dmc_session* session, int id, dmc_session** opened) {
+    if (opened != nullptr) *opened = nullptr;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        std::unique_ptr<dmcresource::Session> made;
+        const auto outcome = actions::run_companion_action(core(session), id, &made);
+        if (opened != nullptr && made) *opened = wrap(std::move(made));
+        return outcome_of(outcome);
+    } catch (...) { return outcome_of({}); }
+}
+
+dmc_menu* dmc_effect_menu(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto out = std::make_unique<dmc_menu>();
+        fill_menu(*out, actions::effect_menu(core(session)));
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+dmc_outcome dmc_play_effect(dmc_session* session, int id) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return outcome_of(actions::play_effect(core(session), id));
+    } catch (...) { return outcome_of({}); }
+}
+
+dmc_menu* dmc_sound_menu(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto out = std::make_unique<dmc_menu>();
+        fill_menu(*out, actions::sound_menu(core(session)));
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+dmc_pcm dmc_sound_pcm(const dmc_session* session, int index) {
+    dmc_pcm out{};
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto pcm = actions::sound_pcm(core(session), index);
+        out.sample_rate = pcm.sample_rate;
+        if (!pcm.samples.empty()) {
+            out.samples = static_cast<int16_t*>(std::malloc(pcm.samples.size() * sizeof(int16_t)));
+            if (out.samples != nullptr) {
+                std::memcpy(out.samples, pcm.samples.data(), pcm.samples.size() * sizeof(int16_t));
+                out.sample_count = pcm.samples.size();
+            }
+        }
+        out.message = copy_string(pcm.message);
+    } catch (...) {}
+    if (out.message == nullptr) out.message = copy_string({});
+    return out;
+}
+
+void dmc_pcm_free(dmc_pcm* pcm) {
+    if (pcm == nullptr) return;
+    std::free(pcm->samples);
+    std::free(pcm->message);
+    pcm->samples = nullptr;
+    pcm->message = nullptr;
+    pcm->sample_count = 0;
+}
+
+}  // extern "C"
