@@ -42,6 +42,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Long press on the view: the core's answer (a configuration marker's card
   with its rows and buttons, a joint, a note). Room menu → Load stage
   configuration (stNNNcfg.pac) for the opened stage or the base room.
+- Cutscenes: their sound streamed from the core's mix (AVAudioEngine, looping
+  with the motion), the subtitles where the core lays them out, and the
+  cutscene's .ogg when the core asks for it.
 - Settings (⌘,): the core's settings schema, the same rows as Android, each
   choice stored and applied at once.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
@@ -51,6 +54,6 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- Cutscenes,
+-
   videos (the core is built without FFmpeg here), the photo camera and fly
   mode are on Android only for now; the C API already has all of them.

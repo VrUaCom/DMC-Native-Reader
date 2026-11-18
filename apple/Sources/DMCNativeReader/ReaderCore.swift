@@ -237,6 +237,20 @@ struct MenuRow: Identifiable, Hashable {
     let icon: String
 }
 
+/// A cutscene's subtitle: text and its layout in fractions of the view.
+struct Subtitle: Equatable {
+    let text: String
+    let centreX: Float
+    let top: Float
+    let size: Float
+    let alpha: Float
+    let front: (UInt8, UInt8, UInt8)
+    let back: (UInt8, UInt8, UInt8)
+    static func == (a: Subtitle, b: Subtitle) -> Bool {
+        a.text == b.text && a.centreX == b.centreX && a.top == b.top && a.size == b.size && a.alpha == b.alpha
+    }
+}
+
 /// A configuration marker's card, as the core wrote it.
 struct MarkerCardInfo: Identifiable {
     struct Row: Hashable { let name: String; let value: String }
@@ -363,6 +377,32 @@ extension ReaderSession {
         defer { dmc_outcome_free(&result) }
         return Outcome(ok: result.ok, step: result.step, message: String(cString: result.message),
                        marker: result.marker, title: String(cString: result.title), opened: nil)
+    }
+
+    /// A cutscene's mixed sound: rate and channels (nil: none).
+    func cutsceneAudioFormat() -> (rate: Int, channels: Int)? {
+        var rate: UInt32 = 0
+        var channels: UInt32 = 0
+        return dmc_cutscene_audio_format(handle, &rate, &channels) && rate > 0 && channels > 0
+            ? (Int(rate), Int(channels)) : nil
+    }
+
+    /// The sample frame heard at motion frame `frame`.
+    func cutsceneAudioPosition(frame: Float) -> Int64 { dmc_cutscene_audio_position(handle, frame) }
+
+    /// Reads up to `frames` sample frames from `position` (interleaved int16); returns values written.
+    func readCutsceneAudio(position: Int64, frames: Int, into buffer: UnsafeMutablePointer<Int16>, capacity: Int) -> Int {
+        Int(dmc_cutscene_audio_read(handle, position, frames, buffer, capacity))
+    }
+
+    /// The subtitle shown now (text and how the core lays it out), nil when none.
+    func subtitle() -> Subtitle? {
+        var s = dmc_subtitle()
+        guard dmc_cutscene_subtitle(handle, &s) else { return nil }
+        defer { dmc_subtitle_free(&s) }
+        return Subtitle(text: s.text.map { String(cString: $0) } ?? "", centreX: s.centre_x, top: s.top,
+                        size: s.size, alpha: s.alpha, front: (s.front.0, s.front.1, s.front.2),
+                        back: (s.back.0, s.back.1, s.back.2))
     }
 
     /// The core's diagnostics text for the Info window.

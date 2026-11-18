@@ -58,6 +58,9 @@ final class ViewerModel: ObservableObject {
     private(set) var motionFrame: Float = .nan
     private var motionRange: (end: Float, loopStart: Float)?
     private var playTimer: Timer?
+    /// A cutscene's sound and the subtitle shown now (both the core's).
+    private let cutsceneAudio = CutsceneAudio()
+    @Published private(set) var subtitle: Subtitle?
     private var lastTick = Date()
     /// The companion menu of the open session, written by the core.
     @Published private(set) var actions: [MenuRow] = []
@@ -109,6 +112,7 @@ final class ViewerModel: ObservableObject {
         healthLevel = next.health().level
         children = (0..<next.childCount).map { ChildFile(index: $0, title: next.childTitle($0)) }
         stopMotion()
+        subtitle = nil
         motionFrame = .nan
         motionRange = nil
         activeCard = nil
@@ -192,6 +196,7 @@ final class ViewerModel: ObservableObject {
         stopMotion()
         playing = true
         lastTick = Date()
+        if let session { cutsceneAudio.play(session, frame: motionFrame.isFinite ? motionFrame : 0) }
         playTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -201,6 +206,7 @@ final class ViewerModel: ObservableObject {
         playTimer?.invalidate()
         playTimer = nil
         playing = false
+        cutsceneAudio.stop()
     }
 
     /// One step of the playing motion: 60 game frames per second, looping like Android.
@@ -214,7 +220,11 @@ final class ViewerModel: ObservableObject {
             let span = range.end - range.loopStart
             frame = span > 0 ? range.loopStart + (frame - range.end).truncatingRemainder(dividingBy: span) : range.end
         }
+        let looped = frame < motionFrame
         motionFrame = frame
+        if looped, let session { cutsceneAudio.play(session, frame: frame) }  // the sound loops with the motion
+        let shown = session?.subtitle()
+        if shown != subtitle { subtitle = shown }
         requestFrame()
     }
 
@@ -293,6 +303,23 @@ final class ViewerModel: ObservableObject {
         refreshAfterChange()
     }
 
+    /// A cutscene's .ogg the user picked.
+    func loadCutsceneSound(url: URL) {
+        guard let session else { return }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            message = "Could not read \(url.lastPathComponent)."
+            return
+        }
+        var result = data.withUnsafeBytes { raw in
+            dmc_cutscene_sound_load(session.handle, url.lastPathComponent, raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
+        }
+        defer { dmc_outcome_free(&result) }
+        message = String(cString: result.message)
+        if playing { startMotion() }  // the new sound joins the playing cutscene
+    }
+
     func runCard(button: MenuRow) {
         guard let card = markerCard else { return }
         markerCard = nil
@@ -314,6 +341,8 @@ final class ViewerModel: ObservableObject {
             resetCamera()
         case Int32(DMC_STEP_PICK_STAGE_CONFIG.rawValue):
             OpenPanel.choose { [weak self] in self?.loadStageConfig(url: $0) }
+        case Int32(DMC_STEP_PICK_CUTSCENE_SOUND.rawValue):
+            OpenPanel.choose { [weak self] in self?.loadCutsceneSound(url: $0) }
         default:
             requestFrame()
         }

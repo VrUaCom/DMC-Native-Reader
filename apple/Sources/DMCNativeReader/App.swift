@@ -199,6 +199,21 @@ struct ContentView: View {
         }
     }
 
+    /// A cutscene subtitle where and how the core lays it out (fractions of the view).
+    private func subtitleView(_ s: Subtitle, in size: CGSize) -> some View {
+        let color = { (c: (UInt8, UInt8, UInt8)) in Color(red: Double(c.0) / 255, green: Double(c.1) / 255, blue: Double(c.2) / 255) }
+        return Text(s.text)
+            .font(.system(size: max(10, CGFloat(s.size) * size.height), weight: .semibold))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(color(s.front))
+            .shadow(color: color(s.back), radius: 1.5)
+            .shadow(color: color(s.back), radius: 1.5)
+            .opacity(Double(s.alpha))
+            .frame(width: size.width * 0.9)
+            .position(x: CGFloat(s.centreX) * size.width, y: CGFloat(s.top) * size.height + CGFloat(s.size) * size.height)
+            .allowsHitTesting(false)
+    }
+
     private var viewport: some View {
         GeometryReader { geometry in
             ZStack {
@@ -212,6 +227,11 @@ struct ContentView: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .overlay(alignment: .topLeading) {
+                if let subtitle = model.subtitle, !subtitle.text.isEmpty {
+                    subtitleView(subtitle, in: geometry.size)
+                }
+            }
             .contentShape(Rectangle())
             .gesture(orbit)
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).sequenced(before: DragGesture(minimumDistance: 0))
