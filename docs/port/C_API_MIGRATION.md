@@ -264,7 +264,9 @@
 | `beginVideo` | MainActivity | — | `dmc_video_begin / dmc_video_frame` | FFmpeg на всіх платформах |
 | `renderVideoFrame` | DmcRenderView | так | `dmc_video_begin / dmc_video_frame` | FFmpeg на всіх платформах |
 
-### 8. Фото камера — 12
+### 8. Фото камера — 12 (додано в C API)
+
+У C API: `dmc_camera_settings_list` → `dmc_camera_setting` (ключ, id, розділ, підпис, підказка, опції, початкова), `dmc_camera_set_choices`, `dmc_camera_dials_list` → `dmc_camera_dial`, `dmc_camera_follow_up_of`, `dmc_camera_plan_of`, `dmc_camera_focus_at` / `_lock` / `_ring`, `dmc_camera_polarizer_turnable` / `_turn`, `dmc_camera_set_polarizer`, `dmc_capture_dng` (у відкритий оболонкою файл; з проявленою картинкою). Рядки з табами JNI замінено типізованими структурами. Тест пише справжній DNG і перевіряє заголовок TIFF.
 
 | JNI | Java | лок сесії | C API | примітка |
 |---|---|---|---|---|

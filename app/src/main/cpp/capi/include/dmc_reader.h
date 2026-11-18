@@ -605,6 +605,79 @@ bool dmc_video_frame_size(int view_width, int view_height, int* width, int* heig
 int dmc_video_frame(dmc_session* session, int view_width, int view_height, const dmc_view* view, uint8_t* rgba,
                     size_t capacity);
 
+/* ---- Group 8: the photo camera ------------------------------------------ *
+ * Its settings and dials are the core's (spider/camera.h); the shell stores
+ * the chosen option of each setting and gives them back in order. */
+
+typedef struct dmc_camera_setting {
+    int key;                     /* the setting's key (dials and follow-ups name it) */
+    const char* id;              /* stable name the shell stores the choice under */
+    const char* section;
+    const char* label;
+    const char* hint;
+    size_t option_count;
+    const char* const* options;
+    int start;                   /* the starting option */
+} dmc_camera_setting;
+
+typedef struct dmc_camera_settings dmc_camera_settings;
+dmc_camera_settings* dmc_camera_settings_list(void);
+size_t dmc_camera_settings_count(const dmc_camera_settings* list);
+const dmc_camera_setting* dmc_camera_settings_at(const dmc_camera_settings* list, size_t index);
+void dmc_camera_settings_free(dmc_camera_settings* list);
+/* The chosen option of each setting, in list order. */
+void dmc_camera_set_choices(const int* choices, size_t count);
+
+/* The dials of the camera bar: the setting each turns, its short name and value. */
+typedef struct dmc_camera_dial {
+    int key;
+    const char* title;
+    const char* value;           /* as a camera shows it: "ISO 400", "1/60" */
+    size_t with_count;
+    const int* with;             /* settings shown together with it */
+} dmc_camera_dial;
+typedef struct dmc_camera_dials dmc_camera_dials;
+dmc_camera_dials* dmc_camera_dials_list(void);
+size_t dmc_camera_dials_count(const dmc_camera_dials* list);
+const dmc_camera_dial* dmc_camera_dials_at(const dmc_camera_dials* list, size_t index);
+void dmc_camera_dials_free(dmc_camera_dials* list);
+
+/* What changes with setting `key` set to `option` (a camera's M dial, ...). */
+typedef struct dmc_camera_follow_up {
+    char* message;
+    size_t count;
+    int* keys;
+    int* options;
+} dmc_camera_follow_up;
+bool dmc_camera_follow_up_of(int key, int option, dmc_camera_follow_up* out);
+void dmc_camera_follow_up_free(dmc_camera_follow_up* follow_up);
+
+/* How a picture (`video` false) or a video of a view is taken. */
+typedef struct dmc_camera_plan {
+    int width, height;
+    int format;                  /* picture: PNG 0, JPEG 1, WebP 2, DNG 3, DNG+JPEG 4; video: AVC 0, HEVC 1 */
+    int quality;                 /* picture 0..100; video bits per second */
+    int fps, keyframe_ms, limit_seconds, timer_seconds, burst;
+    bool subtitles;
+} dmc_camera_plan;
+dmc_camera_plan dmc_camera_plan_of(bool video, int view_width, int view_height);
+
+/* Focus: at a point of the view, the AF lock, the focus ring; each returns
+ * the core's line ("" when nothing is in focus there). */
+char* dmc_camera_focus_at(const dmc_session* session, int width, int height, const dmc_view* view, float x, float y);
+char* dmc_camera_focus_lock(void);
+char* dmc_camera_focus_ring(float steps);
+
+/* The circular polarizer: whether two fingers turn it now, turning it, setting it. */
+bool dmc_camera_polarizer_turnable(void);
+float dmc_camera_polarizer_turn(float radians);
+void dmc_camera_set_polarizer(float radians);
+
+/* A RAW (DNG) picture written to the open file `fd`; with `developed`, also
+ * the developed picture (RAW + JPEG), the caller's (dmc_image_free). */
+bool dmc_capture_dng(dmc_session* session, int view_width, int view_height, const dmc_view* view, float motion_fps,
+                     int fd, dmc_image** developed);
+
 /* ---- Settings (spider/viewer_settings.h) --------------------------------- */
 
 typedef enum dmc_setting_control {

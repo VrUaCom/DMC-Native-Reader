@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 static void put_u32(uint8_t* bytes, size_t at, uint32_t value) {
     bytes[at] = (uint8_t)value;
@@ -498,6 +499,73 @@ int main(void) {
     assert(dmc_video_frame(model.session, W, H, &view, video_frame, 8) == 0);  /* too small */
     assert(dmc_video_frame(model.session, W, H, &view, video_frame, (size_t)vw * (size_t)vh * 4) == 1);
     free(video_frame);
+
+    /* Group 8: the photo camera's settings and dials are the core's. */
+    dmc_camera_settings* camera_settings = dmc_camera_settings_list();
+    assert(camera_settings != NULL && dmc_camera_settings_count(camera_settings) > 5);
+    int choices[128];
+    size_t choice_count = 0;
+    for (size_t i = 0; i < dmc_camera_settings_count(camera_settings) && i < 128; ++i) {
+        const dmc_camera_setting* s = dmc_camera_settings_at(camera_settings, i);
+        assert(s->id != NULL && strlen(s->id) > 0 && s->label != NULL && s->option_count > 0);
+        assert(s->start >= 0 && (size_t)s->start < s->option_count && s->options[s->start] != NULL);
+        choices[choice_count++] = s->start;
+    }
+    assert(dmc_camera_settings_at(camera_settings, dmc_camera_settings_count(camera_settings)) == NULL);
+    dmc_camera_set_choices(choices, choice_count);
+    dmc_camera_dials* dials = dmc_camera_dials_list();
+    assert(dials != NULL && dmc_camera_dials_count(dials) > 0);
+    const dmc_camera_dial* dial = dmc_camera_dials_at(dials, 0);
+    assert(dial->title != NULL && strlen(dial->title) > 0 && dial->value != NULL);
+    dmc_camera_dials_free(dials);
+    dmc_camera_follow_up follow;
+    assert(!dmc_camera_follow_up_of(-1, 0, &follow) && follow.message == NULL);
+    for (size_t i = 0; i < dmc_camera_settings_count(camera_settings); ++i) {
+        const dmc_camera_setting* s = dmc_camera_settings_at(camera_settings, i);
+        for (size_t o = 0; o < s->option_count; ++o) {
+            if (dmc_camera_follow_up_of(s->key, (int)o, &follow)) {
+                assert(follow.count > 0 && follow.keys != NULL && follow.options != NULL && follow.message != NULL);
+                dmc_camera_follow_up_free(&follow);
+                assert(follow.keys == NULL && follow.count == 0);
+            }
+        }
+    }
+    dmc_camera_settings_free(camera_settings);
+    dmc_camera_set_choices(NULL, 0);
+    const dmc_camera_plan photo_plan = dmc_camera_plan_of(false, W, H);
+    assert(photo_plan.width > 0 && photo_plan.height > 0 && photo_plan.quality >= 0 && photo_plan.quality <= 100);
+    const dmc_camera_plan video_plan = dmc_camera_plan_of(true, W, H);
+    assert(video_plan.fps > 0);
+    char* focus = dmc_camera_focus_at(model.session, W, H, &view, (float)W / 2, (float)H / 2);
+    assert(focus != NULL);
+    dmc_string_free(focus);
+    char* locked = dmc_camera_focus_lock();
+    char* unlocked = dmc_camera_focus_lock();
+    assert(locked != NULL && unlocked != NULL && strcmp(locked, unlocked) != 0);  /* a toggle */
+    assert(strcmp(unlocked, "Auto focus") == 0 || strcmp(locked, "Auto focus") == 0);
+    dmc_string_free(locked);
+    dmc_string_free(unlocked);
+    char* ring = dmc_camera_focus_ring(0.0f);
+    assert(ring != NULL);
+    dmc_string_free(ring);
+    (void)dmc_camera_polarizer_turnable();
+    dmc_camera_set_polarizer(0.0f);
+    assert(isfinite(dmc_camera_polarizer_turn(0.1f)));
+    dmc_camera_set_polarizer(0.0f);
+    /* A RAW picture into a file the shell opened: a TIFF/DNG header, and the developed picture. */
+    FILE* dng = tmpfile();
+    assert(dng != NULL);
+    dmc_image* developed = NULL;
+    assert(!dmc_capture_dng(model.session, W, H, &view, 30.0f, -1, &developed) && developed == NULL);
+    assert(dmc_capture_dng(model.session, W, H, &view, 30.0f, fileno(dng), &developed));
+    assert(developed != NULL && developed->width > 0 && developed->rgba != NULL);
+    dmc_image_free(developed);
+    fflush(dng);
+    rewind(dng);
+    unsigned char head[4] = {0};
+    assert(fread(head, 1, 4, dng) == 4);
+    assert((head[0] == 'I' && head[1] == 'I' && head[2] == 42) || (head[0] == 'M' && head[1] == 'M' && head[3] == 42));
+    fclose(dng);
 
     dmc_close(model.session);
     free(pixels);

@@ -1622,3 +1622,158 @@ int dmc_video_frame(dmc_session* session, int view_width, int view_height, const
 }
 
 }  // extern "C"
+
+/* ---- Group 8: the photo camera ------------------------------------------- */
+
+struct dmc_camera_settings {
+    std::vector<std::vector<const char*>> option_ptrs;
+    std::vector<dmc_camera_setting> rows;
+};
+
+struct dmc_camera_dials {
+    std::vector<dmcresource::spider::camera::Dial> dials;
+    std::vector<std::vector<int>> with;
+    std::vector<dmc_camera_dial> rows;
+};
+
+extern "C" {
+
+dmc_camera_settings* dmc_camera_settings_list(void) {
+    try {
+        const auto& list = dmcresource::spider::camera::settings();  // static for the program's life
+        auto out = std::make_unique<dmc_camera_settings>();
+        out->option_ptrs.resize(list.size());
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            for (const auto& option : list[i].options) out->option_ptrs[i].push_back(option.c_str());
+            out->rows.push_back({static_cast<int>(list[i].key), list[i].id.c_str(), list[i].section.c_str(),
+                                 list[i].label.c_str(), list[i].hint.c_str(), out->option_ptrs[i].size(),
+                                 out->option_ptrs[i].data(), list[i].start});
+        }
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+size_t dmc_camera_settings_count(const dmc_camera_settings* list) { return list == nullptr ? 0U : list->rows.size(); }
+const dmc_camera_setting* dmc_camera_settings_at(const dmc_camera_settings* list, size_t index) {
+    return list == nullptr || index >= list->rows.size() ? nullptr : &list->rows[index];
+}
+void dmc_camera_settings_free(dmc_camera_settings* list) { delete list; }
+
+void dmc_camera_set_choices(const int* choices, size_t count) {
+    try {
+        std::vector<int> values;
+        if (choices != nullptr) values.assign(choices, choices + count);
+        dmcresource::spider::camera::set_choices(values);
+    } catch (...) {}
+}
+
+dmc_camera_dials* dmc_camera_dials_list(void) {
+    try {
+        auto out = std::make_unique<dmc_camera_dials>();
+        out->dials = dmcresource::spider::camera::dials();
+        for (const auto& dial : out->dials) {
+            std::vector<int> with;
+            for (const auto key : dial.with) with.push_back(static_cast<int>(key));
+            out->with.push_back(std::move(with));
+        }
+        for (std::size_t i = 0; i < out->dials.size(); ++i) {
+            out->rows.push_back({static_cast<int>(out->dials[i].key), out->dials[i].title.c_str(),
+                                 out->dials[i].value.c_str(), out->with[i].size(), out->with[i].data()});
+        }
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
+size_t dmc_camera_dials_count(const dmc_camera_dials* list) { return list == nullptr ? 0U : list->rows.size(); }
+const dmc_camera_dial* dmc_camera_dials_at(const dmc_camera_dials* list, size_t index) {
+    return list == nullptr || index >= list->rows.size() ? nullptr : &list->rows[index];
+}
+void dmc_camera_dials_free(dmc_camera_dials* list) { delete list; }
+
+bool dmc_camera_follow_up_of(int key, int option, dmc_camera_follow_up* out) {
+    namespace cam = dmcresource::spider::camera;
+    if (out == nullptr) return false;
+    *out = dmc_camera_follow_up{};
+    try {
+        if (key < 0 || key >= static_cast<int>(cam::Key::Count)) return false;
+        const auto follow = cam::follow_up(static_cast<cam::Key>(key), option);
+        if (follow.changes.empty()) return false;
+        out->message = copy_string(follow.message);
+        out->keys = static_cast<int*>(std::malloc(follow.changes.size() * sizeof(int)));
+        out->options = static_cast<int*>(std::malloc(follow.changes.size() * sizeof(int)));
+        if (out->keys == nullptr || out->options == nullptr) { dmc_camera_follow_up_free(out); return false; }
+        for (std::size_t i = 0; i < follow.changes.size(); ++i) {
+            out->keys[i] = static_cast<int>(follow.changes[i].key);
+            out->options[i] = follow.changes[i].option;
+        }
+        out->count = follow.changes.size();
+        return true;
+    } catch (...) { dmc_camera_follow_up_free(out); return false; }
+}
+
+void dmc_camera_follow_up_free(dmc_camera_follow_up* follow_up) {
+    if (follow_up == nullptr) return;
+    std::free(follow_up->message);
+    std::free(follow_up->keys);
+    std::free(follow_up->options);
+    *follow_up = dmc_camera_follow_up{};
+}
+
+dmc_camera_plan dmc_camera_plan_of(bool video, int view_width, int view_height) {
+    namespace cam = dmcresource::spider::camera;
+    const auto p = cam::plan(video ? cam::Kind::Video : cam::Kind::Photo, view_width, view_height);
+    return {p.width, p.height, p.format, p.quality, p.fps, p.keyframe_ms, p.limit_seconds, p.timer_seconds,
+            p.burst, p.subtitles};
+}
+
+char* dmc_camera_focus_at(const dmc_session* session, int width, int height, const dmc_view* view, float x, float y) {
+    namespace cam = dmcresource::spider::camera;
+    try {
+        if (view == nullptr) return copy_string({});
+        const std::lock_guard lock{api_mutex()};
+        const float units = cam::focus_at(core(session), width, height, view->yaw, view->pitch, view->zoom,
+                                          view->render_flags, controls_of(*view), x, y);
+        return copy_string(cam::focus_message(units));
+    } catch (...) { return copy_string({}); }
+}
+
+char* dmc_camera_focus_lock(void) {
+    namespace cam = dmcresource::spider::camera;
+    try {
+        const bool locked = cam::toggle_focus_lock();
+        return copy_string(locked ? "AF lock: " + cam::focus_message(cam::focus_point()) : std::string{"Auto focus"});
+    } catch (...) { return copy_string({}); }
+}
+
+char* dmc_camera_focus_ring(float steps) {
+    namespace cam = dmcresource::spider::camera;
+    try { return copy_string(cam::focus_message(cam::turn_focus_ring(steps))); } catch (...) { return copy_string({}); }
+}
+
+bool dmc_camera_polarizer_turnable(void) { return dmcresource::spider::camera::polarizer_turnable(); }
+float dmc_camera_polarizer_turn(float radians) { return dmcresource::spider::camera::turn_polarizer(radians); }
+void dmc_camera_set_polarizer(float radians) { dmcresource::spider::camera::set_polarizer_angle(radians); }
+
+bool dmc_capture_dng(dmc_session* session, int view_width, int view_height, const dmc_view* view, float motion_fps,
+                     int fd, dmc_image** developed) {
+    namespace cam = dmcresource::spider::camera;
+    if (developed != nullptr) *developed = nullptr;
+    try {
+        const std::lock_guard lock{api_mutex()};
+        auto* s = core(session);
+        if (s == nullptr || view == nullptr || fd < 0) return false;
+        dmcresource::RgbaImage image;
+        const bool ok = cam::capture_raw(s, view_width, view_height, view->yaw, view->pitch, view->zoom,
+                                         view->render_flags, controls_of(*view), fd,
+                                         developed != nullptr ? &image : nullptr,
+                                         cam::SceneMotion{view->motion_frame, motion_fps});
+        if (!ok) return false;
+        if (developed != nullptr) {
+            *developed = image_of(image);
+            if (*developed == nullptr) return false;
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+}  // extern "C"
