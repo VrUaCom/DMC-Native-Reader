@@ -312,6 +312,25 @@ struct ContentView: View {
                 }
             } label: { Label("Actions", systemImage: "ellipsis.circle") }
                 .disabled(model.actions.isEmpty && model.moreActions.isEmpty)
+            if !model.effects.isEmpty {
+                Menu {
+                    ForEach(model.effects) { row in
+                        Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.playEffect(row) }
+                    }
+                } label: { Label("Effects", systemImage: "sparkles") }
+            }
+            Menu {
+                Button("Load base room…") { OpenPanel.choose { model.loadRoom(url: $0) } }
+                Button("Clear base room") { model.clearRoom() }
+                    .disabled(model.roomName == nil)
+            } label: { Label(model.roomName ?? "Room", systemImage: "cube.transparent") }
+            Button {
+                let panel = NSSavePanel()
+                panel.allowedContentTypes = [.png]
+                panel.nameFieldStringValue = (model.session?.title ?? "view") + ".png"
+                if panel.runModal() == .OK, let url = panel.url { model.exportPNG(to: url) }
+            } label: { Label("Export PNG", systemImage: "square.and.arrow.up") }
+                .disabled(model.session == nil)
             Button { showInfo = true } label: {
                 Label("Info", systemImage: "info.circle")
                     .overlay(alignment: .topTrailing) {

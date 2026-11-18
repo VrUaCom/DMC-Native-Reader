@@ -116,6 +116,7 @@ final class ViewerModel: ObservableObject {
         let menu = next.companionRows()
         actions = menu.rows
         moreActions = menu.more
+        effects = isPicture ? [] : next.effectRows()
         camera = startCamera(of: next)  // draws the first frame of a 3D session
     }
 
@@ -214,6 +215,63 @@ final class ViewerModel: ObservableObject {
             frame = span > 0 ? range.loopStart + (frame - range.end).truncatingRemainder(dividingBy: span) : range.end
         }
         motionFrame = frame
+        requestFrame()
+    }
+
+    // MARK: Base room, effects, export
+
+    @Published private(set) var roomName: String?
+    @Published private(set) var effects: [MenuRow] = []
+
+    func loadRoom(url: URL) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            message = "Could not read \(url.lastPathComponent)."
+            return
+        }
+        if let detail = ReaderCore.loadRoom(name: url.lastPathComponent, bytes: data) {
+            roomName = url.lastPathComponent
+            message = "Base room: \(url.lastPathComponent) — \(detail)"
+        } else {
+            message = "\(url.lastPathComponent) is not a room the core can draw."
+        }
+        refreshAfterChange()
+    }
+
+    func clearRoom() {
+        ReaderCore.clearRoom()
+        roomName = nil
+        refreshAfterChange()
+    }
+
+    func playEffect(_ row: MenuRow) {
+        guard let session else { return }
+        let text = session.playEffect(row.id)
+        if !text.isEmpty { message = text }
+        requestFrame()
+    }
+
+    /// Saves the stage's export picture, or else the view as it is now, as PNG.
+    func exportPNG(to url: URL) {
+        let picture = session?.exportPicture().flatMap(Self.cgImage) ?? image
+        guard let picture,
+              let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            message = "Nothing to export."
+            return
+        }
+        CGImageDestinationAddImage(destination, picture, nil)
+        message = CGImageDestinationFinalize(destination)
+            ? "Saved \(url.lastPathComponent) (\(picture.width) × \(picture.height))."
+            : "Could not write \(url.lastPathComponent)."
+    }
+
+    private func refreshAfterChange() {
+        guard let session else { return }
+        let menu = session.companionRows()
+        actions = menu.rows
+        moreActions = menu.more
+        effects = session.effectRows()
         requestFrame()
     }
 

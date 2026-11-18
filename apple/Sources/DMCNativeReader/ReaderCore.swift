@@ -201,6 +201,15 @@ final class ReaderSession: @unchecked Sendable {
     }
 }
 
+extension RGBAImage {
+    /// A copy of a picture the core made.
+    init(copying image: dmc_image) {
+        let count = Int(image.width) * Int(image.height) * 4
+        self.init(width: Int(image.width), height: Int(image.height),
+                  pixels: Array(UnsafeBufferPointer(start: image.rgba, count: count)))
+    }
+}
+
 /// One card of the animation strip (spider/motion_strip): a motion of the
 /// session's library or a staged file, with the MotionScripts that drive it.
 struct MotionCard: Identifiable, Hashable {
@@ -314,6 +323,26 @@ extension ReaderSession {
         return outcome
     }
 
+    /// The effects the view can play, and playing one.
+    func effectRows() -> [MenuRow] {
+        guard let menu = dmc_effect_menu(handle) else { return [] }
+        defer { dmc_menu_free(menu) }
+        return rows(of: menu)
+    }
+
+    func playEffect(_ id: Int) -> String {
+        var result = dmc_play_effect(handle, Int32(id))
+        defer { dmc_outcome_free(&result) }
+        return String(cString: result.message)
+    }
+
+    /// The stage's PNG export picture (nil: the session has none).
+    func exportPicture() -> RGBAImage? {
+        guard let image = dmc_render_export(handle) else { return nil }
+        defer { dmc_image_free(image) }
+        return RGBAImage(copying: image.pointee)
+    }
+
     /// The core's diagnostics text for the Info window.
     func diagnostics() -> String { takeString(dmc_diagnostics(handle)) ?? "" }
 }
@@ -374,6 +403,15 @@ enum ReaderCore {
         }
         return rows
     }
+
+    /// The base room every model stands in, from a stNNN file; the core's detail or nil.
+    static func loadRoom(name: String, bytes: Data) -> String? {
+        bytes.withUnsafeBytes { raw in
+            takeString(dmc_room_load(name, raw.bindMemory(to: UInt8.self).baseAddress, raw.count))
+        }
+    }
+
+    static func clearRoom() { dmc_room_clear() }
 
     /// The stored values (key -> value) applied: what they mean for the view.
     static func apply(stored: [String: Float]) -> AppliedSettings {

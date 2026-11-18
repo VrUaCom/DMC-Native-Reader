@@ -36,6 +36,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Animations: the core's animation strip under the view (the library's
   motions; a card with MotionScripts lists them in its menu), play / pause,
   looping like Android; Load motion picks a MOT or motion PAC.
+- The base room every model stands in (Room menu: load a stNNN file, clear),
+  the effects the view can play (Effects menu), and Export PNG (the stage's
+  export picture, else the view as it is).
 - Settings (⌘,): the core's settings schema, the same rows as Android, each
   choice stored and applied at once.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
@@ -45,6 +48,6 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- The base room, stage configurations, effects, cutscenes,
+- Stage configurations, cutscenes,
   videos (the core is built without FFmpeg here), the photo camera and fly
   mode are on Android only for now; the C API already has all of them.
