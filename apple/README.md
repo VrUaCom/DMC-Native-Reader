@@ -39,6 +39,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - The base room every model stands in (Room menu: load a stNNN file, clear),
   the effects the view can play (Effects menu), and Export PNG (the stage's
   export picture, else the view as it is).
+- Long press on the view: the core's answer (a configuration marker's card
+  with its rows and buttons, a joint, a note). Room menu → Load stage
+  configuration (stNNNcfg.pac) for the opened stage or the base room.
 - Settings (⌘,): the core's settings schema, the same rows as Android, each
   choice stored and applied at once.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
@@ -48,6 +51,6 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 ## Not yet
 
 - The view is drawn by the core's CPU renderer; a Metal backend comes next.
-- Stage configurations, cutscenes,
+- Cutscenes,
   videos (the core is built without FFmpeg here), the photo camera and fly
   mode are on Android only for now; the C API already has all of them.

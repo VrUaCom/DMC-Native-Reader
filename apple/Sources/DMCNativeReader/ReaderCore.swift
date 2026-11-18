@@ -237,6 +237,16 @@ struct MenuRow: Identifiable, Hashable {
     let icon: String
 }
 
+/// A configuration marker's card, as the core wrote it.
+struct MarkerCardInfo: Identifiable {
+    struct Row: Hashable { let name: String; let value: String }
+    let marker: Int
+    let title: String
+    let rows: [Row]
+    let buttons: [MenuRow]
+    var id: Int { marker }
+}
+
 /// What the core tells the shell after an action.
 struct Outcome {
     let ok: Bool
@@ -343,6 +353,18 @@ extension ReaderSession {
         return RGBAImage(copying: image.pointee)
     }
 
+    /// The view's long press at (x, y) of a width x height frame.
+    func hold(width: Int, height: Int, camera: ViewCamera, flags: UInt32, x: Float, y: Float) -> Outcome {
+        var view = dmc_view()
+        view.yaw = camera.yaw; view.pitch = camera.pitch; view.zoom = camera.zoom
+        view.render_flags = flags; view.pan_x = camera.panX; view.pan_y = camera.panY
+        view.room_yaw = camera.roomYaw; view.motion_frame = .nan
+        var result = dmc_hold(handle, Int32(width), Int32(height), &view, x, y, true, false)
+        defer { dmc_outcome_free(&result) }
+        return Outcome(ok: result.ok, step: result.step, message: String(cString: result.message),
+                       marker: result.marker, title: String(cString: result.title), opened: nil)
+    }
+
     /// The core's diagnostics text for the Info window.
     func diagnostics() -> String { takeString(dmc_diagnostics(handle)) ?? "" }
 }
@@ -412,6 +434,43 @@ enum ReaderCore {
     }
 
     static func clearRoom() { dmc_room_clear() }
+
+    /// A stage configuration (stNNNcfg.pac) for slot 0 (the base room) or 1 (the opened stage).
+    static func loadStageConfig(name: String, bytes: Data, slot: Int) -> Outcome {
+        var result = bytes.withUnsafeBytes { raw in
+            dmc_stage_config_load(name, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, Int32(slot))
+        }
+        defer { dmc_outcome_free(&result) }
+        return Outcome(ok: result.ok, step: result.step, message: String(cString: result.message),
+                       marker: result.marker, title: String(cString: result.title), opened: nil)
+    }
+
+    /// A marker's card: title, rows and buttons (nil: no card).
+    static func markerCard(_ marker: Int) -> MarkerCardInfo? {
+        guard let card = dmc_marker_card(Int32(marker)) else { return nil }
+        defer { dmc_card_free(card) }
+        var cardRows: [(String, String)] = []
+        for index in 0..<dmc_card_row_count(card) {
+            var name: UnsafePointer<CChar>?
+            var value: UnsafePointer<CChar>?
+            if dmc_card_row(card, index, &name, &value), let name, let value {
+                cardRows.append((String(cString: name), String(cString: value)))
+            }
+        }
+        let buttons = rows(of: dmc_card_actions(card))
+        return MarkerCardInfo(marker: marker, title: String(cString: dmc_card_title(card)),
+                              rows: cardRows.map { MarkerCardInfo.Row(name: $0.0, value: $0.1) }, buttons: buttons)
+    }
+
+    static func runCardAction(marker: Int, id: Int) -> Outcome {
+        var opened: OpaquePointer?
+        var result = dmc_run_card_action(Int32(marker), Int32(id), &opened)
+        defer { dmc_outcome_free(&result) }
+        var outcome = Outcome(ok: result.ok, step: result.step, message: String(cString: result.message),
+                              marker: result.marker, title: String(cString: result.title), opened: nil)
+        if let opened { outcome.opened = ReaderSession(adopting: opened, title: outcome.title.isEmpty ? "File" : outcome.title) }
+        return outcome
+    }
 
     /// The stored values (key -> value) applied: what they mean for the view.
     static func apply(stored: [String: Float]) -> AppliedSettings {

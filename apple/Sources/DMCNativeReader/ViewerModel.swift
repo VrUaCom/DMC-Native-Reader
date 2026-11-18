@@ -266,6 +266,59 @@ final class ViewerModel: ObservableObject {
             : "Could not write \(url.lastPathComponent)."
     }
 
+    // MARK: Long press, configurations, marker cards
+
+    @Published var markerCard: MarkerCardInfo?
+
+    /// The view's long press at `point` (view points): a marker's card, a joint, or the core's note.
+    func hold(at point: CGPoint) {
+        guard let session, !isPicture else { return }
+        let (width, height) = frameSize()
+        let x = Float(point.x / max(1, viewSize.width)) * Float(width)
+        let y = Float(point.y / max(1, viewSize.height)) * Float(height)
+        let outcome = session.hold(width: width, height: height, camera: camera, flags: settings.renderFlags,
+                                   x: x, y: y)
+        handle(outcome)
+    }
+
+    func loadStageConfig(url: URL) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            message = "Could not read \(url.lastPathComponent)."
+            return
+        }
+        let slot = session.map { dmc_stage_slot($0.handle) } ?? 0
+        handle(ReaderCore.loadStageConfig(name: url.lastPathComponent, bytes: data, slot: Int(slot)))
+        refreshAfterChange()
+    }
+
+    func runCard(button: MenuRow) {
+        guard let card = markerCard else { return }
+        markerCard = nil
+        handle(ReaderCore.runCardAction(marker: card.marker, id: button.id))
+    }
+
+    /// The one platform step the core leaves to the shell.
+    private func handle(_ outcome: Outcome) {
+        if !outcome.message.isEmpty { message = outcome.message }
+        if let opened = outcome.opened, let session {
+            stack.append(session)
+            show(opened)
+            return
+        }
+        switch outcome.step {
+        case Int32(DMC_STEP_SHOW_MARKER_CARD.rawValue):
+            markerCard = ReaderCore.markerCard(Int(outcome.marker))
+        case Int32(DMC_STEP_RESET_VIEW.rawValue):
+            resetCamera()
+        case Int32(DMC_STEP_PICK_STAGE_CONFIG.rawValue):
+            OpenPanel.choose { [weak self] in self?.loadStageConfig(url: $0) }
+        default:
+            requestFrame()
+        }
+    }
+
     private func refreshAfterChange() {
         guard let session else { return }
         let menu = session.companionRows()
@@ -281,13 +334,8 @@ final class ViewerModel: ObservableObject {
     func run(action: MenuRow) {
         guard let session else { return }
         let outcome = session.runCompanionAction(action.id)
-        if !outcome.message.isEmpty { message = outcome.message }
-        if let opened = outcome.opened {
-            stack.append(session)
-            show(opened)
-            return
-        }
-        if outcome.step == Int32(DMC_STEP_RESET_VIEW.rawValue) { resetCamera() }
+        if outcome.opened != nil { handle(outcome); return }
+        handle(outcome)
         // The session may have changed (a part attached, a texture re-encoded): refresh what depends on it.
         let menu = session.companionRows()
         actions = menu.rows

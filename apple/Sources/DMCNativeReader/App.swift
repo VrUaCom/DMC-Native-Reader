@@ -103,6 +103,7 @@ struct ContentView: View {
             return true
         }
         .sheet(isPresented: $showInfo) { InfoSheet(model: model) }
+        .sheet(item: $model.markerCard) { card in MarkerCardSheet(model: model, card: card) }
     }
 
     private var start: some View {
@@ -213,6 +214,10 @@ struct ContentView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
             .gesture(orbit)
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).sequenced(before: DragGesture(minimumDistance: 0))
+                .onEnded { value in
+                    if case .second(true, let drag?) = value { model.hold(at: drag.location) }
+                })
             .simultaneousGesture(magnify)
             .simultaneousGesture(twist)
             .onAppear { model.viewChanged(size: geometry.size, scale: NSScreen.main?.backingScaleFactor ?? 2) }
@@ -323,6 +328,9 @@ struct ContentView: View {
                 Button("Load base room…") { OpenPanel.choose { model.loadRoom(url: $0) } }
                 Button("Clear base room") { model.clearRoom() }
                     .disabled(model.roomName == nil)
+                Divider()
+                Button("Load stage configuration…") { OpenPanel.choose { model.loadStageConfig(url: $0) } }
+                    .disabled(model.session == nil)
             } label: { Label(model.roomName ?? "Room", systemImage: "cube.transparent") }
             Button {
                 let panel = NSSavePanel()
@@ -414,5 +422,36 @@ struct SettingsView: View {
     private func closest(_ row: SettingRow) -> Int {
         let value = model.value(of: row)
         return row.values.indices.min { abs(row.values[$0] - value) < abs(row.values[$1] - value) } ?? 0
+    }
+}
+
+/// A configuration marker's card: its rows, then its buttons (the core's).
+struct MarkerCardSheet: View {
+    @ObservedObject var model: ViewerModel
+    let card: MarkerCardInfo
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(card.title).font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                ForEach(card.rows, id: \.self) { row in
+                    GridRow {
+                        Text(row.name).foregroundStyle(.secondary)
+                        Text(row.value).textSelection(.enabled)
+                    }
+                }
+            }
+            .font(.system(.callout, design: .monospaced))
+            HStack {
+                ForEach(card.buttons) { button in
+                    Button(button.label) { model.runCard(button: button) }
+                }
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 420)
     }
 }
