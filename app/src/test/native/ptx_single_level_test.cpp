@@ -55,6 +55,23 @@ void add_texture(std::vector<std::byte>& b, std::size_t at, std::uint32_t w, std
     }
 }
 
+// The same texture with a full mip chain down to 1x1 (DDSD_MIPMAPCOUNT set).
+void add_chain(std::vector<std::byte>& b, std::size_t at, std::uint32_t w, std::uint32_t h, std::uint16_t rgb565,
+               std::uint32_t mips, std::uint32_t chain_bytes) {
+    add_texture(b, at, w, h, rgb565);
+    put32(b, at + 0x64, 128U + chain_bytes);
+    const std::size_t d = at + 0x70;
+    put32(b, d + 8, 0x81007U | 0x20000U);
+    put32(b, d + 28, mips);
+    put32(b, d + 108, 0x401008U);
+    for (std::size_t p = d + 128 + (w / 4U) * (h / 4U) * 16U; p < d + 128 + chain_bytes; p += 16) {
+        b[p] = std::byte{0xFF};
+        b[p + 1] = std::byte{0xFF};
+        put16(b, p + 8, rgb565);
+        put16(b, p + 10, rgb565);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -93,6 +110,22 @@ int main() {
     auto longer = bank;
     longer.resize(bank.size() + 0x800);
     assert(!parse_ptx(longer).ok());
+    // A bundle mixing a single-level texture with a full chain (GData.afs
+    // em026..em028) reads: each DDS exact in its descriptor.
+    std::vector<std::byte> mixed(0x800 + 3 * 0x800 + 1 * 0x800);
+    put32(mixed, 0, 2U);
+    put32(mixed, 4, 3U);
+    put32(mixed, 8, 1U);
+    add_texture(mixed, 0x800, 64, 64, 0xF800);
+    add_chain(mixed, 0x2000, 8, 8, 0x07E0, 4U, 4U * 16U + 3U * 16U);  // 8x8, 4x4, 2x2, 1x1
+    const auto both = parse_ptx(mixed);
+    assert(both.ok() && both.slots.size() == 2U);
+    assert(both.slots[0].dds.mip_count == 1U && both.slots[1].dds.mip_count == 4U);
+    assert(decode_base_mip(mixed, both.slots[1], &image) && image.width == 8U && image.rgba8[1] >= 0xF0);
+    // ...but not with a descriptor size that disagrees with its DDS.
+    auto wrong = mixed;
+    put32(wrong, 0x2000 + 0x64, 1234U);
+    assert(!parse_ptx(wrong).ok());
     std::printf("ptx_single_level ok\n");
     return 0;
 }

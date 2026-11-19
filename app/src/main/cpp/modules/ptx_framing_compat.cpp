@@ -333,14 +333,32 @@ dmc3::TextureSlotFramingResult parse_texture_bundle(
         } catch (...) {
         }
     }
-    // Only descriptor-field disagreements are tolerated. Structural faults
-    // (padding, trailing bytes, sector bounds, DDS validity) stay rejected.
-    if (read.framing.status != dmc3::TextureSlotFramingStatus::descriptor_mismatch) {
+    // Only descriptor-field disagreements are tolerated, and bundles that mix
+    // full mip chains with single-level textures (GData.afs em026..em028: the
+    // canonical reader takes one or the other, the single-level reader only
+    // the latter). Structural faults (padding, trailing bytes, sector bounds,
+    // DDS sizes) stay rejected: the lenient read checks each of them.
+    if (read.framing.status != dmc3::TextureSlotFramingStatus::descriptor_mismatch &&
+        read.framing.status != dmc3::TextureSlotFramingStatus::invalid_dds) {
         return read.framing;
     }
 
     try {
         auto lenient = parse_lenient(source);
+        // A mixed bundle is taken only as it is: every descriptor's DDS size
+        // exact, and both kinds of texture really present.
+        if (lenient.ok() && read.framing.status == dmc3::TextureSlotFramingStatus::invalid_dds) {
+            bool exact = true;
+            bool single = false;
+            bool chain = false;
+            for (const auto& entry : lenient.document.textures) {
+                exact = exact && u32(source, static_cast<std::size_t>(entry.descriptor_offset) + 0x64U) == entry.dds_size;
+                single = single || entry.mip_map_count == 1U;
+                chain = chain || entry.mip_map_count > 1U;
+            }
+            if (!exact || !single || !chain) return read.framing;
+            lenient.detail = "mixed full-chain and single-level textures (lenient read: header, sector spans, DDS)";
+        }
         if (lenient.ok()) {
             if (compatibility_used != nullptr) *compatibility_used = false;
             if (community_descriptors_used != nullptr) *community_descriptors_used = true;

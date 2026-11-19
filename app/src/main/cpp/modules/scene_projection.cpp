@@ -87,7 +87,9 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
             }
             total_vertices += primitive.mesh.vertices.size();
             total_indices += primitive.mesh.indices.size();
-            if (!primitive.mesh.has_uv0()) complete_uv0 = false;
+            // A mesh with no vertices (pl011 has two) has nothing to map: it
+            // does not take the UVs away from the rest of the scene.
+            if (!primitive.mesh.vertices.empty() && !primitive.mesh.has_uv0()) complete_uv0 = false;
         }
         materialized.vertices.reserve(total_vertices);
         materialized.indices.reserve(total_indices);
