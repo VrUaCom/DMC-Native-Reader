@@ -18,7 +18,7 @@
  * bytes and makes a new session, so a large archive opens while other
  * sessions keep drawing.
  *
- * Ownership: a session from dmc_open, dmc_open_source, dmc_open_child,
+ * Ownership: a session from dmc_open, dmc_open_description, dmc_open_source, dmc_open_child,
  * dmc_assemble, dmc_compose or dmc_open_uv_gallery is the caller's and is
  * closed once with dmc_close. A session built from others (a child, an
  * assembly, a composition) owns copies of what it needs: its sources may be
@@ -57,6 +57,9 @@ typedef struct dmc_open_result {
 
 /* How a picked file opens, decided by the core (spider open_resource). */
 dmc_open_result dmc_open(const char* name, const uint8_t* bytes, size_t size);
+/* The file as its description, with no format module run: for a file the
+ * reader closed on the last time it opened it (the JNI describe_only open). */
+dmc_open_result dmc_open_description(const char* name, const uint8_t* bytes, size_t size);
 void dmc_close(dmc_session* session);
 
 size_t dmc_child_count(const dmc_session* session);

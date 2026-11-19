@@ -233,6 +233,22 @@ dmc_open_result dmc_open(const char* name, const uint8_t* bytes, size_t size) {
     return result;
 }
 
+dmc_open_result dmc_open_description(const char* name, const uint8_t* bytes, size_t size) {
+    dmc_open_result result{};
+    try {
+        // Unlocked like dmc_open (B7): nothing is parsed, a new session is made.
+        auto opened = actions::open_resource_description(text_or_empty(name), bytes, size);
+        result.opened_as = static_cast<dmc_opened_as>(opened.as);
+        result.title = copy_string(opened.title);
+        result.room_effects = opened.room_effects;
+        result.session = wrap(std::move(opened.session));
+    } catch (...) {
+        result.session = nullptr;
+        result.opened_as = DMC_OPENED_REJECTED;
+    }
+    return result;
+}
+
 void dmc_close(dmc_session* session) {
     if (session == nullptr) return;
     const std::lock_guard lock{api_mutex()};

@@ -77,6 +77,9 @@ final class ViewerModel: ObservableObject {
         openRequest += 1
         let request = openRequest
         opening = name
+        // The file the reader closed on the last time opens as its description.
+        let describeOnly = CrashReports.takeClosedOn(name)
+        CrashReports.opening(name)
         // The core parses without the session lock (B7): a large PAC opens
         // while the window stays live and the current view keeps drawing.
         Task { @MainActor [weak self] in
@@ -85,11 +88,12 @@ final class ViewerModel: ObservableObject {
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 do {
                     let data = try Data(contentsOf: url, options: .mappedIfSafe)
-                    return ReaderSession.open(name: name, bytes: data)
+                    return ReaderSession.open(name: name, bytes: data, describeOnly: describeOnly)
                 } catch {
                     return .failure(OpenFailure(message: "Could not read \(name): \(error.localizedDescription)"))
                 }
             }.value
+            CrashReports.shown(name)
             guard let self, request == self.openRequest else { return }  // a newer file was picked
             self.opening = nil
             switch result {
@@ -274,6 +278,11 @@ final class ViewerModel: ObservableObject {
         roomName = nil
         refreshAfterChange()
     }
+
+    // MARK: Crash report
+
+    /// The last run's crash report, shown once at start.
+    @Published var crashReport: String?
 
     // MARK: Collision
 

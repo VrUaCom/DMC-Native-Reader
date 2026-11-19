@@ -129,10 +129,10 @@ final class ReaderSession: @unchecked Sendable {
     deinit { dmc_close(handle) }
 
     /// Opens `bytes` named `name`; on rejection the core's reason comes back as text.
-    static func open(name: String, bytes: Data) -> Result<ReaderSession, OpenFailure> {
+    static func open(name: String, bytes: Data, describeOnly: Bool = false) -> Result<ReaderSession, OpenFailure> {
         var result = bytes.withUnsafeBytes { raw -> dmc_open_result in
             let base = raw.bindMemory(to: UInt8.self).baseAddress
-            return dmc_open(name, base, raw.count)
+            return describeOnly ? dmc_open_description(name, base, raw.count) : dmc_open(name, base, raw.count)
         }
         let title = takeString(result.title) ?? name
         result.title = nil

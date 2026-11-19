@@ -13,7 +13,23 @@ struct DMCNativeReaderApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(model: model)
-                .onAppear { appDelegate.model = model }
+                .onAppear {
+                    appDelegate.model = model
+                    if model.crashReport == nil, let report = appDelegate.lastCrash {
+                        model.crashReport = report
+                        appDelegate.lastCrash = nil
+                    }
+                }
+                .alert("The reader closed by itself last time",
+                       isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
+                    Button("Copy report") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(model.crashReport ?? "", forType: .string)
+                    }
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text((model.crashReport ?? "") + "\n\nThat file now opens as its description, once.")
+                }
                 .onOpenURL { model.open(url: $0) }
         }
         Settings {
@@ -37,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         didSet { if let model, !waiting.isEmpty { waiting.forEach { url in Task { @MainActor in model.open(url: url) } }; waiting.removeAll() } }
     }
     private var waiting: [URL] = []
+    /// The last run's crash report (CrashReports), until the window shows it.
+    var lastCrash: String? = CrashReports.install()
+
+    func applicationWillTerminate(_ notification: Notification) { CrashReports.left() }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Started from Terminal (swift run) the app would stay in the background.

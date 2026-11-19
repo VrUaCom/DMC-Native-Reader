@@ -57,6 +57,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Collision: a character's attack hitboxes (all, each attack, H steps
   through them as the Android button) and a stage's HITS walls and floors,
   with the core's reports grouped by colour.
+- Crashes: the core's crash note (dmc_crash_install) and the file being
+  opened are kept; the next start shows them, and that file opens once as
+  its description (dmc_open_description) instead of closing the reader again.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an

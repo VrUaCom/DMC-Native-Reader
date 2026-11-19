@@ -150,6 +150,16 @@ int main(void) {
     assert(model.session != NULL && model.opened_as == DMC_OPENED_PLAIN);
     dmc_string_free(model.title);
     assert(!dmc_image_preview_size(model.session, &pw, &ph) && pw == 0 && ph == 0);
+    /* The same file as its description: nothing parsed, nothing drawn, a picture of the note. */
+    dmc_open_result described = dmc_open_description("tri.mod", mod, mod_size);
+    assert(described.session != NULL && described.opened_as == DMC_OPENED_PLAIN);
+    assert(described.title != NULL && strstr(described.title, "description") != NULL);
+    dmc_string_free(described.title);
+    assert(dmc_child_count(described.session) == 0);
+    dmc_close(described.session);
+    dmc_open_result no_file = dmc_open_description("empty.bin", NULL, 0);
+    assert(no_file.session == NULL && no_file.opened_as == DMC_OPENED_REJECTED);
+    dmc_string_free(no_file.title);
     dmc_view view;
     memset(&view, 0, sizeof view);
     view.zoom = 1.0f;

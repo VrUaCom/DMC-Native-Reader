@@ -24,7 +24,7 @@
 **Буфери пікселів** виділяє оболонка і передає їх місткість. Якщо буфер замалий, функція нічого не пише й повертає 0/false. Через це `allocateFrameBuffer` / `freeFrameBuffer` у C API не переходять.
 
 **Сесії й володіння:**
-- кожна сесія від `dmc_open`, `dmc_open_source`, `dmc_open_child`, `dmc_assemble`, `dmc_compose` або `dmc_open_uv_gallery` належить тому, хто викликав, і закривається один раз;
+- кожна сесія від `dmc_open`, `dmc_open_description`, `dmc_open_source`, `dmc_open_child`, `dmc_assemble`, `dmc_compose` або `dmc_open_uv_gallery` належить тому, хто викликав, і закривається один раз;
 - сесія, зібрана з інших, тримає власні копії (`shared_ptr` на байти), тому джерела можна закрити раніше (перевірено в `c_api_test`);
 - JNI тримає реєстр живих сесій (`live_sessions`), тож закритий handle там нічого не робить. У C API реєстру немає, і подвійне закриття — помилка оболонки. Swift закриває сесію в `deinit`, тож такої помилки там не буває. Для Windows слід зробити так само: RAII-обгортка над `dmc_session*`.
 
@@ -86,7 +86,7 @@
 | `imagePreviewWidth` | DmcRenderView | так | `dmc_image_preview_size / dmc_image_preview` | є; три виклики JNI стають двома |
 | `motionStrip` | MainActivity | так | `dmc_motion_strip_build` | є |
 | `openChild` | MainActivity | так | `dmc_open_child` | є |
-| `openResource` | MainActivity | так | `dmc_open` | є з v1 |
+| `openResource` | MainActivity | так | `dmc_open`; `describe_only` — `dmc_open_description` | є з v1; опис — з 2026-11-19 |
 | `renderToBuffer` | DmcRenderView | так | `dmc_render` | є; бракує полів dmc_view: room_yaw, follow, dolly і статусу «показано у вікні» (біт 4) |
 | `sessionInfoText` | MainActivity | так | `dmc_info_text` | є |
 | `settingsSchema` | MainActivity | — | `dmc_settings_schema / dmc_settings_selected` | є |
