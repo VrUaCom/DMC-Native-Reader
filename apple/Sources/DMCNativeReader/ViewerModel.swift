@@ -21,7 +21,7 @@ final class ViewerModel: ObservableObject {
     let settingRows = ReaderCore.settingsSchema()
     @Published private(set) var stored: [String: Float] =
         (UserDefaults.standard.dictionary(forKey: "settings") as? [String: Float]) ?? [:]
-    private lazy var settings = ReaderCore.apply(stored: stored)
+    lazy var settings = ReaderCore.apply(stored: stored)
 
     /// The value a setting has now (stored, else the core's fallback).
     func value(of row: SettingRow) -> Float { stored[row.key] ?? row.fallback }
@@ -34,7 +34,7 @@ final class ViewerModel: ObservableObject {
         requestFrame()
     }
     private let renderQueue = DispatchQueue(label: "dmc.render", qos: .userInitiated)
-    private var viewSize = CGSize(width: 800, height: 600)
+    var viewSize = CGSize(width: 800, height: 600)
     private var scale: CGFloat = 2
     private var generation = 0
     private var drawing = false
@@ -167,6 +167,7 @@ final class ViewerModel: ObservableObject {
         soundPlayer.stop()
         sounds = next.soundRows().rows
         hitboxAttack = nil
+        classEvents = isPicture ? [] : next.classEvents()
         dualPreview = next.hasDualPreview
         infoPreviewShown = dualPreview && next.infoPreviewActive
         stageCollisionShown = false
@@ -312,6 +313,9 @@ final class ViewerModel: ObservableObject {
     @Published var askTextureFormat = false
     @Published var partsShown: [PartInfo] = []
     @Published var diagnosticsText = ""
+    @Published var diagnosticsTitle = "Diagnostics"
+    @Published var classEvents: [String] = []
+    @Published var roomBroken = false
     /// Files staged beside the model, listed in Info.
     var staged: [(role: String, name: String)] = []
 
@@ -512,7 +516,7 @@ final class ViewerModel: ObservableObject {
     // MARK: Camera settings and viewfinder
 
     let cameraRows = ReaderCore.cameraSettings()
-    @Published private(set) var cameraChoices: [Int] = []
+    @Published var cameraChoices: [Int] = []
     @Published private(set) var viewfinder: Viewfinder?
     @Published private(set) var dials: [(title: String, value: String)] = []
     /// The frame size the viewfinder was laid out for (pixels).
@@ -698,7 +702,7 @@ final class ViewerModel: ObservableObject {
 
     /// The view's size in pixels, the longest side capped by the settings and
     /// each side within what the core draws (a thin view is scaled up from it).
-    private func frameSize() -> (Int, Int) {
+    func frameSize() -> (Int, Int) {
         var width = max(1, viewSize.width * scale)
         var height = max(1, viewSize.height * scale)
         let longest = max(width, height)

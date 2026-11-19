@@ -140,7 +140,10 @@ extension ViewerModel {
         case CompanionID.stagePhysics: stageFiles(role: "Physics")
         case CompanionID.stageCloth: stageFiles(role: "Cloth")
         case CompanionID.stageOther: stageFiles(role: "Other")
-        case CompanionID.diagnostics: diagnosticsText = session?.diagnostics() ?? ""
+        case CompanionID.diagnostics:
+            diagnosticsTitle = "Diagnostics"
+            diagnosticsText = session?.diagnostics() ?? ""
+        case CompanionID.nextRoomSpot: nextSpot()
         case CompanionID.photo: SavePanel.choose(name: "photo.png", type: .png) { [weak self] in self?.savePhoto(to: $0) }
         case CompanionID.video:
             if recording { toggleRecording() } else {

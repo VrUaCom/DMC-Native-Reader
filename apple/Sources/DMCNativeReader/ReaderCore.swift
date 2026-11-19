@@ -95,6 +95,7 @@ struct SessionState: OptionSet {
     static let canShowUv = SessionState(rawValue: 1 << 14)
     static let canShowHitboxes = SessionState(rawValue: 1 << 33)
     static let canShowStageCollision = SessionState(rawValue: 1 << 34)
+    static let canBreakRoom = SessionState(rawValue: 1 << 36)
 }
 
 /// What the stored settings mean for the view (dmc_apply_settings).

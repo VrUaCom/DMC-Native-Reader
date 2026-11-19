@@ -134,7 +134,7 @@ struct ContentView: View {
             PartsSheet(model: model)
         }
         .sheet(isPresented: Binding(get: { !model.diagnosticsText.isEmpty }, set: { if !$0 { model.diagnosticsText = "" } })) {
-            TextSheet(title: "Diagnostics", text: model.diagnosticsText)
+            TextSheet(title: model.diagnosticsTitle, text: model.diagnosticsText)
         }
     }
 
@@ -321,6 +321,7 @@ struct ContentView: View {
                 .onEnded { value in
                     if case .second(true, let drag?) = value { model.hold(at: drag.location) }
                 })
+            .simultaneousGesture(SpatialTapGesture().onEnded { model.click(at: $0.location) })
             .simultaneousGesture(magnify)
             .simultaneousGesture(twist)
             .onAppear { model.viewChanged(size: geometry.size, scale: NSScreen.main?.backingScaleFactor ?? 2) }
@@ -427,6 +428,22 @@ struct ContentView: View {
                     }
                 } label: { Label("Effects", systemImage: "sparkles") }
             }
+            if !model.classEvents.isEmpty {
+                Menu {
+                    ForEach(model.classEvents.indices, id: \.self) { i in
+                        Button(model.classEvents[i]) { model.triggerClassEvent(i) }
+                    }
+                } label: { Label("Events", systemImage: "bolt") }
+            }
+            if model.session != nil {
+                Menu {
+                    Button("UV") { model.showInspection(1, title: "UV") }
+                    Button("Meshes") { model.showInspection(2, title: "Meshes") }
+                    Button("Hierarchy") { model.showInspection(3, title: "Hierarchy") }
+                    Divider()
+                    Button("Benchmark (10 s)") { model.runBenchmark() }.disabled(model.isPicture)
+                } label: { Label("Inspect", systemImage: "list.bullet.rectangle") }
+            }
             if model.canShowUV {
                 Button { model.openUVMaps() } label: { Label("UV maps", systemImage: "square.grid.3x3") }
                     .help("The model's UV layout, one map per texture")
@@ -473,6 +490,18 @@ struct ContentView: View {
                 Button("Load base room…") { OpenPanel.choose { model.loadRoom(url: $0) } }
                 Button("Clear base room") { model.clearRoom() }
                     .disabled(model.roomName == nil)
+                if model.roomName != nil {
+                    Button("Next spot") { model.nextSpot() }.keyboardShortcut("n", modifiers: [])
+                    let spawns = model.spawnPoints
+                    if !spawns.isEmpty {
+                        Menu("Spawn points") {
+                            ForEach(spawns.indices, id: \.self) { i in Button(spawns[i]) { model.standOnSpawn(i) } }
+                        }
+                    }
+                }
+                if model.canBreakRoom {
+                    Toggle("Broken", isOn: Binding(get: { model.roomBroken }, set: { model.setRoomBroken($0) }))
+                }
                 Divider()
                 Button("Load stage configuration…") { OpenPanel.choose { model.loadStageConfig(url: $0) } }
                     .disabled(model.session == nil)

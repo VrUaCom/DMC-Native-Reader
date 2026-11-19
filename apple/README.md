@@ -67,6 +67,11 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   model, the parts placed on the host's joints, attach a PTX, the archive's
   own files, a stage's effect bank, files staged beside the model (listed
   in Info), diagnostics.
+- A click picks what is under the pointer (a joint, a marker's card) and,
+  with the base room shown, stands the actor on the floor there; the Room
+  menu steps through spots (N) and spawn points and breaks the room; an
+  enemy class's events fire from Events; Inspect shows the UV, mesh and
+  hierarchy texts and runs the core's 10-second benchmark.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
