@@ -108,6 +108,7 @@ struct ContentView: View {
         .onAppear { FlyKeys.install(model: model); model.loadCameraChoices() }
         .sheet(isPresented: $showInfo) { InfoSheet(model: model) }
         .sheet(item: $model.markerCard) { card in MarkerCardSheet(model: model, card: card) }
+        .sheet(item: $model.collisionReport) { report in CollisionReportSheet(report: report) }
     }
 
     private var start: some View {
@@ -399,6 +400,26 @@ struct ContentView: View {
                     }
                 } label: { Label("Effects", systemImage: "sparkles") }
             }
+            if model.canShowHitboxes || model.canShowStageCollision {
+                Menu {
+                    if model.canShowHitboxes {
+                        Button("Next hitboxes") { model.cycleHitboxes() }.keyboardShortcut("h", modifiers: [])
+                        Button("All attacks") { model.showHitboxes(-1) }
+                        ForEach(model.attackIDs, id: \.self) { id in
+                            Button("Attack \(id)") { model.showHitboxes(id) }
+                        }
+                        Button("Hide hitboxes") { model.showHitboxes(nil) }.disabled(model.hitboxAttack == nil)
+                        Button("Hitbox report…") { model.showCollisionReport(attack: true) }
+                    }
+                    if model.canShowStageCollision {
+                        Divider()
+                        Button(model.stageCollisionShown ? "Hide stage collision" : "Show stage collision") {
+                            model.toggleStageCollision()
+                        }
+                        Button("Stage collision report…") { model.showCollisionReport(attack: false) }
+                    }
+                } label: { Label("Collision", systemImage: "scope") }
+            }
             if !model.sounds.isEmpty {
                 Menu {
                     ForEach(model.sounds) { row in
@@ -536,6 +557,45 @@ struct SettingsView: View {
 }
 
 /// A configuration marker's card: its rows, then its buttons (the core's).
+/// The core's collision report: each group's colour (as drawn), heading and lines.
+struct CollisionReportSheet: View {
+    let report: CollisionReport
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(report.title).font(.headline)
+            if !report.summary.isEmpty { Text(report.summary).foregroundStyle(.secondary) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(report.groups) { group in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                if group.rgb >= 0 {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color(red: Double((group.rgb >> 16) & 0xFF) / 255,
+                                                    green: Double((group.rgb >> 8) & 0xFF) / 255,
+                                                    blue: Double(group.rgb & 0xFF) / 255))
+                                        .frame(width: 12, height: 12)
+                                }
+                                Text(group.heading).font(.subheadline.bold())
+                            }
+                            Text(group.lines).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 460, minHeight: 360)
+    }
+}
+
 struct MarkerCardSheet: View {
     @ObservedObject var model: ViewerModel
     let card: MarkerCardInfo

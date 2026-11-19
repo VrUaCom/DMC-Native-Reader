@@ -92,6 +92,8 @@ struct ViewCamera: Equatable {
 struct SessionState: OptionSet {
     let rawValue: UInt64
     static let uvMapView = SessionState(rawValue: 1 << 18)
+    static let canShowHitboxes = SessionState(rawValue: 1 << 33)
+    static let canShowStageCollision = SessionState(rawValue: 1 << 34)
 }
 
 /// What the stored settings mean for the view (dmc_apply_settings).
@@ -370,6 +372,34 @@ extension ReaderSession {
         guard let menu = dmc_effect_menu(handle) else { return [] }
         defer { dmc_menu_free(menu) }
         return rows(of: menu)
+    }
+
+    /// Attack ids with hitboxes on the model's bones.
+    func attackIDs() -> [Int] {
+        let count = dmc_collision_attack_ids(handle, nil, 0)
+        guard count > 0 else { return [] }
+        var ids = [Int32](repeating: 0, count: count)
+        let written = ids.withUnsafeMutableBufferPointer { dmc_collision_attack_ids(handle, $0.baseAddress, count) }
+        return ids.prefix(min(written, count)).map(Int.init)
+    }
+
+    /// Shows only `attack`'s hitboxes (-1: all); the core's description.
+    func selectAttack(_ attack: Int) -> String { takeString(dmc_select_collision_attack(handle, Int32(attack))) ?? "" }
+
+    var stageCollisionSources: Int { Int(dmc_stage_collision_source_count(handle)) }
+
+    /// The hitbox report (`attack`) or the stage's HITS report.
+    func collisionReport(attack: Bool) -> CollisionReport? {
+        guard let report = dmc_collision_report(handle, attack) else { return nil }
+        defer { dmc_report_free(report) }
+        let groups = (0..<dmc_report_group_count(report)).compactMap { index -> CollisionReport.Group? in
+            guard let g = dmc_report_group_at(report, index)?.pointee else { return nil }
+            return CollisionReport.Group(id: index, rgb: g.rgb, heading: g.heading.map { String(cString: $0) } ?? "",
+                                         lines: g.lines.map { String(cString: $0) } ?? "")
+        }
+        return CollisionReport(title: dmc_report_title(report).map { String(cString: $0) } ?? "",
+                               summary: dmc_report_summary(report).map { String(cString: $0) } ?? "",
+                               groups: groups)
     }
 
     /// The file's sounds; `message` is the core's line when there are none.
@@ -653,6 +683,22 @@ enum ReaderCore {
 enum RenderFlag {
     static let shadows: UInt32 = 1 << 6
     static let uvLayout: UInt32 = 1 << 5
+    static let collision: UInt32 = 1 << 7          // attack hitboxes on the bones
+    static let roomCollision: UInt32 = 1 << 14     // the stage's HITS walls and floors
+}
+
+/// The core's account of a collision: groups with a colour, heading and lines.
+struct CollisionReport: Identifiable {
+    struct Group: Identifiable {
+        let id: Int
+        let rgb: Int64
+        let heading: String
+        let lines: String
+    }
+    let id = UUID()
+    let title: String
+    let summary: String
+    let groups: [Group]
 }
 
 /// Takes a string the C API allocated and frees it.

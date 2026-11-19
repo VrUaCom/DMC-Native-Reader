@@ -138,6 +138,9 @@ final class ViewerModel: ObservableObject {
         effects = isPicture ? [] : next.effectRows()
         soundPlayer.stop()
         sounds = next.soundRows().rows
+        hitboxAttack = nil
+        stageCollisionShown = false
+        attackIDs = next.state.contains(.canShowHitboxes) ? next.attackIDs() : []
         camera = startCamera(of: next)  // draws the first frame of a 3D session
     }
 
@@ -270,6 +273,51 @@ final class ViewerModel: ObservableObject {
         ReaderCore.clearRoom()
         roomName = nil
         refreshAfterChange()
+    }
+
+    // MARK: Collision
+
+    /// Hitboxes: nil off, -1 every attack, else the attack shown.
+    @Published private(set) var hitboxAttack: Int?
+    @Published private(set) var stageCollisionShown = false
+    @Published private(set) var attackIDs: [Int] = []
+    @Published var collisionReport: CollisionReport?
+    var canShowHitboxes: Bool { session?.state.contains(.canShowHitboxes) ?? false }
+    var canShowStageCollision: Bool {
+        (session?.stageCollisionSources ?? 0) > 0 || (roomName != nil && dmc_room_collision_source_count() > 0)
+    }
+
+    /// Shows `attack`'s hitboxes (-1: all), or hides them (nil).
+    func showHitboxes(_ attack: Int?) {
+        guard let session else { return }
+        hitboxAttack = attack
+        if let attack {
+            let label = session.selectAttack(attack)
+            message = "Hitboxes: \(label)"
+        } else {
+            message = "Hitboxes off"
+        }
+        requestFrame()
+    }
+
+    /// Off, every attack, then each attack in turn, as the Android button.
+    func cycleHitboxes() {
+        guard canShowHitboxes else { return }
+        guard let current = hitboxAttack else { return showHitboxes(-1) }
+        let next = current == -1 ? 0 : (attackIDs.firstIndex(of: current).map { $0 + 1 } ?? attackIDs.count)
+        showHitboxes(next < attackIDs.count ? attackIDs[next] : nil)
+    }
+
+    func toggleStageCollision() {
+        guard canShowStageCollision else { return }
+        stageCollisionShown.toggle()
+        message = stageCollisionShown ? "Stage collision shown" : "Stage collision hidden (still active)"
+        requestFrame()
+    }
+
+    func showCollisionReport(attack: Bool) {
+        collisionReport = session?.collisionReport(attack: attack)
+        if collisionReport == nil { message = "No collision to report." }
     }
 
     // MARK: Sounds
@@ -573,6 +621,8 @@ final class ViewerModel: ObservableObject {
         } else if settings.shadows {
             flags |= RenderFlag.shadows
         }
+        if hitboxAttack != nil { flags |= RenderFlag.collision }
+        if stageCollisionShown { flags |= RenderFlag.roomCollision }
         let camera = self.camera
         let motionFrame = self.motionFrame
         renderQueue.async { [weak self] in

@@ -54,6 +54,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   choice stored and applied at once; a Camera tab holds the photo camera's
   settings (the core's schema). In camera mode the core's viewfinder (frame,
   guide lines, status) is drawn over the view, with its dials below.
+- Collision: a character's attack hitboxes (all, each attack, H steps
+  through them as the Android button) and a stage's HITS walls and floors,
+  with the core's reports grouped by colour.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
