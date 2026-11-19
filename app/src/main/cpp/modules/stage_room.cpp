@@ -376,6 +376,7 @@ const void* g_collision_owner = nullptr;
 std::optional<ActiveCollision> g_collision;
 std::uint64_t g_collision_revision = 0U;
 std::array<std::shared_ptr<const Session>, 2> g_effect_host;
+std::shared_ptr<const Session> g_common_effect_host;
 std::atomic<int> g_active_slot{0};
 
 }  // namespace
@@ -1040,6 +1041,16 @@ void set_effect_host(StageSlot slot, std::shared_ptr<const Session> host) noexce
 std::shared_ptr<const Session> effect_host(StageSlot slot) noexcept {
     const std::lock_guard lock{g_mutex};
     return g_effect_host[static_cast<std::size_t>(slot)];
+}
+
+void set_common_effect_host(std::shared_ptr<const Session> host) noexcept {
+    const std::lock_guard lock{g_mutex};
+    g_common_effect_host = std::move(host);
+}
+
+std::shared_ptr<const Session> common_effect_host() noexcept {
+    const std::lock_guard lock{g_mutex};
+    return g_common_effect_host;
 }
 
 void set_effect_host(std::shared_ptr<const Session> host) noexcept { set_effect_host(active_slot(), std::move(host)); }

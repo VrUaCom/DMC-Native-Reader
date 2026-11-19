@@ -283,8 +283,9 @@ std::string effect_title(const EffectChoice& choice) {
     title += seconds;
     // A bank that did not come with the file itself: which one.
     if (choice.source != EffectChoice::Source::own) {
-        title += " \xC2\xB7 " + (choice.bank.empty() ? std::string(choice.source == EffectChoice::Source::stage
-                                                                     ? "stage bank" : "cutscene bank")
+        title += " \xC2\xB7 " + (choice.bank.empty() ? std::string(choice.source == EffectChoice::Source::stage    ? "stage bank"
+                                                                     : choice.source == EffectChoice::Source::common ? "common bank"
+                                                                                                                     : "cutscene bank")
                                                        : choice.bank);
     }
     const auto owners = effect_sites::owners(choice.kind, choice.id);

@@ -431,7 +431,7 @@ struct ViewControls final {
 // every V, G, E and P record of this session's banks, of the stage effect
 // bank and of a cutscene's bank, in that order.
 struct EffectChoice final {
-    enum class Source : std::uint8_t { own, stage, cutscene };
+    enum class Source : std::uint8_t { own, stage, cutscene, common };
     char kind{};
     std::uint16_t id{};
     std::uint32_t slot{};

@@ -469,6 +469,37 @@ int main(void) {
     dmc_companion* no_facts = dmc_companion_menu(model.session, NULL);
     assert(no_facts != NULL);
     dmc_companion_free(no_facts);
+    /* The common effect bank (static_effect.pac): a synthetic FXBANK of one
+     * G record joins the model's effect menu, and leaves it when cleared. */
+    {
+        uint8_t bank[16 + 8 + 12 + 96];
+        memset(bank, 0, sizeof bank);
+        memcpy(bank, "PNST", 4);
+        bank[4] = 2;            /* two slots: manifest, records */
+        bank[8] = 16;           /* manifest at 16 */
+        bank[12] = 24;          /* records at 24 */
+        memcpy(bank + 16, "G 5 #", 5);
+        memcpy(bank + 24, "PNST", 4);
+        bank[28] = 1;           /* one record */
+        bank[32] = 12;          /* at 12 inside the inner PNST */
+        char* loaded = dmc_common_effects_load("static_effect.pac", bank, sizeof bank);
+        assert(loaded != NULL && strstr(loaded, "1 effect records") != NULL);
+        dmc_string_free(loaded);
+        dmc_menu* with_common = dmc_effect_menu(model.session);
+        int found = 0;
+        for (size_t i = 0; i < dmc_menu_count(with_common); ++i) {
+            const char* label = dmc_menu_at(with_common, i)->label;
+            if (strstr(label, "G 5") != NULL && strstr(label, "static_effect.pac") != NULL) found = 1;
+        }
+        assert(found);
+        dmc_menu_free(with_common);
+        dmc_common_effects_clear();
+        dmc_menu* without = dmc_effect_menu(model.session);
+        for (size_t i = 0; i < dmc_menu_count(without); ++i) assert(strstr(dmc_menu_at(without, i)->label, "static_effect") == NULL);
+        dmc_menu_free(without);
+        const uint8_t junk_bank[4] = {1, 2, 3, 4};
+        assert(dmc_common_effects_load("junk.pac", junk_bank, sizeof junk_bank) == NULL);
+    }
     dmc_menu* effects = dmc_effect_menu(model.session);
     assert(effects != NULL);
     dmc_menu_free(effects);

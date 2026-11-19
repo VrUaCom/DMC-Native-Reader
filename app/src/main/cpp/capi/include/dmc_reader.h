@@ -471,6 +471,11 @@ dmc_menu* dmc_base_room_menu(bool room_loaded);
 /* A stage's effect bank onto slot `slot`; the core's detail, NULL when refused. */
 char* dmc_room_effects_load(const char* name, const uint8_t* bytes, size_t size, int slot);
 void dmc_room_effects_clear(int slot);
+/* The game's common effect bank (static_effect.pac): one for the reader,
+ * listed after each file's own effects and its stage's; a room's bank does
+ * not replace it. The core's detail, NULL when refused. */
+char* dmc_common_effects_load(const char* name, const uint8_t* bytes, size_t size);
+void dmc_common_effects_clear(void);
 
 /* A stNNNcfg.pac (or one member) as slot `slot`'s configuration. */
 dmc_outcome dmc_stage_config_load(const char* name, const uint8_t* bytes, size_t size, int slot);

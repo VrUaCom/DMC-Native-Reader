@@ -203,6 +203,12 @@ void set_effect_host(std::shared_ptr<const Session> host) noexcept;
 void set_effect_host(StageSlot slot, std::shared_ptr<const Session> host) noexcept;
 [[nodiscard]] std::shared_ptr<const Session> effect_host(StageSlot slot) noexcept;
 
+// The game's common effect bank (static_effect.pac: hits, sparks, auras the
+// characters fire). One for the whole reader, beside the stage slots: a base
+// room's or a stage's own bank does not replace it. nullptr: none loaded.
+void set_common_effect_host(std::shared_ptr<const Session> host) noexcept;
+[[nodiscard]] std::shared_ptr<const Session> common_effect_host() noexcept;
+
 // The "# GAME" sets with a model that stand in the room, intact or broken
 // (their order in the layout): DUMMY sets never; a STAY set whose "# SET"
 // comment says broken (Shift-JIS 壊れ) in the broken state only, instead of

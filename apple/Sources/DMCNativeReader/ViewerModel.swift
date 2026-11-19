@@ -104,6 +104,7 @@ final class ViewerModel: ObservableObject {
                 self.stagedMotions.removeAll()
                 self.show(opened)
                 // An opened stage brings its own effect bank and configuration from beside it.
+                self.findCommonEffects(near: url)
                 if opened.openedAs == .stage {
                     self.findStageArchives(near: url, stage: name, slot: 1, effects: true, config: true)
                 }
@@ -303,6 +304,9 @@ final class ViewerModel: ObservableObject {
     /// The base room's effect bank and configuration files (slot 0).
     var baseEffectsName: String?
     var baseConfigName: String?
+    /// The common effect bank (static_effect.pac) and the folder it came from.
+    @Published var commonEffectsName: String?
+    var commonEffectsFolder: URL?
     @Published private(set) var effects: [MenuRow] = []
 
     func loadRoom(url: URL) {

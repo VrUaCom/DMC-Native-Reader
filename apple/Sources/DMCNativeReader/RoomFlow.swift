@@ -62,4 +62,36 @@ extension ViewerModel {
         }
         refreshAfterChange()
     }
+
+    /// The game's common effect bank (static_effect.pac) from the folder of
+    /// the file opened, once per folder: hits, sparks and auras the
+    /// characters fire join each file's effect menu.
+    func findCommonEffects(near url: URL) {
+        let folder = url.deletingLastPathComponent()
+        guard commonEffectsFolder != folder else { return }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        guard let name = files.first(where: { $0.caseInsensitiveCompare("static_effect.pac") == .orderedSame }) else { return }
+        loadCommonEffects(url: folder.appendingPathComponent(name))
+    }
+
+    func loadCommonEffects(url: URL) {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return }
+        let detail = data.withUnsafeBytes { raw in
+            takeString(dmc_common_effects_load(url.lastPathComponent, raw.bindMemory(to: UInt8.self).baseAddress, raw.count))
+        }
+        if detail != nil {
+            commonEffectsFolder = url.deletingLastPathComponent()
+            commonEffectsName = url.lastPathComponent
+            refreshAfterChange()
+        } else {
+            message = "\(url.lastPathComponent) is not an effect bank."
+        }
+    }
+
+    func clearCommonEffects() {
+        dmc_common_effects_clear()
+        commonEffectsName = nil
+        commonEffectsFolder = nil
+        refreshAfterChange()
+    }
 }

@@ -535,6 +535,11 @@ struct ContentView: View {
                 Divider()
                 Button("Load stage configuration…") { OpenPanel.choose { model.loadStageConfig(url: $0) } }
                     .disabled(model.session == nil)
+                Divider()
+                Button(model.commonEffectsName.map { "Common effects: \($0)…" } ?? "Load common effects (static_effect.pac)…") {
+                    OpenPanel.choose { model.loadCommonEffects(url: $0) }
+                }
+                Button("Clear common effects") { model.clearCommonEffects() }.disabled(model.commonEffectsName == nil)
             } label: { Label(model.roomName ?? "Room", systemImage: "cube.transparent") }
             Menu {
                 Toggle("Viewfinder (camera mode)", isOn: Binding(get: { model.cameraModeChoice },

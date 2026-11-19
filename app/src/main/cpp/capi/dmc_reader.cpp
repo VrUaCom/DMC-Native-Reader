@@ -1277,6 +1277,21 @@ char* dmc_room_effects_load(const char* name, const uint8_t* bytes, size_t size,
 
 void dmc_room_effects_clear(int slot) { dmcresource::stage_room::set_effect_host(slot_of(slot), nullptr); }
 
+char* dmc_common_effects_load(const char* name, const uint8_t* bytes, size_t size) {
+    try {
+        if (bytes == nullptr || size == 0U) return nullptr;
+        auto host = dmcresource::stage_room::make_effect_host(text_or_empty(name), bytes, size);
+        if (!host || host->effect_banks.empty()) return nullptr;
+        const std::string detail = std::to_string(host->effect_banks.front().bank.records.size()) +
+                                   " effect records, " +
+                                   std::to_string(host->effect_banks.front().textures.size()) + " textures";
+        dmcresource::stage_room::set_common_effect_host(std::move(host));
+        return copy_string(detail);
+    } catch (...) { return nullptr; }
+}
+
+void dmc_common_effects_clear(void) { dmcresource::stage_room::set_common_effect_host(nullptr); }
+
 dmc_outcome dmc_stage_config_load(const char* name, const uint8_t* bytes, size_t size, int slot) {
     try {
         // Into the base room's set or the opened stage's (stage_slot.h).

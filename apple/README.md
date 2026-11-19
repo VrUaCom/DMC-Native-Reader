@@ -83,6 +83,10 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Motion files staged beside the model (Actions → Stage motion) join the
   animation strip as their own cards. View → Zoom In / Out (⌘+ ⌘−) and
   Reset View (⌘0); About names the commit the core was built from.
+- The game's common effect bank (static_effect.pac: hits, sparks, auras)
+  loads from the opened file's folder by itself and joins every file's
+  Effects menu (Room menu: load another, clear it); a room's or a stage's own
+  bank does not replace it.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an

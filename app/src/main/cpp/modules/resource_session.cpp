@@ -2614,6 +2614,10 @@ std::vector<EffectChoice> effect_choices(const Session* session) {
         add(*stage, EffectChoice::Source::stage);
     }
     if (const auto cutscene = demo::effect_host(*session)) add(*cutscene, EffectChoice::Source::cutscene);
+    // The game's common bank last (static_effect.pac), unless the file is that bank.
+    if (const auto common = stage_room::common_effect_host(); common && common.get() != session) {
+        add(*common, EffectChoice::Source::common);
+    }
     return out;
 }
 
@@ -2622,6 +2626,7 @@ bool launch_effect(Session* session, const EffectChoice& choice) {
     std::shared_ptr<const Session> host;
     if (choice.source == EffectChoice::Source::stage) host = stage_room::effect_host(slot_for(session));
     if (choice.source == EffectChoice::Source::cutscene) host = demo::effect_host(*session);
+    if (choice.source == EffectChoice::Source::common) host = stage_room::common_effect_host();
     if (choice.source != EffectChoice::Source::own && !host) return false;
     const Session& bank_host = host ? *host : *session;
     if (find_effect_record(bank_host, choice.kind, choice.id, choice.slot) == nullptr) return false;
