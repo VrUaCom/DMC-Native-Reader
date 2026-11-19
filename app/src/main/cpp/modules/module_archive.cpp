@@ -14,7 +14,9 @@
 #include "dmc_rengine/formats/pac.hpp"
 #include "dmc_rengine/formats/pnst.hpp"
 #include "dmcresource/archive_entry.h"
+#include "dmcresource/messages.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/plain_text.h"
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/demo.h"
 #include "dmcresource/sound.h"
@@ -122,6 +124,13 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             }
             if (motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
                 return {Format::MotionScript, "MotionScript", "msc"};
+            }
+            // Text no module above claims: message tables, then plain text.
+            if (messages::looks_like_table(std::span<const std::uint8_t>{bytes, size})) {
+                return {Format::MessageTable, "MSG", "txt"};
+            }
+            if (plain_text::looks_like_text(std::span<const std::uint8_t>{bytes, size})) {
+                return {Format::PlainText, "TEXT", "txt"};
             }
         } catch (...) {
         }

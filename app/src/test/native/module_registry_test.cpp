@@ -1,18 +1,19 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/native_module.h"
 #include "dmcresource/spider/app_info.h"
-#include <string>
 
 int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 40U);
+    assert(modules.size() == 42U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -25,6 +26,21 @@ int main() {
     assert(ptx != nullptr && ptx->format == Format::Ptx && !ptx->renderable);
     assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
            !event_tbl->renderable);
+
+    // Text no other module claims: message tables and plain text.
+    const auto* msg = NativeModuleRegistry::find("MSG");
+    const auto* text_module = NativeModuleRegistry::find("TEXT");
+    assert(msg != nullptr && msg->format == Format::MessageTable);
+    assert(text_module != nullptr && text_module->format == Format::PlainText);
+    const std::string table = "# Msg 20600\n\t\"13th Avenue\"\n# End\n";
+    assert(probe("x.bin", reinterpret_cast<const std::uint8_t*>(table.data()), table.size()).format ==
+           Format::MessageTable);
+    const std::string light = "Force   1400.0\r\nRange   10000.0\r\nRgb     311  280  245\r\n";
+    std::vector<std::uint8_t> padded(light.begin(), light.end());
+    padded.resize(64U, 0U);
+    assert(probe("x.bin", padded.data(), padded.size()).format == Format::PlainText);
+    const std::uint8_t binary[8] = {1, 0, 0, 0, 2, 0, 0, 0};
+    assert(probe("x.bin", binary, sizeof binary).format != Format::PlainText);
 
     const auto* hits = NativeModuleRegistry::find("HITS");
     assert(hits != nullptr && hits->format == Format::Hits && hits->renderable &&

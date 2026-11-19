@@ -13,6 +13,8 @@
 #include "dmcresource/demo.h"
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/font.h"
+#include "dmcresource/messages.h"
+#include "dmcresource/plain_text.h"
 #include "dmcresource/stage_config.h"
 #include "dmcresource/sound.h"
 #include "dmcresource/video.h"
@@ -193,6 +195,10 @@ ProbeResult probe(std::string_view filename,
             return result(Format::NameIndex, true, ".index", "name-list", "inspection",
                           "STRUCTURAL_CONFIRMED", "text/vnd.dmc.index");
         }
+        if (messages::looks_like_table(std::span<const std::uint8_t>{bytes, size})) {
+            return result(Format::MessageTable, true, "MSG", "messages", "inspection",
+                          "STRUCTURAL_CONFIRMED", "text/vnd.dmc.messages");
+        }
     }
     // MOT keeps its identity at +0x04 after the u32 header size.
     if (bytes != nullptr && size >= 8U && magic4(bytes + 4U, size - 4U, 'M', 'O', 'T', '\0')) {
@@ -341,6 +347,12 @@ ProbeResult probe(std::string_view filename,
                           "CORPUS_CONFIRMED", "application/vnd.dmc.so");
         }
     }
+    // Plain text no module claims (light settings, notes): shown as text,
+    // last of all.
+    if (bytes != nullptr && plain_text::looks_like_text(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::PlainText, true, "TEXT", "text", "inspection",
+                      "DATA_CONFIRMED", "text/plain");
+    }
 
     return {};
 }
@@ -399,6 +411,8 @@ const char* format_name(Format format) noexcept {
     case Format::DemoCamera: return "DEMO-CAM";
     case Format::DemoClips: return "CLIPS";
     case Format::Wmv: return "WMV";
+    case Format::MessageTable: return "MSG";
+    case Format::PlainText: return "TEXT";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

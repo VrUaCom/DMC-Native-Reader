@@ -166,6 +166,7 @@ set(DMC_NATIVE_READER_CORE_SOURCES
     modules/view_gesture.cpp
     modules/slot_inflate.cpp
     modules/ptx_rgba.cpp
+    modules/plain_text.cpp
     modules/frame_profile.cpp
     modules/module_archive.cpp
     modules/module_shadow.cpp

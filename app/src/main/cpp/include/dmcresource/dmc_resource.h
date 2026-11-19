@@ -54,6 +54,10 @@ enum class Format : std::uint8_t {
     DemoClips,
     // Movies (.wmv, ASF): the HD release's game movies (video.h).
     Wmv,
+    // Text no other module claims: message tables (# Msg ... # End,
+    // messages.h) and plain text (plain_text.h).
+    MessageTable,
+    PlainText,
 };
 
 struct ProbeResult {

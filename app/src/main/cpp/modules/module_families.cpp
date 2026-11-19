@@ -16,7 +16,9 @@
 #include "dmc_rengine/formats/stage_txt.hpp"
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/game_lights.h"
+#include "dmcresource/messages.h"
 #include "dmcresource/module_support.h"
+#include "dmcresource/plain_text.h"
 #include "dmcresource/raster_card.h"
 #include "dmcresource/sound.h"
 #include "dmcresource/video.h"
@@ -263,6 +265,46 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             out.detail = "Name index | " + std::to_string(slot) + " names";
             return out;
         }
+        case Format::MessageTable: {
+            const auto table = messages::parse_table(filename, std::span<const std::uint8_t>{bytes, size});
+            if (!table || table->messages.empty()) break;
+            auto out = start(module, probe, size, "Message table - the game's texts");
+            auto& root = out.inspection.root;
+            property(root, "Messages", std::to_string(table->messages.size()));
+            if (!table->language.empty()) property(root, "Language", table->language);
+            InspectionNode list;
+            list.id = "messages";
+            list.title = "Messages";
+            list.kind = InspectionKind::Collection;
+            for (const auto& [number, message] : table->messages) {
+                if (list.properties.size() >= 2000U) break;
+                std::string text;
+                for (const auto& page : message.pages) {
+                    for (const auto& line : page.lines) {
+                        if (!text.empty()) text += " / ";
+                        text += line.text;
+                    }
+                }
+                property(list, "# " + std::to_string(number), text.empty() ? "(empty)" : text);
+            }
+            root.children.push_back(std::move(list));
+            out.detail = "Message table | " + std::to_string(table->messages.size()) + " messages";
+            return out;
+        }
+        case Format::PlainText: {
+            const auto all = plain_text::lines(std::span<const std::uint8_t>{bytes, size}, 4000U);
+            auto out = start(module, probe, size, "Text");
+            auto& root = out.inspection.root;
+            property(root, "Lines", std::to_string(all.size()));
+            InspectionNode text;
+            text.id = "lines";
+            text.title = "Lines";
+            text.kind = InspectionKind::Collection;
+            for (std::size_t i = 0; i < all.size(); ++i) property(text, "line " + std::to_string(i + 1U), all[i]);
+            root.children.push_back(std::move(text));
+            out.detail = "Text | " + std::to_string(all.size()) + " lines";
+            return out;
+        }
         case Format::SoGraph: {
             const auto parsed = rf::so::graph::parse(raw);
             if (!parsed.ok()) break;
@@ -441,6 +483,8 @@ std::vector<NativeModule> family_modules() noexcept {
         make("formats.lig2.records", "LIG2", Format::Lig2),
         make("formats.dca.records", "DCA", Format::Dca),
         make("formats.stage-txt.lexer", "TXT", Format::StageText),
+        make("formats.messages.table", "MSG", Format::MessageTable),
+        make("formats.text.plain", "TEXT", Format::PlainText),
         make("formats.name-index", ".index", Format::NameIndex),
         make("formats.so.graph", "SO-GRAPH", Format::SoGraph),
         make("formats.sound.dbst", "dbsT", Format::SoundTable),
