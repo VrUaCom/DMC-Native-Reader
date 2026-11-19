@@ -102,6 +102,10 @@ final class ViewerModel: ObservableObject {
                 self.sourceFile = (name, data)
                 self.staged.removeAll()
                 self.show(opened)
+                // An opened stage brings its own effect bank and configuration from beside it.
+                if opened.openedAs == .stage {
+                    self.findStageArchives(near: url, stage: name, slot: 1, effects: true, config: true)
+                }
             case .failure(let failure):
                 self.message = failure.message
             }
@@ -282,6 +286,9 @@ final class ViewerModel: ObservableObject {
     // MARK: Base room, effects, export
 
     @Published private(set) var roomName: String?
+    /// The base room's effect bank and configuration files (slot 0).
+    var baseEffectsName: String?
+    var baseConfigName: String?
     @Published private(set) var effects: [MenuRow] = []
 
     func loadRoom(url: URL) {
@@ -294,6 +301,7 @@ final class ViewerModel: ObservableObject {
         if let detail = ReaderCore.loadRoom(name: url.lastPathComponent, bytes: data) {
             roomName = url.lastPathComponent
             message = "Base room: \(url.lastPathComponent) — \(detail)"
+            afterNewRoom(url: url)
         } else {
             message = "\(url.lastPathComponent) is not a room the core can draw."
         }
@@ -432,6 +440,7 @@ final class ViewerModel: ObservableObject {
         }
         let slot = session.map { dmc_stage_slot($0.handle) } ?? 0
         handle(ReaderCore.loadStageConfig(name: url.lastPathComponent, bytes: data, slot: Int(slot)))
+        if slot == 0 { baseConfigName = url.lastPathComponent }
         refreshAfterChange()
     }
 

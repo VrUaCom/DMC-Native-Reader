@@ -62,6 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Started from Terminal (swift run) the app would stay in the background.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // The shell and the core it links must speak the same C API.
+        if dmc_api_version() != DMC_API_VERSION {
+            let alert = NSAlert()
+            alert.messageText = "This app and its core do not match"
+            alert.informativeText = "The core speaks C API \(dmc_api_version()), the app expects \(DMC_API_VERSION). Build both again with apple/build-mac.sh."
+            alert.runModal()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

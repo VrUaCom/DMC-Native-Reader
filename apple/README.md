@@ -72,6 +72,10 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   menu steps through spots (N) and spawn points and breaks the room; an
   enemy class's events fire from Events; Inspect shows the UV, mesh and
   hierarchy texts and runs the core's 10-second benchmark.
+- A stage brings its own effect bank and configuration from beside it
+  (dmc_stage_archives): opening st100.pac also loads st100_effect.pac and
+  st100cfg.pac from its folder; a new base room keeps or drops the previous
+  stage's ones as the core says (dmc_after_new_room) and finds its own.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an

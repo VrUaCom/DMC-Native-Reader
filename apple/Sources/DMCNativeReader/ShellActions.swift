@@ -277,6 +277,7 @@ extension ViewerModel {
                                              raw.count, Int32(slot)))
         } ?? ""
         message = text.isEmpty ? "\(url.lastPathComponent): no effects read." : text
+        if !text.isEmpty, slot == 0 { baseEffectsName = url.lastPathComponent }
         refreshAfterChange()
     }
 
