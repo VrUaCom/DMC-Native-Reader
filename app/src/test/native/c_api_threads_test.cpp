@@ -12,6 +12,12 @@
 #include <thread>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 void put_u32(std::uint8_t* bytes, std::size_t at, std::uint32_t value) {
@@ -167,5 +173,20 @@ int main() {
     dmc_close(composite);
     dmc_close(extra);
     dmc_close(base);
+
+#if !defined(NDEBUG) && !defined(_WIN32)
+    // B9: a handle closed twice stops the process in a debug build.
+    const pid_t child = fork();
+    if (child == 0) {
+        dmc_session* once = dmc_open_source("once.mod", mod.data(), mod.size());
+        dmc_close(once);
+        dmc_close(once);
+        _exit(0);
+    }
+    int status = 0;
+    assert(child > 0 && waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+#endif
+    dmc_close(nullptr);  // closing nothing is fine
     return 0;
 }

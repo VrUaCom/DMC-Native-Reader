@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "dmcresource/camera_control.h"
@@ -66,19 +67,63 @@ char* copy_string(const std::string& text) noexcept {
 
 std::string text_or_empty(const char* text) { return text == nullptr ? std::string{} : std::string{text}; }
 
+// B9: in a debug build (no NDEBUG) every live handle is registered, and a
+// handle the API never made, or one already closed, stops the process with a
+// message instead of being used (undefined behaviour in a release build).
+#if !defined(NDEBUG) || defined(DMC_READER_HANDLE_REGISTRY)
+std::mutex& registry_mutex() noexcept {
+    static std::mutex mutex;
+    return mutex;
+}
+std::unordered_set<const dmc_session*>& registry() {
+    static auto* live = new std::unordered_set<const dmc_session*>{};  // outlives static teardown
+    return *live;
+}
+void remember(const dmc_session* session) {
+    const std::lock_guard lock{registry_mutex()};
+    registry().insert(session);
+}
+void check_live(const dmc_session* session, const char* what) noexcept {
+    bool live = false;
+    {
+        const std::lock_guard lock{registry_mutex()};
+        live = registry().contains(session);
+    }
+    if (!live) {
+        std::fprintf(stderr, "dmc_reader: %s on a handle that is not open (%p): closed twice or never opened\n",
+                     what, static_cast<const void*>(session));
+        std::abort();
+    }
+}
+void forget(const dmc_session* session) noexcept {
+    check_live(session, "dmc_close");
+    const std::lock_guard lock{registry_mutex()};
+    registry().erase(session);
+}
+#else
+void remember(const dmc_session*) {}
+void check_live(const dmc_session*, const char*) noexcept {}
+void forget(const dmc_session*) noexcept {}
+#endif
+
 const dmcresource::Session* core(const dmc_session* session) noexcept {
-    return session == nullptr ? nullptr : session->session.get();
+    if (session == nullptr) return nullptr;
+    check_live(session, "a call");
+    return session->session.get();
 }
 
 dmcresource::Session* core(dmc_session* session) noexcept {
-    return session == nullptr ? nullptr : session->session.get();
+    if (session == nullptr) return nullptr;
+    check_live(session, "a call");
+    return session->session.get();
 }
 
 dmc_session* wrap(std::unique_ptr<dmcresource::Session> session) {
     if (!session) return nullptr;
-    auto* out = new dmc_session{};
+    auto out = std::make_unique<dmc_session>();
     out->session = std::move(session);
-    return out;
+    remember(out.get());
+    return out.release();
 }
 
 // The view's controls as the core reads them: the shell's pan, room yaw,
@@ -189,7 +234,9 @@ dmc_open_result dmc_open(const char* name, const uint8_t* bytes, size_t size) {
 }
 
 void dmc_close(dmc_session* session) {
+    if (session == nullptr) return;
     const std::lock_guard lock{api_mutex()};
+    forget(session);
     delete session;
 }
 
@@ -468,7 +515,7 @@ bool dmc_image_preview(const dmc_session* session, uint8_t* rgba, size_t capacit
 int dmc_render(dmc_session* session, int width, int height, const dmc_view* view, uint8_t* rgba, size_t capacity) {
     try {
         const std::lock_guard lock{api_mutex()};
-        if (session == nullptr || !session->session || view == nullptr || rgba == nullptr ||
+        if (core(session) == nullptr || view == nullptr || rgba == nullptr ||
             width < DMC_RENDER_MIN_SIDE || height < DMC_RENDER_MIN_SIDE || width > DMC_RENDER_MAX_SIDE ||
             height > DMC_RENDER_MAX_SIDE) {
             return 0;  // the core draws only these sizes (render_session)
