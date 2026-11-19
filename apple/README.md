@@ -76,6 +76,10 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   (dmc_stage_archives): opening st100.pac also loads st100_effect.pac and
   st100cfg.pac from its folder; a new base room keeps or drops the previous
   stage's ones as the core says (dmc_after_new_room) and finds its own.
+- Camera mode (Camera → Viewfinder, V): a click focuses there, , and .
+  turn the focus ring, K locks focus, L levels, two fingers turn the
+  polarizer (or roll the camera), a dial clicked steps its setting; a
+  setting's follow-ups (dmc_camera_follow_up_of) are applied with it.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an

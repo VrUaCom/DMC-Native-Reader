@@ -527,7 +527,7 @@ final class ViewerModel: ObservableObject {
     let cameraRows = ReaderCore.cameraSettings()
     @Published var cameraChoices: [Int] = []
     @Published private(set) var viewfinder: Viewfinder?
-    @Published private(set) var dials: [(title: String, value: String)] = []
+    @Published private(set) var dials: [(key: Int, title: String, value: String)] = []
     /// The frame size the viewfinder was laid out for (pixels).
     private(set) var finderFrameSize = CGSize(width: 1, height: 1)
 
@@ -544,6 +544,19 @@ final class ViewerModel: ObservableObject {
         cameraChoices[index] = option
         var stored = UserDefaults.standard.dictionary(forKey: "camera") as? [String: Int] ?? [:]
         stored[row.id] = option
+        // What changes with it (a camera's M dial sets the shutter, ...): the core's follow-up.
+        var follow = dmc_camera_follow_up()
+        if dmc_camera_follow_up_of(Int32(row.key), Int32(option), &follow) {
+            for i in 0..<follow.count {
+                let key = Int(follow.keys[i])
+                if let other = cameraRows.firstIndex(where: { $0.key == key }) {
+                    cameraChoices[other] = Int(follow.options[i])
+                    stored[cameraRows[other].id] = Int(follow.options[i])
+                }
+            }
+            if let text = follow.message.map({ String(cString: $0) }), !text.isEmpty { message = text }
+            dmc_camera_follow_up_free(&follow)
+        }
         UserDefaults.standard.set(stored, forKey: "camera")
         ReaderCore.setCameraChoices(cameraChoices)
         refreshFinder()

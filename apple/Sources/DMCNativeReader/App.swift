@@ -119,6 +119,7 @@ struct ContentView: View {
                         .padding(10)
                         .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
                         .padding()
+                        .padding(.bottom, model.dials.isEmpty ? 0 : 56)  // above the camera's dials
                 }
             }
         }
@@ -311,10 +312,14 @@ struct ContentView: View {
                 if !model.dials.isEmpty {
                     HStack(spacing: 14) {
                         ForEach(Array(model.dials.enumerated()), id: \.offset) { _, dial in
-                            VStack(spacing: 1) {
-                                Text(dial.title).font(.caption2).foregroundStyle(.secondary)
-                                Text(dial.value).font(.system(.caption, design: .monospaced))
+                            Button { model.stepDial(key: dial.key) } label: {
+                                VStack(spacing: 1) {
+                                    Text(dial.title).font(.caption2).foregroundStyle(.secondary)
+                                    Text(dial.value).font(.system(.caption, design: .monospaced))
+                                }
                             }
+                            .buttonStyle(.plain)
+                            .help("Click: the next \(dial.title)")
                         }
                     }
                     .padding(8)
@@ -328,7 +333,9 @@ struct ContentView: View {
                 .onEnded { value in
                     if case .second(true, let drag?) = value { model.hold(at: drag.location) }
                 })
-            .simultaneousGesture(SpatialTapGesture().onEnded { model.click(at: $0.location) })
+            .simultaneousGesture(SpatialTapGesture().onEnded {
+                if model.inCameraMode { model.focus(at: $0.location) } else { model.click(at: $0.location) }
+            })
             .simultaneousGesture(magnify)
             .simultaneousGesture(twist)
             .onAppear { model.viewChanged(size: geometry.size, scale: NSScreen.main?.backingScaleFactor ?? 2) }
@@ -395,7 +402,12 @@ struct ContentView: View {
             .onChanged { angle in
                 let last = twistLast ?? 0
                 twistLast = angle.radians
-                model.camera.twist(radians: dmc_angle_delta(Float(last), Float(angle.radians)), roomShown: false)
+                let delta = dmc_angle_delta(Float(last), Float(angle.radians))
+                if model.inCameraMode {
+                    model.cameraTwist(delta)
+                } else {
+                    model.camera.twist(radians: delta, roomShown: false)
+                }
             }
             .onEnded { _ in twistLast = nil }
     }
@@ -514,6 +526,10 @@ struct ContentView: View {
                     .disabled(model.session == nil)
             } label: { Label(model.roomName ?? "Room", systemImage: "cube.transparent") }
             Menu {
+                Toggle("Viewfinder (camera mode)", isOn: Binding(get: { model.cameraModeChoice },
+                                                                 set: { model.setCameraMode($0) }))
+                    .keyboardShortcut("v", modifiers: [])
+                Divider()
                 Button("Take picture (PNG)…") {
                     let panel = NSSavePanel()
                     panel.allowedContentTypes = [.png]
@@ -802,7 +818,21 @@ enum FlyKeys {
     static func install(model: ViewerModel) {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak model] event in
-            guard let model, model.flying, let key = name(of: event) else { return event }
+            guard let model else { return event }
+            // The photo camera's keys: , . turn the focus ring, K locks focus, L levels.
+            if !model.flying, model.inCameraMode, event.type == .keyDown,
+               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+               !(event.window?.firstResponder is NSText),
+               let c = event.charactersIgnoringModifiers?.lowercased() {
+                switch c {
+                case ",": model.focusRing(-1); return nil
+                case ".": model.focusRing(1); return nil
+                case "k": model.focusLock(); return nil
+                case "l": model.levelCamera(); return nil
+                default: break
+                }
+            }
+            guard model.flying, let key = name(of: event) else { return event }
             model.flyKey(key, down: event.type == .keyDown)
             return nil  // the keys steer while flying
         }

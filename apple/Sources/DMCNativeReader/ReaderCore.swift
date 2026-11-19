@@ -674,12 +674,12 @@ enum ReaderCore {
     }
 
     /// The camera bar's dials: title and value as a camera shows them.
-    static func cameraDials() -> [(title: String, value: String)] {
+    static func cameraDials() -> [(key: Int, title: String, value: String)] {
         guard let list = dmc_camera_dials_list() else { return [] }
         defer { dmc_camera_dials_free(list) }
         return (0..<dmc_camera_dials_count(list)).compactMap { index in
             guard let d = dmc_camera_dials_at(list, index)?.pointee else { return nil }
-            return (String(cString: d.title), String(cString: d.value))
+            return (Int(d.key), String(cString: d.title), String(cString: d.value))
         }
     }
 
