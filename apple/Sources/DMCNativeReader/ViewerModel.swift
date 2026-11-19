@@ -68,22 +68,37 @@ final class ViewerModel: ObservableObject {
 
     // MARK: Opening
 
+    /// The file being opened (read and parsed off the main thread), if any.
+    @Published private(set) var opening: String?
+    private var openRequest = 0
+
     func open(url: URL) {
-        let access = url.startAccessingSecurityScopedResource()
-        defer { if access { url.stopAccessingSecurityScopedResource() } }
-        let data: Data
-        do {
-            data = try Data(contentsOf: url, options: .mappedIfSafe)
-        } catch {
-            message = "Could not read \(url.lastPathComponent): \(error.localizedDescription)"
-            return
-        }
-        switch ReaderSession.open(name: url.lastPathComponent, bytes: data) {
-        case .success(let opened):
-            stack.removeAll()
-            show(opened)
-        case .failure(let failure):
-            message = failure.message
+        let name = url.lastPathComponent
+        openRequest += 1
+        let request = openRequest
+        opening = name
+        // The core parses without the session lock (B7): a large PAC opens
+        // while the window stays live and the current view keeps drawing.
+        Task { @MainActor [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<ReaderSession, OpenFailure> in
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                    return ReaderSession.open(name: name, bytes: data)
+                } catch {
+                    return .failure(OpenFailure(message: "Could not read \(name): \(error.localizedDescription)"))
+                }
+            }.value
+            guard let self, request == self.openRequest else { return }  // a newer file was picked
+            self.opening = nil
+            switch result {
+            case .success(let opened):
+                self.stack.removeAll()
+                self.show(opened)
+            case .failure(let failure):
+                self.message = failure.message
+            }
         }
     }
 

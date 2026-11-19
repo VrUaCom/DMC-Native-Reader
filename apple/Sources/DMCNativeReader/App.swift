@@ -256,6 +256,16 @@ struct ContentView: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .overlay {
+                if let opening = model.opening {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Opening \(opening)…").font(.callout)
+                    }
+                    .padding(14)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
             .overlay(alignment: .topLeading) {
                 if let subtitle = model.subtitle, !subtitle.text.isEmpty {
                     subtitleView(subtitle, in: geometry.size)
