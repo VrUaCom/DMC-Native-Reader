@@ -435,8 +435,10 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
 [[nodiscard]] dmcresource::spider::black_widow::StateBits black_widow_state(
         const Session* session) noexcept {
     if (session == nullptr) return 0U;
-    // The stage companions of what is asked about (stage_slot.h).
-    set_active_slot(slot_for(session));
+    // The stage companions of what is asked about (stage_slot.h), read for
+    // its slot without switching the active one (B8): a frame of one session
+    // and a menu of another may ask at once.
+    const auto slot = slot_for(session);
     std::size_t sounds = 0U;
     try {
         if (session->sound_bytes != nullptr) sounds = session_sound_count(session);
@@ -470,7 +472,7 @@ std::unique_ptr<Session> session_from_child(const ChildResource& child) {
                        (session->stage != nullptr || room != nullptr),
         .stage_uv = session->stage != nullptr && !demo::is_demo(session) && session->stage->mesh.has_uv0() &&
                     !session->stage->textures.empty(),
-        .stage_config_loaded = stage_markers::current() != nullptr,
+        .stage_config_loaded = stage_markers::current(slot) != nullptr,
         .stage_markers_visible = stage_markers::visible(),
         .sound_count = sounds,
         // Only real shadow files (SHW hulls bound to the model): a stage

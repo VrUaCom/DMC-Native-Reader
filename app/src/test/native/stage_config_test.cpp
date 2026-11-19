@@ -487,7 +487,18 @@ int main() {
         {
             const act::ShellFacts facts{.root_scene = true, .assembled_pac_source = false, .stage_source = true,
                                         .room_loaded = false, .room_shown = false};
+            // B8: building the menu (and the state it reads) switches no slot;
+            // the stage scene's rows come out the same from the base slot.
+            const auto before = active_slot();
+            set_active_slot(StageSlot::base);
+            const auto from_base = act::companion_menu(&stage, facts);
+            assert(active_slot() == StageSlot::base);
+            set_active_slot(StageSlot::scene);
             const auto companions = act::companion_menu(&stage, facts);
+            assert(active_slot() == StageSlot::scene);
+            assert(from_base.rows.size() == companions.rows.size() &&
+                   from_base.stage_ops.size() == companions.stage_ops.size());
+            set_active_slot(before);
             const auto has_row = [&](act::Companion id) {
                 for (const auto& row : companions.rows) if (row.id == static_cast<int>(id)) return true;
                 return false;

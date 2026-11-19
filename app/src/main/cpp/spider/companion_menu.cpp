@@ -102,8 +102,9 @@ void stage_ops(const Session* session, const ShellFacts& facts, CompanionMenu& m
 
 CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     CompanionMenu menu;
-    // The menu acts on the stage companions of the opened file (stage_slot.h).
-    set_active_slot(slot_for(session));
+    // The menu reads the stage companions of the opened file for its slot
+    // (stage_slot.h) without switching the active one (B8); the action
+    // picked from it switches it (run_companion_action).
     const auto state = black_widow_state(session);
     const auto has = [state](widow::StateFlag flag) { return widow::has_state(state, flag); };
     const bool open = session != nullptr;
@@ -232,6 +233,8 @@ ActionOutcome run_companion_action(Session* session, int id, std::unique_ptr<Ses
 }
 
 ActionOutcome run_companion_action(Session* session, int id) noexcept {
+    // The action works on the stage companions of the file it was picked for.
+    if (session != nullptr) set_active_slot(slot_for(session));
     const auto picked = static_cast<Companion>(id);
     if (picked == Companion::CutsceneSound || picked == Companion::CutsceneMovie || picked == Companion::CutsceneSubtitles) {
         ActionOutcome out;
