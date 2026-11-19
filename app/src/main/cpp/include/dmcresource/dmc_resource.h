@@ -58,6 +58,8 @@ enum class Format : std::uint8_t {
     // messages.h) and plain text (plain_text.h).
     MessageTable,
     PlainText,
+    // PS2 IPU picture streams (video.h looks_like_ipu), played as movies.
+    Ipu,
 };
 
 struct ProbeResult {

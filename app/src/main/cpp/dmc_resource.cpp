@@ -231,6 +231,10 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Ogg, true, "OGG", "sound", "image-preview",
                       "STRUCTURAL_CONFIRMED", "audio/ogg");
     }
+    if (bytes != nullptr && video::looks_like_ipu(std::span<const std::uint8_t>{bytes, size})) {
+        return result(Format::Ipu, true, "IPU", "movie", "image-preview",
+                      "STRUCTURAL_CONFIRMED", "video/x-ps2-ipu");
+    }
     if (bytes != nullptr && video::looks_like_asf(std::span<const std::uint8_t>{bytes, size})) {
         return result(Format::Wmv, true, "WMV", "movie", "image-preview",
                       "STRUCTURAL_CONFIRMED", "video/x-ms-wmv");
@@ -413,6 +417,7 @@ const char* format_name(Format format) noexcept {
     case Format::Wmv: return "WMV";
     case Format::MessageTable: return "MSG";
     case Format::PlainText: return "TEXT";
+    case Format::Ipu: return "IPU";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

@@ -392,17 +392,23 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
                          " channel(s), " + seconds;
             return out;
         }
-        case Format::Wmv: {
-            auto out = start(module, probe, size, "WMV - movie (ASF)");
+        case Format::Wmv:
+        case Format::Ipu: {
+            const bool ipu = module.format == Format::Ipu;
+            auto out = start(module, probe, size, ipu ? "IPU - picture stream (MPEG-2 intra frames)" : "WMV - movie (ASF)");
             auto& root = out.inspection.root;
-            property(root, "Source", "HD release: the game's SFD movies, the EXE swapping the extension for .wmv",
-                     EvidenceLevel::ExeConfirmed);
+            if (ipu) {
+                property(root, "Source", "PS2 IPU stream: the animated pictures of the interface archives");
+            } else {
+                property(root, "Source", "HD release: the game's SFD movies, the EXE swapping the extension for .wmv",
+                         EvidenceLevel::ExeConfirmed);
+            }
             std::string error;
             auto movie = video::open_movie(std::make_shared<const std::vector<std::uint8_t>>(data.begin(), data.end()),
                                            &error);
             if (!movie) {
                 property(root, "Decoder", error);
-                out.detail = "WMV | " + error;
+                out.detail = std::string{ipu ? "IPU | " : "WMV | "} + error;
                 return out;
             }
             const auto& info = movie->info();
@@ -424,7 +430,7 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
                 out.image_preview.height = static_cast<std::uint32_t>(frame.height);
                 out.image_preview.rgba8 = std::move(frame.pixels);
             }
-            out.detail = "WMV | " + std::to_string(info.width) + "x" + std::to_string(info.height) + " " +
+            out.detail = std::string{ipu ? "IPU | " : "WMV | "} + std::to_string(info.width) + "x" + std::to_string(info.height) + " " +
                          info.video_codec + ", " + text;
             return out;
         }
@@ -494,6 +500,7 @@ std::vector<NativeModule> family_modules() noexcept {
         make("formats.sound.vag", "VAG", Format::Vag, true),
         make("formats.sound.ogg", "OGG", Format::Ogg, true),
         make("formats.movie.wmv", "WMV", Format::Wmv, true),
+        make("formats.movie.ipu", "IPU", Format::Ipu, true),
     };
 }
 

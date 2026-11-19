@@ -25,7 +25,55 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+// An HD "ipum" stream of DXT1 frames 4 x 4: each frame one block of one colour.
+std::vector<std::uint8_t> ipum(const std::vector<std::uint16_t>& colours) {
+    std::vector<std::uint8_t> out{'i', 'p', 'u', 'm', 0, 0, 1, 0, 4, 0, 4, 0};
+    out.push_back(static_cast<std::uint8_t>(colours.size()));
+    out.insert(out.end(), {0, 0, 0});
+    for (const auto colour : colours) {
+        out.insert(out.end(), {'f', 'r', 'm', 'j', 0x80, 0x80, 0, 0});
+        std::vector<std::uint8_t> dds(128U, 0U);
+        const auto put = [&dds](std::size_t at, std::uint32_t v) {
+            for (int i = 0; i < 4; ++i) dds[at + i] = static_cast<std::uint8_t>(v >> (8 * i));
+        };
+        dds[0] = 'D'; dds[1] = 'D'; dds[2] = 'S'; dds[3] = ' ';
+        put(4, 124U); put(8, 0x81007U); put(12, 4U); put(16, 4U); put(20, 8U);
+        put(76, 32U); put(80, 4U); put(84, 0x31545844U); put(108, 0x1000U);
+        out.insert(out.end(), dds.begin(), dds.end());
+        const std::uint8_t block[8] = {static_cast<std::uint8_t>(colour), static_cast<std::uint8_t>(colour >> 8),
+                                       static_cast<std::uint8_t>(colour), static_cast<std::uint8_t>(colour >> 8),
+                                       0, 0, 0, 0};
+        out.insert(out.end(), std::begin(block), std::end(block));
+    }
+    return out;
+}
+
+}  // namespace
+
 int main() {
+    // An ipum stream: its DDS frames at 25 a second, read without FFmpeg.
+    {
+        const auto bytes = ipum({0xF800, 0x001F, 0x07E0});
+        assert(video::looks_like_ipu(bytes) && !video::looks_like_asf(bytes));
+        std::string error;
+        auto frames = video::open_movie(std::make_shared<const std::vector<std::uint8_t>>(bytes), &error);
+        assert(frames && frames->info().width == 4 && frames->info().height == 4);
+        assert(std::fabs(frames->info().duration - 3.0 / 25.0) < 1e-9 && frames->info().frame_rate == 25.0);
+        RgbaImage picture;
+        assert(frames->frame_at(0.0, &picture) && picture.width == 4 && picture.pixels[0] > 240 && picture.pixels[2] < 16);
+        assert(frames->frame_at(1.0 / 25.0 + 0.001, &picture) && picture.pixels[2] > 240 && picture.pixels[0] < 16);
+        assert(frames->frame_at(10.0, &picture) && picture.pixels[1] > 240);  // held on the last frame
+        assert(!frames->sound());
+        auto session = open_session("x.ipu", bytes.data(), bytes.size());
+        assert(session && session->probe.format == Format::Ipu);
+        // Not a frame stream: a PS2 IPU stream proper is refused with a reason.
+        auto ps2 = bytes;
+        ps2.resize(16U);
+        ps2.insert(ps2.end(), {0, 0, 1, 0xB0, 1, 2, 3, 4});
+        assert(!video::open_movie(std::make_shared<const std::vector<std::uint8_t>>(ps2), &error) && !error.empty());
+    }
     const std::span<const std::uint8_t> file{kTinyWmv, sizeof kTinyWmv};
     assert(video::looks_like_asf(file));
     assert(!video::looks_like_asf(file.subspan(1)));

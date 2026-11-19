@@ -17,6 +17,7 @@
 #include "dmcresource/messages.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/plain_text.h"
+#include "dmcresource/video.h"
 #include "dmcresource/collision_shapes.h"
 #include "dmcresource/demo.h"
 #include "dmcresource/sound.h"
@@ -124,6 +125,9 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             }
             if (motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
                 return {Format::MotionScript, "MotionScript", "msc"};
+            }
+            if (video::looks_like_ipu(std::span<const std::uint8_t>{bytes, size})) {
+                return {Format::Ipu, "IPU", "ipu"};
             }
             // Text no module above claims: message tables, then plain text.
             if (messages::looks_like_table(std::span<const std::uint8_t>{bytes, size})) {

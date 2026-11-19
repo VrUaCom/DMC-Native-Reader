@@ -5,6 +5,8 @@
 #include <cstring>
 #include <utility>
 
+#include "dmcresource/dds_bcn.h"
+
 #if defined(DMC_NATIVE_READER_FFMPEG)
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -23,6 +25,13 @@ bool looks_like_asf(std::span<const std::uint8_t> bytes) noexcept {
     static constexpr std::uint8_t kHeader[16] = {0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
                                                  0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C};
     return bytes.size() >= 30U && std::memcmp(bytes.data(), kHeader, sizeof kHeader) == 0;
+}
+
+bool looks_like_ipu(std::span<const std::uint8_t> bytes) noexcept {
+    if (bytes.size() < 16U || std::memcmp(bytes.data(), "ipum", 4U) != 0) return false;
+    const unsigned width = bytes[8] | (bytes[9] << 8U);
+    const unsigned height = bytes[10] | (bytes[11] << 8U);
+    return width > 0U && height > 0U && width <= 4096U && height <= 4096U;
 }
 
 RgbaImage fit(const RgbaImage& picture, int width, int height) {
@@ -403,7 +412,7 @@ private:
 
 }  // namespace
 
-std::unique_ptr<Movie> open_movie(std::shared_ptr<const std::vector<std::uint8_t>> bytes, std::string* error) {
+static std::unique_ptr<Movie> open_ffmpeg_movie(std::shared_ptr<const std::vector<std::uint8_t>> bytes, std::string* error) {
     try {
         if (!bytes || bytes->empty()) return nullptr;
         av_log_set_level(AV_LOG_QUIET);
@@ -420,11 +429,95 @@ std::unique_ptr<Movie> open_movie(std::shared_ptr<const std::vector<std::uint8_t
 
 bool available() noexcept { return false; }
 
-std::unique_ptr<Movie> open_movie(std::shared_ptr<const std::vector<std::uint8_t>>, std::string* error) {
+static std::unique_ptr<Movie> open_ffmpeg_movie(std::shared_ptr<const std::vector<std::uint8_t>>, std::string* error) {
     if (error != nullptr) *error = "this build has no movie decoder";
     return nullptr;
 }
 
 #endif
+
+namespace {
+
+// The HD "ipum" stream: one DDS per frame (video.h).
+class FrameSequence final : public Movie {
+public:
+    FrameSequence(std::shared_ptr<const std::vector<std::uint8_t>> bytes,
+                  std::vector<std::span<const std::uint8_t>> frames, int width, int height)
+        : bytes_(std::move(bytes)), frames_(std::move(frames)) {
+        info_.width = width;
+        info_.height = height;
+        info_.frame_rate = kRate;
+        info_.duration = static_cast<double>(frames_.size()) / kRate;
+        info_.video_codec = "DDS frames (ipum)";
+    }
+
+    [[nodiscard]] const MovieInfo& info() const noexcept override { return info_; }
+
+    bool frame_at(double seconds, RgbaImage* out) override {
+        if (out == nullptr || frames_.empty()) return false;
+        const double index = std::floor(std::max(0.0, seconds) * kRate);
+        const auto i = static_cast<std::size_t>(std::min(index, static_cast<double>(frames_.size() - 1U)));
+        if (i != decoded_) {
+            const auto raw = std::as_bytes(frames_[i]);
+            const auto parsed = dds_bcn::parse(raw);
+            if (!parsed.ok()) return false;
+            auto image = dds_bcn::decode_level_rgba8(raw, parsed.document, 0U);
+            if (!image.ok) return false;
+            picture_.width = static_cast<int>(image.image.width);
+            picture_.height = static_cast<int>(image.image.height);
+            picture_.pixels = std::move(image.image.rgba8);
+            decoded_ = i;
+        }
+        *out = picture_;
+        return true;
+    }
+
+    [[nodiscard]] std::optional<sound::Pcm> sound() override { return std::nullopt; }
+
+private:
+    static constexpr double kRate = 25.0;
+    std::shared_ptr<const std::vector<std::uint8_t>> bytes_;
+    std::vector<std::span<const std::uint8_t>> frames_;
+    MovieInfo info_;
+    RgbaImage picture_;
+    std::size_t decoded_{static_cast<std::size_t>(-1)};
+};
+
+std::unique_ptr<Movie> open_frame_sequence(std::shared_ptr<const std::vector<std::uint8_t>> bytes, std::string* error) {
+    const std::span<const std::uint8_t> all{*bytes};
+    const int width = all[8] | (all[9] << 8U);
+    const int height = all[10] | (all[11] << 8U);
+    std::uint32_t declared = 0;
+    std::memcpy(&declared, all.data() + 12U, 4U);
+    std::vector<std::span<const std::uint8_t>> frames;
+    std::size_t at = 16U;
+    while (at + 8U + 128U <= all.size() && std::memcmp(all.data() + at, "frmj", 4U) == 0) {
+        const auto dds = all.subspan(at + 8U);
+        const auto parsed = dds_bcn::parse(std::as_bytes(dds));
+        if (!parsed.ok() || parsed.document.total_size > dds.size()) break;
+        frames.push_back(dds.first(parsed.document.total_size));
+        at += 8U + parsed.document.total_size;
+        if (frames.size() > 100000U) break;
+    }
+    if (frames.empty()) {
+        if (error != nullptr) *error = "the ipum stream holds no DDS frame (a PS2 IPU stream is not read)";
+        return nullptr;
+    }
+    if (declared != 0U && frames.size() > declared) frames.resize(declared);
+    return std::make_unique<FrameSequence>(std::move(bytes), std::move(frames), width, height);
+}
+
+}  // namespace
+
+std::unique_ptr<Movie> open_movie(std::shared_ptr<const std::vector<std::uint8_t>> bytes, std::string* error) {
+    try {
+        if (!bytes || bytes->empty()) return nullptr;
+        if (looks_like_ipu(*bytes)) return open_frame_sequence(std::move(bytes), error);
+        return open_ffmpeg_movie(std::move(bytes), error);
+    } catch (...) {
+        if (error != nullptr) *error = "the movie could not be read";
+        return nullptr;
+    }
+}
 
 }  // namespace dmcresource::video

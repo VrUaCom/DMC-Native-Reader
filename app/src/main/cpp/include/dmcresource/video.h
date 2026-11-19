@@ -19,6 +19,13 @@
 namespace dmcresource::video {
 
 [[nodiscard]] bool looks_like_asf(std::span<const std::uint8_t> bytes) noexcept;
+// "ipum" picture streams (the animated pictures of the id55xx archives). On
+// the PS2 an IPU file held MPEG-2 intra frames; the HD files keep its header
+// (u32, u16 width, u16 height, u32 frame count) and hold each frame as a DDS
+// instead: "frmj", a u32, then the DDS (DXT1 in the files seen). Read by the
+// core itself, without FFmpeg, as a movie of those frames at 25 a second
+// (the IPU rate; the HD files do not say).
+[[nodiscard]] bool looks_like_ipu(std::span<const std::uint8_t> bytes) noexcept;
 
 // Whether this build decodes movies (built with FFmpeg).
 [[nodiscard]] bool available() noexcept;
@@ -47,8 +54,9 @@ public:
     [[nodiscard]] virtual std::optional<sound::Pcm> sound() = 0;
 };
 
-// The movie in `bytes`; nullptr (and why, in `error`) when it cannot be
-// decoded or this build has no decoder.
+// The movie in `bytes` (an ipum frame stream, or through FFmpeg a WMV);
+// nullptr (and why, in `error`) when it cannot be decoded or this build has
+// no decoder for it.
 [[nodiscard]] std::unique_ptr<Movie> open_movie(std::shared_ptr<const std::vector<std::uint8_t>> bytes,
                                                 std::string* error = nullptr);
 

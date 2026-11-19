@@ -704,7 +704,7 @@ std::unique_ptr<Session> open_session_unchecked(std::string_view name, const std
         if (auto scene = demo::open_demo(std::move(*session), name, bytes, size)) return scene;
     }
     // A movie opens as a timeline of its own (demo_session.h open_movie).
-    if (session && session->probe.format == Format::Wmv && bytes != nullptr) {
+    if (session && (session->probe.format == Format::Wmv || session->probe.format == Format::Ipu) && bytes != nullptr) {
         if (auto movie = demo::open_movie(std::move(*session), name, bytes, size)) return movie;
     }
     attach_standalone_view(session.get(), std::span<const std::uint8_t>{bytes, size});

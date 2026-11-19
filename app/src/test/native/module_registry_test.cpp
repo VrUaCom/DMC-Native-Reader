@@ -13,7 +13,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 42U);
+    assert(modules.size() == 43U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -39,6 +39,10 @@ int main() {
     std::vector<std::uint8_t> padded(light.begin(), light.end());
     padded.resize(64U, 0U);
     assert(probe("x.bin", padded.data(), padded.size()).format == Format::PlainText);
+    // PS2 IPU picture streams play as movies.
+    const std::uint8_t ipu[16] = {'i', 'p', 'u', 'm', 0, 0, 1, 0, 0, 1, 0, 1, 0x44, 0, 0, 0};
+    assert(probe("x.bin", ipu, sizeof ipu).format == Format::Ipu);
+    assert(NativeModuleRegistry::find("IPU") != nullptr && NativeModuleRegistry::find("IPU")->format == Format::Ipu);
     const std::uint8_t binary[8] = {1, 0, 0, 0, 2, 0, 0, 0};
     assert(probe("x.bin", binary, sizeof binary).format != Format::PlainText);
 
