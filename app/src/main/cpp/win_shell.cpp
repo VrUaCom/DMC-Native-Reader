@@ -26,6 +26,7 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -118,7 +119,8 @@ std::string WideToUtf8(const std::wstring& wide) {
 }
 
 std::vector<std::uint8_t> ReadFileBytes(const std::wstring& path) {
-    std::ifstream file(path, std::ios::binary);
+    // A path, not a wstring: wide-string stream constructors are MSVC-only.
+    std::ifstream file(std::filesystem::path{path}, std::ios::binary);
     if (!file) return {};
     return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)),
                                      std::istreambuf_iterator<char>());
@@ -851,7 +853,7 @@ void LoadRecentWorkspaces() {
     g_state.recent_workspaces.clear();
     const auto list_path = RecentWorkspacesPath();
     if (list_path.empty()) return;
-    std::wifstream file(list_path);
+    std::wifstream file(std::filesystem::path{list_path});
     if (!file) return;
     std::wstring line;
     while (std::getline(file, line) && g_state.recent_workspaces.size() < 5) {
@@ -870,7 +872,7 @@ void RememberRecentWorkspace(const std::wstring& folder) {
 
     const auto list_path = RecentWorkspacesPath();
     if (list_path.empty()) return;
-    std::wofstream file(list_path, std::ios::trunc);
+    std::wofstream file(std::filesystem::path{list_path}, std::ios::trunc);
     if (!file) return;
     for (const auto& p : recents) file << p << L"\n";
 }
@@ -947,7 +949,7 @@ constexpr DiagnosticsFlag kDiagnosticsFlags[] = {
 void AppendDiagnosticsLog(const std::wstring& path, bool opened_ok) {
     const auto log_path = DiagnosticsLogPath();
     if (log_path.empty()) return;
-    std::ofstream log(log_path, std::ios::app | std::ios::binary);
+    std::ofstream log(std::filesystem::path{log_path}, std::ios::app | std::ios::binary);
     if (!log) return;
 
     log << "[" << NowTimestampUtf8() << "] build=" << DMC_NATIVE_READER_BUILD_SHA

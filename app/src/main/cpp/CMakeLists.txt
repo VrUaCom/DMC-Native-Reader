@@ -469,6 +469,13 @@ if(WIN32)
         DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
     )
     dmc_native_reader_require_cpp23(dmc_native_reader_cli PRIVATE)
+    if(MINGW)
+        # wWinMain and wmain: MinGW links the wide entry points with -municode.
+        target_compile_options(dmc_native_reader_win PRIVATE -municode)
+        target_link_options(dmc_native_reader_win PRIVATE -municode)
+        target_compile_options(dmc_native_reader_cli PRIVATE -municode)
+        target_link_options(dmc_native_reader_cli PRIVATE -municode)
+    endif()
 endif()
 
 option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
