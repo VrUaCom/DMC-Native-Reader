@@ -44,8 +44,9 @@ struct Shape final {
 
 inline constexpr std::size_t kShapeRecordSize = 0x50U;
 
-// Content identity of a shape table: whole 80-byte records, type byte 0..6
-// with zero padding up to +0x10, finite values, at least one sphere/box/capsule.
+// Content identity of a shape table: whole 80-byte records, type byte 0..15
+// (the game dispatches 0..6; 7 occurs on all-zero records) with zero padding
+// up to +0x10, finite values, at least one sphere/box/capsule.
 [[nodiscard]] bool looks_like_shape_table(std::span<const std::uint8_t> bytes) noexcept;
 [[nodiscard]] std::vector<Shape> parse_shapes(std::span<const std::uint8_t> bytes);
 

@@ -1075,6 +1075,12 @@ int main() {
         auto bad = shapes;
         bad[3] = 1U;                         // padding must stay zero
         assert(!collision::looks_like_shape_table(bad));
+        auto seven = shapes;
+        seven[0x50U] = 7U;                   // an unused record of type 7 (em011 slot 10)
+        assert(collision::looks_like_shape_table(seven));
+        auto wild = shapes;
+        wild[0x50U] = 0x40U;                 // not a type byte
+        assert(!collision::looks_like_shape_table(wild));
         assert(dmcresource::probe("x.bin", shapes.data(), shapes.size()).format ==
                dmcresource::Format::CollisionShapes);
         const std::vector<std::uint8_t> index{6, 0, 0, 0, 2, 3, 1, 0, 0, 0, 0, 0, 1, 9, 2, 0};
