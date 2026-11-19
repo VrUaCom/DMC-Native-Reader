@@ -126,6 +126,16 @@ int main() {
     auto wrong = mixed;
     put32(wrong, 0x2000 + 0x64, 1234U);
     assert(!parse_ptx(wrong).ok());
+    // Single levels under a descriptor a tool wrote (all zero but the DDS
+    // size, id100.pac slot 53) read too.
+    auto zeroed = bank;
+    for (std::size_t at : {std::size_t{0x800}, std::size_t{0x2000}}) {
+        for (std::size_t i = 0; i < 0x70; ++i) {
+            if (i < 0x64 || i >= 0x68) zeroed[at + i] = std::byte{0};
+        }
+    }
+    const auto tool = parse_ptx(zeroed);
+    assert(tool.ok() && tool.slots.size() == 2U && tool.slots[0].dds.width == 64U);
     std::printf("ptx_single_level ok\n");
     return 0;
 }

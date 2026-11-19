@@ -333,10 +333,10 @@ dmc3::TextureSlotFramingResult parse_texture_bundle(
         } catch (...) {
         }
     }
-    // Only descriptor-field disagreements are tolerated, and bundles that mix
-    // full mip chains with single-level textures (GData.afs em026..em028: the
-    // canonical reader takes one or the other, the single-level reader only
-    // the latter). Structural faults (padding, trailing bytes, sector bounds,
+    // Only descriptor-field disagreements are tolerated, and bundles the DDS
+    // domain refused: full mip chains mixed with single levels (GData.afs
+    // em026..em028), or single levels under descriptors a tool wrote (id100
+    // slot 53: zero but for the size). Structural faults (padding, trailing bytes, sector bounds,
     // DDS sizes) stay rejected: the lenient read checks each of them.
     if (read.framing.status != dmc3::TextureSlotFramingStatus::descriptor_mismatch &&
         read.framing.status != dmc3::TextureSlotFramingStatus::invalid_dds) {
@@ -345,19 +345,20 @@ dmc3::TextureSlotFramingResult parse_texture_bundle(
 
     try {
         auto lenient = parse_lenient(source);
-        // A mixed bundle is taken only as it is: every descriptor's DDS size
-        // exact, and both kinds of texture really present.
+        // A bundle the DDS-domain checks refused (mixed full chains and single
+        // levels, or single levels under tool-written descriptors) is taken
+        // only as it is: every descriptor's DDS size exact, and each DDS header
+        // consistent (no mip-count flag over a zero mip count).
         if (lenient.ok() && read.framing.status == dmc3::TextureSlotFramingStatus::invalid_dds) {
             bool exact = true;
-            bool single = false;
-            bool chain = false;
             for (const auto& entry : lenient.document.textures) {
-                exact = exact && u32(source, static_cast<std::size_t>(entry.descriptor_offset) + 0x64U) == entry.dds_size;
-                single = single || entry.mip_map_count == 1U;
-                chain = chain || entry.mip_map_count > 1U;
+                const auto dds = static_cast<std::size_t>(entry.dds_offset);
+                const bool mip_flag = (u32(source, dds + 8U) & 0x20000U) != 0U;
+                exact = exact && u32(source, static_cast<std::size_t>(entry.descriptor_offset) + 0x64U) == entry.dds_size &&
+                        !(mip_flag && u32(source, dds + 28U) == 0U);
             }
-            if (!exact || !single || !chain) return read.framing;
-            lenient.detail = "mixed full-chain and single-level textures (lenient read: header, sector spans, DDS)";
+            if (!exact) return read.framing;
+            lenient.detail = "single-level or mixed textures (lenient read: header, sector spans, DDS)";
         }
         if (lenient.ok()) {
             if (compatibility_used != nullptr) *compatibility_used = false;
