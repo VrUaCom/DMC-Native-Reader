@@ -136,6 +136,8 @@ final class ViewerModel: ObservableObject {
         actions = menu.rows
         moreActions = menu.more
         effects = isPicture ? [] : next.effectRows()
+        soundPlayer.stop()
+        sounds = next.soundRows().rows
         camera = startCamera(of: next)  // draws the first frame of a 3D session
     }
 
@@ -269,6 +271,24 @@ final class ViewerModel: ObservableObject {
         roomName = nil
         refreshAfterChange()
     }
+
+    // MARK: Sounds
+
+    @Published private(set) var sounds: [MenuRow] = []
+    private let soundPlayer = SoundPlayer()
+
+    func playSound(_ row: MenuRow) {
+        guard let session else { return }
+        let pcm = session.soundPCM(row.id)
+        if pcm.samples.isEmpty {
+            message = pcm.message.isEmpty ? "This sound could not be decoded." : pcm.message
+            return
+        }
+        soundPlayer.play(samples: pcm.samples, rate: pcm.rate)
+        if !pcm.message.isEmpty { message = pcm.message }
+    }
+
+    func stopSound() { soundPlayer.stop() }
 
     func playEffect(_ row: MenuRow) {
         guard let session else { return }

@@ -372,6 +372,23 @@ extension ReaderSession {
         return rows(of: menu)
     }
 
+    /// The file's sounds; `message` is the core's line when there are none.
+    func soundRows() -> (rows: [MenuRow], message: String) {
+        guard let menu = dmc_sound_menu(handle) else { return ([], "") }
+        defer { dmc_menu_free(menu) }
+        let message = dmc_menu_message(menu).map { String(cString: $0) } ?? ""
+        return (rows(of: menu), message)
+    }
+
+    /// Sound `index` as 16-bit mono samples and its rate, or the core's reason.
+    func soundPCM(_ index: Int) -> (samples: [Int16], rate: UInt32, message: String) {
+        var pcm = dmc_sound_pcm(handle, Int32(index))
+        defer { dmc_pcm_free(&pcm) }
+        let message = pcm.message.map { String(cString: $0) } ?? ""
+        guard let samples = pcm.samples, pcm.sample_count > 0 else { return ([], 0, message) }
+        return (Array(UnsafeBufferPointer(start: samples, count: pcm.sample_count)), pcm.sample_rate, message)
+    }
+
     func playEffect(_ id: Int) -> String {
         var result = dmc_play_effect(handle, Int32(id))
         defer { dmc_outcome_free(&result) }

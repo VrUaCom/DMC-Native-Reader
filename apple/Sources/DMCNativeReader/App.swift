@@ -399,6 +399,15 @@ struct ContentView: View {
                     }
                 } label: { Label("Effects", systemImage: "sparkles") }
             }
+            if !model.sounds.isEmpty {
+                Menu {
+                    ForEach(model.sounds) { row in
+                        Button(row.label) { model.playSound(row) }
+                    }
+                    Divider()
+                    Button("Stop") { model.stopSound() }
+                } label: { Label("Sounds", systemImage: "speaker.wave.2") }
+            }
             Menu {
                 Button("Load base room…") { OpenPanel.choose { model.loadRoom(url: $0) } }
                 Button("Clear base room") { model.clearRoom() }
