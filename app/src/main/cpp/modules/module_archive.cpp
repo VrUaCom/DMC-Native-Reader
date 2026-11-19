@@ -2,6 +2,7 @@
 #include "dmcresource/native_module.h"
 
 #include <cmath>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -125,6 +126,9 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
             }
             if (motion::MotionScriptFile::looks_like(std::span<const std::uint8_t>{bytes, size})) {
                 return {Format::MotionScript, "MotionScript", "msc"};
+            }
+            if (size >= 0x24U && std::memcmp(bytes, "Head", 4U) == 0 && std::memcmp(bytes + 0x20U, "Prog", 4U) == 0) {
+                return {Format::SoundHeader, "SNDHD", "hd"};
             }
             if (video::looks_like_ipu(std::span<const std::uint8_t>{bytes, size})) {
                 return {Format::Ipu, "IPU", "ipu"};

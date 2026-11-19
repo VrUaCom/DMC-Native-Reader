@@ -60,6 +60,9 @@ enum class Format : std::uint8_t {
     PlainText,
     // PS2 IPU picture streams (video.h looks_like_ipu), played as movies.
     Ipu,
+    // The sound bank header beside a VAG body (snd_*.pac slot 1): "Head",
+    // then "Prog", "Smpl", "Vagi" chunks.
+    SoundHeader,
 };
 
 struct ProbeResult {

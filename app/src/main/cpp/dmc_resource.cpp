@@ -231,6 +231,11 @@ ProbeResult probe(std::string_view filename,
         return result(Format::Ogg, true, "OGG", "sound", "image-preview",
                       "STRUCTURAL_CONFIRMED", "audio/ogg");
     }
+    if (bytes != nullptr && size >= 0x20U && std::memcmp(bytes, "Head", 4U) == 0 &&
+        std::memcmp(bytes + 0x20U, "Prog", 4U) == 0) {
+        return result(Format::SoundHeader, true, "SNDHD", "sound", "inspection",
+                      "STRUCTURAL_CONFIRMED", "application/vnd.dmc.sound-header");
+    }
     if (bytes != nullptr && video::looks_like_ipu(std::span<const std::uint8_t>{bytes, size})) {
         return result(Format::Ipu, true, "IPU", "movie", "image-preview",
                       "STRUCTURAL_CONFIRMED", "video/x-ps2-ipu");
@@ -418,6 +423,7 @@ const char* format_name(Format format) noexcept {
     case Format::MessageTable: return "MSG";
     case Format::PlainText: return "TEXT";
     case Format::Ipu: return "IPU";
+    case Format::SoundHeader: return "SNDHD";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

@@ -265,6 +265,41 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             out.detail = "Name index | " + std::to_string(slot) + " names";
             return out;
         }
+        case Format::SoundHeader: {
+            // "Head": u32 0x20, u32 1, header size, body size, then the
+            // offsets of "Prog", "Smpl", "Vagi". Each chunk: tag, size, the
+            // last index, 0xFFFFFFFF, then its entries.
+            if (size < 0x20U) break;
+            const auto chunk_at = [&](std::size_t field) { return static_cast<std::size_t>(u32(data, field)); };
+            const std::size_t prog = chunk_at(0x14U), smpl = chunk_at(0x18U), vagi = chunk_at(0x1CU);
+            const auto chunk_ok = [&](std::size_t at, const char* tag) {
+                return at + 16U <= size && std::memcmp(bytes + at, tag, 4U) == 0;
+            };
+            if (!chunk_ok(prog, "Prog") || !chunk_ok(smpl, "Smpl") || !chunk_ok(vagi, "Vagi")) break;
+            auto out = start(module, probe, size, "Sound bank header (Head / Prog / Smpl / Vagi)");
+            auto& root = out.inspection.root;
+            property(root, "Header bytes", std::to_string(u32(data, 0x0CU)));
+            property(root, "Sound body bytes (the VAG beside it)", std::to_string(u32(data, 0x10U)));
+            const auto entries = [&](std::size_t at) { return static_cast<std::size_t>(u32(data, at + 8U)) + 1U; };
+            property(root, "Programs (Prog)", std::to_string(entries(prog)));
+            property(root, "Samples (Smpl)", std::to_string(entries(smpl)));
+            property(root, "Sounds (Vagi)", std::to_string(entries(vagi)));
+            // Vagi: 16-byte entries from +0x10: body offset, bytes, a word, rate.
+            InspectionNode sounds;
+            sounds.id = "vagi";
+            sounds.title = "Sounds in the body (Vagi)";
+            sounds.kind = InspectionKind::Collection;
+            const std::size_t vagi_end = std::min(size, vagi + static_cast<std::size_t>(u32(data, vagi + 4U)));
+            for (std::size_t i = 0, at = vagi + 0x10U; i < entries(vagi) && at + 16U <= vagi_end; ++i, at += 16U) {
+                property(sounds, "sound " + std::to_string(i),
+                         "at " + hex(u32(data, at)) + ", " + std::to_string(u32(data, at + 4U)) + " bytes, " +
+                             std::to_string(u32(data, at + 12U)) + " Hz, word " + hex(u32(data, at + 8U)));
+            }
+            root.children.push_back(std::move(sounds));
+            out.detail = "Sound header | " + std::to_string(entries(vagi)) + " sounds, " +
+                         std::to_string(entries(smpl)) + " samples, " + std::to_string(entries(prog)) + " programs";
+            return out;
+        }
         case Format::MessageTable: {
             const auto table = messages::parse_table(filename, std::span<const std::uint8_t>{bytes, size});
             if (!table || table->messages.empty()) break;
@@ -501,6 +536,7 @@ std::vector<NativeModule> family_modules() noexcept {
         make("formats.sound.ogg", "OGG", Format::Ogg, true),
         make("formats.movie.wmv", "WMV", Format::Wmv, true),
         make("formats.movie.ipu", "IPU", Format::Ipu, true),
+        make("formats.sound.header", "SNDHD", Format::SoundHeader),
     };
 }
 

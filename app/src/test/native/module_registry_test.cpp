@@ -1,6 +1,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,7 +14,7 @@ int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 43U);
+    assert(modules.size() == 44U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -43,6 +44,17 @@ int main() {
     const std::uint8_t ipu[16] = {'i', 'p', 'u', 'm', 0, 0, 1, 0, 0, 1, 0, 1, 0x44, 0, 0, 0};
     assert(probe("x.bin", ipu, sizeof ipu).format == Format::Ipu);
     assert(NativeModuleRegistry::find("IPU") != nullptr && NativeModuleRegistry::find("IPU")->format == Format::Ipu);
+    // The sound bank header beside a VAG body (snd_*.pac slot 1).
+    std::vector<std::uint8_t> hd(0x50U, 0U);
+    const auto put32 = [&hd](std::size_t at, std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) hd[at + i] = static_cast<std::uint8_t>(v >> (8 * i));
+    };
+    std::memcpy(hd.data(), "Head", 4); put32(4, 0x20); put32(8, 1); put32(0x0C, 0x50); put32(0x10, 0x40);
+    put32(0x14, 0x20); put32(0x18, 0x30); put32(0x1C, 0x40);
+    std::memcpy(hd.data() + 0x20, "Prog", 4); put32(0x24, 0x10);
+    std::memcpy(hd.data() + 0x30, "Smpl", 4); put32(0x34, 0x10);
+    std::memcpy(hd.data() + 0x40, "Vagi", 4); put32(0x44, 0x10);
+    assert(probe("x.bin", hd.data(), hd.size()).format == Format::SoundHeader);
     const std::uint8_t binary[8] = {1, 0, 0, 0, 2, 0, 0, 0};
     assert(probe("x.bin", binary, sizeof binary).format != Format::PlainText);
 
