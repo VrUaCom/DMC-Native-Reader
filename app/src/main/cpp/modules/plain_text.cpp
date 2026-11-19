@@ -18,14 +18,18 @@ bool looks_like_text(std::span<const std::uint8_t> bytes) noexcept {
     std::size_t printable = 0U;
     std::size_t letters = 0U;
     for (const auto b : text) {
-        if (b == '\t' || b == '\n' || b == '\r') continue;
+        if (b == '\t' || b == '\n' || b == '\r') {
+            ++printable;  // layout counts as text (st4xx object lists: Shift-JIS comments)
+            continue;
+        }
         if (b < 0x20U || b == 0x7FU) return false;  // a control byte: binary
         if (b < 0x7FU) {
             ++printable;
             if ((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')) ++letters;
         }
     }
-    // Mostly ASCII, with some letters or digits (not a run of punctuation).
+    // Mostly ASCII (spaces and line breaks included), with some letters or
+    // digits (not a run of punctuation).
     return printable * 10U >= text.size() * 7U && letters >= 2U;
 }
 

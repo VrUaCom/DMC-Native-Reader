@@ -55,6 +55,12 @@ int main() {
     std::memcpy(hd.data() + 0x30, "Smpl", 4); put32(0x34, 0x10);
     std::memcpy(hd.data() + 0x40, "Vagi", 4); put32(0x44, 0x10);
     assert(probe("x.bin", hd.data(), hd.size()).format == Format::SoundHeader);
+    // An object list with Shift-JIS comments (st412 slot 4) is text too.
+    std::string objects = "# GAME\r\n\r\n# SET 0 STAY\t;";
+    for (int i = 0; i < 3; ++i) objects += "\x82\xa0\x82\xa2";
+    objects += "\r\n\tmodel\t\t0\r\n\tpos\t\t\t0 0 0\r\n\thit\tbox\t\t2566, 90, -500, 2000, 2000, 2000\r\n";
+    assert(probe("x.bin", reinterpret_cast<const std::uint8_t*>(objects.data()), objects.size()).format ==
+           Format::PlainText);
     const std::uint8_t binary[8] = {1, 0, 0, 0, 2, 0, 0, 0};
     assert(probe("x.bin", binary, sizeof binary).format != Format::PlainText);
 
