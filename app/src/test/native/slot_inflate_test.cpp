@@ -73,11 +73,12 @@ int main() {
     const auto s2 = get(*expanded, 16U);
     const auto s3 = get(*expanded, 20U);
     assert(get(*expanded, 12U) == 0U);
-    assert(s0 % 0x800U == 0U && s2 % 0x800U == 0U && s3 % 0x800U == 0U && s0 < s2 && s2 < s3);
+    assert(s0 % 4U == 0U && s2 % 4U == 0U && s3 % 4U == 0U && s0 < s2 && s2 < s3);
+    // Each slot keeps its exact size (the distance to the next slot or the end).
+    assert(s2 - s0 == (text.size() + 3U) / 4U * 4U && s3 - s2 == sizeof plain && expanded->size() - s3 == 8U);
     assert(std::memcmp(expanded->data() + s0, text.data(), text.size()) == 0);
     assert(std::memcmp(expanded->data() + s2, plain, sizeof plain) == 0);
     assert(std::memcmp(expanded->data() + s3, "PAC\0tiny", 8U) == 0);
-    assert(expanded->size() % 0x800U == 0U);
 
     // An archive with nothing compressed, or not an archive: left alone.
     std::vector<std::uint8_t> raw(0x10U, 0U);

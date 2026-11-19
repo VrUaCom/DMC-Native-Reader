@@ -27,8 +27,8 @@ namespace dmcresource::slot_inflate {
 
 // A PAC or PNST archive with at least one zlib-compressed slot (or one PTX
 // slot with uncompressed textures), rebuilt with
-// every such slot inflated (the others copied), the slots aligned as the
-// game's own archives are; a slot that only starts like zlib is kept as it is.
+// every such slot inflated (the others copied), each slot keeping its exact
+// size (4-byte aligned starts); a slot that only starts like zlib is kept as it is.
 // nullopt when it is no such archive, nothing was inflated, or the result
 // would exceed the core's resource limit.
 // What expand changed: slots inflated, PTX bundles whose uncompressed

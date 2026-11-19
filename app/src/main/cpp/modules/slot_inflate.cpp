@@ -261,7 +261,11 @@ void put_u32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t val
     std::memcpy(bytes.data() + at, &value, 4U);
 }
 
-constexpr std::size_t kSlotAlignment = 0x800U;  // as the game's own PAC files
+// Slots start on 4-byte boundaries and keep their exact size: a slot's size
+// is the distance to the next one, and readers check it (a collision shape
+// table is a whole number of 80-byte records, em000 slot 40 has 23). Padding
+// slots to 0x800 sectors as the retail files do would change those sizes.
+constexpr std::size_t kSlotAlignment = 4U;
 constexpr std::size_t kHeaderAlignment = 16U;
 
 std::size_t align_up(std::size_t value, std::size_t to) noexcept { return (value + to - 1U) / to * to; }
@@ -360,7 +364,6 @@ std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> ar
             placed[i] = static_cast<std::uint32_t>(out.size());
             out.insert(out.end(), payloads[i].begin(), payloads[i].end());
         }
-        out.resize(align_up(out.size(), kSlotAlignment), 0U);
         for (std::uint32_t i = 0; i < count; ++i) {
             std::uint32_t offset = 0U;
             if (offsets[i] != 0U) {
