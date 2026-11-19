@@ -25,11 +25,23 @@ namespace dmcresource::slot_inflate {
 // less, no preset dictionary, header check passes).
 [[nodiscard]] bool looks_like_zlib(std::span<const std::uint8_t> bytes) noexcept;
 
-// A PAC or PNST archive with at least one zlib-compressed slot, rebuilt with
+// A PAC or PNST archive with at least one zlib-compressed slot (or one PTX
+// slot with uncompressed textures), rebuilt with
 // every such slot inflated (the others copied), the slots aligned as the
 // game's own archives are; a slot that only starts like zlib is kept as it is.
 // nullopt when it is no such archive, nothing was inflated, or the result
 // would exceed the core's resource limit.
-[[nodiscard]] std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> archive);
+// What expand changed: slots inflated, PTX bundles whose uncompressed
+// textures were encoded as BC3 (ptx_rgba.h).
+struct Expanded final {
+    std::size_t inflated{};
+    std::size_t textures_compressed{};
+};
+
+// Also rewrites a slot (inflated or stored) that is a PTX bundle with
+// uncompressed textures (ptx_rgba::compress), so such an archive is rebuilt
+// even when nothing in it is zlib-compressed.
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> archive,
+                                                              Expanded* what = nullptr);
 
 }  // namespace dmcresource::slot_inflate

@@ -4,6 +4,7 @@
 #include <array>
 #include <cstring>
 
+#include "dmcresource/ptx_rgba.h"
 #include "dmcresource/resource_limits.h"
 
 namespace dmcresource::slot_inflate {
@@ -294,7 +295,7 @@ std::optional<std::vector<std::uint8_t>> inflate_zlib(std::span<const std::uint8
     }
 }
 
-std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> archive) {
+std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> archive, Expanded* what) {
     try {
         if (archive.size() < 8U) return std::nullopt;
         const bool pac = std::memcmp(archive.data(), "PAC\0", 4U) == 0;
@@ -326,6 +327,7 @@ std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> ar
         const std::size_t limit = resource_limits::kMaxResourceBytes;
         std::vector<std::vector<std::uint8_t>> payloads(sorted.size());
         std::size_t inflated = 0;
+        std::size_t textures = 0;
         std::size_t total = align_up(table_end, kHeaderAlignment);
         for (std::size_t i = 0; i < sorted.size(); ++i) {
             const auto slot = slot_of(sorted[i]);
@@ -339,10 +341,16 @@ std::optional<std::vector<std::uint8_t>> expand(std::span<const std::uint8_t> ar
             } else {
                 payloads[i].assign(slot.begin(), slot.end());
             }
+            // A texture bundle with uncompressed textures: encoded as BC3 (ptx_rgba.h).
+            if (auto compressed = ptx_rgba::compress(payloads[i])) {
+                payloads[i] = std::move(*compressed);
+                ++textures;
+            }
             total = align_up(total, kSlotAlignment) + payloads[i].size();
             if (total > limit) return std::nullopt;
         }
-        if (inflated == 0U) return std::nullopt;
+        if (inflated == 0U && textures == 0U) return std::nullopt;
+        if (what != nullptr) *what = Expanded{inflated, textures};
 
         std::vector<std::uint8_t> out(align_up(table_end, kHeaderAlignment), 0U);
         std::memcpy(out.data(), archive.data(), 8U);

@@ -1,4 +1,5 @@
 #include "dmcresource/slot_inflate.h"
+#include "dmcresource/ptx_rgba.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/scm_layout_compat.h"
 #include "dmcresource/spider/stage_actions.h"
@@ -611,13 +612,30 @@ void assess_health(Session* session, std::string_view name, std::span<const std:
 
 std::unique_ptr<Session> open_session(std::string_view name,
     const std::uint8_t* bytes, std::size_t size) {
-    // An archive of zlib-compressed files opens as the archive they make.
+    // An archive of zlib-compressed files opens as the archive they make, and
+    // a texture bundle with uncompressed textures with them as BC3.
     if (bytes != nullptr) {
-        if (auto inflated = slot_inflate::expand(std::span<const std::uint8_t>{bytes, size})) {
-            auto session = open_session(name, inflated->data(), inflated->size());
+        const std::span<const std::uint8_t> file{bytes, size};
+        slot_inflate::Expanded what;
+        if (auto expanded = slot_inflate::expand(file, &what)) {
+            auto session = open_session(name, expanded->data(), expanded->size());
+            if (session) {
+                if (what.inflated > 0U) {
+                    if (!session->detail.empty()) session->detail += "\n";
+                    session->detail += "Its files are stored zlib-compressed; they are shown inflated.";
+                }
+                if (what.textures_compressed > 0U) {
+                    if (!session->detail.empty()) session->detail += "\n";
+                    session->detail += "Uncompressed textures of its PTX are shown encoded as BC3 (DXT5).";
+                }
+            }
+            return session;
+        }
+        if (auto compressed = ptx_rgba::compress(file)) {
+            auto session = open_session(name, compressed->data(), compressed->size());
             if (session) {
                 if (!session->detail.empty()) session->detail += "\n";
-                session->detail += "Its files are stored zlib-compressed; they are shown inflated.";
+                session->detail += "Its uncompressed textures are shown encoded as BC3 (DXT5).";
             }
             return session;
         }
