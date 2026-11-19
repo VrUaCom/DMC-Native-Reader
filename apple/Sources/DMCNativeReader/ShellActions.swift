@@ -286,6 +286,10 @@ extension ViewerModel {
         pickFiles { [weak self] urls in
             guard let self else { return }
             self.staged.append(contentsOf: urls.map { (role: role, name: $0.lastPathComponent) })
+            if role == "Motion" {
+                self.stagedMotions.append(contentsOf: urls)
+                self.motionCards = self.session?.motionCards(staged: self.stagedMotionNames) ?? []
+            }
             self.message = "\(urls.count) \(role.lowercased()) file(s) staged: see Info."
         }
     }

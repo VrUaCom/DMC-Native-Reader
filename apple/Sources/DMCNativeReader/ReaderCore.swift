@@ -313,8 +313,13 @@ struct Outcome {
 
 extension ReaderSession {
     /// The animation strip: the library's motions and the scripts that drive them.
-    func motionCards() -> [MotionCard] {
-        guard let strip = dmc_motion_strip_build(handle, true, nil, 0) else { return [] }
+    func motionCards(staged: [String] = []) -> [MotionCard] {
+        let names = staged.map { strdup($0) }
+        defer { names.forEach { free($0) } }
+        let built = names.map { UnsafePointer($0) }.withUnsafeBufferPointer { buffer in
+            dmc_motion_strip_build(handle, true, buffer.baseAddress, buffer.count)
+        }
+        guard let strip = built else { return [] }
         defer { dmc_motion_strip_free(strip) }
         var cards: [MotionCard] = []
         for index in 0..<dmc_motion_strip_count(strip) {

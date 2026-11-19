@@ -43,6 +43,15 @@ struct DMCNativeReaderApp: App {
                 Button("Open…") { OpenPanel.choose { model.open(url: $0) } }
                     .keyboardShortcut("o")
             }
+            CommandGroup(replacing: .appInfo) {
+                Button("About DMC Native Reader") { AboutPanel.show() }
+            }
+            CommandGroup(after: .toolbar) {
+                Button("Zoom In") { model.zoom(by: 1.25) }.keyboardShortcut("+")
+                Button("Zoom Out") { model.zoom(by: 0.8) }.keyboardShortcut("-")
+                Button("Reset View") { model.resetCamera() }.keyboardShortcut("0")
+                Divider()
+            }
         }
     }
 }
@@ -883,5 +892,18 @@ struct CameraSettingsView: View {
     private func choice(of row: CameraSettingRow) -> Int {
         guard let index = model.cameraRows.firstIndex(of: row), index < model.cameraChoices.count else { return row.start }
         return model.cameraChoices[index]
+    }
+}
+
+/// About: the app's version and the commit its core was built from.
+enum AboutPanel {
+    static func show() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1"
+        let build = takeString(dmc_build_identity()) ?? "unknown"
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationVersion: version,
+            .version: "core \(build), C API \(dmc_api_version())",
+            .credits: NSAttributedString(string: "A read-only viewer of the game's files: the core decides, this shell shows."),
+        ])
     }
 }

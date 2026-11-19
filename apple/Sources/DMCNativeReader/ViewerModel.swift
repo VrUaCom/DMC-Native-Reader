@@ -50,7 +50,7 @@ final class ViewerModel: ObservableObject {
 
     // MARK: Animation state
     /// The animation strip of the open session (its motions and scripts).
-    @Published private(set) var motionCards: [MotionCard] = []
+    @Published var motionCards: [MotionCard] = []
     /// The card whose motion is loaded, if any.
     @Published private(set) var activeCard: Int?
     @Published private(set) var playing = false
@@ -101,6 +101,7 @@ final class ViewerModel: ObservableObject {
                 self.stack.removeAll()
                 self.sourceFile = (name, data)
                 self.staged.removeAll()
+                self.stagedMotions.removeAll()
                 self.show(opened)
                 // An opened stage brings its own effect bank and configuration from beside it.
                 if opened.openedAs == .stage {
@@ -163,7 +164,7 @@ final class ViewerModel: ObservableObject {
         motionFrame = .nan
         motionRange = nil
         activeCard = nil
-        motionCards = isPicture ? [] : next.motionCards()
+        motionCards = isPicture ? [] : next.motionCards(staged: stagedMotionNames)
         let menu = next.companionRows()
         actions = menu.rows
         moreActions = menu.more
@@ -197,6 +198,12 @@ final class ViewerModel: ObservableObject {
         requestFrame()
     }
 
+    /// Zooms the view by `factor` (within the core's limits).
+    func zoom(by factor: Float) {
+        guard session != nil, !isPicture else { return }
+        camera.zoom = dmc_pinch_zoom(camera.zoom, factor)
+    }
+
     func resetCamera() {
         guard let session else { camera = ViewCamera(); return }
         camera = startCamera(of: session)
@@ -217,7 +224,14 @@ final class ViewerModel: ObservableObject {
 
     /// Loads a card's motion (the library's, or driven by one of its scripts) and plays it.
     func play(card: MotionCard, script: MotionCard.Script? = nil) {
-        guard let session, card.libraryIndex >= 0 else { return }
+        guard let session else { return }
+        // A staged motion file: the shell reads it, the core loads it.
+        if card.libraryIndex < 0, card.stagedIndex >= 0, card.stagedIndex < stagedMotions.count {
+            loadMotion(url: stagedMotions[card.stagedIndex])
+            activeCard = card.id
+            return
+        }
+        guard card.libraryIndex >= 0 else { return }
         let report = script.map { session.loadScriptedMotion(script: $0.scriptIndex, motion: card.libraryIndex) }
             ?? session.loadLibraryMotion(card.libraryIndex)
         if !report.isEmpty { message = report }
@@ -238,7 +252,7 @@ final class ViewerModel: ObservableObject {
         }
         message = session.loadMotion(name: url.lastPathComponent, bytes: data)
         motionRange = session.motionRange()
-        motionCards = session.motionCards()
+        motionCards = session.motionCards(staged: stagedMotionNames)
         motionFrame = motionRange == nil ? .nan : 0
         if motionRange != nil { startMotion() } else { requestFrame() }
     }
@@ -326,6 +340,9 @@ final class ViewerModel: ObservableObject {
     @Published var roomBroken = false
     /// Files staged beside the model, listed in Info.
     var staged: [(role: String, name: String)] = []
+    /// Motion files staged beside the model: cards of the animation strip.
+    var stagedMotions: [URL] = []
+    var stagedMotionNames: [String] { stagedMotions.map(\.lastPathComponent) }
 
     // MARK: Crash report
 
@@ -671,7 +688,7 @@ final class ViewerModel: ObservableObject {
         let menu = session.companionRows()
         actions = menu.rows
         moreActions = menu.more
-        motionCards = session.motionCards()
+        motionCards = session.motionCards(staged: stagedMotionNames)
         requestFrame()
     }
 

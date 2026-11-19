@@ -80,6 +80,9 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   turn the focus ring, K locks focus, L levels, two fingers turn the
   polarizer (or roll the camera), a dial clicked steps its setting; a
   setting's follow-ups (dmc_camera_follow_up_of) are applied with it.
+- Motion files staged beside the model (Actions → Stage motion) join the
+  animation strip as their own cards. View → Zoom In / Out (⌘+ ⌘−) and
+  Reset View (⌘0); About names the commit the core was built from.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an
