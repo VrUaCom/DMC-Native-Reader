@@ -420,6 +420,19 @@ struct ContentView: View {
                     }
                 } label: { Label("Effects", systemImage: "sparkles") }
             }
+            if model.canShowUV {
+                Button { model.openUVMaps() } label: { Label("UV maps", systemImage: "square.grid.3x3") }
+                    .help("The model's UV layout, one map per texture")
+            }
+            if model.dualPreview {
+                Picker("Picture", selection: Binding(get: { model.infoPreviewShown },
+                                                     set: { model.setInfoPreview($0) })) {
+                    Text("Texture").tag(false)
+                    Text("Info").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .help("The texture, or the core's Info picture of it")
+            }
             if model.canShowHitboxes || model.canShowStageCollision {
                 Menu {
                     if model.canShowHitboxes {

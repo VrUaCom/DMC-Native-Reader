@@ -60,6 +60,8 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
 - Crashes: the core's crash note (dmc_crash_install) and the file being
   opened are kept; the next start shows them, and that file opens once as
   its description (dmc_open_description) instead of closing the reader again.
+- UV maps: a model's UV layout as a list of maps, each drawn over its
+  texture; a texture with an Info picture switches between the two.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an

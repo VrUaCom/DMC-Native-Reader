@@ -115,6 +115,28 @@ final class ViewerModel: ObservableObject {
         show(child)
     }
 
+    // MARK: UV maps, the Info picture
+
+    var canShowUV: Bool { !isPicture && (session?.state.contains(.canShowUv) ?? false) }
+    @Published private(set) var dualPreview = false
+    @Published private(set) var infoPreviewShown = false
+
+    func openUVMaps() {
+        guard let session else { return }
+        guard let gallery = session.openUVGallery() else {
+            message = "UV maps unavailable: incomplete bindings"
+            return
+        }
+        stack.append(session)
+        show(gallery)
+    }
+
+    func setInfoPreview(_ info: Bool) {
+        guard let session, session.hasDualPreview, session.setInfoPreview(info) else { return }
+        infoPreviewShown = session.infoPreviewActive
+        if let picture = session.picture() { image = Self.cgImage(picture) }
+    }
+
     func goBack() {
         guard let previous = stack.popLast() else { return }
         show(previous)
@@ -143,6 +165,8 @@ final class ViewerModel: ObservableObject {
         soundPlayer.stop()
         sounds = next.soundRows().rows
         hitboxAttack = nil
+        dualPreview = next.hasDualPreview
+        infoPreviewShown = dualPreview && next.infoPreviewActive
         stageCollisionShown = false
         attackIDs = next.state.contains(.canShowHitboxes) ? next.attackIDs() : []
         camera = startCamera(of: next)  // draws the first frame of a 3D session

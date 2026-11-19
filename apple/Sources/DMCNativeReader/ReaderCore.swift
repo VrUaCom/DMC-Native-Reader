@@ -92,6 +92,7 @@ struct ViewCamera: Equatable {
 struct SessionState: OptionSet {
     let rawValue: UInt64
     static let uvMapView = SessionState(rawValue: 1 << 18)
+    static let canShowUv = SessionState(rawValue: 1 << 14)
     static let canShowHitboxes = SessionState(rawValue: 1 << 33)
     static let canShowStageCollision = SessionState(rawValue: 1 << 34)
 }
@@ -149,6 +150,17 @@ final class ReaderSession: @unchecked Sendable {
         let title = takeString(dmc_child_title(handle, index)) ?? "\(fileName) #\(index)"
         return ReaderSession(handle: child, title: title, openedAs: .plain, fileName: title)
     }
+
+    /// The model's UV maps as a session of their own (one child per map).
+    func openUVGallery() -> ReaderSession? {
+        guard let gallery = dmc_open_uv_gallery(handle) else { return nil }
+        return ReaderSession(handle: gallery, title: "\(title) · UV", openedAs: .plain, fileName: fileName)
+    }
+
+    /// A texture with an Info picture too: which of the two is shown.
+    var hasDualPreview: Bool { dmc_has_dual_preview(handle) }
+    var infoPreviewActive: Bool { dmc_info_preview_active(handle) }
+    @discardableResult func setInfoPreview(_ info: Bool) -> Bool { dmc_set_info_preview(handle, info) }
 
     var childCount: Int { Int(dmc_child_count(handle)) }
 
