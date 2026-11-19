@@ -171,8 +171,15 @@ final class ReaderSession: @unchecked Sendable {
     var state: SessionState { SessionState(rawValue: dmc_state_flags(handle)) }
 
     /// Info, written by the core: structure, evidence, navigation, staged files.
-    func infoText(navigationDepth: Int, backTitle: String) -> String {
-        takeString(dmc_info_text(handle, title, navigationDepth, backTitle, nil, 0)) ?? title
+    func infoText(navigationDepth: Int, backTitle: String, staged: [(role: String, name: String)] = []) -> String {
+        // The staged files' strings live until the call returns.
+        let roles = staged.map { strdup($0.role) }
+        let names = staged.map { strdup($0.name) }
+        defer { (roles + names).forEach { free($0) } }
+        let files = zip(roles, names).map { dmc_staged_file(role: $0, name: $1) }
+        return files.withUnsafeBufferPointer { buffer in
+            takeString(dmc_info_text(handle, title, navigationDepth, backTitle, buffer.baseAddress, buffer.count))
+        } ?? title
     }
 
     /// File health: 0 fine, 1 notice (orange), 2 problem (red), and its report.
@@ -714,7 +721,7 @@ struct CollisionReport: Identifiable {
 }
 
 /// Takes a string the C API allocated and frees it.
-private func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String? {
+func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String? {
     guard let pointer else { return nil }
     defer { dmc_string_free(pointer) }
     return String(cString: pointer)

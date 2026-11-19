@@ -12,11 +12,11 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var image: CGImage?
     @Published private(set) var isPicture = false
     @Published private(set) var healthLevel = 0
-    @Published private(set) var message: String?
+    @Published var message: String?
     @Published var camera = ViewCamera() { didSet { requestFrame() } }
 
     /// Sessions under the current one (Back returns to the last).
-    private(set) var stack: [ReaderSession] = []
+    var stack: [ReaderSession] = []
     /// The settings schema and the user's stored choices (UserDefaults), applied by the core.
     let settingRows = ReaderCore.settingsSchema()
     @Published private(set) var stored: [String: Float] =
@@ -83,12 +83,12 @@ final class ViewerModel: ObservableObject {
         // The core parses without the session lock (B7): a large PAC opens
         // while the window stays live and the current view keeps drawing.
         Task { @MainActor [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<ReaderSession, OpenFailure> in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<(ReaderSession, Data), OpenFailure> in
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 do {
                     let data = try Data(contentsOf: url, options: .mappedIfSafe)
-                    return ReaderSession.open(name: name, bytes: data, describeOnly: describeOnly)
+                    return ReaderSession.open(name: name, bytes: data, describeOnly: describeOnly).map { ($0, data) }
                 } catch {
                     return .failure(OpenFailure(message: "Could not read \(name): \(error.localizedDescription)"))
                 }
@@ -97,8 +97,10 @@ final class ViewerModel: ObservableObject {
             guard let self, request == self.openRequest else { return }  // a newer file was picked
             self.opening = nil
             switch result {
-            case .success(let opened):
+            case .success(let (opened, data)):
                 self.stack.removeAll()
+                self.sourceFile = (name, data)
+                self.staged.removeAll()
                 self.show(opened)
             case .failure(let failure):
                 self.message = failure.message
@@ -142,7 +144,7 @@ final class ViewerModel: ObservableObject {
         show(previous)
     }
 
-    private func show(_ next: ReaderSession) {
+    func show(_ next: ReaderSession) {
         // The picture is known before the camera resets: resetting it asks
         // for a frame, and a picture session draws none.
         let picture = next.picture()
@@ -176,7 +178,7 @@ final class ViewerModel: ObservableObject {
 
     func infoText() -> String {
         guard let session else { return welcome }
-        return session.infoText(navigationDepth: stack.count, backTitle: stack.last?.title ?? "")
+        return session.infoText(navigationDepth: stack.count, backTitle: stack.last?.title ?? "", staged: staged)
     }
 
     func healthReport() -> String { session?.health().report ?? "" }
@@ -302,6 +304,16 @@ final class ViewerModel: ObservableObject {
         roomName = nil
         refreshAfterChange()
     }
+
+    // MARK: Shell steps of the companion menu (ShellActions.swift)
+
+    /// The file opened from disk: the source for adding PACs or MOD parts.
+    var sourceFile: (name: String, data: Data)?
+    @Published var askTextureFormat = false
+    @Published var partsShown: [PartInfo] = []
+    @Published var diagnosticsText = ""
+    /// Files staged beside the model, listed in Info.
+    var staged: [(role: String, name: String)] = []
 
     // MARK: Crash report
 
@@ -443,7 +455,7 @@ final class ViewerModel: ObservableObject {
     }
 
     /// The one platform step the core leaves to the shell.
-    private func handle(_ outcome: Outcome) {
+    func handle(_ outcome: Outcome) {
         if !outcome.message.isEmpty { message = outcome.message }
         if let opened = outcome.opened, let session {
             stack.append(session)
@@ -612,7 +624,7 @@ final class ViewerModel: ObservableObject {
         }
     }
 
-    private func refreshAfterChange() {
+    func refreshAfterChange() {
         guard let session else { return }
         let menu = session.companionRows()
         actions = menu.rows
@@ -637,7 +649,7 @@ final class ViewerModel: ObservableObject {
         requestFrame()
     }
 
-    private func requestFrame() {
+    func requestFrame() {
         guard let session, !isPicture else { return }
         if dmc_camera_mode() || viewfinder != nil { refreshFinder() }
         if drawing {

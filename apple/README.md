@@ -62,6 +62,11 @@ tests there and `apple/build-mac.sh` produces the app without Swift warnings.
   its description (dmc_open_description) instead of closing the reader again.
 - UV maps: a model's UV layout as a list of maps, each drawn over its
   texture; a texture with an Info picture switches between the two.
+- Actions the core leaves to the shell, as on Android: texture format
+  (re-encode, then Save file…), add PACs to a character or MOD parts to a
+  model, the parts placed on the host's joints, attach a PTX, the archive's
+  own files, a stage's effect bank, files staged beside the model (listed
+  in Info), diagnostics.
 - Sounds: a file's sounds (a VAG's chunks) from the core's sound menu,
   decoded by the core to PCM and played with AVAudioEngine.
 - Actions: the core's companion menu (rows and "Other actions"); a file an

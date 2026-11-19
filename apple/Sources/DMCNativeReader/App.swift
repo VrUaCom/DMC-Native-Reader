@@ -129,6 +129,13 @@ struct ContentView: View {
         .sheet(isPresented: $showInfo) { InfoSheet(model: model) }
         .sheet(item: $model.markerCard) { card in MarkerCardSheet(model: model, card: card) }
         .sheet(item: $model.collisionReport) { report in CollisionReportSheet(report: report) }
+        .sheet(isPresented: $model.askTextureFormat) { TextureFormatSheet(model: model) }
+        .sheet(isPresented: Binding(get: { !model.partsShown.isEmpty }, set: { if !$0 { model.partsShown = [] } })) {
+            PartsSheet(model: model)
+        }
+        .sheet(isPresented: Binding(get: { !model.diagnosticsText.isEmpty }, set: { if !$0 { model.diagnosticsText = "" } })) {
+            TextSheet(title: "Diagnostics", text: model.diagnosticsText)
+        }
     }
 
     private var start: some View {
@@ -402,12 +409,12 @@ struct ContentView: View {
                 .disabled(model.session == nil || model.isPicture)
             Menu {
                 ForEach(model.actions) { row in
-                    Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.run(action: row) }
+                    Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.runCompanion(row) }
                 }
                 if !model.moreActions.isEmpty {
                     Menu("Other actions") {
                         ForEach(model.moreActions) { row in
-                            Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.run(action: row) }
+                            Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.runCompanion(row) }
                         }
                     }
                 }
@@ -590,6 +597,98 @@ struct SettingsView: View {
 }
 
 /// A configuration marker's card: its rows, then its buttons (the core's).
+/// The formats textures can be re-encoded to (the core's list), DX10 header optional.
+struct TextureFormatSheet: View {
+    @ObservedObject var model: ViewerModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var dx10 = false
+    private let formats = ReaderSession.textureFormats
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Texture format").font(.headline)
+            List(formats, id: \.name) { format in
+                Button(format.label) {
+                    dismiss()
+                    model.reencodeTextures(format: format.name, dx10: dx10)
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(minHeight: 220)
+            Toggle("Always write the DX10 header", isOn: $dx10)
+            HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
+        }
+        .padding()
+        .frame(minWidth: 380)
+    }
+}
+
+/// A composite model's parts: each hangs from a joint of the host, or sits where its file put it.
+struct PartsSheet: View {
+    @ObservedObject var model: ViewerModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var joints: [Int: Int] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Model parts").font(.headline)
+            let host = model.partsShown.first
+            List(model.partsShown) { part in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(part.id). \(part.name)").font(.subheadline.bold())
+                    Text(part.state).font(.caption).foregroundStyle(.secondary)
+                    if part.id > 0, let host {
+                        HStack {
+                            Picker("Joint of \(host.name)", selection: Binding(
+                                get: { joints[part.id] ?? max(0, part.defaultAttachment) },
+                                set: { joints[part.id] = $0 })) {
+                                ForEach(host.nodes.indices, id: \.self) { Text(host.nodes[$0]).tag($0) }
+                            }
+                            Button("Attach") {
+                                model.attachPart(host: 0, child: part.id,
+                                                 joint: joints[part.id] ?? max(0, part.defaultAttachment))
+                            }
+                            Button("Reset") { model.resetPart(part.id) }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(minHeight: 260)
+            HStack { Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
+        }
+        .padding()
+        .frame(minWidth: 520)
+    }
+}
+
+/// Plain selectable text (diagnostics).
+struct TextSheet: View {
+    let title: String
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            ScrollView {
+                Text(text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                Spacer()
+                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding()
+        .frame(minWidth: 520, minHeight: 400)
+    }
+}
+
 /// The core's collision report: each group's colour (as drawn), heading and lines.
 struct CollisionReportSheet: View {
     let report: CollisionReport
