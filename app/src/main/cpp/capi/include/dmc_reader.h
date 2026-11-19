@@ -13,7 +13,10 @@
  * for its whole use (the JNI shell takes the same lock), so a frame drawn on
  * a render thread and a change made on the UI thread never overlap. A call
  * waits while a frame is being drawn. The stage room and the camera are the
- * core's own state, not a session's, and have their own locks.
+ * core's own state, not a session's, and have their own locks. Opening a
+ * file (dmc_open, dmc_open_source) takes no session lock: it reads only the
+ * bytes and makes a new session, so a large archive opens while other
+ * sessions keep drawing.
  *
  * Ownership: a session from dmc_open, dmc_open_source, dmc_open_child,
  * dmc_assemble, dmc_compose or dmc_open_uv_gallery is the caller's and is

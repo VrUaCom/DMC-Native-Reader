@@ -274,10 +274,10 @@ Java_com_dmcrengine_nativeviewer_NativeBridge_openResource(
     if (!mapped.valid()) return nullptr;
     try {
         const auto name = to_utf8(env, filename);
-        // The whole open plan runs under the session lock, as its steps did
-        // when the shell called them one by one: nothing else reads or
-        // changes sessions and stage state meanwhile.
-        const SessionLock open_lock{session_mutex()};
+        // Parsed without the session lock (B7): the open reads only the
+        // mapped file and builds a session no one else sees yet; the shared
+        // stage and camera state it reads has its own locks. The handle is
+        // registered under the lock (to_handle).
         auto opened = describe_only == JNI_TRUE
             ? dmcresource::spider::actions::open_resource_description(name, mapped.data(), mapped.size())
             : dmcresource::spider::actions::open_resource(name, mapped.data(), mapped.size());

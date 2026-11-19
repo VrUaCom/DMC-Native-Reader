@@ -1,6 +1,6 @@
 // The C API's thread contract: frames drawn on one thread while another
 // changes the same session (parts attached and reset, part lists read) never
-// overlap; group 2's picks, long presses, metrics and captures in between. Run under
+// overlap, and files open meanwhile on a third thread (B7); group 2's picks, long presses, metrics and captures in between. Run under
 // ThreadSanitizer this fails on any unlocked access.
 #include "dmc_reader.h"
 
@@ -102,6 +102,26 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     });
+    // B7: files open without the session lock, on their own thread, while
+    // the frames above and the changes below go on.
+    std::vector<std::uint8_t> pac(0x20, 0);
+    std::memcpy(pac.data(), "PAC", 4);
+    put_u32(pac.data(), 4, 2);
+    put_u32(pac.data(), 8, 0x20);
+    pac.insert(pac.end(), mod.begin(), mod.end());
+    put_u32(pac.data(), 12, static_cast<std::uint32_t>(pac.size()));
+    pac.insert(pac.end(), mod.begin(), mod.end());
+    std::atomic<int> opened{0};
+    std::thread opener([&] {
+        while (!done.load()) {
+            dmc_open_result result = dmc_open("pair.pac", pac.data(), pac.size());
+            if (result.session != nullptr) ++opened;
+            dmc_string_free(result.title);
+            dmc_close(result.session);
+            dmc_session* plain = dmc_open_source("one.mod", mod.data(), mod.size());
+            dmc_close(plain);
+        }
+    });
     for (int round = 0; round < 200; ++round) {
         char* attached = dmc_part_attach(composite, 0, 1, 0);
         dmc_string_free(attached);
@@ -139,9 +159,10 @@ int main() {
             dmc_image_free(photo);
         }
     }
-    while (frames.load() < 3) std::this_thread::yield();
+    while (frames.load() < 3 || opened.load() < 3) std::this_thread::yield();
     done = true;
     render.join();
+    opener.join();
 
     dmc_close(composite);
     dmc_close(extra);

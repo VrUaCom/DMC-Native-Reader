@@ -172,7 +172,10 @@ void dmc_string_free(char* text) { std::free(text); }
 dmc_open_result dmc_open(const char* name, const uint8_t* bytes, size_t size) {
     dmc_open_result result{};
     try {
-        const std::lock_guard lock{api_mutex()};
+        // No session lock (B7): parsing reads only `bytes` and builds a new
+        // session no one else sees; the core's shared state it reads (stage
+        // rooms, markers, camera) has its own locks. A large PAC no longer
+        // stops other sessions' frames while it is read.
         auto opened = actions::open_resource(text_or_empty(name), bytes, size);
         result.opened_as = static_cast<dmc_opened_as>(opened.as);
         result.title = copy_string(opened.title);
@@ -194,8 +197,8 @@ void dmc_close(dmc_session* session) {
 
 dmc_session* dmc_open_source(const char* name, const uint8_t* bytes, size_t size) {
     try {
-        const std::lock_guard lock{api_mutex()};
         if (bytes == nullptr && size != 0U) return nullptr;
+        // Parsed without the session lock, as dmc_open (B7).
         return wrap(dmcresource::open_session(text_or_empty(name), bytes, size));
     } catch (...) { return nullptr; }
 }
