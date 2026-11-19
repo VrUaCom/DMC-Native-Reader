@@ -104,7 +104,9 @@ EntryKind classify_payload(const std::uint8_t* bytes, std::size_t size) noexcept
         if (demo::looks_like_effect_list(text)) return {Format::Unknown, "FX-IDS", "txt"};
         // A clip text with nothing in it (an unused track's Set file).
         if (const auto body = text.substr(0, text.find('\0'));
-            body == "# End\r\n" || body == "# End\n" || body == "# End") {
+            body == "# End\r\n" || body == "# End\n" || body == "# End" ||
+            // A text holding only its end mark ('$' ends the game's texts: st137, st215 slot 4).
+            body == "$\r\n" || body == "$\n" || body == "$") {
             return {Format::Unknown, "EMPTY", "txt"};
         }
     }
