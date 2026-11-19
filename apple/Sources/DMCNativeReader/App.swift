@@ -360,6 +360,7 @@ struct ContentView: View {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
                 stopSpin()
+                if dragLast == nil { model.claimCutsceneCamera() }
                 let last = dragLast ?? .zero
                 dragLast = value.translation
                 model.camera.drag(dx: Float(value.translation.width - last.width),
@@ -398,6 +399,7 @@ struct ContentView: View {
     private var magnify: some Gesture {
         MagnificationGesture()
             .onChanged { scale in
+                if zoomStart == nil { model.claimCutsceneCamera() }
                 let start = zoomStart ?? model.camera.zoom
                 if zoomStart == nil { zoomStart = start }
                 model.camera.pinch(startZoom: start, scale: Float(scale))

@@ -71,4 +71,20 @@ extension ViewerModel {
         message = on ? "Camera mode: click focuses, , . turn the ring, K locks, L levels, two fingers turn the polarizer"
                      : "Camera mode off"
     }
+
+    /// A camera gesture on a cutscene whose cuts drive the view: the core hands
+    /// the shot's camera over and the gesture goes on from it (Android's claimCamera).
+    func claimCutsceneCamera() {
+        guard let session, !isPicture, dmc_camera_follows_cuts(session.handle) else { return }
+        var view: [Float] = [0, 0, 1]
+        guard view.withUnsafeMutableBufferPointer({ dmc_cutscene_take_camera(session.handle, $0.baseAddress) }) else { return }
+        var next = camera
+        next.yaw = view[0]
+        next.pitch = view[1]
+        next.zoom = dmc_pinch_zoom(view[2], 1)
+        next.panX = 0
+        next.panY = 0
+        camera = next
+        message = "Free camera: Actions → Cutscene camera gives the view back to the cuts."
+    }
 }
