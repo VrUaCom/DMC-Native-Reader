@@ -1011,6 +1011,22 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         return out;
     }
 
+    // em025.pac (Cerberus), init 0x14010FAC0, draw 0x140115880: body 1 and
+    // heads 2-4 (each head with its own motion PAC, 16-18 in the HD PAC),
+    // spikes 5, chain 6, 7; slots 8-14 are the ice armour over them.
+    if (archive_name.size() == 9U && std::tolower(static_cast<unsigned char>(archive_name[0])) == 'e' &&
+        archive_name.substr(2, 7) == "025.pac") {
+        ArchiveVariant armoured;
+        armoured.label = "Cerberus (ice armour)";
+        out.push_back(armoured);
+        ArchiveVariant bare;
+        bare.label = "Cerberus (no ice)";
+        bare.include_top_level_mod_slots = {1U, 2U, 3U, 4U, 5U, 6U, 7U};
+        bare.include_top_level_mod_count = 7U;
+        out.push_back(bare);
+        return out;
+    }
+
     // em026.pac (Agni) / em027.pac (Rudra), CEm026 (creator 0x140120AB0,
     // pair 0x1401AC6D0 case 0x1B). Body slot 1; the sword of brother 0 is
     // slot 2, of brother 1 slot 3 (draw 0x140126E20 shows one by

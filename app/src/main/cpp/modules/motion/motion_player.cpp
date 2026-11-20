@@ -1601,7 +1601,8 @@ Matrix4 shl02_effect_parent_matrix(const Matrix4& slot20_node0) noexcept {
 
 namespace {
 [[nodiscard]] MotionLoadReport load_motion_impl(Session* session, std::string_view name, const std::uint8_t* bytes,
-                                                std::size_t size, bool leading_joints) noexcept;
+                                                std::size_t size, bool leading_joints,
+                                                const Session::MotionPayload* library_entry = nullptr) noexcept;
 }  // namespace
 
 MotionLoadReport load_motion(Session* session,
@@ -1618,7 +1619,8 @@ MotionLoadReport load_cutscene_motion(Session* session, std::string_view name, c
 
 namespace {
 MotionLoadReport load_motion_impl(Session* session, std::string_view name, const std::uint8_t* bytes,
-                                  std::size_t size, bool leading_joints) noexcept {
+                                  std::size_t size, bool leading_joints,
+                                  const Session::MotionPayload* library_entry) noexcept {
     MotionLoadReport report;
     if (session == nullptr || bytes == nullptr || size == 0U) {
         report.detail = "Motion: no session or empty MOT";
@@ -1637,11 +1639,60 @@ MotionLoadReport load_motion_impl(Session* session, std::string_view name, const
         std::string reasons;
         std::size_t vertex_cursor = 0U;
         std::size_t node_cursor = 0U;
+        // Parts with their own motion set (Cerberus' heads, a carriage):
+        // the class plays the same MOT index from each part's own motion
+        // PAC. A part the main MOT cannot drive takes the first unused
+        // other motion PAC (in slot order) whose MOT at the same index binds.
+        std::vector<int> companion_packs;
+        const auto try_companion = [&](const RenderScene& scene, const CompositePlacement* placement)
+            -> std::optional<PartMotion> {
+            if (library_entry == nullptr || library_entry->pack_slot < 0 || library_entry->mot_slot < 0) {
+                return std::nullopt;
+            }
+            std::vector<const Session::MotionPayload*> candidates;
+            // Every other pack used once: start over, so an overlay of a part
+            // (Cerberus' ice heads over the heads) takes the same packs in order.
+            bool any_unused = false;
+            for (const auto& entry : session->motion_library) {
+                if (entry.pack_slot >= 0 && entry.pack_slot != library_entry->pack_slot &&
+                    entry.mot_slot == library_entry->mot_slot &&
+                    std::find(companion_packs.begin(), companion_packs.end(), entry.pack_slot) ==
+                        companion_packs.end()) {
+                    any_unused = true;
+                }
+            }
+            if (!any_unused) companion_packs.clear();
+            for (const auto& entry : session->motion_library) {
+                if (entry.pack_slot < 0 || entry.pack_slot == library_entry->pack_slot ||
+                    entry.mot_slot != library_entry->mot_slot) {
+                    continue;
+                }
+                if (std::find(companion_packs.begin(), companion_packs.end(), entry.pack_slot) !=
+                    companion_packs.end()) {
+                    continue;
+                }
+                candidates.push_back(&entry);
+            }
+            std::sort(candidates.begin(), candidates.end(),
+                      [](const auto* a, const auto* b) { return a->pack_slot < b->pack_slot; });
+            for (const auto* entry : candidates) {
+                const auto own = std::span<const std::byte>{
+                    reinterpret_cast<const std::byte*>(entry->bytes.data()), entry->bytes.size()};
+                std::string ignored;
+                auto part = bind_part(scene, vertex_cursor, node_cursor, placement, own, &ignored, leading_joints);
+                if (part.has_value()) {
+                    companion_packs.push_back(entry->pack_slot);
+                    return part;
+                }
+            }
+            return std::nullopt;
+        };
         const auto try_part = [&](const RenderScene& scene,
                                   const CompositePlacement* placement,
                                   const std::string& label) {
             std::string reason;
             auto part = bind_part(scene, vertex_cursor, node_cursor, placement, mot, &reason, leading_joints);
+            if (!part.has_value()) part = try_companion(scene, placement);
             if (part.has_value()) {
                 state->parts.push_back(std::move(*part));
             } else {
@@ -2079,8 +2130,8 @@ MotionLoadReport load_library_motion(Session* session,
             }
         }
 
-        report = load_motion(
-            session, payload.name, payload.bytes.data(), payload.bytes.size());
+        report = load_motion_impl(
+            session, payload.name, payload.bytes.data(), payload.bytes.size(), false, &payload);
         if (report.ok && is_em034(*session) && payload.pack_slot == 11) {
             report.detail = "Raw component MOT (no MotionScript events): " +
                             report.detail;
