@@ -1011,6 +1011,37 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         return out;
     }
 
+    // em026.pac (Agni) / em027.pac (Rudra), CEm026 (creator 0x140120AB0,
+    // pair 0x1401AC6D0 case 0x1B). Body slot 1; the sword of brother 0 is
+    // slot 2, of brother 1 slot 3 (draw 0x140126E20 shows one by
+    // [this+0x3D20]). Sword placement 0x1401263E0: record [this+0x3C60+i]
+    // (init 0x140122ED0 sets 0 and 1): record 0 = body joint 7, T (-20,
+    // -5.5, 0), R 0; record 1 = joint 11, T (20, -5.5, 0), R (pi, -0.17453,
+    // pi), rest-local order (0x140330450 + 0x140031200).
+    const auto named = [archive_name](std::string_view name) {
+        if (archive_name.size() != name.size()) return false;
+        for (std::size_t i = 0U; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return false;
+        }
+        return true;
+    };
+    if (named("em026.pac") || named("em027.pac")) {
+        const bool agni = named("em026.pac");
+        ArchiveVariant brother;
+        brother.label = agni ? "Agni" : "Rudra";
+        const std::uint32_t sword = agni ? 2U : 3U;
+        brother.include_top_level_mod_slots = {1U, sword};
+        brother.include_top_level_mod_count = 2U;
+        brother.part_attachments[0] = agni
+            ? ArchivePartAttachment{1U, 2U, 7U, false, true, true, {-20.0F, -5.5F, 0.0F},
+                                    {0.0F, 0.0F, 0.0F}, true}
+            : ArchivePartAttachment{1U, 3U, 11U, false, true, true, {20.0F, -5.5F, 0.0F},
+                                    {3.1415925F, -0.17453292F, 3.1415925F}, true};
+        brother.part_attachment_count = 1U;
+        out.push_back(brother);
+        return out;
+    }
+
     // em037.pac (Jester). CEm037 init (0x14018FC80) builds Jester from three
     // MODs: slot 1 (texture slot 0), slot 7 (texture slot 0) and slot 15
     // (texture slot 14). The ball is its own actor, CEm037Ball (init
