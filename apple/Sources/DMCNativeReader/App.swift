@@ -20,16 +20,6 @@ struct DMCNativeReaderApp: App {
                         appDelegate.lastCrash = nil
                     }
                 }
-                .alert("The reader closed by itself last time",
-                       isPresented: Binding(get: { model.crashReport != nil }, set: { if !$0 { model.crashReport = nil } })) {
-                    Button("Copy report") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(model.crashReport ?? "", forType: .string)
-                    }
-                    Button("OK", role: .cancel) {}
-                } message: {
-                    Text((model.crashReport ?? "") + "\n\nThat file now opens as its description, once.")
-                }
                 .onOpenURL { model.open(url: $0) }
         }
         Settings {
@@ -108,28 +98,24 @@ struct ContentView: View {
     @State private var spinTimer: Timer?
 
     var body: some View {
-        ZStack {
-            Color(nsColor: NSColor(calibratedWhite: 0.09, alpha: 1)).ignoresSafeArea()
-            if model.session == nil {
-                start
-            } else if model.children.isEmpty {
-                viewer
-            } else {
-                HSplitView {
-                    files.frame(minWidth: 200, idealWidth: 260, maxWidth: 420)
-                    viewer.frame(minWidth: 320)
-                }
-            }
-            if let message = model.message {
-                VStack {
-                    Spacer()
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                main
+                if let message = model.message {
+                    // The status line: below the view, never over it.
                     Text(message)
                         .font(.callout)
-                        .padding(10)
-                        .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
-                        .padding()
-                        .padding(.bottom, model.dials.isEmpty ? 0 : 56)  // above the camera's dials
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(nsColor: .windowBackgroundColor))
                 }
+            }
+            if hasPanel {
+                Divider()
+                sidePanel
+                    .frame(minWidth: 320, idealWidth: 380, maxWidth: 460)
             }
         }
         .frame(minWidth: 640, minHeight: 480)
@@ -143,15 +129,53 @@ struct ContentView: View {
             return true
         }
         .onAppear { FlyKeys.install(model: model); model.loadCameraChoices() }
-        .sheet(isPresented: $showInfo) { InfoSheet(model: model) }
-        .sheet(item: $model.markerCard) { card in MarkerCardSheet(model: model, card: card) }
-        .sheet(item: $model.collisionReport) { report in CollisionReportSheet(report: report) }
-        .sheet(isPresented: $model.askTextureFormat) { TextureFormatSheet(model: model) }
-        .sheet(isPresented: Binding(get: { !model.partsShown.isEmpty }, set: { if !$0 { model.partsShown = [] } })) {
+    }
+
+    /// What used to be sheets over the window: one at a time, in a panel beside the view.
+    private var hasPanel: Bool {
+        model.crashReport != nil || showInfo || model.markerCard != nil || model.collisionReport != nil ||
+            model.askTextureFormat || !model.partsShown.isEmpty || !model.diagnosticsText.isEmpty
+    }
+
+    @ViewBuilder private var sidePanel: some View {
+        if let report = model.crashReport {
+            TextSheet(title: "The reader closed by itself last time",
+                      text: report + "\n\nThat file now opens as its description, once.")
+                .environment(\.closePanel, ClosePanelAction { model.crashReport = nil })
+        } else if let card = model.markerCard {
+            MarkerCardSheet(model: model, card: card)
+                .environment(\.closePanel, ClosePanelAction { model.markerCard = nil })
+        } else if let report = model.collisionReport {
+            CollisionReportSheet(report: report)
+                .environment(\.closePanel, ClosePanelAction { model.collisionReport = nil })
+        } else if model.askTextureFormat {
+            TextureFormatSheet(model: model)
+                .environment(\.closePanel, ClosePanelAction { model.askTextureFormat = false })
+        } else if !model.partsShown.isEmpty {
             PartsSheet(model: model)
-        }
-        .sheet(isPresented: Binding(get: { !model.diagnosticsText.isEmpty }, set: { if !$0 { model.diagnosticsText = "" } })) {
+                .environment(\.closePanel, ClosePanelAction { model.partsShown = [] })
+        } else if !model.diagnosticsText.isEmpty {
             TextSheet(title: model.diagnosticsTitle, text: model.diagnosticsText)
+                .environment(\.closePanel, ClosePanelAction { model.diagnosticsText = "" })
+        } else if showInfo {
+            InfoSheet(model: model)
+                .environment(\.closePanel, ClosePanelAction { showInfo = false })
+        }
+    }
+
+    private var main: some View {
+        ZStack {
+            Color(nsColor: NSColor(calibratedWhite: 0.09, alpha: 1)).ignoresSafeArea()
+            if model.session == nil {
+                start
+            } else if model.children.isEmpty {
+                viewer
+            } else {
+                HSplitView {
+                    files.frame(minWidth: 200, idealWidth: 260, maxWidth: 420)
+                    viewer.frame(minWidth: 320)
+                }
+            }
         }
     }
 
@@ -595,7 +619,7 @@ struct ContentView: View {
 /// Info and, when the file has something to say, its health report.
 struct InfoSheet: View {
     @ObservedObject var model: ViewerModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePanel) private var dismiss
     @State private var showHealth = false
 
     var body: some View {
@@ -620,7 +644,7 @@ struct InfoSheet: View {
             }
         }
         .padding()
-        .frame(minWidth: 560, idealWidth: 720, minHeight: 420, idealHeight: 620)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var text: String { showHealth ? model.healthReport() : model.infoText() }
@@ -668,7 +692,7 @@ struct SettingsView: View {
 /// The formats textures can be re-encoded to (the core's list), DX10 header optional.
 struct TextureFormatSheet: View {
     @ObservedObject var model: ViewerModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePanel) private var dismiss
     @State private var dx10 = false
     private let formats = ReaderSession.textureFormats
 
@@ -687,14 +711,14 @@ struct TextureFormatSheet: View {
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }
         }
         .padding()
-        .frame(minWidth: 380)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
 /// A composite model's parts: each hangs from a joint of the host, or sits where its file put it.
 struct PartsSheet: View {
     @ObservedObject var model: ViewerModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePanel) private var dismiss
     @State private var joints: [Int: Int] = [:]
 
     var body: some View {
@@ -726,7 +750,7 @@ struct PartsSheet: View {
             HStack { Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
         }
         .padding()
-        .frame(minWidth: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -734,7 +758,7 @@ struct PartsSheet: View {
 struct TextSheet: View {
     let title: String
     let text: String
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePanel) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -753,14 +777,14 @@ struct TextSheet: View {
             }
         }
         .padding()
-        .frame(minWidth: 520, minHeight: 400)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
 /// The core's collision report: each group's colour (as drawn), heading and lines.
 struct CollisionReportSheet: View {
     let report: CollisionReport
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePanel) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -792,14 +816,14 @@ struct CollisionReportSheet: View {
             }
         }
         .padding()
-        .frame(minWidth: 460, minHeight: 360)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
 struct MarkerCardSheet: View {
     @ObservedObject var model: ViewerModel
     let card: MarkerCardInfo
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePanel) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -822,7 +846,7 @@ struct MarkerCardSheet: View {
             }
         }
         .padding()
-        .frame(minWidth: 420)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -912,5 +936,23 @@ enum AboutPanel {
             .version: "core \(build), C API \(dmc_api_version())",
             .credits: NSAttributedString(string: "A read-only viewer of the game's files: the core decides, this shell shows."),
         ])
+    }
+}
+
+/// Closes the side panel a former sheet sits in (the panel's owner sets it).
+struct ClosePanelAction {
+    let run: () -> Void
+    init(_ run: @escaping () -> Void = {}) { self.run = run }
+    func callAsFunction() { run() }
+}
+
+private struct ClosePanelKey: EnvironmentKey {
+    static let defaultValue = ClosePanelAction()
+}
+
+extension EnvironmentValues {
+    var closePanel: ClosePanelAction {
+        get { self[ClosePanelKey.self] }
+        set { self[ClosePanelKey.self] = newValue }
     }
 }
