@@ -235,7 +235,7 @@ struct EnemyVariant final {
     std::string_view pac_stem;
     std::string_view class_name;
     std::uint32_t body_slot;
-    std::array<EnemyClothPart, 2> cloth;
+    std::array<EnemyClothPart, 6> cloth;
     std::uint32_t cloth_count;
     std::uint32_t weapon_slot;      // [this+0x670] in 0..1
     std::uint32_t weapon_slot_alt;  // [this+0x670] in 2..3 (same slot: no choice)
@@ -248,6 +248,9 @@ struct EnemyVariant final {
     // Motion PACs the class init reads (slot 35 body motions, 36 / 37 extra;
     // 0 = unused). Empty: every MOT of the archive is offered.
     std::array<std::uint32_t, 3> motion_slots{};
+    // The class sets the cloth model's world to the joint's world: a cloth
+    // whose root sits at the joint (not at the origin) keeps its root there.
+    bool cloth_root_at_joint{};
 };
 
 inline constexpr std::array<float, 3> kEm000WeaponT{-15.0F, -61.39939880371094F,
@@ -283,6 +286,28 @@ inline constexpr std::array<EnemyVariant, 8> kEm000Variants{{
      {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U, {37U, 0U, 0U}},
     {"em000", "CEm005Shl01", 23U, {{{0U, 0U}, {0U, 0U}}}, 0U, kNoEnemySlot, kNoEnemySlot, false,
      0U, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U, {37U, 0U, 0U}},
+}};
+
+// The sin family's own archives share the em000 draw rules: body world,
+// cloth model world = body joint [this+0x3254] world, weapon = offset
+// (kEm000WeaponT / R, init +0x2840) x body joint 9.
+//   CEm006 Abyss (em006.pac) and CEm007 Envy (em007.pac): draw 0x1400B2D10
+//     (vtable slot 3 of both). em006: body 1, cloth 3 (.clt 2) on joint 14,
+//     scythe 8 (PTX 7); slots 4 / 5 are low-poly copies. em007: body 1,
+//     scythe 4 (PTX 3); slot 2 a low-poly copy.
+//   CEm008 Vanguard (em008.pac): init 0x1400B57A0, draw 0x1400B77C0. Body
+//     EFM 1, six cloth MODs each with the .clt before it: 3 -> joint 5,
+//     5 -> 3, 7 -> 3, 9 -> 8, 11 -> 12, 13 -> 14; scythe 18 (PTX 17).
+inline constexpr std::array<EnemyVariant, 1> kEm006Variants{{
+    {"em006", "CEm006", 1U, {{{3U, 14U}}}, 1U, 8U, 8U, false, 9U, kEm000WeaponT, kEm000WeaponR,
+     kNoEnemySlot, {}, true},
+}};
+inline constexpr std::array<EnemyVariant, 1> kEm007Variants{{
+    {"em007", "CEm007", 1U, {}, 0U, 4U, 4U, false, 9U, kEm000WeaponT, kEm000WeaponR},
+}};
+inline constexpr std::array<EnemyVariant, 1> kEm008Variants{{
+    {"em008", "CEm008", 1U, {{{3U, 5U}, {5U, 3U}, {7U, 3U}, {9U, 8U}, {11U, 12U}, {13U, 14U}}}, 6U,
+     18U, 18U, false, 9U, kEm000WeaponT, kEm000WeaponR},
 }};
 
 // Variants for an archive name ("em000.pac", any directory, any case).

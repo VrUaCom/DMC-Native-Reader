@@ -601,7 +601,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     for (std::uint32_t c = 0U; c < cloth_count; ++c) {
                         if (*entry.slot != variant->cloth[c].slot) continue;
                         if (motion::attach_part_skeleton(assembled.get(), *host, part,
-                                                         variant->cloth[c].host_joint, false)) {
+                                                         variant->cloth[c].host_joint,
+                                                         variant->cloth_root_at_joint)) {
                             ++report.attached_parts;
                             report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
                                 "->bodyJoint" + std::to_string(variant->cloth[c].host_joint);

@@ -958,12 +958,18 @@ Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
 std::span<const EnemyVariant> enemy_variants_for(std::string_view archive_name) noexcept {
     const auto slash = archive_name.find_last_of("/\\");
     if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
-    constexpr std::string_view name = "em000.pac";
-    if (archive_name.size() != name.size()) return {};
-    for (std::size_t i = 0U; i < name.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return {};
-    }
-    return kEm000Variants;
+    const auto is = [archive_name](std::string_view name) {
+        if (archive_name.size() != name.size()) return false;
+        for (std::size_t i = 0U; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return false;
+        }
+        return true;
+    };
+    if (is("em000.pac")) return kEm000Variants;
+    if (is("em006.pac")) return kEm006Variants;
+    if (is("em007.pac")) return kEm007Variants;
+    if (is("em008.pac")) return kEm008Variants;
+    return {};
 }
 
 std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
