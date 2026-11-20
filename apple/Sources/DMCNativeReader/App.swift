@@ -460,8 +460,8 @@ struct ContentView: View {
             }
             if !model.classEvents.isEmpty {
                 Menu {
-                    ForEach(model.classEvents.indices, id: \.self) { i in
-                        Button(model.classEvents[i]) { model.triggerClassEvent(i) }
+                    ForEach(Array(model.classEvents.enumerated()), id: \.offset) { i, title in
+                        Button(title) { model.triggerClassEvent(i) }
                     }
                 } label: { Label("Events", systemImage: "bolt") }
             }
@@ -525,7 +525,7 @@ struct ContentView: View {
                     let spawns = model.spawnPoints
                     if !spawns.isEmpty {
                         Menu("Spawn points") {
-                            ForEach(spawns.indices, id: \.self) { i in Button(spawns[i]) { model.standOnSpawn(i) } }
+                            ForEach(Array(spawns.enumerated()), id: \.offset) { i, title in Button(title) { model.standOnSpawn(i) } }
                         }
                     }
                 }
@@ -644,7 +644,7 @@ struct SettingsView: View {
                         Picker(selection: Binding(
                             get: { closest(row) },
                             set: { model.set(row, to: row.values[$0]) })) {
-                            ForEach(row.choices.indices, id: \.self) { Text(row.choices[$0]).tag($0) }
+                            ForEach(Array(row.choices.enumerated()), id: \.offset) { Text($0.element).tag($0.offset) }
                         } label: {
                             Text(row.label)
                         }
@@ -710,7 +710,7 @@ struct PartsSheet: View {
                             Picker("Joint of \(host.name)", selection: Binding(
                                 get: { joints[part.id] ?? max(0, part.defaultAttachment) },
                                 set: { joints[part.id] = $0 })) {
-                                ForEach(host.nodes.indices, id: \.self) { Text(host.nodes[$0]).tag($0) }
+                                ForEach(Array(host.nodes.enumerated()), id: \.offset) { Text($0.element).tag($0.offset) }
                             }
                             Button("Attach") {
                                 model.attachPart(host: 0, child: part.id,
@@ -885,7 +885,7 @@ struct CameraSettingsView: View {
                         Picker(selection: Binding(
                             get: { choice(of: row) },
                             set: { model.setCamera(row, option: $0) })) {
-                            ForEach(row.options.indices, id: \.self) { Text(row.options[$0]).tag($0) }
+                            ForEach(Array(row.options.enumerated()), id: \.offset) { Text($0.element).tag($0.offset) }
                         } label: { Text(row.label) }
                         .help(row.hint)
                     }
