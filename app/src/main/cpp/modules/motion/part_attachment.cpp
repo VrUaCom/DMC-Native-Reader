@@ -1011,6 +1011,39 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         return out;
     }
 
+    // em035.pac (Vergil). The draw 0x140186930 shows one of four forms
+    // ([this+0xEF10]); every model of a form is drawn in the actor world.
+    // The PAC keeps each look as a PTX followed by its body and coat MODs:
+    // PTX 0 -> 1 + 3, PTX 14 -> 15 + 16 + 17 + 18 (devil trigger), PTX 44 ->
+    // 45 + 46, PTX 50 -> 51 + 52, PTX 60 -> 61 + 62; weapons 25 + 28 (PTX
+    // 24 / 27), 32, 55 (Beowulf), 58. One look per position, not all at once.
+    if (archive_name.size() == 9U && std::tolower(static_cast<unsigned char>(archive_name[0])) == 'e' &&
+        archive_name.substr(2, 7) == "035.pac") {
+        // The coat hangs from body joint 3 like the player's coat (slot 12).
+        const auto look = [&out](std::string label, std::initializer_list<std::uint32_t> slots,
+                                 std::uint32_t body, std::uint32_t coat) {
+            ArchiveVariant v;
+            v.label = std::move(label);
+            std::uint32_t n = 0U;
+            for (const auto slot : slots) {
+                if (n < v.include_top_level_mod_slots.size()) v.include_top_level_mod_slots[n++] = slot;
+            }
+            v.include_top_level_mod_count = n;
+            if (coat != 0U) {
+                v.part_attachments[0] = {body, coat, kPlayerCoatHostJoint, true, true, false};
+                v.part_attachment_count = 1U;
+            }
+            out.push_back(std::move(v));
+        };
+        look("Vergil · look 1", {1U, 3U, 25U, 28U}, 1U, 3U);
+        look("Vergil · look 2", {45U, 46U, 25U, 28U}, 45U, 46U);
+        look("Vergil · look 3", {51U, 52U, 25U, 28U}, 51U, 52U);
+        look("Vergil · look 4", {61U, 62U, 25U, 28U}, 61U, 62U);
+        look("Vergil · devil trigger", {15U, 16U, 17U, 18U}, 15U, 18U);
+        look("Vergil · weapons", {2U, 25U, 28U, 32U, 55U, 58U}, 0U, 0U);
+        return out;
+    }
+
     // em025.pac (Cerberus), init 0x14010FAC0, draw 0x140115880: body 1 and
     // heads 2-4 (each head with its own motion PAC, 16-18 in the HD PAC),
     // spikes 5, chain 6, 7; slots 8-14 are the ice armour over them.
