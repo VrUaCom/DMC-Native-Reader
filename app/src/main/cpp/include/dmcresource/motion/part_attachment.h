@@ -312,6 +312,9 @@ struct ArchivePartAttachment final {
     std::array<float, 3> translation{};
     std::array<float, 3> rotation_xyz_radians{};
     bool explicit_offset{};
+    // The offset is Rz x Ry x Rx then translation (attach_local_matrix_zyx),
+    // as the class builds it in code, not the MOD rest-local order.
+    bool zyx_offset{};
 };
 
 struct ArchiveVariant final {

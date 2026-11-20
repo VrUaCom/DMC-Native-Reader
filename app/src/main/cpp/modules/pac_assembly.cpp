@@ -636,10 +636,12 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         if (*entry.slot == attach.host_model_slot) host = part;
                         if (*entry.slot == attach.child_model_slot) child = part;
                     }
-                    const auto offset = attach.explicit_offset
-                        ? motion::attach_local_matrix(
-                              attach.translation, attach.rotation_xyz_radians)
-                        : Matrix4{};
+                    const auto offset = !attach.explicit_offset ? Matrix4{}
+                        : attach.zyx_offset
+                            ? motion::attach_local_matrix_zyx(
+                                  attach.translation, attach.rotation_xyz_radians)
+                            : motion::attach_local_matrix(
+                                  attach.translation, attach.rotation_xyz_radians);
                     if (host && child &&
                         motion::attach_part_skeleton(
                             assembled.get(), *host, *child, attach.host_joint,

@@ -101,5 +101,12 @@ int main() {
     assert(m::beowulf_archive("obj/PLWP_FIGHT.pac") && !m::beowulf_archive("plwp_fight2.pac"));
     assert(m::kBeowulfNodeJoints.front() == (std::pair<std::uint32_t, std::uint32_t>{1U, 8U}));
     assert(m::kBeowulfNodeJoints.back() == (std::pair<std::uint32_t, std::uint32_t>{10U, 22U}));
+
+    // Jester: his look (body, hat on joint 5, cane on joint 9) apart from the ball and shells.
+    const auto jester = m::archive_variants("EM037.pac");
+    assert(jester.size() == 3U && jester[0].include_top_level_mod_count == 3U);
+    assert(jester[0].include_top_level_mod_slots[2] == 15U && jester[0].part_attachment_count == 2U);
+    assert(jester[0].part_attachments[0].host_joint == 5U && jester[0].part_attachments[1].host_joint == 9U);
+    assert(jester[0].part_attachments[1].zyx_offset && jester[1].include_top_level_mod_slots[0] == 17U);
     return 0;
 }

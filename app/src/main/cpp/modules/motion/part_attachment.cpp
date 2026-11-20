@@ -1005,6 +1005,50 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         return out;
     }
 
+    // em037.pac (Jester). CEm037 init (0x14018FC80) builds Jester from three
+    // MODs: slot 1 (texture slot 0), slot 7 (texture slot 0) and slot 15
+    // (texture slot 14). The ball is its own actor, CEm037Ball (init
+    // 0x140196D90): MOD slot 17, texture slot 16, spawned once at an arena
+    // point (arena centre 3500, 492, 3500; Jester stays within 1000 of it,
+    // 0x14018BB80). The shells (CEm037Shl00..07) use the remaining MODs.
+    // Jester's look must not overlay the ball and shells at his origin.
+    // Draw 0x1401954A0: the hat (slot 7) root follows body node 0 and its
+    // node 0 body node 5 (record set in init, identity offset); the cane
+    // (slot 15) is Rz(0.10472) x Ry(-0.48869) x Rx(-0.1309), translation
+    // (-15.5, -1, 10), times body node 9.
+    constexpr std::string_view jester = "em037.pac";
+    bool is_jester = archive_name.size() == jester.size();
+    for (std::size_t i = 0U; is_jester && i < jester.size(); ++i) {
+        is_jester = std::tolower(static_cast<unsigned char>(archive_name[i])) == jester[i];
+    }
+    if (is_jester) {
+        ArchiveVariant body;
+        body.label = "Jester";
+        body.include_top_level_mod_slots = {1U, 7U, 15U};
+        body.include_top_level_mod_count = 3U;
+        body.texture_overrides = {{{1U, 0U}, {7U, 0U}, {15U, 14U}}};
+        body.texture_override_count = 3U;
+        body.part_attachments[0] = {1U, 7U, 5U, true, true, true};
+        body.part_attachments[1] = {1U, 15U, 9U, false, true, true,
+                                    {-15.5F, -1.0F, 10.0F},
+                                    {-0.1308997F, -0.4886922F, 0.1047198F}, true, true};
+        body.part_attachment_count = 2U;
+        out.push_back(body);
+        ArchiveVariant ball;
+        ball.label = "Jester · ball";
+        ball.include_top_level_mod_slots = {17U};
+        ball.include_top_level_mod_count = 1U;
+        ball.texture_overrides = {{{17U, 16U}}};
+        ball.texture_override_count = 1U;
+        out.push_back(ball);
+        ArchiveVariant shells;
+        shells.label = "Jester · shells";
+        shells.include_top_level_mod_slots = {21U, 23U, 25U, 27U};
+        shells.include_top_level_mod_count = 4U;
+        out.push_back(shells);
+        return out;
+    }
+
     // em034.pac (Lady) contains two complete appearance sets plus a separate
     // group of equipment/weapon MODs. Corpus evidence from the retail PAC:
     //   slots 1 + 17  -> MOD header +0x14 = 0x00000384
