@@ -1158,6 +1158,17 @@ std::optional<WeaponSecondPart> weapon_second_part(std::string_view class_name) 
     return std::nullopt;
 }
 
+bool beowulf_archive(std::string_view archive_name) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    constexpr std::string_view kName{"plwp_fight.pac"};
+    if (archive_name.size() != kName.size()) return false;
+    for (std::size_t i = 0U; i < kName.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(archive_name[i])) != kName[i]) return false;
+    }
+    return true;
+}
+
 bool is_attached_part(const Session* session, std::size_t part) noexcept {
     return session != nullptr && part < session->composite_parts.size() &&
            session->composite_parts[part].placement.mode ==

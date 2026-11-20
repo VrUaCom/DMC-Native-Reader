@@ -1,4 +1,5 @@
 #include "dmcresource/pac_assembly.h"
+#include "dmcresource/motion/object_visibility.h"
 
 #include <algorithm>
 #include <array>
@@ -319,6 +320,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         if (position != nullptr) report.enemy_class = position->label;
         std::vector<std::unique_ptr<Session>> models;
         std::vector<std::string> model_names;
+        bool beowulf_attached = false;  // plwp_fight on the body (below)
         std::vector<std::size_t> model_entry;
         std::vector<std::optional<std::size_t>> texture_for_model;
         std::vector<Session::MotionPayload> motions;
@@ -783,6 +785,22 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             }
             // Added weapon archives: every MOD hangs from its record's joint.
             for (std::size_t a = 1U; body && a < archive_names.size(); ++a) {
+                if (motion::beowulf_archive(archive_names[a])) {
+                    // Beowulf: its nodes follow ten body joints (0x140229100).
+                    std::vector<CompositeNodeConstraint> nodes;
+                    for (const auto& [node, joint] : motion::kBeowulfNodeJoints) {
+                        nodes.push_back({node, joint, Matrix4{}});
+                    }
+                    for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                        if (entries[model_entry[part]].archive != a) continue;
+                        if (motion::attach_part_nodes(assembled.get(), *body, part, nodes)) {
+                            ++report.attached_parts;
+                            beowulf_attached = true;
+                            report.detail_attachments += " CPlWpFight->bodyJoints(10 nodes)";
+                        }
+                    }
+                    continue;
+                }
                 const auto record = motion::weapon_record_for_archive(archive_names[a]);
                 if (!record) continue;
                 const auto offset = motion::weapon_offset_matrix(*record);
@@ -815,6 +833,28 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                             "->bodyJoint" + std::to_string(record->joint);
                     }
                 }
+            }
+        }
+
+        // The player class's draw bits on the body (hands, Beowulf parts):
+        // motion/object_visibility.h.
+        if (const auto rule = motion::visibility_rule_for(archive_name); rule != motion::VisibilityRule::none) {
+            for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                const auto& entry = entries[model_entry[part]];
+                if (entry.archive != 0U || !entry.container.empty() || entry.slot != motion::kPlayerBodySlot) continue;
+                if (motion::install_object_visibility(assembled.get(), part, rule)) {
+                    // Beowulf equipped (0x140212BE0 checks melee weapon 4): only with
+                    // its model on the body, else the bare shins would show nothing.
+                    if (beowulf_attached) motion::set_beowulf(assembled.get(), true);
+                    std::string hidden;
+                    for (const auto object : motion::hidden_objects(assembled.get())) {
+                        hidden += (hidden.empty() ? "" : ",") + std::to_string(object);
+                    }
+                    report.detail_attachments += " drawBits=" +
+                        std::string{rule == motion::VisibilityRule::dante ? "CPlDante" : "CPlNewVergil"} +
+                        "(hidden objects " + hidden + ")";
+                }
+                break;
             }
         }
 

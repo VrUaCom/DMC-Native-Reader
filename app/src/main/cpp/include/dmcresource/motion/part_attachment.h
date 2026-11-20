@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -197,6 +198,19 @@ inline constexpr std::array<WeaponSecondPart, 1> kWeaponSecondParts{{
 
 [[nodiscard]] std::optional<WeaponSecondPart> weapon_second_part(
     std::string_view class_name) noexcept;
+
+// Beowulf (CPlWpFight, obj\\plwp_fight.pac): one skinned MOD of 11 nodes,
+// gauntlets (object 0, 1) and greaves (object 2). Its pose 0x140229100 copies
+// ten player joint matrices onto its nodes, pairs {node, joint} at
+// 0x1404E0BD0 (joint + table 0x1404E0328[body variant], 0 for the normal
+// body, 0x1401FAA90); node 0 takes the player world (+0x180).
+inline constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 10> kBeowulfNodeJoints{{
+    {1U, 8U}, {2U, 9U}, {6U, 12U}, {7U, 13U}, {3U, 16U},
+    {4U, 17U}, {5U, 18U}, {8U, 20U}, {9U, 21U}, {10U, 22U},
+}};
+
+// True for plwp_fight.pac (any directory or case).
+[[nodiscard]] bool beowulf_archive(std::string_view archive_name) noexcept;
 
 // local(T, R) built like the MOD rest local (0x140330450 + 0x140031200).
 [[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,

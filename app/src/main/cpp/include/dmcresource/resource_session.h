@@ -18,6 +18,7 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/motion/motion_script.h"
+#include "dmcresource/motion/object_visibility.h"
 #include "dmcresource/motion/part_attachment.h"
 #include "dmcresource/motion/uv_scroll.h"
 #include "dmcresource/shadow_hull.h"
@@ -164,6 +165,9 @@ struct Session {
     std::shared_ptr<const motion::MotionScriptFile> motion_script;
     std::vector<MotionScriptBinding> motion_scripts;
     std::vector<motion::WeaponBinding> weapon_bindings;
+    // Which body objects the player class draws now (hands, Beowulf parts):
+    // motion/object_visibility.h. Null for any other model.
+    std::shared_ptr<motion::ObjectVisibility> object_visibility;
     // Enemy class of an em000-style archive position (EnemyVariant) and the
     // composite part its weapon model was attached as (script object 1).
     std::string enemy_class;

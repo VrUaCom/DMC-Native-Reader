@@ -2197,6 +2197,11 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
                 if (wanted != binding.state) (void)set_weapon_state(session, binding, wanted);
             }
         }
+        // The player's hands as the script's opcode-3 b3 says (object_visibility.h);
+        // a motion without a script keeps hand 0.
+        if (session->object_visibility) {
+            motion::set_hand_variant(session, motion::hand_variant_at(state.script_signals, frame));
+        }
         // Resolve current body-driven equipment before Lady runtime signals
         // query slot20 node worlds for Shl spawn transforms. This pass does not
         // advance cloth; the final attachment pass below performs the actual
