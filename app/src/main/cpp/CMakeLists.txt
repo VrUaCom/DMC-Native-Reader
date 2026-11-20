@@ -537,5 +537,10 @@ if(DMC_NATIVE_READER_BUILD_TESTS)
     else()
         target_compile_options(c_api_threads_test PRIVATE -UNDEBUG)
     endif()
+    # The handle registry (B9) lives in the library, which has it only without
+    # NDEBUG: the asserts above are forced on in the test, so it is told how the
+    # library was built.
+    target_compile_definitions(c_api_threads_test PRIVATE
+        $<$<CONFIG:Release,RelWithDebInfo,MinSizeRel>:DMC_CAPI_RELEASE_LIBRARY>)
     add_test(NAME c_api_threads COMMAND c_api_threads_test)
 endif()

@@ -174,8 +174,8 @@ int main() {
     dmc_close(extra);
     dmc_close(base);
 
-#if !defined(NDEBUG) && !defined(_WIN32)
-    // B9: a handle closed twice stops the process in a debug build.
+#if !defined(_WIN32) && (!defined(DMC_CAPI_RELEASE_LIBRARY) || defined(DMC_READER_HANDLE_REGISTRY))
+    // B9: a handle closed twice stops the process in a debug build of the library.
     const pid_t child = fork();
     if (child == 0) {
         dmc_session* once = dmc_open_source("once.mod", mod.data(), mod.size());
