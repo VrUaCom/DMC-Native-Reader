@@ -418,6 +418,20 @@ struct HostContext {
     GC gc = nullptr;
     Atom wm_delete_window = 0;
 
+    // XDND Drag-and-Drop protocol atoms (v5)
+    Atom xdnd_aware = 0;
+    Atom xdnd_enter = 0;
+    Atom xdnd_position = 0;
+    Atom xdnd_status = 0;
+    Atom xdnd_type_list = 0;
+    Atom xdnd_action_copy = 0;
+    Atom xdnd_drop = 0;
+    Atom xdnd_finished = 0;
+    Atom xdnd_selection = 0;
+    Atom text_uri_list = 0;
+    Atom primary = 0;
+    Window xdnd_source_window = 0;
+
     // Extensible EGL/GLES hook structure
     void* egl_display = nullptr;
     void* egl_surface = nullptr;
@@ -617,9 +631,19 @@ private:
     // Interaction & Drag
     bool drag_left_ = false;
     bool drag_pan_ = false;
+    bool drag_twist_ = false;
     int last_mouse_x_ = 0;
     int last_mouse_y_ = 0;
     int hover_btn_id_ = -1;
+
+    // Inertia fling & spin (dmc_fling, dmc_spin_step)
+    dmc_spin spin_{};
+    bool is_spinning_ = false;
+    std::chrono::steady_clock::time_point drag_sample_time_{};
+    int drag_sample_x_ = 0;
+    int drag_sample_y_ = 0;
+    float drag_velocity_x_ = 0.0f;
+    float drag_velocity_y_ = 0.0f;
 
     // Buttons
     std::vector<Button> header_buttons_{};
@@ -691,6 +715,23 @@ bool App::init_x11(int width, int height) {
     XStoreName(host_.display, host_.window, "DMC Native Reader (Linux)");
     host_.wm_delete_window = XInternAtom(host_.display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(host_.display, host_.window, &host_.wm_delete_window, 1);
+
+    // Register XDND Drag-and-Drop protocol support (v5)
+    host_.xdnd_aware = XInternAtom(host_.display, "XdndAware", False);
+    host_.xdnd_enter = XInternAtom(host_.display, "XdndEnter", False);
+    host_.xdnd_position = XInternAtom(host_.display, "XdndPosition", False);
+    host_.xdnd_status = XInternAtom(host_.display, "XdndStatus", False);
+    host_.xdnd_type_list = XInternAtom(host_.display, "XdndTypeList", False);
+    host_.xdnd_action_copy = XInternAtom(host_.display, "XdndActionCopy", False);
+    host_.xdnd_drop = XInternAtom(host_.display, "XdndDrop", False);
+    host_.xdnd_finished = XInternAtom(host_.display, "XdndFinished", False);
+    host_.xdnd_selection = XInternAtom(host_.display, "XdndSelection", False);
+    host_.text_uri_list = XInternAtom(host_.display, "text/uri-list", False);
+    host_.primary = XInternAtom(host_.display, "PRIMARY", False);
+
+    const Atom xdnd_ver = 5;
+    XChangeProperty(host_.display, host_.window, host_.xdnd_aware, XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char*>(&xdnd_ver), 1);
 
     host_.gc = XCreateGC(host_.display, host_.window, 0, nullptr);
 
@@ -2467,6 +2508,74 @@ void App::run() {
             if (ev.type == ClientMessage) {
                 if (static_cast<Atom>(ev.xclient.data.l[0]) == host_.wm_delete_window) {
                     running_ = false;
+                } else if (ev.xclient.message_type == host_.xdnd_enter) {
+                    host_.xdnd_source_window = static_cast<Window>(ev.xclient.data.l[0]);
+                } else if (ev.xclient.message_type == host_.xdnd_position) {
+                    XEvent reply{};
+                    reply.type = ClientMessage;
+                    reply.xclient.window = host_.xdnd_source_window;
+                    reply.xclient.message_type = host_.xdnd_status;
+                    reply.xclient.format = 32;
+                    reply.xclient.data.l[0] = static_cast<long>(host_.window);
+                    reply.xclient.data.l[1] = 1; // Accept drop
+                    reply.xclient.data.l[2] = 0;
+                    reply.xclient.data.l[3] = 0;
+                    reply.xclient.data.l[4] = static_cast<long>(host_.xdnd_action_copy);
+                    XSendEvent(host_.display, host_.xdnd_source_window, False, NoEventMask, &reply);
+                    XFlush(host_.display);
+                } else if (ev.xclient.message_type == host_.xdnd_drop) {
+                    const Time drop_time = static_cast<Time>(ev.xclient.data.l[2]);
+                    XConvertSelection(host_.display, host_.xdnd_selection, host_.text_uri_list,
+                                     host_.primary, host_.window, drop_time);
+                }
+            } else if (ev.type == SelectionNotify) {
+                if (ev.xselection.property != None) {
+                    Atom actual_type;
+                    int actual_format;
+                    unsigned long count = 0, bytes_after = 0;
+                    unsigned char* data = nullptr;
+                    XGetWindowProperty(host_.display, host_.window, ev.xselection.property,
+                                       0, 65536, False, AnyPropertyType,
+                                       &actual_type, &actual_format, &count, &bytes_after, &data);
+                    if (data && count > 0) {
+                        std::string uris(reinterpret_cast<char*>(data), count);
+                        XFree(data);
+                        size_t pos = uris.find("file://");
+                        if (pos != std::string::npos) {
+                            size_t end_pos = uris.find_first_of("\r\n", pos);
+                            std::string uri = (end_pos == std::string::npos) ? uris.substr(pos) : uris.substr(pos, end_pos - pos);
+                            std::string path_str = uri.substr(7);
+                            std::string decoded_path;
+                            for (size_t i = 0; i < path_str.size(); ++i) {
+                                if (path_str[i] == '%' && i + 2 < path_str.size()) {
+                                    int ch = 0;
+                                    if (std::sscanf(path_str.substr(i + 1, 2).c_str(), "%x", &ch) == 1) {
+                                        decoded_path += static_cast<char>(ch);
+                                        i += 2;
+                                        continue;
+                                    }
+                                }
+                                decoded_path += path_str[i];
+                            }
+                            if (!decoded_path.empty()) {
+                                std::cout << "[XDND] Drag-and-drop opening file: " << decoded_path << "\n";
+                                open_file(decoded_path);
+                            }
+                        }
+                    }
+                    if (host_.xdnd_source_window != 0) {
+                        XEvent fin{};
+                        fin.type = ClientMessage;
+                        fin.xclient.window = host_.xdnd_source_window;
+                        fin.xclient.message_type = host_.xdnd_finished;
+                        fin.xclient.format = 32;
+                        fin.xclient.data.l[0] = static_cast<long>(host_.window);
+                        fin.xclient.data.l[1] = 1;
+                        fin.xclient.data.l[2] = static_cast<long>(host_.xdnd_action_copy);
+                        XSendEvent(host_.display, host_.xdnd_source_window, False, NoEventMask, &fin);
+                        XFlush(host_.display);
+                        host_.xdnd_source_window = 0;
+                    }
                 }
             } else if (ev.type == ConfigureNotify) {
                 if (ev.xconfigure.width != window_width_ || ev.xconfigure.height != window_height_) {
@@ -2617,12 +2726,22 @@ void App::run() {
                             }
                             dmc_pick_result_free(&pick);
                         }
+                        is_spinning_ = false;
                         drag_left_ = true;
                         last_mouse_x_ = mx;
                         last_mouse_y_ = my;
+                        drag_sample_x_ = mx;
+                        drag_sample_y_ = my;
+                        drag_sample_time_ = std::chrono::steady_clock::now();
+                        drag_velocity_x_ = 0.0f;
+                        drag_velocity_y_ = 0.0f;
                     }
-                } else if (ev.xbutton.button == Button2 || ev.xbutton.button == Button3) {
+                } else if (ev.xbutton.button == Button2) {
                     drag_pan_ = true;
+                    last_mouse_x_ = mx;
+                    last_mouse_y_ = my;
+                } else if (ev.xbutton.button == Button3) {
+                    drag_twist_ = true;
                     last_mouse_x_ = mx;
                     last_mouse_y_ = my;
                 } else if (ev.xbutton.button == Button4) {
@@ -2633,8 +2752,16 @@ void App::run() {
                     view_.zoom = dmc_pinch_zoom(view_.zoom, 0.9f);
                 }
             } else if (ev.type == ButtonRelease) {
-                if (ev.xbutton.button == Button1) drag_left_ = false;
-                if (ev.xbutton.button == Button2 || ev.xbutton.button == Button3) drag_pan_ = false;
+                if (ev.xbutton.button == Button1) {
+                    if (drag_left_) {
+                        drag_left_ = false;
+                        if (dmc_fling(drag_velocity_x_, drag_velocity_y_, 1.0f, &spin_)) {
+                            is_spinning_ = true;
+                        }
+                    }
+                }
+                if (ev.xbutton.button == Button2) drag_pan_ = false;
+                if (ev.xbutton.button == Button3) drag_twist_ = false;
             } else if (ev.type == MotionNotify) {
                 const int mx = ev.xmotion.x;
                 const int my = ev.xmotion.y;
@@ -2680,9 +2807,29 @@ void App::run() {
                 }
 
                 if (drag_left_) {
+                    const auto now = std::chrono::steady_clock::now();
+                    const float dt_sample = std::chrono::duration<float>(now - drag_sample_time_).count();
+                    if (dt_sample >= 0.015f) {
+                        drag_velocity_x_ = static_cast<float>(mx - drag_sample_x_) / dt_sample;
+                        drag_velocity_y_ = static_cast<float>(my - drag_sample_y_) / dt_sample;
+                        drag_sample_x_ = mx;
+                        drag_sample_y_ = my;
+                        drag_sample_time_ = now;
+                    }
                     const float dx = static_cast<float>(mx - last_mouse_x_);
                     const float dy = static_cast<float>(my - last_mouse_y_);
                     dmc_view_drag(&view_, dx, dy);
+                    last_mouse_x_ = mx;
+                    last_mouse_y_ = my;
+
+                    if (session_) {
+                        float cam_pos[3];
+                        dmc_cutscene_take_camera(session_, cam_pos);
+                    }
+                } else if (drag_twist_) {
+                    const float dx = static_cast<float>(mx - last_mouse_x_);
+                    const float radians = dx * 0.01f;
+                    dmc_view_twist(&view_, radians, false);
                     last_mouse_x_ = mx;
                     last_mouse_y_ = my;
                 } else if (drag_pan_) {
@@ -2711,6 +2858,11 @@ void App::run() {
         const auto now = std::chrono::steady_clock::now();
         const float dt = std::clamp(std::chrono::duration<float>(now - last_tick).count(), 0.001f, 0.1f);
         last_tick = now;
+
+        // Inertia spin step (dmc_spin_step)
+        if (is_spinning_ && !drag_left_) {
+            is_spinning_ = dmc_spin_step(&view_, &spin_, dt);
+        }
 
         // Fly mode tick
         if (fly_mode_ && session_) {
