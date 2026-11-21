@@ -357,6 +357,44 @@ private:
     std::thread worker_{};
 };
 
+// ---- POSIX Crash Handler (Signal Recorder) --------------------------------
+class LinuxCrashHandler {
+public:
+    static std::string init() {
+        fs::path data_dir;
+        const char* xdg_data = std::getenv("XDG_DATA_HOME");
+        if (xdg_data && *xdg_data) {
+            data_dir = fs::path(xdg_data) / "dmc-native-reader";
+        } else {
+            const char* home = std::getenv("HOME");
+            data_dir = home ? (fs::path(home) / ".local" / "share" / "dmc-native-reader") : fs::path("/tmp/dmc-native-reader");
+        }
+        std::error_code ec;
+        fs::create_directories(data_dir, ec);
+        const fs::path note_path = data_dir / "crash_native.txt";
+
+        std::string previous_note;
+        if (fs::exists(note_path, ec)) {
+            std::ifstream in(note_path, std::ios::binary);
+            if (in) {
+                previous_note.assign(std::istreambuf_iterator<char>(in), {});
+            }
+            fs::remove(note_path, ec);
+        }
+
+        dmc_crash_install(note_path.string().c_str());
+        return previous_note;
+    }
+
+    static void set_opening(const std::string& name) {
+        dmc_crash_context(("opening " + name).c_str());
+    }
+
+    static void set_viewing(const std::string& name) {
+        dmc_crash_context(("viewing " + name).c_str());
+    }
+};
+
 // ---- Extensible Host & EGL/GLES Context Structure -------------------------
 struct HostContext {
     Display* display = nullptr;
@@ -562,6 +600,13 @@ bool App::init_x11(int width, int height) {
     window_width_ = width;
     window_height_ = height;
 
+    std::string prev_crash = LinuxCrashHandler::init();
+    if (!prev_crash.empty()) {
+        std::cout << "[Crash Handler] Recovered note from previous run:\n" << prev_crash << "\n";
+        camera_message_ = "Crash note recovered from previous run";
+        health_report_ = "Recovered Crash: " + prev_crash.substr(0, 80);
+    }
+
     host_.display = XOpenDisplay(nullptr);
     if (!host_.display) {
         std::cerr << "error: could not open X11 display. Check $DISPLAY.\n";
@@ -747,6 +792,7 @@ void App::open_file(const fs::path& path) {
     show_kit_panel_ = false;
     fly_mode_ = false;
 
+    LinuxCrashHandler::set_opening(path.filename().string());
     auto res = dmc_open(path.string().c_str(), bytes.data(), bytes.size());
     if (res.session == nullptr) {
         std::cerr << "open rejected: " << (res.title ? res.title : "unknown reason") << "\n";
@@ -761,6 +807,7 @@ void App::open_file(const fs::path& path) {
         current_title_ = res.title;
     }
     dmc_string_free(res.title);
+    LinuxCrashHandler::set_viewing(current_title_);
 
     // View reset
     dmc_view_reset(&view_);
