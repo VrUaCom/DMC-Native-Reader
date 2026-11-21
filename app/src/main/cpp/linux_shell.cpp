@@ -441,6 +441,7 @@ private:
     void open_child_resource(size_t index);
     void trigger_open_dialog();
     void play_next_sound();
+    void refresh_session_metadata();
 
     void init_camera();
     void toggle_camera_mode();
@@ -766,26 +767,14 @@ void App::open_file(const fs::path& path) {
     render_flags_ = 0;
     view_.render_flags = 0;
 
-    // Check children
-    child_count_ = dmc_child_count(session_);
-    const uint64_t state_bits = dmc_state_flags(session_);
-    child_browser_mode_ = (state_bits & (1ULL << 15)) != 0; // StateFlag::ChildBrowserMode
+    // Session metadata & children
+    refresh_session_metadata();
 
     // File health
     char* report_str = nullptr;
     file_health_ = dmc_file_health(session_, path.filename().string().c_str(), &report_str);
     health_report_ = report_str ? report_str : "";
     if (report_str) dmc_string_free(report_str);
-
-    // Animation info
-    animation_playing_ = false;
-    dmc_motion_range(session_, &motion_end_frame_, &motion_loop_start_);
-
-    // Hitbox / attack ids
-    attack_ids_.resize(32);
-    const size_t attack_count = dmc_collision_attack_ids(session_, attack_ids_.data(), attack_ids_.size());
-    attack_ids_.resize(attack_count);
-    hitbox_attack_ = -2;
 
     // Character kit loading
     base_character_name_ = path.filename().string();
@@ -944,6 +933,22 @@ void App::add_whole_kit() {
     reassemble_character();
 }
 
+void App::refresh_session_metadata() {
+    if (!session_) return;
+    child_count_ = dmc_child_count(session_);
+    const uint64_t state_bits = dmc_state_flags(session_);
+    child_browser_mode_ = (state_bits & (1ULL << 15)) != 0;
+    child_thumb_cache_.clear();
+
+    animation_playing_ = false;
+    dmc_motion_range(session_, &motion_end_frame_, &motion_loop_start_);
+
+    attack_ids_.resize(32);
+    const size_t attack_count = dmc_collision_attack_ids(session_, attack_ids_.data(), attack_ids_.size());
+    attack_ids_.resize(attack_count);
+    hitbox_attack_ = -2;
+}
+
 void App::open_child_resource(size_t index) {
     if (!session_ || index >= child_count_) return;
     dmc_session* child = dmc_open_child(session_, index);
@@ -960,10 +965,7 @@ void App::open_child_resource(size_t index) {
     current_title_ = child_name;
     dmc_view_reset(&view_);
 
-    child_count_ = dmc_child_count(session_);
-    const uint64_t state_bits = dmc_state_flags(session_);
-    child_browser_mode_ = (state_bits & (1ULL << 15)) != 0;
-    child_thumb_cache_.clear();
+    refresh_session_metadata();
 
     std::cout << "Navigated into child: " << current_title_ << "\n";
 }
@@ -979,10 +981,7 @@ void App::go_back() {
     current_path_ = prev.path;
     view_ = prev.view;
 
-    child_count_ = dmc_child_count(session_);
-    const uint64_t state_bits = dmc_state_flags(session_);
-    child_browser_mode_ = (state_bits & (1ULL << 15)) != 0;
-    child_thumb_cache_.clear();
+    refresh_session_metadata();
 
     std::cout << "Navigated back to: " << current_title_ << "\n";
 }
@@ -1665,8 +1664,9 @@ void App::step_animation(float delta) {
     if (!std::isfinite(view_.motion_frame)) view_.motion_frame = 0.0f;
     view_.motion_frame += delta;
     if (view_.motion_frame < 0.0f) view_.motion_frame = 0.0f;
-    if (motion_end_frame_ > 0.0f && view_.motion_frame > motion_end_frame_) {
-        view_.motion_frame = motion_loop_start_;
+    if (motion_end_frame_ > motion_loop_start_ && view_.motion_frame > motion_end_frame_) {
+        const float span = motion_end_frame_ - motion_loop_start_;
+        view_.motion_frame = motion_loop_start_ + std::fmod(view_.motion_frame - motion_end_frame_, span);
     }
 }
 
@@ -2097,8 +2097,9 @@ void App::run() {
         if (animation_playing_ && session_) {
             if (!std::isfinite(view_.motion_frame)) view_.motion_frame = 0.0f;
             view_.motion_frame += dt * 60.0f;
-            if (motion_end_frame_ > 0.0f && view_.motion_frame > motion_end_frame_) {
-                view_.motion_frame = motion_loop_start_;
+            if (motion_end_frame_ > motion_loop_start_ && view_.motion_frame > motion_end_frame_) {
+                const float span = motion_end_frame_ - motion_loop_start_;
+                view_.motion_frame = motion_loop_start_ + std::fmod(view_.motion_frame - motion_end_frame_, span);
             }
         }
 
