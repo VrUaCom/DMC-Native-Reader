@@ -96,9 +96,14 @@ enum OpenPanel {
 struct ContentView: View {
     @ObservedObject var model: ViewerModel
     @State private var showInfo = false
-    @State private var dragLast: CGSize?
-    @State private var zoomStart: Float?
-    @State private var twistLast: Double?
+    /// Where a gesture was at its last event: kept outside SwiftUI's state so
+    /// that moving the camera never rebuilds the window's views.
+    final class GestureTrack {
+        var dragLast: CGSize?
+        var zoomStart: Float?
+        var twistLast: Double?
+    }
+    @State private var track = GestureTrack()
     @State private var spinTimer: Timer?
 
     var body: some View {
@@ -120,7 +125,7 @@ struct ContentView: View {
             if hasPanel {
                 Divider()
                 sidePanel
-                    .frame(minWidth: 320, idealWidth: 380, maxWidth: 460)
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 400)
             }
         }
         .frame(minWidth: 640, minHeight: 480)
@@ -138,7 +143,7 @@ struct ContentView: View {
 
     /// What used to be sheets over the window: one at a time, in a panel beside the view.
     private var hasPanel: Bool {
-        model.crashReport != nil || showInfo || model.markerCard != nil || model.collisionReport != nil ||
+        model.settingsShown || model.crashReport != nil || showInfo || model.markerCard != nil || model.collisionReport != nil ||
             model.askTextureFormat || !model.partsShown.isEmpty || !model.diagnosticsText.isEmpty
     }
 
@@ -165,6 +170,9 @@ struct ContentView: View {
         } else if showInfo {
             InfoSheet(model: model)
                 .environment(\.closePanel, ClosePanelAction { showInfo = false })
+        } else if model.settingsShown {
+            SettingsPanel(model: model)
+                .environment(\.closePanel, ClosePanelAction { model.settingsShown = false })
         }
     }
 
@@ -399,14 +407,14 @@ struct ContentView: View {
         DragGesture(minimumDistance: 1)
             .onChanged { value in
                 stopSpin()
-                if dragLast == nil { model.claimCutsceneCamera() }
-                let last = dragLast ?? .zero
-                dragLast = value.translation
+                if track.dragLast == nil { model.claimCutsceneCamera() }
+                let last = track.dragLast ?? .zero
+                track.dragLast = value.translation
                 model.camera.drag(dx: Float(value.translation.width - last.width),
                                   dy: Float(value.translation.height - last.height))
             }
             .onEnded { value in
-                dragLast = nil
+                track.dragLast = nil
                 // The flick's speed in points per second, from where the drag would have ended.
                 let vx = Float(value.predictedEndTranslation.width - value.translation.width) * 4
                 let vy = Float(value.predictedEndTranslation.height - value.translation.height) * 4
@@ -438,20 +446,20 @@ struct ContentView: View {
     private var magnify: some Gesture {
         MagnificationGesture()
             .onChanged { scale in
-                if zoomStart == nil { model.claimCutsceneCamera() }
-                let start = zoomStart ?? model.camera.zoom
-                if zoomStart == nil { zoomStart = start }
+                if track.zoomStart == nil { model.claimCutsceneCamera() }
+                let start = track.zoomStart ?? model.camera.zoom
+                if track.zoomStart == nil { track.zoomStart = start }
                 model.camera.pinch(startZoom: start, scale: Float(scale))
             }
-            .onEnded { _ in zoomStart = nil }
+            .onEnded { _ in track.zoomStart = nil }
     }
 
     /// Two fingers turning on the trackpad turn the view.
     private var twist: some Gesture {
         RotationGesture()
             .onChanged { angle in
-                let last = twistLast ?? 0
-                twistLast = angle.radians
+                let last = track.twistLast ?? 0
+                track.twistLast = angle.radians
                 let delta = dmc_angle_delta(Float(last), Float(angle.radians))
                 if model.inCameraMode {
                     model.cameraTwist(delta)
@@ -459,7 +467,7 @@ struct ContentView: View {
                     model.camera.twist(radians: delta, roomShown: false)
                 }
             }
-            .onEnded { _ in twistLast = nil }
+            .onEnded { _ in track.twistLast = nil }
     }
 
     @ToolbarContentBuilder
@@ -469,6 +477,8 @@ struct ContentView: View {
                 .disabled(!model.canGoBack)
         }
         ToolbarItemGroup {
+            Button { model.settingsShown.toggle() } label: { Label("Settings", systemImage: "gearshape") }
+                .help("Settings: graphics, lines, animation, base room and the photo camera (the same as on Android)")
             Button { OpenPanel.choose { model.open(url: $0) } } label: { Label("Open", systemImage: "folder") }
             Button { model.resetCamera() } label: { Label("Reset view", systemImage: "scope") }
                 .disabled(model.session == nil || model.isPicture)

@@ -93,8 +93,9 @@ std::vector<Setting> viewer_settings(const Capabilities& caps) {
 
     auto renderer = toggle("set.gpu", kGraphics, "Renderer", {"GPU (graphics chip)", "CPU (software)"}, true, true);
     renderer.hint =
-        "GPU draws the model, the room, the floor, shadows and effects with OpenGL ES 3; lines and bones are "
-        "drawn on top. Wireframe and UV views always use the CPU. Now: " +
+        "GPU draws the model, the room, the floor, shadows and effects on the graphics chip (OpenGL ES 3 on "
+        "Android, Metal on macOS); lines and bones are drawn on top. Wireframe and UV views always use the "
+        "CPU. Now: " +
         caps.renderer;
     if (caps.max_samples > 0) {
         renderer.hint += "\nThis chip: anti-aliasing up to " + std::to_string(caps.max_samples) +

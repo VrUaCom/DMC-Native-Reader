@@ -18,7 +18,9 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var isPicture = false
     @Published private(set) var healthLevel = 0
     @Published var message: String?
-    @Published var camera = ViewCamera() { didSet { requestFrame() } }
+    /// Not published: no view shows it, and publishing it rebuilt the whole
+    /// window on every pointer event while the camera turned.
+    var camera = ViewCamera() { didSet { requestFrame() } }
 
     /// Sessions under the current one (Back returns to the last).
     var stack: [ReaderSession] = []
@@ -328,6 +330,8 @@ final class ViewerModel: ObservableObject {
     // MARK: Base room, effects, export
 
     @Published private(set) var roomName: String?
+    /// The settings panel beside the view (the toolbar's gear).
+    @Published var settingsShown = false
     /// The base room's effect bank and configuration files (slot 0).
     var baseEffectsName: String?
     var baseConfigName: String?
@@ -631,8 +635,13 @@ final class ViewerModel: ObservableObject {
         }
         let (width, height) = frameSize()
         finderFrameSize = CGSize(width: width, height: height)
-        viewfinder = session.viewfinder(width: width, height: height, zoom: camera.zoom, recording: recording, seconds: 0)
-        dials = ReaderCore.cameraDials()
+        // Only real changes are published (each one rebuilds the window).
+        let finder = session.viewfinder(width: width, height: height, zoom: camera.zoom, recording: recording, seconds: 0)
+        if finder != viewfinder { viewfinder = finder }
+        let next = ReaderCore.cameraDials()
+        if !next.elementsEqual(dials, by: { $0.key == $1.key && $0.title == $1.title && $0.value == $1.value }) {
+            dials = next
+        }
     }
 
     private let recorder = ViewRecorder()
@@ -770,11 +779,13 @@ final class ViewerModel: ObservableObject {
                 guard let self else { return }
                 self.drawing = false
                 if request == self.generation, self.session === session {
+                    // Published values change only when they differ: an
+                    // equal assignment still rebuilds the views.
                     if shown {
-                        self.shownDirectly = true
+                        if !self.shownDirectly { self.shownDirectly = true }
                     } else if let picture {
                         self.image = picture
-                        self.shownDirectly = false
+                        if self.shownDirectly { self.shownDirectly = false }
                     }
                     if frame == nil, self.image == nil, !self.shownDirectly {
                         self.message = self.children.isEmpty

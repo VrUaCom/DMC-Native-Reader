@@ -159,7 +159,7 @@ extension ViewerModel {
                 SavePanel.choose(name: "view.mov", type: .quickTimeMovie) { [weak self] in self?.toggleRecording(to: $0) }
             }
         case CompanionID.settings, CompanionID.cameraSettings:
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            settingsShown = true
         case CompanionID.gestures:
             message = "Drag turns, two-finger drag or ⌥-drag pans, pinch zooms, rotate twists; F flies (WASD, arrows)."
         default: run(action: row)
