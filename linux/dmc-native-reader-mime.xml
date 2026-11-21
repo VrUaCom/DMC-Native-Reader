@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+    <mime-type type="application/x-dmc-pac">
+        <comment>Devil May Cry Archive Container (PAC)</comment>
+        <glob pattern="*.pac"/>
+        <glob pattern="*.PAC"/>
+    </mime-type>
+    <mime-type type="application/x-dmc-mod">
+        <comment>Devil May Cry 3D Model (MOD)</comment>
+        <glob pattern="*.mod"/>
+        <glob pattern="*.MOD"/>
+    </mime-type>
+    <mime-type type="application/x-dmc-scm">
+        <comment>Devil May Cry Stage Composite Model (SCM)</comment>
+        <glob pattern="*.scm"/>
+        <glob pattern="*.SCM"/>
+    </mime-type>
+    <mime-type type="application/x-dmc-ptx">
+        <comment>Devil May Cry Texture Package (PTX)</comment>
+        <glob pattern="*.ptx"/>
+        <glob pattern="*.PTX"/>
+    </mime-type>
+    <mime-type type="application/x-dmc-mot">
+        <comment>Devil May Cry Skeletal Motion (MOT)</comment>
+        <glob pattern="*.mot"/>
+        <glob pattern="*.MOT"/>
+    </mime-type>
+</mime-info>

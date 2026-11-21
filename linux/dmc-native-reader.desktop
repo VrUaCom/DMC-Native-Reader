@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=DMC Native Reader
+GenericName=Devil May Cry Asset Viewer & Inspector
+Comment=Interactive 3D viewer and inspector for Devil May Cry game resources (PAC, MOD, SCM, PTX, DDS, MOT)
+Exec=dmc_native_reader_linux %f
+Icon=dmc-native-reader
+Terminal=false
+Categories=Development;Graphics;Viewer;3DGraphics;
+MimeType=application/x-dmc-pac;application/x-dmc-mod;application/x-dmc-scm;application/x-dmc-ptx;application/x-dmc-mot;image/vnd-ms.dds;
+StartupNotify=true
+Keywords=DMC;Devil May Cry;MOD;PAC;SCM;PTX;DDS;Viewer;3D;Reverse Engineering;
