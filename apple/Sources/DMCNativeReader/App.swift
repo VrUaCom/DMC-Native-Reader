@@ -143,7 +143,7 @@ struct ContentView: View {
 
     /// What used to be sheets over the window: one at a time, in a panel beside the view.
     private var hasPanel: Bool {
-        model.settingsShown || model.crashReport != nil || showInfo || model.markerCard != nil || model.collisionReport != nil ||
+        model.settingsShown || model.texturesShown || model.crashReport != nil || showInfo || model.markerCard != nil || model.collisionReport != nil ||
             model.askTextureFormat || !model.partsShown.isEmpty || !model.diagnosticsText.isEmpty
     }
 
@@ -170,6 +170,9 @@ struct ContentView: View {
         } else if showInfo {
             InfoSheet(model: model)
                 .environment(\.closePanel, ClosePanelAction { showInfo = false })
+        } else if model.texturesShown {
+            TexturesPanel(model: model)
+                .environment(\.closePanel, ClosePanelAction { model.texturesShown = false })
         } else if model.settingsShown {
             SettingsPanel(model: model)
                 .environment(\.closePanel, ClosePanelAction { model.settingsShown = false })
@@ -477,6 +480,9 @@ struct ContentView: View {
                 .disabled(!model.canGoBack)
         }
         ToolbarItemGroup {
+            Button { model.texturesShown.toggle() } label: { Label("Textures", systemImage: "paintpalette") }
+                .help("Textures: drop a PNG or DDS of your own on one to see it on the model (nothing is written)")
+                .disabled(model.session == nil || model.isPicture)
             Button { model.settingsShown.toggle() } label: { Label("Settings", systemImage: "gearshape") }
                 .help("Settings: graphics, lines, animation, base room and the photo camera (the same as on Android)")
             Button { OpenPanel.choose { model.open(url: $0) } } label: { Label("Open", systemImage: "folder") }

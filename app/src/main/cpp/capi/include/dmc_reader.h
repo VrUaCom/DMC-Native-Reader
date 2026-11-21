@@ -715,6 +715,24 @@ void dmc_crash_install(const char* path);
 void dmc_crash_context(const char* text);
 /* Ends the process with SIGABRT, to try the crash note (a debug menu's). */
 void dmc_test_crash(void);
+/* The textures the model is drawn with, and pictures of your own over them
+ * (texture_override.h): see a modded costume without repacking. Nothing is
+ * written; restore brings the original back. */
+size_t dmc_texture_count(const dmc_session* session);
+/* Slot `slot`: its size, whether a picture is shown over it and that
+ * picture's name (*override_name: free with dmc_string_free; may be NULL). */
+bool dmc_texture_info(const dmc_session* session, size_t slot, int* width, int* height, bool* overridden,
+                      char** override_name);
+/* Slot `slot` as drawn (max_side > 0: scaled to fit, for thumbnails), or its
+ * original with `original`. NULL when there is no such slot. */
+dmc_image* dmc_texture_image(const dmc_session* session, size_t slot, int max_side, bool original);
+/* A PNG or DDS file over slot `slot`. False with *message (free with
+ * dmc_string_free) saying why; on success *message names what was shown. */
+bool dmc_texture_override(dmc_session* session, size_t slot, const char* name, const uint8_t* bytes, size_t size,
+                          char** message);
+/* The original back (slot SIZE_MAX: every slot). True when something changed. */
+bool dmc_texture_restore(dmc_session* session, size_t slot);
+
 /* The texture formats a model's textures can be re-encoded to (names the core
  * reads, labels the user reads; same order). */
 dmc_strings* dmc_texture_format_names(void);

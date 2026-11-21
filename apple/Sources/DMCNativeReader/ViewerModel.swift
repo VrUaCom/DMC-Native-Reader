@@ -181,6 +181,7 @@ final class ViewerModel: ObservableObject {
         shownDirectly = false
         session = next
         message = nil
+        textureSlots = texturesShown ? next.textureSlots() : []
         healthLevel = next.health().level
         if next.childCount > 0 || !keepList || listOwner == nil {
             // A new archive (or a file with files of its own) takes the column.
@@ -332,6 +333,9 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var roomName: String?
     /// The settings panel beside the view (the toolbar's gear).
     @Published var settingsShown = false
+    /// The textures panel beside the view, and its rows.
+    @Published var texturesShown = false
+    @Published var textureSlots: [TextureSlot] = []
     /// The base room's effect bank and configuration files (slot 0).
     var baseEffectsName: String?
     var baseConfigName: String?

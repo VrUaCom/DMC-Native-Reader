@@ -155,6 +155,7 @@ void refresh_attachment_completion(Session* session) noexcept {
 
     note_non_canonical(session, attachment.non_canonical_reason);
     session->attached_textures = std::move(attachment.textures);
+    session->texture_overrides.clear();
     session->texture_companion_attached = true;
     session->texture_attachment_detail = attachment.detail +
         " | action=spider.crusader";
@@ -200,6 +201,7 @@ void refresh_attachment_completion(Session* session) noexcept {
     // Atomic ownership switch after parse/decode/projection validation.
     note_non_canonical(session, attachment.non_canonical_reason);
     session->attached_textures = std::move(attachment.textures);
+    session->texture_overrides.clear();
     session->render_triangle_texture_slots = std::move(shared_slots);
     for (auto& part : session->composite_parts) {
         if (!has_required_slots(part)) continue;
@@ -372,6 +374,7 @@ void refresh_attachment_completion(Session* session) noexcept {
 
     note_non_canonical(session, attachment.non_canonical_reason);
     session->attached_textures = std::move(staged_textures);
+    session->texture_overrides.clear();
     session->render_triangle_texture_slots = std::move(staged_slots);
     part.texture_companion_attached = true;
     part.texture_attachment_detail = attachment.detail;

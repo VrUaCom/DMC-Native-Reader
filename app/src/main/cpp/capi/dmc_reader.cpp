@@ -30,6 +30,7 @@
 #include "dmcresource/spider/stage_actions.h"
 #include "dmcresource/stage_room.h"
 #include "dmcresource/frame_profile.h"
+#include "dmcresource/texture_override.h"
 #include "dmcresource/view_benchmark.h"
 #include "dmcresource/view_gpu.h"
 #include "dmcresource/view_renderer.h"
@@ -1968,6 +1969,82 @@ dmc_strings* dmc_texture_format_labels(void) {
         for (const auto& c : actions::texture_format_choices()) out->items.push_back(c.label);
         return out.release();
     } catch (...) { return nullptr; }
+}
+
+size_t dmc_texture_count(const dmc_session* session) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto* source = core(session);
+        return source == nullptr ? 0U : source->attached_textures.size();
+    } catch (...) { return 0U; }
+}
+
+bool dmc_texture_info(const dmc_session* session, size_t slot, int* width, int* height, bool* overridden,
+                      char** override_name) {
+    try {
+        if (override_name != nullptr) *override_name = nullptr;
+        const std::lock_guard lock{api_mutex()};
+        const auto slots = dmcresource::texture_slots(core(session));
+        if (slot >= slots.size()) return false;
+        if (width != nullptr) *width = static_cast<int>(slots[slot].width);
+        if (height != nullptr) *height = static_cast<int>(slots[slot].height);
+        if (overridden != nullptr) *overridden = slots[slot].overridden;
+        if (override_name != nullptr && slots[slot].overridden) *override_name = copy_string(slots[slot].override_name);
+        return true;
+    } catch (...) { return false; }
+}
+
+dmc_image* dmc_texture_image(const dmc_session* session, size_t slot, int max_side, bool original) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        const auto image = dmcresource::texture_image(core(session), slot,
+                                                      static_cast<std::uint32_t>(std::max(0, max_side)), original);
+        if (!image.available()) return nullptr;
+        auto* out = static_cast<dmc_image*>(std::calloc(1U, sizeof(dmc_image)));
+        if (out == nullptr) return nullptr;
+        out->rgba = static_cast<std::uint8_t*>(std::malloc(image.rgba8.size()));
+        if (out->rgba == nullptr) { std::free(out); return nullptr; }
+        std::memcpy(out->rgba, image.rgba8.data(), image.rgba8.size());
+        out->width = static_cast<int>(image.width);
+        out->height = static_cast<int>(image.height);
+        return out;
+    } catch (...) { return nullptr; }
+}
+
+bool dmc_texture_override(dmc_session* session, size_t slot, const char* name, const uint8_t* bytes, size_t size,
+                          char** message) {
+    try {
+        if (message != nullptr) *message = nullptr;
+        if (bytes == nullptr || size == 0U) {
+            if (message != nullptr) *message = copy_string("No file.");
+            return false;
+        }
+        std::string error;
+        auto image = dmcresource::decode_texture_file(std::span<const std::uint8_t>{bytes, size}, &error);
+        const std::string file = text_or_empty(name);
+        if (!image) {
+            if (message != nullptr) *message = copy_string(file + ": " + error + ".");
+            return false;
+        }
+        const auto w = image->width, h = image->height;
+        const std::lock_guard lock{api_mutex()};
+        if (!dmcresource::override_texture(core(session), slot, std::move(*image), file)) {
+            if (message != nullptr) *message = copy_string("No texture #" + std::to_string(slot) + " here.");
+            return false;
+        }
+        if (message != nullptr) {
+            *message = copy_string("Texture #" + std::to_string(slot) + " shows " + file + " (" + std::to_string(w) +
+                                   " x " + std::to_string(h) + "); nothing is written.");
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+bool dmc_texture_restore(dmc_session* session, size_t slot) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        return dmcresource::restore_texture(core(session), slot);
+    } catch (...) { return false; }
 }
 
 dmc_session* dmc_reencode_textures(const dmc_session* session, const char* format, bool force_dx10, char** detail) {

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -67,6 +68,13 @@ struct Session {
     // slots onto one shared or mixed bank while each CompositePart retains the
     // authoritative source-local slot identity separately.
     std::vector<dmcresource::ImagePreview> attached_textures;
+    // Pictures shown instead of some of them (texture_override.h): by slot,
+    // the file's name and the original to restore. Presentation only.
+    struct TextureOverride final {
+        std::string name;
+        dmcresource::ImagePreview original;
+    };
+    std::map<std::size_t, TextureOverride> texture_overrides;
     std::string texture_attachment_detail;
     bool texture_companion_attached{};
 
