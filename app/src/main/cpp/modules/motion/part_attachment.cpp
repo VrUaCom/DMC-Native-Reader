@@ -1054,10 +1054,15 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         struct Look { const char* name; std::uint32_t body; std::uint32_t coat; };
         constexpr std::array<Look, 4> looks{{
             {"Look 1", 1U, 3U}, {"Look 2", 45U, 46U}, {"Look 3", 51U, 52U}, {"Look 4", 61U, 62U}}};
+        // Weapons follow the class form [this+0xEF10] (draw 0x140186930):
+        // form 0 Yamato (sheath 28 on joint 13), form 1 the same plus Beowulf
+        // (55, init 0x140182C50 hangs its glow effects 5-8 on its nodes). The
+        // state machine switches forms in the fight; scripts do not (their
+        // opcode-3 channel 1 only moves an action to its next phase,
+        // 0x14017A060 ...). "No weapons" is a viewer position.
         struct Arms { const char* name; bool yamato; bool beowulf; };
-        constexpr std::array<Arms, 4> arms{{
-            {"Yamato", true, false}, {"Yamato + Beowulf", true, true},
-            {"Beowulf", false, true}, {"No weapons", false, false}}};
+        constexpr std::array<Arms, 3> arms{{
+            {"Yamato", true, false}, {"Yamato + Beowulf", true, true}, {"No weapons", false, false}}};
         for (const bool dt : {false, true}) {
             for (const auto& l : looks) {
                 for (const auto& w : arms) {
