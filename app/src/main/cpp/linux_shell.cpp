@@ -303,6 +303,7 @@ enum ButtonId : int {
     kBtnBack = 100,
     kBtnOpen = 101,
     kBtnKit = 102,
+    kBtnBrowse = 103,
     kBtnWireframe = 201,
     kBtnHierarchy = 202,
     kBtnNormals = 203,
@@ -317,6 +318,7 @@ enum ButtonId : int {
     kBtnEffects = 212,
     kBtnLook = 213,
     kBtnMotion = 214,
+    kBtnTexFormat = 215,
 };
 
 struct MotionCardEntry {
@@ -490,11 +492,15 @@ private:
 
     void open_child_resource(size_t index);
     void trigger_open_dialog();
+    void toggle_file_browser();
+    void refresh_file_browser(const fs::path& dir);
+    void load_stage_companion_archives(const fs::path& path);
     void play_next_sound();
     void trigger_next_class_event();
     void trigger_next_effect();
     void cycle_variant();
     void cycle_motion();
+    void cycle_texture_format();
     void refresh_session_metadata();
 
     void init_camera();
@@ -555,6 +561,24 @@ private:
     // Motion cards & strip (dmc_motion_strip_build)
     std::vector<MotionCardEntry> motion_cards_{};
     int current_motion_idx_ = -1;
+
+    // In-engine file browser overlay
+    bool show_file_browser_ = false;
+    fs::path browser_dir_{};
+    struct BrowserEntry {
+        std::string name;
+        fs::path full_path;
+        bool is_dir = false;
+        Rect rect{};
+    };
+    std::vector<BrowserEntry> browser_entries_{};
+    int browser_scroll_ = 0;
+    int hover_browser_idx_ = -1;
+
+    // Texture re-encoding state (dmc_reencode_textures)
+    std::vector<std::string> tex_format_names_{};
+    std::vector<std::string> tex_format_labels_{};
+    int current_tex_format_idx_ = -1;
 
     // Animation state
     bool animation_playing_ = false;
@@ -710,7 +734,8 @@ void App::init_buttons() {
     header_buttons_ = {
         {kBtnBack, "< BACK", "Return to parent resource", {}, false, false, false},
         {kBtnKit, "KIT", "Character kit and attachments", {}, false, false, false},
-        {kBtnOpen, "OPEN", "Open DMC game file", {}, true, true, false},
+        {kBtnBrowse, "FILES", "Browse directory files (O)", {}, true, true, false},
+        {kBtnOpen, "OPEN", "Open DMC game file dialog", {}, true, true, false},
     };
 
     toolbar_buttons_ = {
@@ -726,6 +751,7 @@ void App::init_buttons() {
         {kBtnEffects, "EFFECT", "Play effect bank action (X)", {}, false, false, false},
         {kBtnLook, "LOOK", "Cycle appearance variant (C)", {}, false, false, false},
         {kBtnMotion, "MOT", "Cycle library motions (M)", {}, false, false, false},
+        {kBtnTexFormat, "TEX", "Re-encode textures to modern formats (T)", {}, false, false, false},
         {kBtnCamera, "CAM", "Toggle Photo Camera viewfinder (V)", {}, true, true, false},
         {kBtnResetView, "RESET", "Reset camera view (R / 0)", {}, true, true, false},
     };
@@ -744,8 +770,10 @@ void App::update_layout(int width, int height) {
             hx += 85;
         } else if (btn.id == kBtnKit) {
             btn.rect = {hx, 6, 60, 30};
+        } else if (btn.id == kBtnBrowse) {
+            btn.rect = {width - 155, 6, 65, 30};
         } else if (btn.id == kBtnOpen) {
-            btn.rect = {width - 85, 6, 75, 30};
+            btn.rect = {width - 80, 6, 70, 30};
         }
     }
 
@@ -780,6 +808,8 @@ void App::update_button_states() {
             btn.visible = !kit_items_.empty();
             btn.enabled = btn.visible;
             btn.active = show_kit_panel_;
+        } else if (btn.id == kBtnBrowse) {
+            btn.active = show_file_browser_;
         }
     }
 
@@ -828,6 +858,17 @@ void App::update_button_states() {
                 btn.visible = !motion_cards_.empty();
                 btn.enabled = btn.visible;
                 btn.active = animation_playing_;
+                break;
+            case kBtnTexFormat:
+                btn.visible = (session_ != nullptr && !child_browser_mode_);
+                btn.enabled = btn.visible;
+                btn.active = (current_tex_format_idx_ >= 0);
+                if (current_tex_format_idx_ >= 0 && current_tex_format_idx_ < static_cast<int>(tex_format_names_.size())) {
+                    btn.label = tex_format_names_[current_tex_format_idx_];
+                    std::transform(btn.label.begin(), btn.label.end(), btn.label.begin(), ::toupper);
+                } else {
+                    btn.label = "TEX";
+                }
                 break;
             case kBtnCamera:
                 btn.active = dmc_camera_mode();
@@ -891,6 +932,9 @@ void App::open_file(const fs::path& path) {
     base_character_name_ = path.filename().string();
     base_character_path_ = path;
     load_character_kit(base_character_name_, path);
+
+    // Stage companion archives auto-discovery (stNNN_effect.pac, stNNNcfg.pac, static_effect.pac)
+    load_stage_companion_archives(path);
 
     std::cout << "Opened " << path.string() << " (" << current_title_ << ")\n";
     if (host_.display && host_.window) {
@@ -1135,6 +1179,11 @@ void App::refresh_session_metadata() {
         dmc_motion_strip_free(strip);
     }
 
+    // Reset texture format re-encoding state
+    tex_format_names_.clear();
+    tex_format_labels_.clear();
+    current_tex_format_idx_ = -1;
+
     update_button_states();
     update_layout(window_width_, window_height_);
 }
@@ -1206,8 +1255,114 @@ void App::trigger_open_dialog() {
     if (!chosen_path.empty()) {
         open_file(chosen_path);
     } else {
-        std::cout << "Open file cancelled or no GUI dialog available.\n";
+        std::cout << "External dialog unavailable or cancelled. Opening in-engine file browser.\n";
+        toggle_file_browser();
     }
+}
+
+void App::load_stage_companion_archives(const fs::path& path) {
+    char* fx_name = nullptr;
+    char* cfg_name = nullptr;
+    const std::string filename = path.filename().string();
+    if (!dmc_stage_archives(filename.c_str(), &fx_name, &cfg_name)) {
+        return;
+    }
+
+    const fs::path dir = path.parent_path();
+    std::string wanted_fx = fx_name ? fx_name : "";
+    std::string wanted_cfg = cfg_name ? cfg_name : "";
+    if (fx_name) dmc_string_free(fx_name);
+    if (cfg_name) dmc_string_free(cfg_name);
+
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        const std::string ename = entry.path().filename().string();
+        if (!wanted_fx.empty() && strcasecmp(ename.c_str(), wanted_fx.c_str()) == 0) {
+            auto b = ReadFileBytes(entry.path());
+            if (!b.empty()) {
+                char* report = dmc_room_effects_load(ename.c_str(), b.data(), b.size(), 1);
+                std::cout << "[Stage] Loaded stage effects from " << ename << (report ? (" (" + std::string(report) + ")") : "") << "\n";
+                if (report) dmc_string_free(report);
+            }
+        } else if (!wanted_cfg.empty() && strcasecmp(ename.c_str(), wanted_cfg.c_str()) == 0) {
+            auto b = ReadFileBytes(entry.path());
+            if (!b.empty()) {
+                dmc_outcome out = dmc_stage_config_load(ename.c_str(), b.data(), b.size(), 1);
+                std::cout << "[Stage] Loaded stage config from " << ename << (out.message ? (" (" + std::string(out.message) + ")") : "") << "\n";
+                dmc_outcome_free(&out);
+            }
+        } else if (strcasecmp(ename.c_str(), "static_effect.pac") == 0) {
+            auto b = ReadFileBytes(entry.path());
+            if (!b.empty()) {
+                char* report = dmc_common_effects_load(ename.c_str(), b.data(), b.size());
+                std::cout << "[Stage] Loaded common effects from " << ename << (report ? (" (" + std::string(report) + ")") : "") << "\n";
+                if (report) dmc_string_free(report);
+            }
+        }
+    }
+}
+
+void App::toggle_file_browser() {
+    show_file_browser_ = !show_file_browser_;
+    if (show_file_browser_) {
+        fs::path start_dir = current_path_.empty() ? fs::current_path() : current_path_.parent_path();
+        refresh_file_browser(start_dir);
+    }
+}
+
+void App::refresh_file_browser(const fs::path& dir) {
+    browser_dir_ = dir;
+    browser_entries_.clear();
+    browser_scroll_ = 0;
+
+    // Parent directory entry
+    if (dir.has_parent_path() && dir.parent_path() != dir) {
+        BrowserEntry parent_entry;
+        parent_entry.name = ".. [Parent Directory]";
+        parent_entry.full_path = dir.parent_path();
+        parent_entry.is_dir = true;
+        browser_entries_.push_back(parent_entry);
+    }
+
+    std::error_code ec;
+    std::vector<BrowserEntry> dirs;
+    std::vector<BrowserEntry> files;
+
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        std::string fname = entry.path().filename().string();
+        if (fname.empty() || fname[0] == '.') continue;
+
+        if (entry.is_directory(ec)) {
+            BrowserEntry de;
+            de.name = fname + "/";
+            de.full_path = entry.path();
+            de.is_dir = true;
+            dirs.push_back(de);
+        } else if (entry.is_regular_file(ec)) {
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".pac" || ext == ".mod" || ext == ".scm" || ext == ".ptx" ||
+                ext == ".mot" || ext == ".tm2" || ext == ".bin" || ext == ".dds" ||
+                ext == ".ogg" || ext == ".vag" || ext.rfind(".st", 0) == 0) {
+                BrowserEntry fe;
+                fe.name = fname;
+                fe.full_path = entry.path();
+                fe.is_dir = false;
+                files.push_back(fe);
+            }
+        }
+    }
+
+    std::sort(dirs.begin(), dirs.end(), [](const BrowserEntry& a, const BrowserEntry& b) {
+        return a.name < b.name;
+    });
+    std::sort(files.begin(), files.end(), [](const BrowserEntry& a, const BrowserEntry& b) {
+        return a.name < b.name;
+    });
+
+    for (auto& d : dirs) browser_entries_.push_back(std::move(d));
+    for (auto& f : files) browser_entries_.push_back(std::move(f));
 }
 
 // ---- Rendering & UI Drawing -----------------------------------------------
@@ -1536,6 +1691,13 @@ void App::render_frame() {
             canvas_.draw_text(px + 16, cur_y, "Health Note: " + health_report_.substr(0, 60), kColorHealthNotice);
         }
 
+        if (session_ && !child_browser_mode_) {
+            cur_y += 14;
+            std::string cur_fmt = (current_tex_format_idx_ >= 0 && current_tex_format_idx_ < static_cast<int>(tex_format_names_.size()))
+                                  ? tex_format_names_[current_tex_format_idx_] : "Default (PS2/Retail)";
+            canvas_.draw_text(px + 16, cur_y, "Texture Compression: " + cur_fmt + "  [Press 'T' to cycle]", kColorAccent);
+        }
+
         canvas_.draw_text_centered(px, py + ph - 28, pw, 20, "[ Press 'I' or 'Escape' or click [X] to close ]", kColorAccent);
     }
 
@@ -1567,6 +1729,64 @@ void App::render_frame() {
         canvas_.draw_text_centered(px + 16, py + ph - 44, 180, 28, "Add Whole Kit", kColorAccent);
 
         canvas_.draw_text_centered(px + 210, py + ph - 40, pw - 220, 20, "[Press number key 1-8 to toggle]", kColorTextDim);
+    }
+
+    if (show_file_browser_) {
+        const int pw = std::min(740, window_width_ - 40);
+        const int ph = std::min(520, window_height_ - 80);
+        const int px = (window_width_ - pw) / 2;
+        const int py = (window_height_ - ph) / 2;
+
+        canvas_.fill_rect(px, py, pw, ph, 0x14141E);
+        canvas_.draw_rect_outline(px, py, pw, ph, kColorAccent);
+
+        canvas_.fill_rect(px, py, pw, 34, 0x1E1E2A);
+        canvas_.draw_rect_outline(px, py, pw, 34, kColorBtnBorder);
+        std::string title_dir = "Browse: " + browser_dir_.string();
+        if (title_dir.size() > 62) title_dir = "..." + title_dir.substr(title_dir.size() - 59);
+        canvas_.draw_text(px + 14, py + 10, title_dir, kColorAccent);
+        canvas_.draw_text(px + pw - 30, py + 10, "[X]", kColorTextDim);
+
+        const int item_h = 24;
+        const int list_y = py + 40;
+        const int max_visible = (ph - 78) / item_h;
+        const int total_items = static_cast<int>(browser_entries_.size());
+        if (max_visible > 0) {
+            browser_scroll_ = std::clamp(browser_scroll_, 0, std::max(0, total_items - max_visible));
+        }
+
+        for (int i = 0; i < max_visible; ++i) {
+            const int idx = browser_scroll_ + i;
+            if (idx >= total_items) break;
+            auto& entry = browser_entries_[idx];
+            const int ey = list_y + i * item_h;
+            entry.rect = {px + 8, ey, pw - 16, item_h};
+
+            const bool is_hover = (hover_browser_idx_ == idx);
+            if (is_hover) {
+                canvas_.fill_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h, kColorBtnHover);
+                canvas_.draw_rect_outline(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h, kColorBtnBorder);
+            }
+
+            if (entry.is_dir) {
+                canvas_.draw_text(entry.rect.x + 8, ey + 5, "[DIR]  " + entry.name, kColorAccent);
+            } else {
+                uint32_t fcol = kColorText;
+                const std::string ext = entry.full_path.extension().string();
+                if (ext == ".pac") fcol = 0x00FFCC00;
+                else if (ext == ".mod") fcol = 0x0055D0FF;
+                else if (ext == ".ptx" || ext == ".tm2" || ext == ".dds") fcol = 0x00FF88AA;
+                else if (ext == ".mot") fcol = 0x0066FF88;
+                canvas_.draw_text(entry.rect.x + 8, ey + 5, "       " + entry.name, fcol);
+            }
+        }
+
+        canvas_.fill_rect(px, py + ph - 32, pw, 32, 0x181822);
+        canvas_.draw_rect_outline(px, py + ph - 32, pw, 32, kColorBtnBorder);
+        std::string scroll_info = "Items " + std::to_string(total_items > 0 ? (browser_scroll_ + 1) : 0) +
+                                  "-" + std::to_string(std::min(total_items, browser_scroll_ + max_visible)) +
+                                  " of " + std::to_string(total_items) + "  |  [Wheel/Arrows] Scroll  [ESC] Close";
+        canvas_.draw_text(px + 14, py + ph - 22, scroll_info, kColorTextDim);
     }
 }
 
@@ -1603,6 +1823,9 @@ void App::handle_button_click(int id) {
     switch (id) {
         case kBtnBack:
             go_back();
+            break;
+        case kBtnBrowse:
+            toggle_file_browser();
             break;
         case kBtnOpen:
             trigger_open_dialog();
@@ -1646,6 +1869,9 @@ void App::handle_button_click(int id) {
         case kBtnMotion:
             cycle_motion();
             break;
+        case kBtnTexFormat:
+            cycle_texture_format();
+            break;
         case kBtnCamera:
             toggle_camera_mode();
             break;
@@ -1658,6 +1884,33 @@ void App::handle_button_click(int id) {
 }
 
 void App::handle_key_press(KeySym sym) {
+    if (show_file_browser_) {
+        switch (sym) {
+            case XK_Escape:
+                show_file_browser_ = false;
+                return;
+            case XK_Up:
+                browser_scroll_ = std::max(0, browser_scroll_ - 1);
+                return;
+            case XK_Down:
+                browser_scroll_ += 1;
+                return;
+            case XK_Page_Up:
+                browser_scroll_ = std::max(0, browser_scroll_ - 5);
+                return;
+            case XK_Page_Down:
+                browser_scroll_ += 5;
+                return;
+            case XK_BackSpace:
+                if (browser_dir_.has_parent_path() && browser_dir_.parent_path() != browser_dir_) {
+                    refresh_file_browser(browser_dir_.parent_path());
+                }
+                return;
+            default:
+                break;
+        }
+    }
+
     if (show_kit_panel_ && sym >= XK_1 && sym <= XK_9) {
         const size_t idx = static_cast<size_t>(sym - XK_1);
         if (idx < kit_items_.size()) {
@@ -1668,7 +1921,8 @@ void App::handle_key_press(KeySym sym) {
 
     switch (sym) {
         case XK_Escape:
-            if (show_info_panel_) show_info_panel_ = false;
+            if (show_file_browser_) show_file_browser_ = false;
+            else if (show_info_panel_) show_info_panel_ = false;
             else if (show_kit_panel_) show_kit_panel_ = false;
             else if (!nav_stack_.empty()) go_back();
             else running_ = false;
@@ -1757,6 +2011,8 @@ void App::handle_key_press(KeySym sym) {
                 dual_info_preview_ = !dual_info_preview_;
                 dmc_set_info_preview(session_, dual_info_preview_);
                 camera_message_ = dual_info_preview_ ? "Preview: Info Layout" : "Preview: Diffuse Texture";
+            } else if (session_) {
+                cycle_texture_format();
             }
             break;
         case XK_s:
@@ -1787,7 +2043,7 @@ void App::handle_key_press(KeySym sym) {
             break;
         case XK_o:
         case XK_O:
-            trigger_open_dialog();
+            toggle_file_browser();
             break;
         case XK_w:
         case XK_W:
@@ -1957,6 +2213,46 @@ void App::cycle_motion() {
     camera_message_ = "Motion [" + std::to_string(current_motion_idx_ + 1) + "/" +
                       std::to_string(motion_cards_.size()) + "]: " + card.name;
     std::cout << camera_message_ << " (" << report << ")\n";
+}
+
+void App::cycle_texture_format() {
+    if (!session_) return;
+    if (tex_format_names_.empty()) {
+        dmc_strings* names = dmc_texture_format_names();
+        dmc_strings* labels = dmc_texture_format_labels();
+        if (names && labels) {
+            const size_t cnt = dmc_strings_count(names);
+            for (size_t i = 0; i < cnt; ++i) {
+                const char* n = dmc_strings_at(names, i);
+                const char* l = dmc_strings_at(labels, i);
+                if (n && l) {
+                    tex_format_names_.emplace_back(n);
+                    tex_format_labels_.emplace_back(l);
+                }
+            }
+        }
+        if (names) dmc_strings_free(names);
+        if (labels) dmc_strings_free(labels);
+    }
+    if (tex_format_names_.empty()) return;
+
+    current_tex_format_idx_ = (current_tex_format_idx_ + 1) % static_cast<int>(tex_format_names_.size());
+    const std::string& fmt = tex_format_names_[current_tex_format_idx_];
+
+    char* detail = nullptr;
+    dmc_session* reencoded = dmc_reencode_textures(session_, fmt.c_str(), false, &detail);
+    if (reencoded) {
+        dmc_close(session_);
+        session_ = reencoded;
+        current_title_ = current_path_.filename().string() + " · " + fmt;
+        refresh_session_metadata();
+        camera_message_ = "Texture Re-encoded: " + fmt + " (" + (detail ? std::string(detail) : "OK") + ")";
+        std::cout << "[Texture] " << camera_message_ << "\n";
+    } else {
+        camera_message_ = fmt + ": " + (detail ? std::string(detail) : "No texture to re-encode");
+        std::cout << "[Texture] " << camera_message_ << "\n";
+    }
+    if (detail) dmc_string_free(detail);
 }
 
 void App::cycle_hitboxes() {
@@ -2186,6 +2482,47 @@ void App::run() {
                 const int mx = ev.xbutton.x;
                 const int my = ev.xbutton.y;
 
+                if (show_file_browser_) {
+                    const int pw = std::min(740, window_width_ - 40);
+                    const int ph = std::min(520, window_height_ - 80);
+                    const int px = (window_width_ - pw) / 2;
+                    const int py = (window_height_ - ph) / 2;
+
+                    if (ev.xbutton.button == Button4) {
+                        browser_scroll_ = std::max(0, browser_scroll_ - 3);
+                        continue;
+                    } else if (ev.xbutton.button == Button5) {
+                        const int item_h = 24;
+                        const int max_vis = (ph - 78) / item_h;
+                        const int max_scroll = std::max(0, static_cast<int>(browser_entries_.size()) - max_vis);
+                        browser_scroll_ = std::min(max_scroll, browser_scroll_ + 3);
+                        continue;
+                    }
+
+                    if (ev.xbutton.button == Button1) {
+                        if (mx >= px + pw - 34 && mx <= px + pw - 8 && my >= py + 6 && my <= py + 30) {
+                            show_file_browser_ = false;
+                            continue;
+                        }
+                        bool item_clicked = false;
+                        for (const auto& entry : browser_entries_) {
+                            if (entry.rect.contains(mx, my)) {
+                                if (entry.is_dir) {
+                                    refresh_file_browser(entry.full_path);
+                                } else {
+                                    open_file(entry.full_path);
+                                    show_file_browser_ = false;
+                                }
+                                item_clicked = true;
+                                break;
+                            }
+                        }
+                        if (item_clicked || (mx >= px && mx <= px + pw && my >= py && my <= py + ph)) {
+                            continue;
+                        }
+                    }
+                }
+
                 if (ev.xbutton.button == Button1) {
                     // Check info panel close button
                     if (show_info_panel_) {
@@ -2263,7 +2600,7 @@ void App::run() {
                         }
                     }
 
-                    if (!clicked_btn && !show_info_panel_ && !show_kit_panel_) {
+                    if (!clicked_btn && !show_info_panel_ && !show_kit_panel_ && !show_file_browser_) {
                         if (dmc_camera_mode() && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
                             camera_focus_at(mx, my - kHeaderHeight);
                         } else if (session_ && !child_browser_mode_ && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
@@ -2308,6 +2645,17 @@ void App::run() {
                 }
                 for (const auto& btn : toolbar_buttons_) {
                     if (btn.visible && btn.rect.contains(mx, my)) hover_btn_id_ = btn.id;
+                }
+
+                // File browser entry hover
+                hover_browser_idx_ = -1;
+                if (show_file_browser_) {
+                    for (size_t i = 0; i < browser_entries_.size(); ++i) {
+                        if (browser_entries_[i].rect.contains(mx, my)) {
+                            hover_browser_idx_ = static_cast<int>(i);
+                            break;
+                        }
+                    }
                 }
 
                 // Child item hover

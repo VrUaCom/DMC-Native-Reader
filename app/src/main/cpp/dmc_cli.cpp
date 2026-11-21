@@ -447,13 +447,79 @@ int CmdBenchmark(const fs::path& input_path, float seconds) {
     return 0;
 }
 
+int CmdTexFormats() {
+    dmc_strings* names = dmc_texture_format_names();
+    dmc_strings* labels = dmc_texture_format_labels();
+    if (!names || !labels) {
+        std::cerr << "error: failed to query texture formats\n";
+        return 1;
+    }
+    const size_t cnt = dmc_strings_count(names);
+    std::cout << "Available Texture Compression Formats (" << cnt << "):\n";
+    for (size_t i = 0; i < cnt; ++i) {
+        std::cout << "  " << dmc_strings_at(names, i) << " - " << dmc_strings_at(labels, i) << "\n";
+    }
+    dmc_strings_free(names);
+    dmc_strings_free(labels);
+    return 0;
+}
+
+int CmdReencode(const fs::path& input_path, const std::string& format, const fs::path& out_path) {
+    const auto bytes = ReadFileBytes(input_path);
+    if (bytes.empty()) {
+        std::cerr << "error: could not read " << input_path.string() << "\n";
+        return 1;
+    }
+    auto res = dmc_open(input_path.string().c_str(), bytes.data(), bytes.size());
+    if (res.session == nullptr) {
+        std::cerr << "error: open rejected: " << (res.title ? res.title : "unknown reason") << "\n";
+        dmc_string_free(res.title);
+        return 1;
+    }
+    dmc_string_free(res.title);
+
+    char* detail = nullptr;
+    dmc_session* reencoded = dmc_reencode_textures(res.session, format.c_str(), false, &detail);
+    std::cout << "Re-encode report: " << (detail ? detail : "OK") << "\n";
+    if (detail) dmc_string_free(detail);
+
+    if (reencoded == nullptr) {
+        std::cerr << "error: re-encoding to format " << format << " produced no session\n";
+        dmc_close(res.session);
+        return 1;
+    }
+
+    if (!out_path.empty()) {
+        const char* src_name = nullptr;
+        const uint8_t* src_bytes = nullptr;
+        size_t src_size = 0;
+        if (dmc_source(reencoded, &src_name, &src_bytes, &src_size) && src_bytes && src_size > 0) {
+            std::ofstream out(out_path, std::ios::binary);
+            if (out) {
+                out.write(reinterpret_cast<const char*>(src_bytes), src_size);
+                std::cout << "saved re-encoded asset (" << src_size << " bytes) to " << out_path.string() << "\n";
+            } else {
+                std::cerr << "error: failed to write output to " << out_path.string() << "\n";
+            }
+        } else {
+            std::cerr << "warning: re-encoded session does not provide raw serializable source bytes\n";
+        }
+    }
+
+    dmc_close(reencoded);
+    dmc_close(res.session);
+    return 0;
+}
+
 void PrintUsage() {
     std::cerr << "dmc_native_reader_cli <command> [args]\n"
               << "  inspect <file> [topic: uv | mesh | hierarchy | all]\n"
               << "  report <file> --json <out.json>\n"
               << "  workspace-scan <folder> --json <out.json>\n"
               << "  export <file> <out.png>\n"
-              << "  benchmark <file> [seconds]\n";
+              << "  benchmark <file> [seconds]\n"
+              << "  tex-formats\n"
+              << "  reencode <file> <format> [out_file]\n";
 }
 
 }  // namespace
@@ -464,6 +530,13 @@ int main(int argc, char** argv) {
         return 2;
     }
     const std::string_view command = argv[1];
+    if (command == "tex-formats") {
+        return CmdTexFormats();
+    }
+    if (command == "reencode" && argc >= 4) {
+        const fs::path out_file = (argc >= 5) ? fs::path(argv[4]) : fs::path();
+        return CmdReencode(fs::path(argv[2]), argv[3], out_file);
+    }
     if (command == "inspect" && argc >= 3) {
         const std::string topic = (argc >= 4) ? argv[3] : "";
         return CmdInspect(fs::path(argv[2]), topic);
