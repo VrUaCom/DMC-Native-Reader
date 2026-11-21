@@ -1,0 +1,5 @@
+module DMCReader {
+    header "include/dmc_reader.h"
+    link "dmc_reader_capi"
+    export *
+}

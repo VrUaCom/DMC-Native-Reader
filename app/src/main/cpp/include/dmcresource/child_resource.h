@@ -32,6 +32,10 @@ struct ChildResource {
     // remains the Visual/Playback-facing surface.
     ImagePreview info_preview;
     std::vector<ChildResource> children;
+    // A container's files by slot, as the name list before it in its archive
+    // gives them (a cutscene's "m07_b00_CameraSet.txt", "cm_c001.cam", an
+    // effect id "G 105"); opening the container names its slots with them.
+    std::vector<std::string> member_names;
 
     // Optional bounded source payload for lazy child materialization. Containers
     // use this only when a child cannot keep a decoded preview resident (for

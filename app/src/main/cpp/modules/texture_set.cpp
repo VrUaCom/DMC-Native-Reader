@@ -2,23 +2,24 @@
 
 #include <algorithm>
 #include <span>
+#include <string>
 #include <utility>
 
 #include "dmc_rengine/profiles/dmc3/texture_slot_framing_compat.hpp"
 #include "dmcresource/ptx_framing_compat.h"
+#include "dmcresource/texture_reencode.h"
 
 namespace dmcresource::texture_set {
 namespace {
 
-namespace dds_bc = dmc::rengine::codecs::dds_bc;
 namespace dmc3 = dmc::rengine::profiles::dmc3;
 
-[[nodiscard]] dds_bc::ParseResult parse_exact_dds(
+[[nodiscard]] dds_bcn::ParseResult parse_exact_dds(
     std::span<const std::byte> bytes) {
-    auto parsed = dds_bc::parse(bytes);
+    auto parsed = dds_bcn::parse(bytes);
     if (parsed.ok() && parsed.document.total_size != bytes.size()) {
-        return dds_bc::ParseResult{
-            .status = dds_bc::Status::payload_out_of_bounds,
+        return dds_bcn::ParseResult{
+            .status = dds_bcn::Status::payload_out_of_bounds,
             .document = {},
             .detail = "DDS has trailing bytes outside its bounded image extent",
         };
@@ -90,11 +91,43 @@ ParseResult parse_dds(std::span<const std::byte> source) {
 
     const auto read = dmc3::TextureSlotFramingReader::parse(source);
     const auto& framing = read.framing;
+    // A gfxTexture whose DDS is outside the canonical variants (any BC1..BC7,
+    // DX10, other header constants), accepted on the dmc3.exe load checks.
+    if (!framing.ok() && texture_reencode::is_wrapped_texture(source)) {
+        const auto dds_size = static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x64])) |
+            (static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x65])) << 8U) |
+            (static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x66])) << 16U) |
+            (static_cast<std::uint64_t>(std::to_integer<std::uint32_t>(source[0x67])) << 24U);
+        const auto parsed = parse_exact_dds(bounded_dds_span(source, 0x70U, dds_size));
+        if (parsed.ok()) {
+            try {
+                const auto u16 = [&](std::size_t o) {
+                    return std::to_integer<std::uint32_t>(source[o]) |
+                        (std::to_integer<std::uint32_t>(source[o + 1U]) << 8U);
+                };
+                out.kind = Kind::wrapped_dds;
+                out.slots.push_back(Slot{
+                    .index = 0U,
+                    .descriptor_offset = 0U,
+                    .dds_offset = 0x70U,
+                    .dds_size = dds_size,
+                    .sector_span = 0U,
+                    .secondary_width = u16(0x10U),
+                    .secondary_height = u16(0x12U),
+                    .dds = parsed.document,
+                });
+            } catch (...) {
+                out = {};
+                out.detail = "DDS rejected: texture-set allocation failed";
+            }
+            return out;
+        }
+    }
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::wrapped_dds ||
         framing.document.textures.size() != 1U) {
         out.detail =
-            "DDS rejected: neither a bounded standalone DXT DDS nor descriptor-wrapped DDS";
+            "DDS rejected: neither a bounded standalone BC1..BC7 DDS nor descriptor-wrapped DDS";
         return out;
     }
 
@@ -121,7 +154,10 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
 
     bool compat_used = false;
     bool community = false;
-    const auto framing = ptx_compat::parse_texture_bundle(source, &compat_used, &community);
+    bool single_level = false;
+    bool extended = false;
+    const auto framing = ptx_compat::parse_texture_bundle(
+        source, &compat_used, &community, &single_level, &extended);
     if (!framing.ok() ||
         framing.document.kind != dmc3::TextureSlotFramingKind::texture_bundle) {
         out.detail = "PTX rejected by canonical texture-slot reader";
@@ -136,6 +172,8 @@ ParseResult parse_ptx(std::span<const std::byte> source) {
         out.kind = Kind::ptx_bundle;
         out.ptx_aux_compat_used = compat_used;
         out.ptx_community_descriptors = community;
+        out.ptx_single_level = single_level;
+        out.ptx_extended_formats = extended;
         out.slots.reserve(framing.document.textures.size());
         for (const auto& entry : framing.document.textures) {
             if (!append_framed_slot(&out, source, entry)) {
@@ -179,10 +217,22 @@ bool decode_base_mip(
         return false;
     }
 
-    const auto decoded = dds_bc::decode_base_mip_rgba8(bytes, slot.dds);
+    auto decoded = dds_bcn::decode_preview_rgba8(bytes, slot.dds);
     if (!decoded.ok) {
         if (detail != nullptr) *detail = decoded.detail;
         return false;
+    }
+    if (detail != nullptr && (decoded.mip_level != 0U || decoded.downscale != 1U)) {
+        try {
+            *detail = "Preview " + std::to_string(decoded.image.width) + "x" +
+                std::to_string(decoded.image.height) +
+                (decoded.mip_level != 0U
+                     ? " from mip " + std::to_string(decoded.mip_level)
+                     : " box-filtered 1/" + std::to_string(decoded.downscale)) +
+                " (full size above the 4M-pixel preview budget)";
+        } catch (...) {
+            detail->clear();
+        }
     }
 
     try {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -11,6 +12,7 @@
 
 #include "dmcresource/composite_model.h"
 #include "dmcresource/motion/cloth_chain.h"
+#include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/render_scene.h"
 
 namespace dmcresource {
@@ -197,6 +199,19 @@ inline constexpr std::array<WeaponSecondPart, 1> kWeaponSecondParts{{
 [[nodiscard]] std::optional<WeaponSecondPart> weapon_second_part(
     std::string_view class_name) noexcept;
 
+// Beowulf (CPlWpFight, obj\\plwp_fight.pac): one skinned MOD of 11 nodes,
+// gauntlets (object 0, 1) and greaves (object 2). Its pose 0x140229100 copies
+// ten player joint matrices onto its nodes, pairs {node, joint} at
+// 0x1404E0BD0 (joint + table 0x1404E0328[body variant], 0 for the normal
+// body, 0x1401FAA90); node 0 takes the player world (+0x180).
+inline constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 10> kBeowulfNodeJoints{{
+    {1U, 8U}, {2U, 9U}, {6U, 12U}, {7U, 13U}, {3U, 16U},
+    {4U, 17U}, {5U, 18U}, {8U, 20U}, {9U, 21U}, {10U, 22U},
+}};
+
+// True for plwp_fight.pac (any directory or case).
+[[nodiscard]] bool beowulf_archive(std::string_view archive_name) noexcept;
+
 // local(T, R) built like the MOD rest local (0x140330450 + 0x140031200).
 [[nodiscard]] Matrix4 attach_local_matrix(const std::array<float, 3>& translation,
                                           const std::array<float, 3>& rotation_xyz_radians) noexcept;
@@ -220,7 +235,7 @@ struct EnemyVariant final {
     std::string_view pac_stem;
     std::string_view class_name;
     std::uint32_t body_slot;
-    std::array<EnemyClothPart, 2> cloth;
+    std::array<EnemyClothPart, 6> cloth;
     std::uint32_t cloth_count;
     std::uint32_t weapon_slot;      // [this+0x670] in 0..1
     std::uint32_t weapon_slot_alt;  // [this+0x670] in 2..3 (same slot: no choice)
@@ -233,6 +248,9 @@ struct EnemyVariant final {
     // Motion PACs the class init reads (slot 35 body motions, 36 / 37 extra;
     // 0 = unused). Empty: every MOT of the archive is offered.
     std::array<std::uint32_t, 3> motion_slots{};
+    // The class sets the cloth model's world to the joint's world: a cloth
+    // whose root sits at the joint (not at the origin) keeps its root there.
+    bool cloth_root_at_joint{};
 };
 
 inline constexpr std::array<float, 3> kEm000WeaponT{-15.0F, -61.39939880371094F,
@@ -270,6 +288,28 @@ inline constexpr std::array<EnemyVariant, 8> kEm000Variants{{
      0U, {0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}, 32U, {37U, 0U, 0U}},
 }};
 
+// The sin family's own archives share the em000 draw rules: body world,
+// cloth model world = body joint [this+0x3254] world, weapon = offset
+// (kEm000WeaponT / R, init +0x2840) x body joint 9.
+//   CEm006 Abyss (em006.pac) and CEm007 Envy (em007.pac): draw 0x1400B2D10
+//     (vtable slot 3 of both). em006: body 1, cloth 3 (.clt 2) on joint 14,
+//     scythe 8 (PTX 7); slots 4 / 5 are low-poly copies. em007: body 1,
+//     scythe 4 (PTX 3); slot 2 a low-poly copy.
+//   CEm008 Vanguard (em008.pac): init 0x1400B57A0, draw 0x1400B77C0. Body
+//     EFM 1, six cloth MODs each with the .clt before it: 3 -> joint 5,
+//     5 -> 3, 7 -> 3, 9 -> 8, 11 -> 12, 13 -> 14; scythe 18 (PTX 17).
+inline constexpr std::array<EnemyVariant, 1> kEm006Variants{{
+    {"em006", "CEm006", 1U, {{{3U, 14U}}}, 1U, 8U, 8U, false, 9U, kEm000WeaponT, kEm000WeaponR,
+     kNoEnemySlot, {}, true},
+}};
+inline constexpr std::array<EnemyVariant, 1> kEm007Variants{{
+    {"em007", "CEm007", 1U, {}, 0U, 4U, 4U, false, 9U, kEm000WeaponT, kEm000WeaponR},
+}};
+inline constexpr std::array<EnemyVariant, 1> kEm008Variants{{
+    {"em008", "CEm008", 1U, {{{3U, 5U}, {5U, 3U}, {7U, 3U}, {9U, 8U}, {11U, 12U}, {13U, 14U}}}, 6U,
+     18U, 18U, false, 9U, kEm000WeaponT, kEm000WeaponR},
+}};
+
 // Variants for an archive name ("em000.pac", any directory, any case).
 [[nodiscard]] std::span<const EnemyVariant> enemy_variants_for(
     std::string_view archive_name) noexcept;
@@ -297,6 +337,9 @@ struct ArchivePartAttachment final {
     std::array<float, 3> translation{};
     std::array<float, 3> rotation_xyz_radians{};
     bool explicit_offset{};
+    // The offset is Rz x Ry x Rx then translation (attach_local_matrix_zyx),
+    // as the class builds it in code, not the MOD rest-local order.
+    bool zyx_offset{};
 };
 
 struct ArchiveVariant final {
@@ -328,6 +371,19 @@ struct ArchiveVariant final {
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
 
+// A character's kit: the archives the game loads with it, for the shell to
+// add from the same folder. Kind: weapon (a plwp_*.pac on the body), motions
+// (a motion bank, pl000_00_<n>.pac, named by its weapon, kDanteWeaponMotionBanks),
+// dt (a devil-trigger body that replaces the body). `start`: added when the
+// character opens (the base motions and the first melee weapon and gun).
+struct KitEntry final {
+    std::string kind;
+    std::string file;
+    std::string label;
+    bool start{};
+};
+[[nodiscard]] std::vector<KitEntry> character_kit(std::string_view archive_name);
+
 // Canonical boss-Lady (CEm034) equipment contract. This is intentionally
 // separate from CPlWpLadyGun / player weapon state tables: CEm034 owns five
 // persistent MOD managers and several dynamic CShell actors.
@@ -343,7 +399,7 @@ enum class LadyControlDomain : std::uint8_t {
 
 enum class LadyEffectiveParent : std::uint8_t {
     BodyJoint = 0,
-    RuntimeBodyRootScaled = 1,  // CEm034+0x43C0, scale source +0x4400
+    RuntimeJointScaled = 1,  // CEm034+0x43C0 = joint13 world * S(+0x4400)
 };
 
 struct LadyPlacementRecord final {
@@ -385,7 +441,7 @@ inline constexpr std::array<LadyComponentContract, 5> kCEm034LadyComponents{{
          {0.0F, 0.0F, -1.6580626964569092F}},
         {13U, {7.199999809265137F, -1.2000000476837158F, 2.700000047683716F},
          {0.0F, -0.1745329201221466F, 0.0F},
-         LadyEffectiveParent::RuntimeBodyRootScaled, 0x43C0U, 0x4400U},
+         LadyEffectiveParent::RuntimeJointScaled, 0x43C0U, 0x4400U},
     }}},
     {4U, 24U, {{
         {14U, {17.0F, -5.0F, -16.0F},
@@ -438,7 +494,7 @@ inline constexpr std::array<LadyDynamicActorContract, 6> kCEm034LadyDynamicActor
 }
 
 // Apply an EXE-confirmed CEm034 placement preset to an assembled persistent
-// component. RuntimeBodyRootScaled is represented exactly in the contract and
+// component. RuntimeJointScaled is represented exactly in the contract and
 // is not approximated as serialized node 13; if the live body-root/scale bridge
 // is unavailable this function returns false instead of guessing.
 bool set_lady_component_preset(Session* session,
@@ -453,7 +509,7 @@ bool set_lady_component_control_domain(Session* session,
                                        LadyControlDomain domain) noexcept;
 
 // Exact CEm034 component3 active-parent scalar (+0x4400). Re-materializes
-// RuntimeBodyRootScaled when component3 is currently ActiveDeployed.
+// RuntimeJointScaled when component3 is currently ActiveDeployed.
 bool set_lady_component_runtime_scale(Session* session,
                                       LadyComponentBinding& binding,
                                       float uniform_scale) noexcept;
@@ -469,7 +525,7 @@ struct LadyRuntimeApplyResult final {
 
 // Apply the recovered CEm034 state-entry baseline/overrides. The binding state
 // is updated even if an exact preview cannot be materialized (currently only
-// component3 ActiveDeployed's RuntimeBodyRootScaled parent).
+// component3 ActiveDeployed's RuntimeJointScaled parent).
 [[nodiscard]] LadyRuntimeApplyResult apply_lady_state_entry(
     Session* session, std::uint16_t state) noexcept;
 
@@ -591,6 +647,26 @@ struct LadyBodyStateScripts final {
         both(4U, 60U);
     }
     return out;
+}
+
+// em034_013 action that the CEm034 entry dispatcher 0x14016A410 starts on the
+// component0 controller (+0x52B0) for `state`. Only the entries that reach
+// 0x14016AA73 do so: states 0x5A..0x5D and 0x64..0x73 (case 0x14016AA3D),
+// 0x7B (0x14016A509) and 0x7C/0x7D (0x14016A52F). That block starts bank 4,
+// action state - 0x53 and clears +0x4020, the enable byte of the slot20 node0
+// CCnsMatrix at +0x4000: component0 then follows its own MOT in actor space.
+// Every other entry keeps (or re-enables) the constraint through 0x1401713F0,
+// which always writes +0x4020 = 1, so no component track runs there.
+// States 0x59/0x61 start the same controller later, from their lane0 signal
+// (0x14016988B); that delayed start is not a state-entry pairing.
+[[nodiscard]] constexpr std::optional<LadyBodyLaneAction>
+lady_component_action_for_state(std::uint16_t state) noexcept {
+    const bool independent = (state >= 0x5AU && state <= 0x5DU) ||
+                             (state >= 0x64U && state <= 0x73U) ||
+                             (state >= 0x7BU && state <= 0x7DU);
+    if (!independent) return std::nullopt;
+    return LadyBodyLaneAction{
+        true, 4U, static_cast<std::uint8_t>(state - 0x53U)};
 }
 
 // Consume one signal value exactly as CEm034's direct 0x140059350 consumers do.

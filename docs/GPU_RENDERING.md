@@ -1,0 +1,118 @@
+# GPU view rendering (OpenGL ES 3)
+
+The model / stage view can be drawn on the device's graphics chip (Adreno on
+Snapdragon phones such as the Galaxy S26 Ultra, Mali / Xclipse elsewhere)
+instead of the software rasteriser. Settings → Graphics → **Renderer** switches
+between "GPU (graphics chip)" (default) and "CPU (software)"; the hint under it
+shows what draws the frames now, e.g. `GPU: OpenGL ES 3.2 / Adreno (TM) ...`,
+and how many frames went each way.
+
+## Settings → Graphics
+
+Everything that changes the picture is in one section, **Graphics**:
+
+| Setting | Values (default) | Applies to |
+| --- | --- | --- |
+| Renderer | GPU (graphics chip) / CPU (software) | — |
+| Anti-aliasing (MSAA) | Off, 2x, **4x**, 8x | GPU; capped by the chip (`GL_MAX_SAMPLES`) and ~256 MiB of samples |
+| Mipmaps | **On** / Off | GPU; smooth textures trilinear, pixel textures nearest-mip |
+| Anisotropic filtering | Off, 2x, 4x, **8x**, 16x | GPU, smooth textures; capped by the chip |
+| Resolution, While moving, Model textures, Model lighting, Background, Shadows when a file opens | as before | both |
+
+**Graphics: lines and overlays** holds the mesh / collision line widths, the
+room wireframe opacity and the HITS collision kinds. The animation frame rate
+moved to **Animation**. The hint under Renderer shows the active renderer, the
+frame counts and the chip's limits (`gpuCapabilities`).
+
+With MSAA, mipmaps and anisotropy all off the GPU frame is within 51–55 dB
+PSNR of the software one (Mesa llvmpipe, `pl000.pac`); with the defaults the
+difference is the intended smoothing.
+
+## Split of responsibilities
+
+| Part | Where | What it owns |
+| --- | --- | --- |
+| `include/dmcresource/view_gpu.h` | Core (portable) | the frame contract: `GpuViewFrame`, `GpuBatch`, `GpuViewBackend`, the switch and the counters |
+| `view_renderer.cpp` | Core | builds the frame with the software rasteriser's rules; draws the line overlays; falls back to software |
+| `android/gles_view_backend.cpp` | Android shell (`libdmcviewer.so`) | EGL context, shaders, textures, room buffers, MSAA target, read-back |
+
+Core decides what every triangle looks like; the backend only evaluates those
+decisions per pixel. `render_view` asks the backend first and keeps the
+software path for:
+
+* wireframe and UV-layout views (lines only);
+* any frame the backend refuses (no OpenGL ES 3, target too large, GL error) —
+  the software picture is then returned unchanged, byte for byte;
+* the switch set to CPU.
+
+After eight failed frames in a row the backend stops trying for the session.
+
+## What runs where
+
+GPU (one offscreen pass per frame, MSAA as set in Graphics):
+
+1. opaque room texels (alpha-tested cut-outs < 32, soft textures' texels >= 240);
+2. the plain floor (when no room is shown);
+3. the model — alpha-blended batches writing depth, then GS ALPHA 2 / 3
+   (additive / subtractive) batches without depth;
+4. soft room texels and additive / subtractive room geometry (light shafts);
+5. the shadow footprint (stencil: each pixel darkened once, depth tolerance
+   1% of the framing radius, as the software pass);
+6. effect quads (E / P records), image-space and affine as before.
+
+CPU, on top of the read-back picture: attack shapes, room HITS, bones and joint
+markers (they never had a depth test). Also on the CPU, once per frame: the
+camera light per vertex (`vertex_light`), grouping the posed model into
+batches, and the effect quad corners.
+
+The room is grouped and uploaded once and kept on the GPU until the room
+changes (`GpuRoomKey`: buffers, counts and a sample of the data). Textures are
+uploaded once with mipmaps and evicted after ~900 unused frames or past
+768 MiB.
+
+## Differences from the software picture
+
+Measured with the same frame on Mesa llvmpipe (Dante, `pl000.pac`, 960x720):
+PSNR 45.9 dB (model), 42.7 dB (smooth textures), 44.7 dB (shadow + bones),
+31.2 dB with the `st001.pac` room. The differences are intended:
+
+* model texture coordinates are perspective-correct (the software model pass
+  interpolates them affinely);
+* with mipmaps on, textures use mip levels (smooth: trilinear + anisotropic) —
+  distant floors no longer shimmer;
+* edges are anti-aliased (MSAA);
+* the room's facing light is evaluated per vertex instead of per triangle;
+* soft room texels are not sorted back to front (the software pass sorts).
+
+`app/src/test/native/gpu_view_frame_test.cpp` pins the contract with a
+recording backend: batches and light terms, the camera matrices against the
+software joint markers (< 0.01 px), near / far planes, the overlays on top,
+byte-identical fallback, wireframe / UV on the CPU, and the room key.
+
+## Benchmark
+
+Settings → Graphics → **Benchmark: maximum FPS with these settings (10 s)**.
+The render thread draws full-size frames back to back for 10 seconds with the
+current resolution, renderer and quality settings; the camera turns once per
+240 frames and a playing motion advances one game frame per drawn frame. A
+frame is what the viewer does per frame minus the screen: pose, render (GPU
+read-back included) and copy the pixels out. The first 5 frames (texture and
+room upload) are not timed.
+
+The report gives the renderer, the frame size, the settings, the average fps,
+the 1% low (99th-percentile frame time), median, best and worst, and how many
+frames went to the GPU / CPU. Results of one app session stay listed so
+settings can be compared; "Copy" puts them on the clipboard. Core:
+`view_benchmark.h` (`run_view_benchmark`, `summarize_frame_times`), test
+`view_benchmark_test.cpp`.
+
+## 8K frames
+
+Frame buffers used to come from `ByteBuffer.allocateDirect`, which on Android
+is a non-movable array in the **Java heap**. Two 8K frames (7680 px long side,
+~110–120 MB each on a 19.5:9 screen) exceed the default heap limit, so the
+viewer reported "Not enough memory" and fell back to 6K. The buffers are now
+allocated in native memory (`NativeBridge.allocateFrameBuffer` /
+`freeFrameBuffer`) and freed exactly once, when neither listed nor on their way
+to the screen. Bitmaps were already native (Android 8+). At 8K the GPU uses
+no MSAA (the ~256 MiB sample budget allows none at 30 Mpx).

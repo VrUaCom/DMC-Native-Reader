@@ -1,3 +1,4 @@
+#include "dmcresource/scm_layout_compat.h"
 #include "dmcresource/vector_math.h"
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/adapters/scm_adapter.h"
@@ -18,6 +19,7 @@
 #include "dmc_rengine/formats/scm_render.hpp"
 #include "dmc_rengine/formats/scm_topology.hpp"
 #include "dmc_rengine/formats/scm_transform.hpp"
+#include "dmcresource/game_material.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/uv_projection.h"
 
@@ -302,7 +304,11 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
         const auto byte_span = std::span<const std::byte>{
             reinterpret_cast<const std::byte*>(bytes), size};
         const auto parsed = scm::Parser::parse(byte_span);
-        if (!parsed.ok()) {
+        // Placement alone (streams in another order, every one read through
+        // its offset) does not keep a model from the view; it is noted.
+        const bool community_layout =
+            !parsed.ok() && scm_layout_compat::readable_despite_placement(parsed, size);
+        if (!parsed.ok() && !community_layout) {
             return module_support::reject(
                 probe, module_id,
                 "SCM rejected by canonical parser: " + first_error(parsed));
@@ -311,6 +317,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
         PipelineResult out;
         out.accepted = true;
         out.probe = probe;
+        if (community_layout) out.modules.push_back({scm_layout_compat::kModuleName, true});
         out.modules.push_back({"identity-probe", true});
         out.modules.push_back({"bounded-read-guard", true});
         out.modules.push_back({"canonical.scm.structural-parser", true});
@@ -445,6 +452,9 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                         "SCM canonical local-mesh projection exceeded topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
+                // The object's material byte, as for MOD (game_material.h).
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
+                                             game_material::material_byte(object.flags, object.alpha_control));
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());

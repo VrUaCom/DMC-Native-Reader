@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>DMC Native Reader</string>
+    <key>CFBundleDisplayName</key>
+    <string>DMC Native Reader</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.dmcrengine.nativereader.mac</string>
+    <key>CFBundleExecutable</key>
+    <string>DMCNativeReader</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>DMC resource</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>mod</string>
+                <string>scm</string>
+                <string>pac</string>
+                <string>ptx</string>
+                <string>dds</string>
+                <string>mot</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

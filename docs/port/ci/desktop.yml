@@ -1,0 +1,86 @@
+name: Desktop shells (Windows MinGW / MSVC, macOS)
+
+# The shells beside Android that share the core: the Win32 shell and CLI
+# with MinGW (GCC, libstdc++) and MSVC, and the SwiftUI app for macOS.
+# Builds and host tests only; nothing is signed or published.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["NR-Luna-v73"]
+    paths:
+      - "app/src/main/cpp/**"
+      - "app/src/test/native/**"
+      - "apple/**"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-mingw:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Configure
+        run: >-
+          cmake -S app/src/main/cpp -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DDMC_NATIVE_READER_FFMPEG=OFF
+          -DDMC_NATIVE_READER_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Host tests
+        run: ctest --test-dir build --output-on-failure -j 2
+      - name: Shell and CLI exist
+        run: |
+          test -f build/dmc_native_reader_win.exe
+          test -f build/dmc_native_reader_cli.exe
+
+  windows-msvc:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: >-
+          cmake -S app/src/main/cpp -B build
+          -DDMC_NATIVE_READER_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release -j 4
+      - name: Host tests
+        run: ctest --test-dir build -C Release --output-on-failure -j 2
+
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Host tests
+        run: |
+          cmake -S app/src/main/cpp -B build -DDMC_NATIVE_READER_BUILD_TESTS=ON -DDMC_NATIVE_READER_FFMPEG=OFF
+          cmake --build build -j 4
+          ctest --test-dir build --output-on-failure -j 2
+      - name: macOS app
+        run: DMC_FFMPEG=OFF apple/build-mac.sh

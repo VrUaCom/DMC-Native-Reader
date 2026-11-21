@@ -6,6 +6,7 @@
 #include "dmcresource/view_renderer.h"
 #include "dmcresource/resource_session.h"
 #include "dmcresource/spider/session_actions.h"
+#include "dmcresource/spider/app_info.h"
 
 #include <cassert>
 #include "dmcresource/ptx_framing_compat.h"
@@ -357,6 +358,31 @@ int main() {
         auto clean = dmcresource::open_session("canonical.ptx", canonical.data(),
                                                canonical.size());
         assert(clean && clean->non_canonical_notes.empty());
+
+        // Info is written by the core: the note shows under NOT CANONICAL,
+        // the shell's navigation and staged files get their own sections.
+        namespace info = dmcresource::spider::actions;
+        info::InfoContext context;
+        context.title = "community.ptx";
+        const auto shown_info = info::session_info_text(shown.get(), context);
+        assert(shown_info.rfind("community.ptx\n\nSTRUCTURE\n", 0) == 0U);
+        assert(shown_info.find("NOT CANONICAL") != std::string::npos);
+        assert(shown_info.find("- " + shown->non_canonical_notes.front()) != std::string::npos);
+        assert(shown_info.find("\nSESSION / EVIDENCE\n") != std::string::npos);
+        assert(shown_info.find("NAVIGATION") == std::string::npos);
+        assert(shown_info.find("STAGED COMPANIONS") == std::string::npos);
+        context.title = "canonical.ptx";
+        context.navigation_depth = 2;
+        context.back_title = "pl000.pac";
+        context.staged = {{"Motion", "pl000_mot.pac"}};
+        const auto clean_info = info::session_info_text(clean.get(), context);
+        assert(clean_info.find("NOT CANONICAL") == std::string::npos);
+        assert(clean_info.find("\nNAVIGATION\nDepth: 2\nBack returns to: pl000.pac\n") != std::string::npos);
+        assert(clean_info.find("\nSTAGED COMPANIONS\n- Motion: pl000_mot.pac\n") != std::string::npos);
+        context = {};
+        context.title = "none";
+        assert(info::session_info_text(nullptr, context) ==
+               "none\n\nSTRUCTURE\nNo typed inspection document.\n\nSESSION / EVIDENCE\n\n");
 
         // Structural faults stay rejected even with community descriptors.
         auto broken = community;

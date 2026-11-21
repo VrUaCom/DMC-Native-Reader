@@ -5,6 +5,7 @@
 #include <bit>
 #include <cctype>
 #include <cmath>
+#include <memory>
 #include <new>
 #include <optional>
 #include <vector>
@@ -531,27 +532,10 @@ std::size_t attach_part_cloth(Session* session,
             part.scene.rig == nullptr || part.scene.rig->node_count() != part.scene.nodes.size()) {
             return 0U;
         }
-        auto blocks = parse_clt(clt_text);
-        if (blocks.empty()) return 0U;
-        const auto count = part.scene.rig->node_count();
-        auto state = std::make_shared<ClothState>();
-        state->params = blocks.front();
-        state->blocks = std::move(blocks);
-        state->sim.assign(count, {});
-        state->velocity.assign(count, {});
-        state->axis_by_node.assign(count, -1);
-        state->block_by_node.assign(count, 0U);
+        auto state = make_cloth_state(part.scene.rig->node_count(), clt_text);
+        if (state == nullptr) return 0U;
         std::size_t simulated = 0U;
-        // Every ClothNo block (0x1402CA1D0 reads ClothNum of them).
-        for (std::size_t b = 0U; b < state->blocks.size() && b < 255U; ++b) {
-            for (const auto& bone : state->blocks[b].bones) {
-                if (bone.node >= count || bone.node == 0U) continue;
-                if (state->axis_by_node[bone.node] < 0) ++simulated;
-                state->axis_by_node[bone.node] = static_cast<std::int8_t>(bone.axis);
-                state->block_by_node[bone.node] = static_cast<std::uint8_t>(b);
-            }
-        }
-        if (simulated == 0U) return 0U;
+        for (const auto axis : state->axis_by_node) simulated += axis >= 0 ? 1U : 0U;
         state->capsules.assign(capsules.begin(), capsules.end());
         const auto previous = part.placement.cloth;
         part.placement.cloth = state;
@@ -616,13 +600,12 @@ bool set_lady_component_preset(Session* session,
     if (index >= contract->presets.size()) return false;
     const auto& record = contract->presets[index];
 
-    // CEm034 component3/preset1 deliberately bypasses serialized node13 and
-    // points CCnsMatrix at CEm034+0x43C0. Canonical EXE reconstruction:
-    //   +0x43C0 = bodyManager(+0x850)->currentWorld(+0x110)
-    //   effective parent = S(+0x4400) * bodyRoot
-    // Both retail Lady bodies (slots1/32) have node0 identity at rest, so the
-    // same result is materialized as (local * S) * hostRootWorld.
-    if (record.effective_parent == LadyEffectiveParent::RuntimeBodyRootScaled) {
+    // CEm034 component3/preset1 points its CCnsMatrix at CEm034+0x43C0.
+    // Update 0x140171240 copies [em+0x850]->world (+0x110) there - body
+    // joint 13 of the +0x7E8 joint table - and 0x1401712A6 scales it by
+    // +0x4400: effective parent = S * joint13 world, so the shotgun sits in
+    // the hand, not at the body root.
+    if (record.effective_parent == LadyEffectiveParent::RuntimeJointScaled) {
         world::Matrix4f local{};
         local.values =
             attach_local_matrix(record.translation, record.rotation_xyz_radians).values;
@@ -634,7 +617,8 @@ bool set_lady_component_preset(Session* session,
         Matrix4 offset;
         offset.values = local_scaled.values;
         if (!attach_part_skeleton(
-                session, binding.host_part, binding.part, 0U, false, offset)) {
+                session, binding.host_part, binding.part, record.serialized_node,
+                false, offset)) {
             return false;
         }
         binding.preset = preset;
@@ -666,11 +650,19 @@ bool set_lady_component_control_domain(Session* session,
     // +0x4020 selects em034_013. Never collapse these into one scalar state.
     auto& part = session->composite_parts[binding.part];
     if (domain == LadyControlDomain::IndependentMotionScript) {
-        // Freeze the currently resolved equipment world as the root for its
-        // own 3-node MOT domain. HostJointSkeleton must be disabled, otherwise
-        // the generic motion player correctly treats the part as host-driven
-        // and refuses to animate it independently.
+        // Clearing +0x4020 disables the slot20 node0 CCnsMatrix (+0x4000,
+        // enable byte +0x20): node0 then takes the em034_013 MOT in the same
+        // actor space as the body MOT, not a copy of the stowed or held
+        // equipment matrix. The Lady body part defines that space.
         if (!part.placement.resolved) return false;
+        Matrix4 actor_space;
+        if (binding.host_part < session->composite_parts.size()) {
+            const auto& host = session->composite_parts[binding.host_part].placement;
+            if (host.resolved) actor_space = host.root_matrix;
+        }
+        part.placement.root_matrix = actor_space;
+        // HostJointSkeleton must be disabled, otherwise the generic motion
+        // player treats the part as host-driven and refuses to animate it.
         part.placement.mode = CompositePlacementMode::HostJoint;
         binding.control_domain = domain;
         return true;
@@ -714,7 +706,7 @@ namespace {
     if (binding == nullptr) return false;
     const bool materialized = set_lady_component_preset(session, *binding, preset);
     // Runtime state remains known even when the preview lacks the special
-    // RuntimeBodyRootScaled materialization bridge.
+    // RuntimeJointScaled materialization bridge.
     binding->preset = preset;
     ++out.changed_components;
     if (!materialized) out.fully_materialized = false;
@@ -917,6 +909,9 @@ LadyRuntimeApplyResult apply_lady_signal(Session* session,
     return out;
 }
 
+// Effect profile data and provider matching live in effect_profile_registry.cpp.
+// This attachment unit remains limited to transform/state consumers.
+
 const WeaponStateRecord* weapon_state_record(std::string_view class_name,
                                              std::uint8_t state) noexcept {
     if (state >= 24U) return nullptr;
@@ -963,12 +958,18 @@ Matrix4 weapon_offset_matrix(const WeaponAttachRecord& record) noexcept {
 std::span<const EnemyVariant> enemy_variants_for(std::string_view archive_name) noexcept {
     const auto slash = archive_name.find_last_of("/\\");
     if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
-    constexpr std::string_view name = "em000.pac";
-    if (archive_name.size() != name.size()) return {};
-    for (std::size_t i = 0U; i < name.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return {};
-    }
-    return kEm000Variants;
+    const auto is = [archive_name](std::string_view name) {
+        if (archive_name.size() != name.size()) return false;
+        for (std::size_t i = 0U; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return false;
+        }
+        return true;
+    };
+    if (is("em000.pac")) return kEm000Variants;
+    if (is("em006.pac")) return kEm006Variants;
+    if (is("em007.pac")) return kEm007Variants;
+    if (is("em008.pac")) return kEm008Variants;
+    return {};
 }
 
 std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
@@ -1007,6 +1008,179 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         ArchiveVariant swarm;
         swarm.label = "Bats out";
         out.push_back(swarm);
+        return out;
+    }
+
+    // Vergil as the player (pl001, pl021, pl023, pl026): body 1 and coat 12;
+    // after the motion data the PAC keeps its own PTX and the summoned
+    // swords (two MODs) -- projectiles, not worn, so a look of their own.
+    {
+        const auto stem = [&archive_name]() {
+            std::string out;
+            for (const char c : archive_name.substr(0, archive_name.find('.'))) {
+                out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return out;
+        }();
+        if (stem == "pl001" || stem == "pl021" || stem == "pl023" || stem == "pl026") {
+            const bool shifted = stem == "pl023";  // one motion PAC fewer: swords 22, 24
+            ArchiveVariant vergil;
+            vergil.label = "Vergil";
+            vergil.include_top_level_mod_slots = {1U, 12U};
+            vergil.include_top_level_mod_count = 2U;
+            out.push_back(vergil);
+            ArchiveVariant swords;
+            swords.label = "Summoned swords";
+            swords.include_top_level_mod_slots = {shifted ? 22U : 23U, shifted ? 24U : 25U};
+            swords.include_top_level_mod_count = 2U;
+            out.push_back(swords);
+            return out;
+        }
+    }
+
+    // em035.pac (Vergil). The draw 0x140186930 shows one of four forms
+    // ([this+0xEF10]); every model of a form is drawn in the actor world.
+    // The PAC keeps each look as a PTX followed by its body and coat MODs:
+    // PTX 0 -> 1 + 3, PTX 14 -> 15 + 16 + 17 + 18 (devil trigger), PTX 44 ->
+    // 45 + 46, PTX 50 -> 51 + 52, PTX 60 -> 61 + 62; weapons 25 + 28 (PTX
+    // 24 / 27), 32, 55 (Beowulf), 58. One look per position, not all at once.
+    if (archive_name.size() == 9U && std::tolower(static_cast<unsigned char>(archive_name[0])) == 'e' &&
+        archive_name.substr(2, 7) == "035.pac") {
+        // Positions are "look · weapons · DT" (the shell offers one switch per
+        // part). 0x140180C60 roots the coat at body joint 3 and the sheathed
+        // Yamato (slot 28, .clt 30) at joint 13; Beowulf (55) is drawn when
+        // [this+0xEF0C] == 2 and follows the body bones it lies on. The DT
+        // form (draw 0x140186930 form 2: 15 + 16 + 17 + 18) draws no sheath.
+        struct Look { const char* name; std::uint32_t body; std::uint32_t coat; };
+        constexpr std::array<Look, 4> looks{{
+            {"Look 1", 1U, 3U}, {"Look 2", 45U, 46U}, {"Look 3", 51U, 52U}, {"Look 4", 61U, 62U}}};
+        // Weapons follow the class form [this+0xEF10] (draw 0x140186930):
+        // form 0 Yamato (sheath 28 on joint 13), form 1 the same plus Beowulf
+        // (55, init 0x140182C50 hangs its glow effects 5-8 on its nodes). The
+        // state machine switches forms in the fight; scripts do not (their
+        // opcode-3 channel 1 only moves an action to its next phase,
+        // 0x14017A060 ...). "No weapons" is a viewer position.
+        struct Arms { const char* name; bool yamato; bool beowulf; };
+        constexpr std::array<Arms, 3> arms{{
+            {"Yamato", true, false}, {"Yamato + Beowulf", true, true}, {"No weapons", false, false}}};
+        for (const bool dt : {false, true}) {
+            for (const auto& l : looks) {
+                for (const auto& w : arms) {
+                    ArchiveVariant v;
+                    v.label = std::string{l.name} + " · " + w.name + (dt ? " · DT on" : " · DT off");
+                    std::uint32_t n = 0U;
+                    const auto add = [&v, &n](std::uint32_t slot) {
+                        if (n < v.include_top_level_mod_slots.size()) v.include_top_level_mod_slots[n++] = slot;
+                    };
+                    const std::uint32_t body = dt ? 15U : l.body;
+                    const std::uint32_t coat = dt ? 18U : l.coat;
+                    add(body);
+                    add(coat);
+                    if (dt) { add(16U); add(17U); }
+                    if (w.yamato && !dt) add(28U);
+                    if (w.beowulf) add(55U);
+                    v.include_top_level_mod_count = n;
+                    std::uint32_t k = 0U;
+                    v.part_attachments[k++] = {body, coat, kPlayerCoatHostJoint, true, true, true};
+                    if (w.yamato && !dt) v.part_attachments[k++] = {body, 28U, 13U, true, true, true};
+                    // DT cloth (0x140180C60 form 2): one on body joint 2, one on 3.
+                    if (dt) v.part_attachments[k++] = {body, 16U, 2U, true, true, true};
+                    v.part_attachment_count = k;
+                    out.push_back(std::move(v));
+                }
+            }
+        }
+        return out;
+    }
+
+    // em025.pac (Cerberus), init 0x14010FAC0, draw 0x140115880: body 1 and
+    // heads 2-4 (each head with its own motion PAC, 16-18 in the HD PAC),
+    // spikes 5, chain 6, 7; slots 8-14 are the ice armour over them.
+    if (archive_name.size() == 9U && std::tolower(static_cast<unsigned char>(archive_name[0])) == 'e' &&
+        archive_name.substr(2, 7) == "025.pac") {
+        ArchiveVariant armoured;
+        armoured.label = "Cerberus (ice armour)";
+        out.push_back(armoured);
+        ArchiveVariant bare;
+        bare.label = "Cerberus (no ice)";
+        bare.include_top_level_mod_slots = {1U, 2U, 3U, 4U, 5U, 6U, 7U};
+        bare.include_top_level_mod_count = 7U;
+        out.push_back(bare);
+        return out;
+    }
+
+    // em026.pac (Agni) / em027.pac (Rudra), CEm026 (creator 0x140120AB0,
+    // pair 0x1401AC6D0 case 0x1B). Body slot 1; the sword of brother 0 is
+    // slot 2, of brother 1 slot 3 (draw 0x140126E20 shows one by
+    // [this+0x3D20]). Sword placement 0x1401263E0: record [this+0x3C60+i]
+    // (init 0x140122ED0 sets 0 and 1): record 0 = body joint 7, T (-20,
+    // -5.5, 0), R 0; record 1 = joint 11, T (20, -5.5, 0), R (pi, -0.17453,
+    // pi), rest-local order (0x140330450 + 0x140031200).
+    const auto named = [archive_name](std::string_view name) {
+        if (archive_name.size() != name.size()) return false;
+        for (std::size_t i = 0U; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(archive_name[i])) != name[i]) return false;
+        }
+        return true;
+    };
+    if (named("em026.pac") || named("em027.pac")) {
+        const bool agni = named("em026.pac");
+        ArchiveVariant brother;
+        brother.label = agni ? "Agni" : "Rudra";
+        const std::uint32_t sword = agni ? 2U : 3U;
+        brother.include_top_level_mod_slots = {1U, sword};
+        brother.include_top_level_mod_count = 2U;
+        brother.part_attachments[0] = agni
+            ? ArchivePartAttachment{1U, 2U, 7U, false, true, true, {-20.0F, -5.5F, 0.0F},
+                                    {0.0F, 0.0F, 0.0F}, true}
+            : ArchivePartAttachment{1U, 3U, 11U, false, true, true, {20.0F, -5.5F, 0.0F},
+                                    {3.1415925F, -0.17453292F, 3.1415925F}, true};
+        brother.part_attachment_count = 1U;
+        out.push_back(brother);
+        return out;
+    }
+
+    // em037.pac (Jester). CEm037 init (0x14018FC80) builds Jester from three
+    // MODs: slot 1 (texture slot 0), slot 7 (texture slot 0) and slot 15
+    // (texture slot 14). The ball is its own actor, CEm037Ball (init
+    // 0x140196D90): MOD slot 17, texture slot 16, spawned once at an arena
+    // point (arena centre 3500, 492, 3500; Jester stays within 1000 of it,
+    // 0x14018BB80). The shells (CEm037Shl00..07) use the remaining MODs.
+    // Jester's look must not overlay the ball and shells at his origin.
+    // Draw 0x1401954A0: the hat (slot 7) root follows body node 0 and its
+    // node 0 body node 5 (record set in init, identity offset); the cane
+    // (slot 15) is Rz(0.10472) x Ry(-0.48869) x Rx(-0.1309), translation
+    // (-15.5, -1, 10), times body node 9.
+    constexpr std::string_view jester = "em037.pac";
+    bool is_jester = archive_name.size() == jester.size();
+    for (std::size_t i = 0U; is_jester && i < jester.size(); ++i) {
+        is_jester = std::tolower(static_cast<unsigned char>(archive_name[i])) == jester[i];
+    }
+    if (is_jester) {
+        ArchiveVariant body;
+        body.label = "Jester";
+        body.include_top_level_mod_slots = {1U, 7U, 15U};
+        body.include_top_level_mod_count = 3U;
+        body.texture_overrides = {{{1U, 0U}, {7U, 0U}, {15U, 14U}}};
+        body.texture_override_count = 3U;
+        body.part_attachments[0] = {1U, 7U, 5U, true, true, true};
+        body.part_attachments[1] = {1U, 15U, 9U, false, true, true,
+                                    {-15.5F, -1.0F, 10.0F},
+                                    {-0.1308997F, -0.4886922F, 0.1047198F}, true, true};
+        body.part_attachment_count = 2U;
+        out.push_back(body);
+        ArchiveVariant ball;
+        ball.label = "Jester · ball";
+        ball.include_top_level_mod_slots = {17U};
+        ball.include_top_level_mod_count = 1U;
+        ball.texture_overrides = {{{17U, 16U}}};
+        ball.texture_override_count = 1U;
+        out.push_back(ball);
+        ArchiveVariant shells;
+        shells.label = "Jester · shells";
+        shells.include_top_level_mod_slots = {21U, 23U, 25U, 27U};
+        shells.include_top_level_mod_count = 4U;
+        out.push_back(shells);
         return out;
     }
 
@@ -1163,10 +1337,84 @@ std::optional<WeaponSecondPart> weapon_second_part(std::string_view class_name) 
     return std::nullopt;
 }
 
+bool beowulf_archive(std::string_view archive_name) noexcept {
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    constexpr std::string_view kName{"plwp_fight.pac"};
+    if (archive_name.size() != kName.size()) return false;
+    for (std::size_t i = 0U; i < kName.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(archive_name[i])) != kName[i]) return false;
+    }
+    return true;
+}
+
 bool is_attached_part(const Session* session, std::size_t part) noexcept {
     return session != nullptr && part < session->composite_parts.size() &&
            session->composite_parts[part].placement.mode ==
                CompositePlacementMode::HostJointSkeleton;
+}
+
+}  // namespace dmcresource::motion
+
+namespace dmcresource::motion {
+
+std::vector<KitEntry> character_kit(std::string_view archive_name) {
+    std::vector<KitEntry> out;
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    std::string stem;
+    for (const char c : archive_name.substr(0, archive_name.find('.'))) {
+        stem += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    const auto pac_of = [](std::string_view class_name) -> std::string {
+        static constexpr std::array<std::pair<std::string_view, std::string_view>, 13> pacs{{
+            {"CPlWpSword", "plwp_sword"}, {"CPlWpNunchaku", "plwp_nunchaku"},
+            {"CPlWp2Sword", "plwp_2sword"}, {"CPlWpGuitar", "plwp_guitar"},
+            {"CPlWpFight", "plwp_fight"}, {"CPlWpGun", "plwp_gun"},
+            {"CPlWpShotGun", "plwp_shotgun"}, {"CPlWpLaser", "plwp_laser"},
+            {"CPlWpRifle", "plwp_rifle"}, {"CPlWpLadyGun", "plwp_ladygun"},
+            {"CPlWpNewVergilSword", "plwp_newvergilsword"}, {"CPlWpFoeceEdge", "plwp_forceedge"},
+            {"CPlWpVergilSword", "plwp_vergilsword"}}};
+        for (const auto& [name, pac] : pacs) {
+            if (name == class_name) return std::string{pac} + ".pac";
+        }
+        return {};
+    };
+    const auto rule = visibility_rule_for(archive_name);
+    if (rule == VisibilityRule::dante || stem == "pl000") {
+        // Dante and his costumes share pl000's motion banks (0-2 base).
+        for (std::uint32_t base = 0U; base < 3U; ++base) {
+            out.push_back({"motions", "pl000_00_" + std::to_string(base) + ".pac",
+                           "Base motions " + std::to_string(base), true});
+        }
+        std::vector<std::string> weapons_seen;
+        for (const auto& bank : kDanteWeaponMotionBanks) {
+            const std::string name{bank.weapon_name};
+            const bool start = bank.weapon_id == 0U || bank.weapon_id == 5U;  // Rebellion, Ebony & Ivory
+            out.push_back({"motions", "pl000_00_" + std::to_string(bank.file_index) + ".pac",
+                           name + " motions", start});
+            const auto pac = pac_of(bank.class_name);
+            if (!pac.empty() && std::find(weapons_seen.begin(), weapons_seen.end(), pac) == weapons_seen.end()) {
+                weapons_seen.push_back(pac);
+                out.push_back({"weapon", pac, name.substr(0, name.find(" (")), start});
+            }
+        }
+        for (const char* dt : {"pl005", "pl006", "pl008", "pl009"}) {
+            out.push_back({"dt", std::string{dt} + ".pac", std::string{"Devil trigger "} + dt, false});
+        }
+    } else if (rule == VisibilityRule::new_vergil) {
+        for (std::uint32_t bank = 0U; bank < 10U; ++bank) {
+            out.push_back({"motions", "pl021_00_" + std::to_string(bank) + ".pac",
+                           "Motions " + std::to_string(bank), bank < 3U});
+        }
+        out.push_back({"weapon", "plwp_newvergilsword.pac", "Yamato", true});
+        out.push_back({"weapon", "plwp_newvergilfight.pac", "Beowulf", false});
+        out.push_back({"weapon", "plwp_forceedge.pac", "Force Edge", false});
+        for (const char* dt : {"pl010", "pl014"}) {
+            out.push_back({"dt", std::string{dt} + ".pac", std::string{"Devil trigger "} + dt, false});
+        }
+    }
+    return out;
 }
 
 }  // namespace dmcresource::motion
