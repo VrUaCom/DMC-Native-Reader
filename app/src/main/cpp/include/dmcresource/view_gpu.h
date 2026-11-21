@@ -21,7 +21,8 @@
 // quads); a platform backend draws it into an offscreen target and reads the
 // pixels back (Android: OpenGL ES 3 through EGL, android/gles_view_backend.cpp);
 // Core then draws the line overlays (attack shapes, HITS, bones) on the
-// result exactly as before. Wireframe and UV views, and any frame the backend
+// result exactly as before. The wireframe view is lines only (overlay quads).
+// UV views, and any frame the backend
 // cannot draw, stay on the software rasteriser.
 namespace dmcresource {
 

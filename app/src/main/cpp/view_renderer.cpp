@@ -2090,6 +2090,36 @@ void lay_fade(const ViewState& view, RgbaImage* image) {
     }
 }
 
+// The wireframe view on the GPU: the room's triangle edges (dimmer around a
+// model, with its own opacity), then the model's, as the CPU draws them.
+void draw_wireframe(const OverlayPen& pen, const Mesh& mesh, const ViewState& view) {
+    if (view.room_mesh != nullptr) {
+        const Mesh& rm = *view.room_mesh;
+        const bool main_view = mesh.indices.size() < 3U || view.room_wire_main;
+        const std::uint8_t level = main_view ? 235U : 150U;
+        const float backdrop = std::clamp(view.room_wire_opacity, 0.0F, 1.0F);
+        const auto alpha = static_cast<std::uint8_t>(main_view ? 190.0F : 255.0F * backdrop);
+        for (std::size_t t = 0U; alpha > 0U && t + 2U < rm.indices.size(); t += 3U) {
+            const auto ia = rm.indices[t], ib = rm.indices[t + 1U], ic = rm.indices[t + 2U];
+            if (ia >= rm.vertices.size() || ib >= rm.vertices.size() || ic >= rm.vertices.size()) continue;
+            const Vec3 a = room_place(view, rm.vertices[ia]);
+            const Vec3 b = room_place(view, rm.vertices[ib]);
+            const Vec3 c = room_place(view, rm.vertices[ic]);
+            pen.line3(a, b, level, level, 255U, alpha, pen.mesh_px);
+            pen.line3(b, c, level, level, 255U, alpha, pen.mesh_px);
+            pen.line3(c, a, level, level, 255U, alpha, pen.mesh_px);
+        }
+    }
+    const auto n = mesh.vertices.size();
+    for (std::size_t t = 0U; t + 2U < mesh.indices.size(); t += 3U) {
+        const auto ia = mesh.indices[t], ib = mesh.indices[t + 1U], ic = mesh.indices[t + 2U];
+        if (ia >= n || ib >= n || ic >= n) continue;
+        pen.line3(mesh.vertices[ia], mesh.vertices[ib], 235U, 235U, 245U, 255U, pen.mesh_px);
+        pen.line3(mesh.vertices[ib], mesh.vertices[ic], 235U, 235U, 245U, 255U, pen.mesh_px);
+        pen.line3(mesh.vertices[ic], mesh.vertices[ia], 235U, 235U, 245U, 255U, pen.mesh_px);
+    }
+}
+
 // Whether anything is drawn over the frame (draw_overlays).
 bool has_overlays(const ViewState& view, const HierarchyOverlay* hierarchy) {
     return view.overlay_lines.size() >= 2U || view.room_collision_lines.size() >= 2U || !view.marker_lines.empty() ||
@@ -2752,8 +2782,8 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
     // off-centre projection (a focal length of its own it has).
     const bool off_centre = view.tile.on && (view.tile.principal_x != 0.0F || view.tile.principal_y != 0.0F);
     auto* backend = gpu_view_enabled() && !off_centre ? gpu_view_backend() : nullptr;
-    if (backend != nullptr && !view.wireframe && !view.uv_layout && !mesh.vertices.empty() &&
-        mesh.indices.size() >= 3U) {
+    if (backend != nullptr && !view.uv_layout &&
+        ((!mesh.vertices.empty() && mesh.indices.size() >= 3U) || (view.wireframe && view.room_mesh != nullptr))) {
         RgbaImage image;
         image.width = std::clamp(width, 1, 8192);
         image.height = std::clamp(height, 1, 8192);
@@ -2767,6 +2797,23 @@ RgbaImage render_view(const Mesh& mesh, int width, int height,
                                               triangle_texture_slots, textures);
             }();
             gpu.fade = view.fade;
+            // Wireframe: no surfaces, every triangle's edges as lines over
+            // the background (the room's first, as on the CPU).
+            if (view.wireframe) {
+                gpu.model = {};
+                gpu.room = false;
+                gpu.floor.clear();
+                gpu.shadow.clear();
+                gpu.effects.clear();
+                gpu.fog.enabled = false;
+                gpu.post = nullptr;
+                RgbaImage size_only;
+                size_only.width = image.width;
+                size_only.height = image.height;
+                OverlayPen pen{size_only, frame, view};
+                pen.record = &gpu.overlay;
+                draw_wireframe(pen, mesh, view);
+            }
             // The lines, crosses and labels go to the GPU too: it draws
             // them over the finished frame.
             if (has_overlays(view, hierarchy)) {

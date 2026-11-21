@@ -189,12 +189,18 @@ int main() {
         backend.accept = true;
     }
 
-    // 5. Wireframe and UV views stay on the CPU.
+    // 5. Wireframe goes to the GPU as lines only (no surfaces, every edge an
+    //    overlay quad); the UV view stays on the CPU.
     {
-        const int calls = backend.last.calls;
+        int calls = backend.last.calls;
         ViewState wire = view;
         wire.wireframe = true;
         (void)render_view(mesh, W, H, wire, nullptr, &slots, &textures);
+        assert(backend.last.calls == calls + 1);
+        assert(backend.last.model_batches.empty() && backend.last.model_vertices.empty());
+        assert(backend.last.floor.empty() && backend.last.shadow.empty());
+        assert(backend.last.overlay_triangles >= 6U);
+        calls = backend.last.calls;
         ViewState uv = view;
         uv.uv_layout = true;
         (void)render_view(mesh, W, H, uv, nullptr, &slots, &textures);
