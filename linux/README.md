@@ -68,6 +68,28 @@ cmake --build build --target dmc_native_reader_linux dmc_native_reader_cli -j$(n
 #   build/dmc_native_reader_cli    (Headless CLI companion)
 ```
 
+### Verification & Smoke Testing
+Mirroring `tools/emulator_smoke.sh` for Android, Linux includes an automated smoke verification suite:
+
+```sh
+# Run automated smoke test over repository assets:
+linux/linux_smoke.sh
+
+# Run smoke test on a specific folder with game assets:
+linux/linux_smoke.sh path/to/game/files
+```
+
+### Desktop Integration & File Associations
+Register the desktop launcher and DMC MIME type associations (`.pac`, `.mod`, `.scm`, `.ptx`, `.mot`) for your desktop user without root privileges:
+
+```sh
+# Install .desktop launcher and MIME associations:
+linux/register-desktop.sh
+
+# Uninstall:
+linux/register-desktop.sh --remove
+```
+
 ---
 
 ## 3. Desktop Application Features (`dmc_native_reader_linux`)
