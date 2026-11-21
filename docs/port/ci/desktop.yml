@@ -1,16 +1,17 @@
-name: Desktop shells (Windows MinGW / MSVC, macOS)
+name: Desktop shells (Linux, Windows MinGW / MSVC, macOS)
 
-# The shells beside Android that share the core: the Win32 shell and CLI
-# with MinGW (GCC, libstdc++) and MSVC, and the SwiftUI app for macOS.
+# The shells beside Android that share the core: the Linux native shell,
+# the Win32 shell and CLI with MinGW (GCC, libstdc++) and MSVC, and the SwiftUI app for macOS.
 # Builds and host tests only; nothing is signed or published.
 on:
   workflow_dispatch:
   push:
-    branches: ["NR-Luna-v73"]
+    branches: ["NR-Luna-v73", "platform/linux"]
     paths:
       - "app/src/main/cpp/**"
       - "app/src/test/native/**"
       - "apple/**"
+      - "linux/**"
       - ".github/workflows/desktop.yml"
 
 permissions:
@@ -21,6 +22,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libx11-dev libxext-dev
+      - name: Build and test
+        run: |
+          linux/build-linux.sh --test
+      - name: Verify binaries
+        run: |
+          test -x linux/.build/bin/dmc_native_reader_linux
+          test -x linux/.build/bin/dmc_native_reader_cli
+          linux/.build/bin/dmc_native_reader_cli || true
   windows-mingw:
     runs-on: windows-latest
     timeout-minutes: 60
