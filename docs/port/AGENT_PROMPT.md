@@ -110,8 +110,8 @@
 - далі налаштування, анімації, стейджі, катсцени — до рівня Android.
 
 **Фаза 2 — GPU поза Android.** Рішення користувача (2026-11-21): **свій Metal (macOS, iOS) і D3D11 (Windows)**, не ANGLE. Ядро вже дає бекенду незалежний від API кадр (`view_gpu.h`: `GpuViewFrame`, `GpuViewBackend`); кожен бекенд малює його так само, як `android/gles_view_backend.cpp`. Етапи:
-1. Metal: власні шейдери бекенда (сітка, екранні квади, пост) на MSL. Шейдери збираються з тексту під час роботи (`newLibraryWithSource`), тож офлайн-компілятор `metal` не потрібен. Кадр малюється поза екраном і читається назад, як на Android.
-2. 67 шейдерів DMC3 (`shaders/dmc3`): переклад на MSL — SPIRV-Cross (glslang → SPIR-V → MSL) під час збирання або перекладач цього підмножини GLSL ES 3.00.
+1. ✅ (2026-11-21) Metal: власні шейдери бекенда (сітка, екранні квади) на MSL, усі проходи кадру, MSAA, mip-текстури. st101 960×720: 4,8 мс на M1 проти 93 мс на CPU. Пост-обробку фото-камери поки робить CPU. Шейдери збираються з тексту під час роботи (`newLibraryWithSource`), тож офлайн-компілятор `metal` не потрібен. Кадр малюється поза екраном і читається назад, як на Android.
+2. Шейдери DMC3. ✅ Ті 6, якими ядро малює (`dmc3_draw`: model_lit, effect_model_lit, stage_lit, stage_lit_fog, texture_modulate, texture_modulate_fog), переписані на MSL у `apple/metal_view_backend.mm`. Решта 61 ще не підключені й на Android (світіння, DOF, відблиски); коли ядро почне ними малювати — переклад на MSL — SPIRV-Cross (glslang → SPIR-V → MSL) під час збирання або перекладач цього підмножини GLSL ES 3.00.
 3. Показ напряму у вікно: `dmc_gpu_attach(native_window)` (CAMetalLayer), без читання назад.
 4. D3D11 для Windows тим самим шляхом (HLSL).
 

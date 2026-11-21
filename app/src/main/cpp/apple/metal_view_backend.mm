@@ -203,7 +203,177 @@ fragment float4 screen_fragment(ScreenOut in [[stage_in]], constant ScreenUnifor
     if (t.a < (tinted ? 1.5 : 7.5) / 255.0) discard_fragment();
     return t;
 }
+
+// ---- The DMC3 shaders the renderer draws with (shaders/dmc3, dmc3_draw) ----
+// model_lit / effect_model_lit / stage_lit / stage_lit_fog with
+// texture_modulate / texture_modulate_fog, written in MSL from the GLSL
+// sources. The Reader's vertices come posed (every one follows bone 0, the
+// identity, alone), so the skinning reduces to the vertex itself; the
+// screen mapping is the identity and the UVs are in 0..1 (x 4096 undoes the
+// shaders' fixed point). Vertex colours arrive as 0..1 for models and rooms
+// (the stage shaders' 0..255 / 255).
+
+struct Dmc3In {
+    float3 position [[attribute(0)]];
+    float3 normal [[attribute(1)]];
+    float2 uv [[attribute(2)]];
+    float4 colour [[attribute(3)]];
+};
+
+struct Dmc3Uniforms {
+    float4x4 view_projection;
+    float4x4 light_directions;
+    float4x4 light_colours;
+    float4 part_colour;      // rgb part colour, w the part's fog amount
+    float4 part_alpha;       // x
+    float4 light_x;
+    float4 light_y;
+    float4 light_z;
+    float4 light_falloff;
+    float4 light_colour[4];
+    float4 ambient;          // xyz
+    float4 fog_colour;       // xyz
+    float4 fog_scroll;       // xy fog coefficients, zw uv scroll (0..1 units)
+    int4 alpha;              // x test, y function
+    float4 alpha_ref;        // x
+};
+
+struct Dmc3Out {
+    float4 pos [[position]];
+    float2 uv;
+    float4 colour;
+    float4 fog;
+};
+
+vertex Dmc3Out model_lit(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    Dmc3Out o;
+    o.pos = metal_clip(u.view_projection * float4(in.position, 1.0));
+    float4 intensity = max(u.light_directions * float4(in.normal, 1.0), 0.0);
+    float4 light = (u.light_colours * intensity) / 128.0;
+    o.colour = clamp(float4(light.rgb * u.part_colour.rgb, u.part_alpha.x), 0.0, 1.0);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
+    return o;
+}
+
+vertex Dmc3Out effect_model_lit(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    Dmc3Out o;
+    o.pos = metal_clip(u.view_projection * float4(in.position, 1.0));
+    float4 intensity = clamp(u.light_directions * float4(in.normal, 1.0), 0.0, 1.0);
+    float4 light = u.light_colours * intensity;
+    float4 colour;
+    colour.rgb = light.rgb * u.part_colour.rgb * in.colour.rgb * (255.0 / 128.0);
+    colour.a = u.part_alpha.x;
+    o.colour = clamp(colour, 0.0, 1.0);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
+    return o;
+}
+
+static float4 stage_light(Dmc3In in, constant Dmc3Uniforms& u) {
+    float4 dx = u.light_x - in.position.x;
+    float4 dy = u.light_y - in.position.y;
+    float4 dz = u.light_z - in.position.z;
+    float4 dist2 = dx * dx + dy * dy + dz * dz;
+    float4 atten = clamp(1.0 - dist2 * u.light_falloff, 0.0, 1.0);
+    float4 facing = dx * in.normal.x + dy * in.normal.y + dz * in.normal.z;
+    float4 w = max(facing * atten, 0.0);
+    float4 light = u.light_colour[0] * w.x + u.light_colour[1] * w.y + u.light_colour[2] * w.z +
+                   u.light_colour[3] * w.w;
+    light.rgb += u.ambient.rgb;
+    return clamp(float4(light.rgb * in.colour.rgb, u.part_alpha.x), 0.0, 1.0);
+}
+
+vertex Dmc3Out stage_lit(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    Dmc3Out o;
+    o.pos = metal_clip(u.view_projection * float4(in.position, 1.0));
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.colour = stage_light(in, u);
+    o.fog = float4(0.0, 0.0, 0.0, 1.0);
+    return o;
+}
+
+vertex Dmc3Out stage_lit_fog(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    Dmc3Out o;
+    float4 c = u.view_projection * float4(in.position, 1.0);
+    o.pos = metal_clip(c);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.colour = stage_light(in, u);
+    o.fog = clamp(float4(u.fog_colour.rgb, u.fog_scroll.x + u.fog_scroll.y / abs(c.w)), 0.0, 1.0);
+    return o;
+}
+
+static bool alpha_passes(float a, int func, float ref) {
+    if (func == 1) return false;
+    if (func == 2) return a < ref;
+    if (func == 3) return a == ref;
+    if (func == 4) return a <= ref;
+    if (func == 5) return a > ref;
+    if (func == 6) return a != ref;
+    if (func == 7) return a >= ref;
+    return true;
+}
+
+fragment float4 texture_modulate(Dmc3Out in [[stage_in]], constant Dmc3Uniforms& u [[buffer(0)]],
+                                 texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    float4 c = tex.sample(smp, in.uv) * in.colour * 2.0;
+    if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
+    return c;
+}
+
+fragment float4 texture_modulate_fog(Dmc3Out in [[stage_in]], constant Dmc3Uniforms& u [[buffer(0)]],
+                                     texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    float4 c = tex.sample(smp, in.uv) * in.colour * 2.0;
+    c.rgb = mix(in.fog.rgb, c.rgb, in.fog.a);
+    if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
+    return c;
+}
 )msl";
+
+struct Dmc3Uniforms {
+    std::array<float, 16> view_projection;
+    std::array<float, 16> light_directions;
+    std::array<float, 16> light_colours;
+    std::array<float, 4> part_colour;
+    std::array<float, 4> part_alpha;
+    std::array<float, 4> light_x;
+    std::array<float, 4> light_y;
+    std::array<float, 4> light_z;
+    std::array<float, 4> light_falloff;
+    std::array<float, 16> light_colour;
+    std::array<float, 4> ambient;
+    std::array<float, 4> fog_colour;
+    std::array<float, 4> fog_scroll;
+    std::array<std::int32_t, 4> alpha;
+    std::array<float, 4> alpha_ref;
+};
+
+// The DMC3 shader's function in the library (null: not written for Metal yet;
+// the Reader's own shader draws that batch).
+const char* dmc3_function(dmcresource::dmc3::Shader shader) {
+    using dmcresource::dmc3::Shader;
+    switch (shader) {
+        case Shader::model_lit_vert: return "model_lit";
+        case Shader::effect_model_lit_vert: return "effect_model_lit";
+        case Shader::stage_lit_vert: return "stage_lit";
+        case Shader::stage_lit_fog_vert: return "stage_lit_fog";
+        case Shader::texture_modulate_frag: return "texture_modulate";
+        case Shader::texture_modulate_fog_frag: return "texture_modulate_fog";
+        default: return nullptr;
+    }
+}
+
+// The DMC3 shaders' u_view_projection: the core's projection after the view.
+std::array<float, 16> view_projection(const std::array<float, 16>& view, const std::array<float, 4>& p) noexcept {
+    std::array<float, 16> m{};
+    for (std::size_t c = 0U; c < 4U; ++c) {
+        m[c * 4U + 0U] = p[0] * view[c * 4U + 0U];
+        m[c * 4U + 1U] = p[1] * view[c * 4U + 1U];
+        m[c * 4U + 2U] = p[2] * view[c * 4U + 2U] + p[3] * view[c * 4U + 3U];
+        m[c * 4U + 3U] = view[c * 4U + 2U];
+    }
+    return m;
+}
 
 struct MeshVertexUniforms {
     std::array<float, 16> view;
@@ -325,6 +495,13 @@ private:
         attribute(mesh_layout_, 4, MTLVertexFormatFloat, offsetof(GpuVertex, light));
         mesh_layout_.layouts[0].stride = sizeof(GpuVertex);
 
+        dmc3_layout_ = [MTLVertexDescriptor vertexDescriptor];
+        attribute(dmc3_layout_, 0, MTLVertexFormatFloat3, offsetof(GpuVertex, x));
+        attribute(dmc3_layout_, 1, MTLVertexFormatFloat3, offsetof(GpuVertex, nx));
+        attribute(dmc3_layout_, 2, MTLVertexFormatFloat2, offsetof(GpuVertex, u));
+        attribute(dmc3_layout_, 3, MTLVertexFormatUChar4Normalized, offsetof(GpuVertex, rgba));
+        dmc3_layout_.layouts[0].stride = sizeof(GpuVertex);
+
         screen_layout_ = [MTLVertexDescriptor vertexDescriptor];
         attribute(screen_layout_, 0, MTLVertexFormatFloat3, offsetof(GpuScreenVertex, x));
         attribute(screen_layout_, 1, MTLVertexFormatFloat2, offsetof(GpuScreenVertex, u));
@@ -343,13 +520,21 @@ private:
     }
 
     id<MTLRenderPipelineState> pipeline(bool screen, Blend blend, NSUInteger samples) {
-        const int key = (screen ? 1 : 0) | (static_cast<int>(blend) << 1) | (static_cast<int>(samples) << 8);
+        return pipeline(screen ? "screen_vertex" : "mesh_vertex", screen ? "screen_fragment" : "mesh_fragment",
+                        screen ? screen_layout_ : mesh_layout_, blend, samples);
+    }
+
+    id<MTLRenderPipelineState> pipeline(const char* vertex, const char* fragment, MTLVertexDescriptor* layout,
+                                        Blend blend, NSUInteger samples) {
+        const std::string key = std::string{vertex} + "|" + fragment + "|" + std::to_string(static_cast<int>(blend)) +
+                                "|" + std::to_string(samples);
         auto& slot = pipelines_[key];
         if (slot != nil) return slot;
         MTLRenderPipelineDescriptor* p = [[MTLRenderPipelineDescriptor alloc] init];
-        p.vertexFunction = screen ? screen_vertex_ : mesh_vertex_;
-        p.fragmentFunction = screen ? screen_fragment_ : mesh_fragment_;
-        p.vertexDescriptor = screen ? screen_layout_ : mesh_layout_;
+        p.vertexFunction = function(vertex);
+        p.fragmentFunction = function(fragment);
+        if (p.vertexFunction == nil || p.fragmentFunction == nil) return nil;
+        p.vertexDescriptor = layout;
         p.rasterSampleCount = samples;
         p.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
         p.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
@@ -390,6 +575,12 @@ private:
         NSError* error = nil;
         slot = [device_ newRenderPipelineStateWithDescriptor:p error:&error];
         if (slot == nil) NSLog(@"Metal view backend: pipeline: %@", error);
+        return slot;
+    }
+
+    id<MTLFunction> function(const char* name) {
+        auto& slot = functions_[name];
+        if (slot == nil) slot = [library_ newFunctionWithName:[NSString stringWithUTF8String:name]];
         return slot;
     }
 
@@ -530,10 +721,62 @@ private:
         }
     }
 
+    // A batch with the DMC3 pair Core chose for it (dmc3_draw); false when
+    // the pair is not one this backend has, and the Reader's shader draws it.
+    bool draw_dmc3(id<MTLRenderCommandEncoder> encoder, id<MTLCommandBuffer> commands, const GpuBatch& batch,
+                   dmcresource::GpuPass pass, bool smooth, Blend blend, const GpuViewFrame& frame,
+                   const std::array<float, 16>& view) {
+        const auto d = dmcresource::dmc3_draw(batch, pass, frame);
+        if (!d.drawn()) return false;
+        const char* vertex = dmc3_function(d.vertex);
+        const char* fragment = dmc3_function(d.fragment);
+        if (vertex == nullptr || fragment == nullptr) return false;
+        id<MTLRenderPipelineState> state = pipeline(vertex, fragment, dmc3_layout_, blend, samples_);
+        if (state == nil) return false;
+        Dmc3Uniforms u{};
+        u.view_projection = view_projection(view, frame.projection);
+        u.light_directions = d.light_directions;
+        u.light_colours = d.light_colours;
+        u.part_colour = {d.part_colour, d.part_colour, d.part_colour, d.fog_amount};
+        u.part_alpha = {d.part_alpha, 0.0F, 0.0F, 0.0F};
+        u.light_x = d.light_x;
+        u.light_y = d.light_y;
+        u.light_z = d.light_z;
+        u.light_falloff = d.light_falloff;
+        u.light_colour = d.light_colour;
+        u.ambient = {d.ambient[0], d.ambient[1], d.ambient[2], 0.0F};
+        u.fog_colour = {d.fog_colour[0], d.fog_colour[1], d.fog_colour[2], 0.0F};
+        u.fog_scroll = {frame.dmc3.fog_coeffs[0], frame.dmc3.fog_coeffs[1], 0.0F, 0.0F};
+        if (batch.scroll_slot != dmcresource::kNoTextureSlot) {
+            for (const auto& s : frame.room_scrolls) {
+                if (s.slot == batch.scroll_slot) {
+                    u.fog_scroll[2] = s.u;
+                    u.fog_scroll[3] = s.v;
+                    break;
+                }
+            }
+        }
+        u.alpha = {d.alpha_func == dmcresource::dmc3::AlphaFunc::off ? 0 : 1, static_cast<std::int32_t>(d.alpha_func),
+                   0, 0};
+        u.alpha_ref = {d.alpha_ref, 0.0F, 0.0F, 0.0F};
+        id<MTLTexture> t = texture(batch.texture, commands);
+        [encoder setRenderPipelineState:state];
+        [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];
+        [encoder setFragmentBytes:&u length:sizeof(u) atIndex:0];
+        [encoder setFragmentTexture:(t != nil ? t : blank_) atIndex:0];
+        [encoder setFragmentSamplerState:sampler(smooth && !batch.nearest, frame.options) atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:batch.first vertexCount:batch.count];
+        ++dmc3_batches_;
+        return true;
+    }
+
     void draw_batch(id<MTLRenderCommandEncoder> encoder, id<MTLCommandBuffer> commands, const GpuBatch& batch,
                     int mode, bool smooth, Blend blend, const GpuViewFrame& frame, MeshVertexUniforms& vu,
-                    MeshFragmentUniforms& fu) {
+                    MeshFragmentUniforms& fu, dmcresource::GpuPass pass) {
+        if (draw_dmc3(encoder, commands, batch, pass, smooth, blend, frame, vu.view)) return;
+        ++reader_batches_;
         [encoder setRenderPipelineState:pipeline(false, blend, samples_)];
+
         id<MTLTexture> t = texture(batch.texture, commands);
         fu.textured = t != nil ? 1 : 0;
         fu.mode = mode;
@@ -585,6 +828,8 @@ private:
 
     bool draw_frame(const GpuViewFrame& frame, RgbaImage& image) {
         ++frame_number_;
+        dmc3_batches_ = 0U;
+        reader_batches_ = 0U;
         if (!ensure_target(frame.width, frame.height, frame.options.msaa_samples)) return false;
         id<MTLCommandBuffer> commands = [queue_ commandBuffer];
 
@@ -651,7 +896,8 @@ private:
             vu.room = 1;
             for (const auto& batch : room_batches_) {
                 if (batch.kind != GpuBatchKind::room) continue;
-                draw_batch(encoder, commands, batch, 2, frame.smooth_room, Blend::none, frame, vu, fu);
+                draw_batch(encoder, commands, batch, 2, frame.smooth_room, Blend::none, frame, vu, fu,
+                           dmcresource::GpuPass::room_opaque);
             }
         }
 
@@ -685,7 +931,7 @@ private:
                 const bool layered = batch.kind != GpuBatchKind::model;
                 [encoder setDepthStencilState:depth_state(1, !layered, false)];
                 draw_batch(encoder, commands, batch, layered ? 1 : 0, frame.smooth_model, blend_for(batch.kind, !layered),
-                           frame, vu, fu);
+                           frame, vu, fu, dmcresource::GpuPass::model);
             }
         }
 
@@ -697,11 +943,13 @@ private:
             vu.room = 1;
             for (const auto& batch : room_batches_) {
                 if (batch.kind != GpuBatchKind::room || !batch.translucent) continue;
-                draw_batch(encoder, commands, batch, 3, frame.smooth_room, blend_for(batch.kind, true), frame, vu, fu);
+                draw_batch(encoder, commands, batch, 3, frame.smooth_room, blend_for(batch.kind, true), frame, vu, fu,
+                           dmcresource::GpuPass::room_soft);
             }
             for (const auto& batch : room_batches_) {
                 if (batch.kind == GpuBatchKind::room) continue;
-                draw_batch(encoder, commands, batch, 4, frame.smooth_room, blend_for(batch.kind, true), frame, vu, fu);
+                draw_batch(encoder, commands, batch, 4, frame.smooth_room, blend_for(batch.kind, true), frame, vu, fu,
+                           dmcresource::GpuPass::room_layered);
             }
         }
 
@@ -795,6 +1043,11 @@ private:
         image.pixels.resize(row * static_cast<std::size_t>(frame.height));
         std::memcpy(image.pixels.data(), [readback_ contents], image.pixels.size());
         trim_textures();
+        dmcresource::GpuShaderStats stats;
+        stats.compiled = 6;
+        stats.dmc3_batches = dmc3_batches_;
+        stats.reader_batches = reader_batches_;
+        dmcresource::set_gpu_shader_stats(std::move(stats));
         return true;
     }
 
@@ -809,7 +1062,11 @@ private:
     MTLVertexDescriptor* mesh_layout_{};
     MTLVertexDescriptor* screen_layout_{};
     id<MTLTexture> blank_{};
-    std::map<int, id<MTLRenderPipelineState>> pipelines_;
+    std::map<std::string, id<MTLRenderPipelineState>> pipelines_;
+    std::map<std::string, id<MTLFunction>> functions_;
+    MTLVertexDescriptor* dmc3_layout_{};
+    std::uint32_t dmc3_batches_{};
+    std::uint32_t reader_batches_{};
     std::map<int, id<MTLDepthStencilState>> depth_states_;
     std::map<int, id<MTLSamplerState>> samplers_;
     id<MTLTexture> color_{}, resolve_{}, depth_{};
