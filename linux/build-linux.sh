@@ -40,15 +40,21 @@ cmake -S "$repo/app/src/main/cpp" -B "$build" \
     -DDMC_NATIVE_READER_FFMPEG="${DMC_FFMPEG:-OFF}" \
     -DDMC_NATIVE_READER_BUILD_TESTS="$BUILD_TESTS"
 
-echo "== Building dmc_native_reader_linux and dmc_native_reader_cli (-j $jobs)"
-cmake --build "$build" --target dmc_native_reader_linux dmc_native_reader_cli -j "$jobs"
-
-cp "$build/dmc_native_reader_linux" "$bin_dir/"
-cp "$build/dmc_native_reader_cli" "$bin_dir/"
-
-echo "== Successfully built:"
-echo "   $bin_dir/dmc_native_reader_linux"
-echo "   $bin_dir/dmc_native_reader_cli"
+echo "== Building binaries (-j $jobs)"
+if cmake --build "$build" --target help 2>/dev/null | grep -q "\<dmc_native_reader_linux\>"; then
+    cmake --build "$build" --target dmc_native_reader_linux dmc_native_reader_cli -j "$jobs"
+    cp "$build/dmc_native_reader_linux" "$bin_dir/"
+    cp "$build/dmc_native_reader_cli" "$bin_dir/"
+    echo "== Successfully built:"
+    echo "   $bin_dir/dmc_native_reader_linux"
+    echo "   $bin_dir/dmc_native_reader_cli"
+else
+    cmake --build "$build" --target dmc_native_reader_cli -j "$jobs"
+    cp "$build/dmc_native_reader_cli" "$bin_dir/"
+    echo "== Successfully built:"
+    echo "   $bin_dir/dmc_native_reader_cli"
+    echo "   (Note: dmc_native_reader_linux X11 desktop shell is built on Linux hosts with libx11-dev)"
+fi
 
 if [ "${1:-}" = "--test" ]; then
     echo "== Running test suite"

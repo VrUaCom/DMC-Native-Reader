@@ -7,12 +7,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 #include "capi/include/dmc_reader.h"
@@ -511,12 +513,60 @@ int CmdReencode(const fs::path& input_path, const std::string& format, const fs:
     return 0;
 }
 
+int CmdExportDng(const fs::path& input_path, const fs::path& out_path) {
+    const auto bytes = ReadFileBytes(input_path);
+    if (bytes.empty()) {
+        std::cerr << "error: could not read " << input_path.string() << "\n";
+        return 1;
+    }
+    auto res = dmc_open(input_path.string().c_str(), bytes.data(), bytes.size());
+    if (res.session == nullptr) {
+        std::cerr << "error: open rejected: " << (res.title ? res.title : "unknown reason") << "\n";
+        dmc_string_free(res.title);
+        return 1;
+    }
+    dmc_string_free(res.title);
+
+    int fd = open(out_path.string().c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        std::cerr << "error: could not open " << out_path.string() << " for writing\n";
+        dmc_close(res.session);
+        return 1;
+    }
+
+    dmc_view view{};
+    dmc_view_reset(&view);
+    dmc_image* developed = nullptr;
+    const bool ok = dmc_capture_dng(res.session, 1920, 1080, &view, 60.0f, fd, &developed);
+    close(fd);
+
+    if (ok) {
+        std::cout << "exported 16-bit linear RAW DNG to " << out_path.string() << "\n";
+        if (developed) {
+            fs::path preview_path = out_path;
+            preview_path.replace_extension(".preview.png");
+            SaveRgbaToPng(preview_path, developed->width, developed->height, developed->rgba);
+            std::cout << "saved developed preview (" << developed->width << "x" << developed->height << ") to " << preview_path.string() << "\n";
+            dmc_image_free(developed);
+        }
+    } else {
+        std::cerr << "error: dmc_capture_dng failed or unsupported for " << input_path.string() << "\n";
+        if (developed) dmc_image_free(developed);
+        dmc_close(res.session);
+        return 1;
+    }
+
+    dmc_close(res.session);
+    return 0;
+}
+
 void PrintUsage() {
     std::cerr << "dmc_native_reader_cli <command> [args]\n"
               << "  inspect <file> [topic: uv | mesh | hierarchy | all]\n"
               << "  report <file> --json <out.json>\n"
               << "  workspace-scan <folder> --json <out.json>\n"
               << "  export <file> <out.png>\n"
+              << "  export-dng <file> <out.dng>\n"
               << "  benchmark <file> [seconds]\n"
               << "  tex-formats\n"
               << "  reencode <file> <format> [out_file]\n";
@@ -536,6 +586,9 @@ int main(int argc, char** argv) {
     if (command == "reencode" && argc >= 4) {
         const fs::path out_file = (argc >= 5) ? fs::path(argv[4]) : fs::path();
         return CmdReencode(fs::path(argv[2]), argv[3], out_file);
+    }
+    if (command == "export-dng" && argc >= 4) {
+        return CmdExportDng(fs::path(argv[2]), fs::path(argv[3]));
     }
     if (command == "inspect" && argc >= 3) {
         const std::string topic = (argc >= 4) ? argv[3] : "";

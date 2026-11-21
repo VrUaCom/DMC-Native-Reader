@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -21,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include <X11/Xatom.h>
@@ -526,6 +528,7 @@ private:
     void camera_level();
     void step_camera_dial(int key);
     void capture_photo_png();
+    void capture_raw_dng();
     void export_high_res_png();
     void export_source_file();
     void load_settings();
@@ -2155,7 +2158,11 @@ void App::handle_key_press(KeySym sym) {
             break;
         case XK_d:
         case XK_D:
-            fly_key_d_ = true;
+            if (fly_mode_) {
+                fly_key_d_ = true;
+            } else if (dmc_camera_mode()) {
+                capture_raw_dng();
+            }
             break;
         case XK_Up:
             fly_key_up_ = true;
@@ -2550,6 +2557,37 @@ void App::capture_photo_png() {
         std::cout << "Captured photo saved to: " << filename << " (" << img->width << "x" << img->height << ")\n";
     }
     dmc_image_free(img);
+}
+
+void App::capture_raw_dng() {
+    if (!session_) return;
+    const auto now = std::chrono::system_clock::now();
+    const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    const std::string filename = "dmc_raw_" + std::to_string(epoch) + ".dng";
+
+    int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        std::cerr << "error: failed to create DNG file " << filename << "\n";
+        return;
+    }
+    const int viewport_h = std::max(64, window_height_ - kHeaderHeight - kToolbarHeight);
+    dmc_image* developed = nullptr;
+    const bool ok = dmc_capture_dng(session_, window_width_, viewport_h, &view_, 60.0f, fd, &developed);
+    close(fd);
+
+    if (ok) {
+        camera_message_ = "Captured RAW DNG: " + filename;
+        std::cout << "[Camera] " << camera_message_ << "\n";
+        if (developed) {
+            std::string preview_name = "dmc_raw_" + std::to_string(epoch) + "_preview.png";
+            linux_png::SaveRgbaToPng(preview_name, developed->width, developed->height, developed->rgba);
+            dmc_image_free(developed);
+        }
+    } else {
+        camera_message_ = "RAW DNG capture unsupported for current session";
+        std::cout << "[Camera] " << camera_message_ << "\n";
+        if (developed) dmc_image_free(developed);
+    }
 }
 
 void App::export_high_res_png() {
