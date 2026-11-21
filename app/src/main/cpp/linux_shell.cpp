@@ -313,6 +313,8 @@ enum ButtonId : int {
     kBtnSound = 208,
     kBtnCamera = 209,
     kBtnResetView = 210,
+    kBtnEvents = 211,
+    kBtnEffects = 212,
 };
 
 struct CameraDialButton {
@@ -479,6 +481,8 @@ private:
     void open_child_resource(size_t index);
     void trigger_open_dialog();
     void play_next_sound();
+    void trigger_next_class_event();
+    void trigger_next_effect();
     void refresh_session_metadata();
 
     void init_camera();
@@ -525,6 +529,12 @@ private:
     // Health
     int file_health_ = 0; // 0 clean, 1 warning, 2 error
     std::string health_report_;
+
+    // Enemy class events & effects
+    std::vector<std::string> class_events_{};
+    int active_class_event_ = -1;
+    std::vector<std::pair<int, std::string>> effect_items_{};
+    int active_effect_idx_ = -1;
 
     // Animation state
     bool animation_playing_ = false;
@@ -692,6 +702,8 @@ void App::init_buttons() {
         {kBtnInfo, "INFO", "File health and inspection (I)", {}, true, true, false},
         {kBtnCollision, "COLLIS", "Cycle hitboxes and collision (H)", {}, true, true, false},
         {kBtnSound, "SOUND", "Play resource sounds (S)", {}, true, true, false},
+        {kBtnEvents, "EVENT", "Trigger enemy class event (E)", {}, false, false, false},
+        {kBtnEffects, "EFFECT", "Play effect bank action (X)", {}, false, false, false},
         {kBtnCamera, "CAM", "Toggle Photo Camera viewfinder (V)", {}, true, true, false},
         {kBtnResetView, "RESET", "Reset camera view (R / 0)", {}, true, true, false},
     };
@@ -715,16 +727,23 @@ void App::update_layout(int width, int height) {
         }
     }
 
-    // Toolbar buttons centered along bottom
-    const int btn_count = static_cast<int>(toolbar_buttons_.size());
-    const int btn_w = 78;
+    // Toolbar buttons centered along bottom (filter by visibility)
+    int visible_count = 0;
+    for (const auto& btn : toolbar_buttons_) {
+        if (btn.visible) ++visible_count;
+    }
+    const int btn_w = 68;
     const int btn_h = 32;
-    const int spacing = 6;
-    const int total_w = btn_count * btn_w + (btn_count - 1) * spacing;
-    int tx = std::max(10, (width - total_w) / 2);
+    const int spacing = 4;
+    const int total_w = visible_count * btn_w + (visible_count > 0 ? (visible_count - 1) * spacing : 0);
+    int tx = std::max(6, (width - total_w) / 2);
     const int ty = height - kToolbarHeight + (kToolbarHeight - btn_h) / 2;
 
     for (auto& btn : toolbar_buttons_) {
+        if (!btn.visible) {
+            btn.rect = {0, 0, 0, 0};
+            continue;
+        }
         btn.rect = {tx, ty, btn_w, btn_h};
         tx += btn_w + spacing;
     }
@@ -764,6 +783,19 @@ void App::update_button_states() {
                 break;
             case kBtnCollision:
                 btn.active = (hitbox_attack_ != -2);
+                break;
+            case kBtnSound:
+                btn.enabled = (session_ != nullptr);
+                break;
+            case kBtnEvents:
+                btn.visible = !class_events_.empty();
+                btn.enabled = btn.visible;
+                btn.active = (active_class_event_ >= 0);
+                break;
+            case kBtnEffects:
+                btn.visible = !effect_items_.empty();
+                btn.enabled = btn.visible;
+                btn.active = (active_effect_idx_ >= 0);
                 break;
             case kBtnCamera:
                 btn.active = dmc_camera_mode();
@@ -994,6 +1026,35 @@ void App::refresh_session_metadata() {
     const size_t attack_count = dmc_collision_attack_ids(session_, attack_ids_.data(), attack_ids_.size());
     attack_ids_.resize(attack_count);
     hitbox_attack_ = -2;
+
+    // Enemy class events (special actions)
+    class_events_.clear();
+    active_class_event_ = -1;
+    dmc_strings* evs = dmc_class_events(session_);
+    if (evs) {
+        const size_t n = dmc_strings_count(evs);
+        for (size_t i = 0; i < n; ++i) {
+            const char* s = dmc_strings_at(evs, i);
+            if (s) class_events_.emplace_back(s);
+        }
+        dmc_strings_free(evs);
+    }
+
+    // Effect menu
+    effect_items_.clear();
+    active_effect_idx_ = -1;
+    dmc_menu* eff = dmc_effect_menu(session_);
+    if (eff) {
+        const size_t n = dmc_menu_count(eff);
+        for (size_t i = 0; i < n; ++i) {
+            const auto* it = dmc_menu_at(eff, i);
+            if (it && it->label) effect_items_.emplace_back(it->id, it->label);
+        }
+        dmc_menu_free(eff);
+    }
+
+    update_button_states();
+    update_layout(window_width_, window_height_);
 }
 
 void App::open_child_resource(size_t index) {
@@ -1488,6 +1549,12 @@ void App::handle_button_click(int id) {
         case kBtnSound:
             play_next_sound();
             break;
+        case kBtnEvents:
+            trigger_next_class_event();
+            break;
+        case kBtnEffects:
+            trigger_next_effect();
+            break;
         case kBtnCamera:
             toggle_camera_mode();
             break;
@@ -1608,6 +1675,16 @@ void App::handle_key_press(KeySym sym) {
             } else {
                 fly_key_s_ = true;
             }
+            break;
+        case XK_e:
+        case XK_E:
+            if (!fly_mode_) {
+                trigger_next_class_event();
+            }
+            break;
+        case XK_x:
+        case XK_X:
+            trigger_next_effect();
             break;
         case XK_o:
         case XK_O:
@@ -1738,6 +1815,28 @@ void App::play_next_sound() {
     current_sound_index_ = (current_sound_index_ + 1) % static_cast<int>(menu->count);
     dmc_pcm_free(&pcm);
     dmc_menu_free(menu);
+}
+
+void App::trigger_next_class_event() {
+    if (!session_ || class_events_.empty()) return;
+    active_class_event_ = (active_class_event_ + 1) % static_cast<int>(class_events_.size());
+    const bool ok = dmc_trigger_class_event(session_, static_cast<size_t>(active_class_event_));
+    camera_message_ = "Class Event [" + std::to_string(active_class_event_ + 1) + "/" +
+                      std::to_string(class_events_.size()) + "]: " +
+                      class_events_[active_class_event_] + (ok ? " (Fired)" : " (Failed)");
+    std::cout << camera_message_ << "\n";
+}
+
+void App::trigger_next_effect() {
+    if (!session_ || effect_items_.empty()) return;
+    active_effect_idx_ = (active_effect_idx_ + 1) % static_cast<int>(effect_items_.size());
+    const auto& item = effect_items_[active_effect_idx_];
+    dmc_outcome out = dmc_play_effect(session_, item.first);
+    std::string msg = (out.message && *out.message) ? out.message : (out.ok ? "Playing" : "Failed");
+    camera_message_ = "Effect [" + std::to_string(active_effect_idx_ + 1) + "/" +
+                      std::to_string(effect_items_.size()) + "]: " + item.second + " (" + msg + ")";
+    std::cout << camera_message_ << "\n";
+    dmc_outcome_free(&out);
 }
 
 void App::cycle_hitboxes() {
