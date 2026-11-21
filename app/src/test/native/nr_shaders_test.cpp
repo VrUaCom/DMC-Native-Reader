@@ -120,6 +120,13 @@ void choices() {
     assert(std::fabs(d.light_colours[0] - 240.0F / 128.0F) < 1.0e-5F);
     assert(std::fabs(d.light_colours[12] - 220.0F / 128.0F) < 1.0e-5F);
 
+    // Punch-through objects (alpha control above 0x80, no blend mode): the
+    // game's A1 pixel shaders, with and without fog.
+    auto cut = model;
+    cut.punch_through = true;
+    assert(nr_draw(cut, GpuPass::model, frame_with(true, false)).fragment == Shader::texture_modulate_cutout_frag);
+    assert(nr_draw(cut, GpuPass::model, frame_with(true, true)).fragment == Shader::texture_modulate_fog_cutout_frag);
+
     // Enhanced lighting: a model lit only by its vertex colours gets the
     // camera light (key, weak back, constant); the game's choice otherwise.
     auto baked = model;

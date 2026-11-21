@@ -1785,7 +1785,10 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
             // Gouraud light: full range on the neutral texture, milder on real
             // textures (their shading is painted in); none on prelit COLOR0 or
             // additive / subtractive effects.
-            const bool lit = !lights.empty() && (neutral || (!colored && blend_mode != 2U && blend_mode != 3U));
+            // Vertex colours count only on effect models (as on the GPU).
+            const bool tri_colored =
+                colored && (!mesh.has_blend0() || game_material::material_effect_model(mesh.blend0[ia]));
+            const bool lit = !lights.empty() && (neutral || (!tri_colored && blend_mode != 2U && blend_mode != 3U));
             const float lbase = neutral ? 0.45F : 0.72F;
             const float lgain = neutral ? 0.85F : 0.42F;
 
@@ -1848,7 +1851,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
                                 sampled = sample_texture(*texture, u, v, &tr, &tg, &tb, &ta);
                             }
                             if (sampled) {
-                                if (colored) {
+                                if (tri_colored) {
                                     // PS2 modulate: texel x vertex colour / 0x80.
                                     const auto mod = [&](std::uint8_t t8, std::size_t k) {
                                         const float vc = w0 * A.color[k] + w1 * B.color[k] + w2 * C.color[k];
@@ -2190,22 +2193,27 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
             texture = view.fallback_texture;
             neutral = true;
         }
-        const bool lit = !lights.empty() && (neutral || (!colored && blend_mode != 2U && blend_mode != 3U));
+        // Vertex colours count only on effect models (EFM); a MOD part of a
+        // composite that has them elsewhere is drawn and lit as a model.
+        const bool tri_colored =
+            colored && (!mesh.has_blend0() || game_material::material_effect_model(material));
+        const bool lit = !lights.empty() && (neutral || (!tri_colored && blend_mode != 2U && blend_mode != 3U));
         GpuBatch key;
         key.texture = texture;
         key.kind = texture == nullptr ? GpuBatchKind::model
             : blend_mode == 2U       ? GpuBatchKind::model_additive
             : blend_mode == 3U       ? GpuBatchKind::model_subtractive
                                      : GpuBatchKind::model;
-        key.colored = colored && texture != nullptr;
+        key.colored = tri_colored && texture != nullptr;
         key.light_base = lit ? (neutral ? 0.45F : 0.72F) : 1.0F;
         key.light_gain = lit ? (neutral ? 0.85F : 0.42F) : 0.0F;
         key.nearest = game_material::material_nearest(material);
         key.part_alpha = game_material::material_part_alpha(material);
+        key.punch_through = game_material::material_punch_through(material);
         const auto same = [&key](const GpuBatch& b) {
             return b.texture == key.texture && b.kind == key.kind && b.colored == key.colored &&
                    b.light_base == key.light_base && b.light_gain == key.light_gain && b.nearest == key.nearest &&
-                   b.part_alpha == key.part_alpha;
+                   b.part_alpha == key.part_alpha && b.punch_through == key.punch_through;
         };
         if (buckets.empty() || !same(buckets[last].batch)) {
             last = buckets.size();
@@ -2592,8 +2600,17 @@ GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame
         // Characters (dmc3_mod) and, with vertex colours, effect models
         // (dmc3_efm): one bone (the vertices come posed), the camera light
         // as their light rig, texel x colour x 2 (tex_col_mod2).
+        // The game's pair (dmc3-shader-selection-exe.md): EFM objects the
+        // effect-model shader, MOD objects the model one; MODULATE (model
+        // textures never select another function); the punch-through (A1)
+        // variant for objects with the alpha override; fog when the frame
+        // has it.
         out.vertex = batch.colored ? Shader::effect_model_lit_vert : Shader::model_lit_vert;
-        out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
+        if (batch.punch_through) {
+            out.fragment = d.fog ? Shader::texture_modulate_fog_cutout_frag : Shader::texture_modulate_cutout_frag;
+        } else {
+            out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
+        }
         out.alpha_func = AlphaFunc::greater_equal;
         out.alpha_ref = 0.5F / 255.0F;
         if (!layered && d.fog) out.fog_colour = d.fog_colour;

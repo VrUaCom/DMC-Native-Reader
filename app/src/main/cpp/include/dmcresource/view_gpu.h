@@ -61,6 +61,9 @@ struct GpuBatch final {
     // part alpha the NR shaders draw with (128/255, or 1 above 0x80).
     bool nearest{};
     float part_alpha{128.0F / 255.0F};
+    // Model: the object's punch-through alpha (game_material.h, the game's A1
+    // pixel shaders).
+    bool punch_through{};
 };
 
 struct GpuGeometry final {

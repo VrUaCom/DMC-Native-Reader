@@ -120,11 +120,42 @@ The pixel shader:
 Vertex 14 (DMC3_PTCL); pixel 0 (MODULATE) when the material word has bit
 0x10 (texture on), else 10 (COL).
 
-## What the Reader needs
+## Where each input comes from (follow-up, 2026-11-21)
 
-- Per batch: the object kind (MOD / EFM and its variant / SCM / particle),
-  the TEX0 key (0-3) of its mesh, recolour on or off, fog, and the A1
-  setting. Then the same ID rule and the same fog fallback.
-- Today `nr_draw()` always uses MODULATE. Still to read: how the Reader can
-  get each MOD mesh's TEX0 key and recolour data from the file, and what
-  sets the A1 field at +0x28.
+- Vertex shader of a model object: its runtime byte +5, sent to the mesh
+  draw with VIF command 0x5C (0x14030DBA0). Set once at load:
+  - MOD (0x1402FF570): 4 DMC3_MOD; 12 DMC3_MOD_SP when the object's source
+    flags have 0x200 or 0x400 (the sheen parameters at file object +0x18 /
+    +0x1C, 0x1403029E0).
+  - EFM (0x1402F8C50): 5 DMC3_EFM; with source flag 0x10 (vertex alpha) 7
+    DMC3_EFM_VA, or 8 DMC3_EFM_VA_SP with 0x200 / 0x400; otherwise 9
+    DMC3_EFM_SP with 0x200 / 0x400.
+  - SCM (0x14030DB50): 3, or 2 with runtime flag 0x20.
+  - MOD and EFM are told apart by the file's signature ("MOD " / "EFM ").
+- Texture function of a model texture: the game builds TEX0 itself
+  (0x14030D040) and never fills TFX; bits 36-37 are TFX's high bit and CBP's
+  low bit, and CBP is 0 for every texture (0x140304B30 / 0x1403365B0 take
+  the no-palette path for TM2 and DDS alike). So model draws always use
+  MODULATE. Checked on 94 textures of 65 packs: CBP 0 everywhere.
+- A1 (punch-through): the upload block for VU 0x3FD is refreshed each frame
+  by 0x140303DE0 from the object's +0x150 block; its +0x28 is the object's
+  +0x178, which 0x1403029E0 sets to the alpha control (file object +0x01)
+  when the blend nibble (source flags & 0xF) is 0 and the control is above
+  0x80, else 0. +0x2C is then 1.0 (otherwise control / 255): the part alpha
+  rule the Reader already has.
+- Recolour: the 0x30-byte records at texture set +0x10 exist only when the
+  loader sets model +0xEE bit 2 (0x140304AE0), start zeroed (0x140304B30)
+  and are written at runtime by effect setters (0x1402F24B0, 0x1402F2550,
+  0x1402F2350, 0x1402F23F0: alpha / RGB of colour A at +0..+3 and colour B
+  at +4..+7). Nothing in the files: off in a viewer unless an effect asks.
+
+## What the Reader does now
+
+- Effect models (EFM) carry bit 6 in the per-vertex material byte; only
+  they draw with effect_model_lit and their vertex colours. MOD parts,
+  including those of composites that also hold EFM parts, draw with
+  model_lit and the light rig.
+- Objects with the alpha override draw with the cut-out (A1) fragment
+  shaders, with and without fog.
+- Still open: the SP (sheen) and VA variants (they need the object's sheen
+  parameters and vertex alpha in the batch), stages' A1, particles.

@@ -534,8 +534,9 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                 // The object's material byte (game_material.h: blend mode =
                 // source flags & 0xF, 0x140302640; nearest filter; part alpha)
                 // and, for EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
-                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
-                                             game_material::material_byte(object.source_flags, object.alpha_control));
+                std::uint8_t material = game_material::material_byte(object.source_flags, object.alpha_control);
+                if (view.efm()) material |= game_material::kMaterialEffectModelBit;
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(), material);
                 if (view.efm() && source.reserved38 != 0U) {
                     const auto count = primitive.mesh.vertices.size();
                     const auto bytes_span = view.span();
