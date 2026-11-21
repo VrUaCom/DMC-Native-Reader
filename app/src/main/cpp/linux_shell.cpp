@@ -258,6 +258,30 @@ public:
         }
     }
 
+    void blit_rgba_scaled_to_bgra(int dst_x, int dst_y, int dst_w, int dst_h,
+                                  int src_w, int src_h, const uint8_t* rgba) {
+        if (dst_w <= 0 || dst_h <= 0 || src_w <= 0 || src_h <= 0 || rgba == nullptr) return;
+        const int x0 = std::max(0, dst_x);
+        const int y0 = std::max(0, dst_y);
+        const int x1 = std::min(width_, dst_x + dst_w);
+        const int y1 = std::min(height_, dst_y + dst_h);
+
+        for (int y = y0; y < y1; ++y) {
+            const int sy = std::clamp((y - dst_y) * src_h / dst_h, 0, src_h - 1);
+            const uint8_t* src_row = rgba + static_cast<size_t>(sy * src_w * 4);
+            uint32_t* dst_row = pixels_.data() + y * width_;
+            for (int x = x0; x < x1; ++x) {
+                const int sx = std::clamp((x - dst_x) * src_w / dst_w, 0, src_w - 1);
+                const uint8_t r = src_row[sx * 4 + 0];
+                const uint8_t g = src_row[sx * 4 + 1];
+                const uint8_t b = src_row[sx * 4 + 2];
+                dst_row[x] = (static_cast<uint32_t>(r) << 16) |
+                             (static_cast<uint32_t>(g) << 8) |
+                             static_cast<uint32_t>(b);
+            }
+        }
+    }
+
 private:
     int width_ = 0;
     int height_ = 0;
@@ -428,6 +452,7 @@ private:
     void capture_photo_png();
 
     void close_all_sessions() {
+        child_thumb_cache_.clear();
         while (!nav_stack_.empty()) {
             if (nav_stack_.back().session) dmc_close(nav_stack_.back().session);
             nav_stack_.pop_back();
@@ -512,6 +537,14 @@ private:
     std::string camera_message_{};
     std::vector<int> camera_choices_{};
     std::vector<CameraDialButton> camera_dial_buttons_{};
+
+    // Child thumbnail cache
+    struct ChildThumb {
+        int w = 0;
+        int h = 0;
+        std::vector<uint8_t> rgba{};
+    };
+    std::unordered_map<size_t, ChildThumb> child_thumb_cache_{};
 
     // Pixel buffers
     std::vector<uint8_t> scene_rgba_{};
@@ -926,6 +959,7 @@ void App::open_child_resource(size_t index) {
     child_count_ = dmc_child_count(session_);
     const uint64_t state_bits = dmc_state_flags(session_);
     child_browser_mode_ = (state_bits & (1ULL << 15)) != 0;
+    child_thumb_cache_.clear();
 
     std::cout << "Navigated into child: " << current_title_ << "\n";
 }
@@ -944,6 +978,7 @@ void App::go_back() {
     child_count_ = dmc_child_count(session_);
     const uint64_t state_bits = dmc_state_flags(session_);
     child_browser_mode_ = (state_bits & (1ULL << 15)) != 0;
+    child_thumb_cache_.clear();
 
     std::cout << "Navigated back to: " << current_title_ << "\n";
 }
@@ -1007,11 +1042,11 @@ void App::render_frame() {
             0, viewport_y + viewport_h / 2 + 15, viewport_w, 20,
             "Supported formats: .pac, .mod, .scm, .dds, .ptx, .mot, .st*, .tm2", kColorTextDim);
     } else if (child_browser_mode_ && child_count_ > 0) {
-        // Child Gallery Grid
-        const int cols = std::max(1, viewport_w / 180);
-        const int tile_w = 160;
-        const int tile_h = 70;
-        const int pad = 16;
+        // Child Gallery Grid with Thumbnails
+        const int cols = std::max(1, viewport_w / 200);
+        const int tile_w = 184;
+        const int tile_h = 74;
+        const int pad = 12;
         for (size_t i = 0; i < child_count_; ++i) {
             const int col = static_cast<int>(i) % cols;
             const int row = static_cast<int>(i) / cols;
@@ -1027,9 +1062,31 @@ void App::render_frame() {
             std::string label = title_c ? title_c : ("Item " + std::to_string(i));
             if (title_c) dmc_string_free(title_c);
 
-            if (label.size() > 18) label = label.substr(0, 15) + "...";
-            canvas_.draw_text(tx + 8, ty + 12, "[" + std::to_string(i) + "]", kColorAccent);
-            canvas_.draw_text(tx + 8, ty + 34, label, kColorText);
+            auto it = child_thumb_cache_.find(i);
+            if (it == child_thumb_cache_.end()) {
+                int pw = 0, ph = 0;
+                if (dmc_child_preview_size(session_, i, &pw, &ph) && pw > 0 && ph > 0 && pw <= 1024 && ph <= 1024) {
+                    ChildThumb thumb;
+                    thumb.w = pw;
+                    thumb.h = ph;
+                    thumb.rgba.resize(static_cast<size_t>(pw * ph * 4));
+                    if (dmc_child_preview(session_, i, thumb.rgba.data(), thumb.rgba.size())) {
+                        it = child_thumb_cache_.emplace(i, std::move(thumb)).first;
+                    }
+                }
+            }
+
+            if (it != child_thumb_cache_.end()) {
+                canvas_.blit_rgba_scaled_to_bgra(tx + 6, ty + 9, 56, 56, it->second.w, it->second.h, it->second.rgba.data());
+                canvas_.draw_rect_outline(tx + 6, ty + 9, 56, 56, kColorBtnBorder);
+                canvas_.draw_text(tx + 68, ty + 14, "[" + std::to_string(i) + "]", kColorAccent);
+                if (label.size() > 14) label = label.substr(0, 11) + "...";
+                canvas_.draw_text(tx + 68, ty + 36, label, kColorText);
+            } else {
+                canvas_.draw_text(tx + 10, ty + 14, "[" + std::to_string(i) + "]", kColorAccent);
+                if (label.size() > 20) label = label.substr(0, 17) + "...";
+                canvas_.draw_text(tx + 10, ty + 38, label, kColorText);
+            }
         }
     } else {
         // Image preview or 3D scene
@@ -1884,10 +1941,10 @@ void App::run() {
                     // Check Child Gallery Clicks
                     if (!clicked_btn && child_browser_mode_ && child_count_ > 0) {
                         const int viewport_y = kHeaderHeight;
-                        const int cols = std::max(1, window_width_ / 180);
-                        const int tile_w = 160;
-                        const int tile_h = 70;
-                        const int pad = 16;
+                        const int cols = std::max(1, window_width_ / 200);
+                        const int tile_w = 184;
+                        const int tile_h = 74;
+                        const int pad = 12;
                         for (size_t i = 0; i < child_count_; ++i) {
                             const int col = static_cast<int>(i) % cols;
                             const int row = static_cast<int>(i) / cols;
@@ -1940,10 +1997,10 @@ void App::run() {
                 child_hover_ = -1;
                 if (child_browser_mode_ && child_count_ > 0) {
                     const int viewport_y = kHeaderHeight;
-                    const int cols = std::max(1, window_width_ / 180);
-                    const int tile_w = 160;
-                    const int tile_h = 70;
-                    const int pad = 16;
+                    const int cols = std::max(1, window_width_ / 200);
+                    const int tile_w = 184;
+                    const int tile_h = 74;
+                    const int pad = 12;
                     for (size_t i = 0; i < child_count_; ++i) {
                         const int col = static_cast<int>(i) % cols;
                         const int row = static_cast<int>(i) / cols;
