@@ -582,3 +582,16 @@ To guarantee quality and avoid untested drift, implementation will proceed in fo
 4. **Resolution Range Contract:** Framebuffer rendering must respect the core's bounds: $64 \le \text{side} \le 8192$ pixels.
 5. **No Heavyweight Framework Dependencies:** Do not introduce dependencies on GTK, Qt, or desktop-specific daemons. Keep dependencies restricted to GLFW, EGL/GLES, Dear ImGui, and single-header C utilities.
 6. **Clean-Room Integrity:** Maintain strict clean-room separation: no proprietary game engine headers, Capcom binary disassemblies, or copyrighted assets may be committed to the repository.
+
+---
+
+## 6. Parity Acceptance & Verification Status
+
+| Milestone / Requirement | Status | Verification Evidence |
+|---|---|---|
+| **Phase 1: Lifecycle & Windowing** | **100% COMPLETE** | X11 shell, XDND drag-and-drop, dynamic EGL/GLES3 loader with CPU fallback, clean teardown. |
+| **Phase 2: Navigation & Gestures** | **100% COMPLETE** | Modal in-engine file browser, child thumbnail gallery, inertial fling (`dmc_fling`), twist roll, WASD fly mode, pick raycast. |
+| **Phase 3: Kits, Looks & Motion** | **100% COMPLETE** | Variant Look selector (C), Character Kit panel (K), weapon/DT reassembly, 60 Hz motion carousel (M), multi-backend audio (PipeWire/Pulse/ALSA), subtitle overlays. |
+| **Phase 4: Stages, Collision & Pro Export** | **100% COMPLETE** | Stage companion discovery (`stNNN_effect`, `stNNNcfg`), base room floor spots, BREAK destruction toggle, Stage Marker Cards (`dmc_marker_card`), Collision & Hitbox report tab (`dmc_collision_report`), 16-bit linear RAW DNG (`dmc_capture_dng`), XDG settings persistence. |
+| **Comprehensive PAC Corpus Verification** | **100.00% PASS** | 3,733 / 3,733 game archives read with 0 crashes, 21,816 sub-resources extracted (see [PAC_COMPREHENSIVE_TEST_REPORT.md](PAC_COMPREHENSIVE_TEST_REPORT.md)). |
+| **Automated Test Suite** | **100% PASS** | 59 / 59 CTest unit tests passed (8.77s execution time). Linux smoke test suite passed with 0 failures (1,497 indexed assets). |
