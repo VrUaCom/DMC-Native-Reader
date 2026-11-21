@@ -45,8 +45,11 @@ for lib in avformat avcodec avutil; do
 done
 
 echo "== SwiftUI shell"
-swift build --package-path "$here" -c release
+# SwiftPM does not relink when only the core's static libraries changed:
+# without its binary it links again.
 binary="$(swift build --package-path "$here" -c release --show-bin-path)/DMCNativeReader"
+rm -f "$binary"
+swift build --package-path "$here" -c release
 
 echo "== $app"
 rm -rf "$app"

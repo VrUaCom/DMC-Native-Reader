@@ -25,6 +25,7 @@ let package = Package(
                 .unsafeFlags(["-L\(coreLibs)"]),
                 .linkedLibrary("c++"),
                 .linkedFramework("Metal"),
+                .linkedFramework("QuartzCore"),
             ] + ffmpeg
         ),
     ]

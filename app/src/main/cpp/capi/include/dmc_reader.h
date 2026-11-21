@@ -182,6 +182,8 @@ typedef struct dmc_view {
     bool follow;
     float dolly;
     float motion_frame;          /* NaN: leave the pose as it is */
+    void* window;                /* NULL: pixels back; else the view's window the frame may go straight
+                                    to (macOS / iOS: its CAMetalLayer*, held until dmc_gpu_release) */
 } dmc_view;
 
 /* A texture's own picture (a DDS, a PTX's chosen texture): its size, 0 x 0
@@ -199,9 +201,13 @@ bool dmc_image_preview(const dmc_session* session, uint8_t* rgba, size_t capacit
 int dmc_render(dmc_session* session, int width, int height, const dmc_view* view, uint8_t* rgba,
                size_t capacity);
 
-/* Bit 4 of dmc_render's result: the frame went straight to the window the core
- * draws into (dmc_gpu_attach, later); nothing was copied into `rgba`. */
+/* Bit 4 of dmc_render's result: the frame went straight to the view's window
+ * (dmc_view.window); nothing was copied into `rgba`. Whether a frame goes there
+ * is the core's call (Graphics → Show frames, the photo camera). */
 #define DMC_RENDER_SHOWN 4
+
+/* The view's window is going away: the core lets go of it if it holds it. */
+void dmc_gpu_release(void* window);
 
 /* ---- Group 2: picking, holding, camera, fly, export, capture ------------- *
  * Every decision is the core's; a shell sends the touch, the stick or the

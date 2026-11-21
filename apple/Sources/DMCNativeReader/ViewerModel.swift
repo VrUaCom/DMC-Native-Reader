@@ -5,11 +5,16 @@ import AppKit
 import CDMCReader
 import CoreGraphics
 import Foundation
+import QuartzCore
 
 @MainActor
 final class ViewerModel: ObservableObject {
     @Published private(set) var session: ReaderSession?
     @Published private(set) var image: CGImage?
+    /// The last frame went straight onto the view's Metal layer (no picture).
+    @Published private(set) var shownDirectly = false
+    /// The view's Metal layer (PresentSurface) frames may go straight to.
+    weak var presentLayer: CAMetalLayer?
     @Published private(set) var isPicture = false
     @Published private(set) var healthLevel = 0
     @Published var message: String?
@@ -171,6 +176,7 @@ final class ViewerModel: ObservableObject {
         let picture = next.picture()
         isPicture = picture != nil
         image = picture.flatMap(Self.cgImage)
+        shownDirectly = false
         session = next
         message = nil
         healthLevel = next.health().level
@@ -749,16 +755,28 @@ final class ViewerModel: ObservableObject {
         if stageCollisionShown { flags |= RenderFlag.roomCollision }
         let camera = self.camera
         let motionFrame = self.motionFrame
+        let window = presentLayer
         renderQueue.async { [weak self] in
             let frame = session.render(width: width, height: height, camera: camera, flags: flags,
-                                       motionFrame: motionFrame)
-            let picture = frame.flatMap(Self.cgImage)
+                                       motionFrame: motionFrame, window: window)
+            var shown = false
+            var picture: CGImage?
+            switch frame {
+            case .pixels(let pixels): picture = Self.cgImage(pixels)
+            case .shown: shown = true
+            case nil: break
+            }
             Task { @MainActor in
                 guard let self else { return }
                 self.drawing = false
                 if request == self.generation, self.session === session {
-                    if let picture { self.image = picture }
-                    if frame == nil, self.image == nil {
+                    if shown {
+                        self.shownDirectly = true
+                    } else if let picture {
+                        self.image = picture
+                        self.shownDirectly = false
+                    }
+                    if frame == nil, self.image == nil, !self.shownDirectly {
                         self.message = self.children.isEmpty
                             ? "Nothing to draw in this file: see Info."
                             : "Nothing to draw: its files are listed on the left."
@@ -773,7 +791,7 @@ final class ViewerModel: ObservableObject {
     }
 
     /// Nothing to draw and no picture: the session is only its files or its Info.
-    var drawsNothing: Bool { session != nil && image == nil && message != nil }
+    var drawsNothing: Bool { session != nil && image == nil && !shownDirectly && message != nil }
 
     /// The view's size in pixels, the longest side capped by the settings and
     /// each side within what the core draws (a thin view is scaled up from it).

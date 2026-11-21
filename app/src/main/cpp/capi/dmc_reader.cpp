@@ -135,6 +135,7 @@ dmcresource::ViewControls controls_of(const dmc_view& view) {
     controls.eye = camera.eye;
     controls.has_pivot = camera.has_pivot;
     controls.pivot = camera.pivot;
+    controls.present = view.window != nullptr;
     return controls;
 }
 
@@ -547,6 +548,19 @@ bool dmc_image_preview(const dmc_session* session, uint8_t* rgba, size_t capacit
     return true;
 }
 
+namespace {
+void* g_gpu_window = nullptr;  // the window the backend holds (api_mutex)
+
+// The backend draws onto this view's window (api_mutex held).
+void use_gpu_window(void* window) {
+    if (window == nullptr || window == g_gpu_window) return;
+    if (auto* backend = dmcresource::gpu_view_backend()) {
+        backend->set_window(window);
+        g_gpu_window = window;
+    }
+}
+}  // namespace
+
 int dmc_render(dmc_session* session, int width, int height, const dmc_view* view, uint8_t* rgba, size_t capacity) {
     try {
         const std::lock_guard lock{api_mutex()};
@@ -561,6 +575,7 @@ int dmc_render(dmc_session* session, int width, int height, const dmc_view* view
             status = 2;
         }
         const auto controls = controls_of(*view);
+        use_gpu_window(view->window);
         const auto image = dmcresource::spider::camera::render_view_frame(
             session->session.get(), width, height, view->yaw, view->pitch, view->zoom, view->render_flags, controls);
         if (image.width != width || image.height != height) return 0;
@@ -575,6 +590,16 @@ int dmc_render(dmc_session* session, int width, int height, const dmc_view* view
         dmcresource::frame_profile::frame_done();
         return status;
     } catch (...) { return 0; }
+}
+
+void dmc_gpu_release(void* window) {
+    try {
+        const std::lock_guard lock{api_mutex()};
+        if (window == nullptr || window != g_gpu_window) return;
+        if (auto* backend = dmcresource::gpu_view_backend()) backend->set_window(nullptr);
+        g_gpu_window = nullptr;
+    } catch (...) {
+    }
 }
 
 dmc_settings* dmc_settings_schema(bool describe_device) {

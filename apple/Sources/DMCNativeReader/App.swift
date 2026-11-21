@@ -21,7 +21,11 @@ struct DMCNativeReaderApp: App {
                     }
                 }
                 .onOpenURL { model.open(url: $0) }
+                // One window: a file opened from Finder goes to it, not to a new
+                // window that would share its model.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
+        .handlesExternalEvents(matching: ["*"])
         Settings {
             TabView {
                 SettingsView(model: model).tabItem { Label("View", systemImage: "eye") }
@@ -319,7 +323,14 @@ struct ContentView: View {
     private var viewport: some View {
         GeometryReader { geometry in
             ZStack {
-                if let image = model.image {
+                // Frames the GPU puts straight on the screen land here; the
+                // picture covers it whenever a frame came back as pixels.
+                PresentSurface(model: model)
+                    .opacity(model.shownDirectly && !model.isPicture ? 1 : 0)
+                    .allowsHitTesting(false)
+                if model.shownDirectly && !model.isPicture {
+                    EmptyView()
+                } else if let image = model.image {
                     Image(decorative: image, scale: 1)
                         .resizable()
                         .interpolation(model.isPicture ? .none : .high)

@@ -4,6 +4,7 @@
 // Linux, where its C interop is checked.
 import CDMCReader
 import Foundation
+import QuartzCore
 
 /// How a file opened, decided by the core (spider open_resource).
 enum OpenedAs: Int {
@@ -202,9 +203,15 @@ final class ReaderSession: @unchecked Sendable {
         return ok ? RGBAImage(width: Int(width), height: Int(height), pixels: pixels) : nil
     }
 
-    /// A frame of the 3D view, or nil when the session draws none.
+    /// A frame of the 3D view: its pixels, or shown straight on the attached
+    /// window (dmc_gpu_attach); nil when the session draws none.
+    enum Frame {
+        case pixels(RGBAImage)
+        case shown
+    }
+
     func render(width: Int, height: Int, camera: ViewCamera, flags: UInt32,
-                motionFrame: Float = .nan) -> RGBAImage? {
+                motionFrame: Float = .nan, window: CAMetalLayer? = nil) -> Frame? {
         guard width > 0, height > 0 else { return nil }
         var view = dmc_view()
         view.yaw = camera.yaw
@@ -215,11 +222,14 @@ final class ReaderSession: @unchecked Sendable {
         view.pan_y = camera.panY
         view.room_yaw = camera.roomYaw
         view.motion_frame = motionFrame
+        view.window = window.map { Unmanaged.passUnretained($0).toOpaque() }
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         let status = pixels.withUnsafeMutableBufferPointer { buffer in
             dmc_render(handle, Int32(width), Int32(height), &view, buffer.baseAddress, buffer.count)
         }
-        return status == 0 ? nil : RGBAImage(width: width, height: height, pixels: pixels)
+        if status == 0 { return nil }
+        if status & Int32(DMC_RENDER_SHOWN) != 0 { return .shown }
+        return .pixels(RGBAImage(width: width, height: height, pixels: pixels))
     }
 }
 

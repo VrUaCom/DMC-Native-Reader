@@ -9,12 +9,15 @@
 // at y = -1). Metal wants z in 0..w and row 0 at y = +1, so every vertex
 // stage maps z to (z + w) / 2 and negates y.
 //
-// Not yet here (frames still correct, drawn like with the DMC3 shaders
-// switched off): the DMC3 material shaders and the photo camera's
-// development (the CPU develops the read-back frame instead).
+// The DMC3 shaders the core draws with (dmc3_draw) are here in MSL, with an
+// enhanced per-pixel variant (GpuViewOptions::shading). A frame may go
+// straight to the window's CAMetalLayer (set_window) instead of being read
+// back. Not yet here: the photo camera's development (the CPU develops the
+// read-back frame instead).
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
 #include <array>
@@ -330,6 +333,22 @@ fragment float4 texture_modulate_fog(Dmc3Out in [[stage_in]], constant Dmc3Unifo
     if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
     return c;
 }
+// ---- The finished frame onto the window's drawable (same size, BGRA).
+struct PresentOut {
+    float4 pos [[position]];
+};
+
+vertex PresentOut present_vertex(uint id [[vertex_id]]) {
+    PresentOut o;
+    float2 p = float2(float((id << 1) & 2), float(id & 2));
+    o.pos = float4(p * 2.0 - 1.0, 0.0, 1.0);
+    return o;
+}
+
+fragment float4 present_fragment(PresentOut in [[stage_in]], texture2d<float> frame [[texture(0)]]) {
+    return float4(frame.read(uint2(in.pos.xy)).rgb, 1.0);
+}
+
 // ---- Enhanced shading (the Graphics setting; off: the game's per-vertex
 // light above). The same lights and the same formulas, evaluated for every
 // pixel from the interpolated position and normal, so the light no longer
@@ -587,6 +606,21 @@ public:
             if (!ok && ++failures_ >= 8U) failed_ = true;
             if (ok) failures_ = 0U;
             return ok;
+        }
+    }
+
+    // The view's CAMetalLayer (null: none): frames marked `present` go
+    // onto its drawables. The backend holds the layer until replaced.
+    void set_window(void* window) override {
+        const std::lock_guard lock{mutex_};
+        CAMetalLayer* layer = (__bridge CAMetalLayer*)window;
+        if (layer != nil && initialize()) {
+            layer.device = device_;
+            layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+            layer.framebufferOnly = YES;
+            layer_ = layer;
+        } else {
+            layer_ = nil;
         }
     }
 
@@ -1189,6 +1223,15 @@ private:
         }
         [encoder endEncoding];
 
+        publish_stats();
+        // Straight to the window when the frame needs no development on the CPU.
+        const bool undeveloped = frame.post != nullptr && frame.post->enabled;
+        if (frame.present && layer_ != nil && !undeveloped && present(commands, frame)) {
+            frame.presented = true;
+            trim_textures();
+            return true;
+        }
+
         // Read back: Metal row 0 is image row 0, as RgbaImage stores them.
         id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
         const NSUInteger row = static_cast<NSUInteger>(frame.width) * 4U;
@@ -1212,11 +1255,50 @@ private:
         image.pixels.resize(row * static_cast<std::size_t>(frame.height));
         std::memcpy(image.pixels.data(), [readback_ contents], image.pixels.size());
         trim_textures();
+        return true;
+    }
+
+    void publish_stats() {
         dmcresource::GpuShaderStats stats;
         stats.compiled = 6;
         stats.dmc3_batches = dmc3_batches_;
         stats.reader_batches = reader_batches_;
         dmcresource::set_gpu_shader_stats(std::move(stats));
+    }
+
+    // Copies the finished frame onto the layer's next drawable and presents
+    // it with this command buffer; false (nothing committed) when the layer
+    // has no drawable to give.
+    bool present(id<MTLCommandBuffer> commands, const GpuViewFrame& frame) {
+        const CGSize size = CGSizeMake(frame.width, frame.height);
+        if (!CGSizeEqualToSize(layer_.drawableSize, size)) {
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            layer_.drawableSize = size;
+            [CATransaction commit];
+        }
+        if (present_state_ == nil) {
+            MTLRenderPipelineDescriptor* p = [[MTLRenderPipelineDescriptor alloc] init];
+            p.vertexFunction = function("present_vertex");
+            p.fragmentFunction = function("present_fragment");
+            p.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+            NSError* error = nil;
+            present_state_ = [device_ newRenderPipelineStateWithDescriptor:p error:&error];
+            if (present_state_ == nil) return false;
+        }
+        id<CAMetalDrawable> drawable = [layer_ nextDrawable];
+        if (drawable == nil) return false;
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = drawable.texture;
+        pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+        [encoder setRenderPipelineState:present_state_];
+        [encoder setFragmentTexture:(samples_ > 1 ? resolve_ : color_) atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [encoder endEncoding];
+        [commands presentDrawable:drawable];
+        [commands commit];
         return true;
     }
 
@@ -1240,6 +1322,8 @@ private:
     std::map<int, id<MTLSamplerState>> samplers_;
     id<MTLTexture> color_{}, resolve_{}, depth_{};
     id<MTLBuffer> readback_{};
+    CAMetalLayer* layer_{};
+    id<MTLRenderPipelineState> present_state_{};
     int width_{}, height_{};
     NSUInteger samples_{1};
     std::unordered_map<const ImagePreview*, Texture> textures_;

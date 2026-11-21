@@ -375,7 +375,7 @@ if(APPLE AND DMC_NATIVE_READER_METAL)
     target_sources(dmc_reader_capi PRIVATE apple/metal_view_backend.mm)
     set_source_files_properties(apple/metal_view_backend.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-std=c++2b")
     target_compile_definitions(dmc_reader_capi PRIVATE DMC_NATIVE_READER_METAL=1)
-    target_link_libraries(dmc_reader_capi PUBLIC "-framework Metal" "-framework Foundation")
+    target_link_libraries(dmc_reader_capi PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation")
 endif()
 
 # Diagnostics build identity shared by every shell (the C API reports it too).
