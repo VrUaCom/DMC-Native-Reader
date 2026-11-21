@@ -262,7 +262,45 @@ enum ButtonId : int {
     kBtnUv = 205,
     kBtnInfo = 206,
     kBtnCollision = 207,
-    kBtnResetView = 208,
+    kBtnSound = 208,
+    kBtnResetView = 209,
+};
+
+// ---- Linux Audio Playback Engine ------------------------------------------
+class LinuxAudioPlayer {
+public:
+    LinuxAudioPlayer() = default;
+    ~LinuxAudioPlayer() { stop(); }
+
+    void play_pcm(const int16_t* samples, size_t sample_count, uint32_t rate) {
+        stop();
+        if (!samples || sample_count == 0 || rate == 0) return;
+
+        stop_requested_.store(false);
+        std::vector<int16_t> pcm_data(samples, samples + sample_count);
+        worker_ = std::thread([this, rate, data = std::move(pcm_data)]() {
+            std::string cmd = "aplay -q -f S16_LE -c 1 -r " + std::to_string(rate) + " 2>/dev/null";
+            FILE* pipe = popen(cmd.c_str(), "w");
+            if (!pipe) return;
+            const size_t chunk_size = 4096;
+            for (size_t offset = 0; offset < data.size() && !stop_requested_.load(); offset += chunk_size) {
+                const size_t to_write = std::min(chunk_size, data.size() - offset);
+                fwrite(data.data() + offset, sizeof(int16_t), to_write, pipe);
+            }
+            pclose(pipe);
+        });
+    }
+
+    void stop() {
+        stop_requested_.store(true);
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
+
+private:
+    std::atomic<bool> stop_requested_{false};
+    std::thread worker_{};
 };
 
 // ---- Extensible Host & EGL/GLES Context Structure -------------------------
@@ -348,6 +386,7 @@ private:
 
     void open_child_resource(size_t index);
     void trigger_open_dialog();
+    void play_next_sound();
 
     void close_all_sessions() {
         while (!nav_stack_.empty()) {
@@ -403,6 +442,10 @@ private:
     // Hitbox / Collision state
     int hitbox_attack_ = -2; // -2 off, -1 all, >=0 specific attack
     std::vector<int> attack_ids_{};
+
+    // Sound playback state
+    int current_sound_index_ = 0;
+    LinuxAudioPlayer audio_{};
 
     // UI Panels
     bool show_info_panel_ = false;
@@ -520,6 +563,7 @@ void App::init_buttons() {
         {kBtnUv, "UV", "Toggle UV layout / gallery (U)", {}, true, true, false},
         {kBtnInfo, "INFO", "File health and inspection (I)", {}, true, true, false},
         {kBtnCollision, "COLLIS", "Cycle hitboxes and collision (H)", {}, true, true, false},
+        {kBtnSound, "SOUND", "Play resource sounds (S)", {}, true, true, false},
         {kBtnResetView, "RESET", "Reset camera view (R / 0)", {}, true, true, false},
     };
 }
@@ -1196,6 +1240,9 @@ void App::handle_button_click(int id) {
         case kBtnCollision:
             cycle_hitboxes();
             break;
+        case kBtnSound:
+            play_next_sound();
+            break;
         case kBtnResetView:
             reset_view();
             break;
@@ -1253,6 +1300,14 @@ void App::handle_key_press(KeySym sym) {
         case XK_k:
         case XK_K:
             toggle_kit_panel();
+            break;
+        case XK_s:
+        case XK_S:
+            if (!fly_mode_) {
+                play_next_sound();
+            } else {
+                fly_key_s_ = true;
+            }
             break;
         case XK_o:
         case XK_O:
@@ -1359,6 +1414,29 @@ void App::step_animation(float delta) {
     if (motion_end_frame_ > 0.0f && view_.motion_frame > motion_end_frame_) {
         view_.motion_frame = motion_loop_start_;
     }
+}
+
+void App::play_next_sound() {
+    if (!session_) return;
+    dmc_menu* menu = dmc_sound_menu(session_);
+    if (!menu) return;
+    if (menu->count == 0) {
+        dmc_menu_free(menu);
+        return;
+    }
+    if (current_sound_index_ >= static_cast<int>(menu->count)) {
+        current_sound_index_ = 0;
+    }
+    dmc_pcm pcm = dmc_sound_pcm(session_, current_sound_index_);
+    if (pcm.samples && pcm.sample_count > 0) {
+        std::cout << "Playing sound [" << current_sound_index_ << "]: "
+                  << (menu->items[current_sound_index_].title ? menu->items[current_sound_index_].title : "")
+                  << " (" << pcm.sample_rate << " Hz)\n";
+        audio_.play_pcm(pcm.samples, pcm.sample_count, pcm.sample_rate);
+    }
+    current_sound_index_ = (current_sound_index_ + 1) % static_cast<int>(menu->count);
+    dmc_pcm_free(&pcm);
+    dmc_menu_free(menu);
 }
 
 void App::cycle_hitboxes() {
