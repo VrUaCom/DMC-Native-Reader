@@ -12,8 +12,8 @@
 // The DMC3 shaders the core draws with (dmc3_draw) are here in MSL, with an
 // enhanced per-pixel variant (GpuViewOptions::shading). A frame may go
 // straight to the window's CAMetalLayer (set_window) instead of being read
-// back. Not yet here: the photo camera's development (the CPU develops the
-// read-back frame instead).
+// back. The photo camera's development (CameraPost) runs here too, as on
+// Android.
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <string>
@@ -349,6 +350,196 @@ fragment float4 present_fragment(PresentOut in [[stage_in]], texture2d<float> fr
     return float4(frame.read(uint2(in.pos.xy)).rgb, 1.0);
 }
 
+// ---- The photo camera's development (CameraPost), from the OpenGL ES
+// backend's passes: the auto focus grid, the depth of field, the lens /
+// polarizer / look, sharpening. Pixel (x, y) is image column x, row y, as
+// there; the depth is the same 0..1 window depth.
+static float post_distance(depth2d<float> depth, uint2 p, float2 proj) {
+    float d = depth.read(p);
+    if (d >= 0.999999) return -1.0;
+    return proj.y / ((2.0 * d - 1.0) - proj.x);
+}
+
+struct FocusUniforms {
+    int2 size;
+    float2 proj;
+    float half_side;
+};
+
+fragment float4 focus_fragment(PresentOut in [[stage_in]], constant FocusUniforms& u [[buffer(0)]],
+                               depth2d<float> depth [[texture(0)]]) {
+    float2 cell = floor(in.pos.xy);
+    float2 p = float2(u.size) * 0.5 + (cell - 7.5) / 7.5 * u.half_side;
+    float z = post_distance(depth, uint2(clamp(p, float2(0.0), float2(u.size) - 1.0)), u.proj);
+    uint v = z < 0.0 ? 0u : uint(clamp(z * 16.0, 1.0, 4.0e9));
+    return float4(float(v & 255u), float((v >> 8) & 255u), float((v >> 16) & 255u), float(v >> 24)) / 255.0;
+}
+
+struct DofUniforms {
+    int2 size;
+    float2 proj;
+    float focus_mm;  // > 0 that distance, < 0 infinity
+    float f;
+    float k;
+    float unit;
+    float px_per_mm;
+    float max_r;
+    int taps;
+    int bright;
+    float2 tap[128];
+};
+
+static float dof_mm(float z, constant DofUniforms& u) { return z < 0.0 ? -1.0 : max(z * u.unit, u.f * 1.05); }
+
+static float dof_radius(float zmm, constant DofUniforms& u) {
+    float coc;
+    if (u.focus_mm > 0.0) {
+        float s = max(u.focus_mm, u.f * 1.05);
+        coc = zmm < 0.0 ? u.k / (s - u.f) : u.k / (s - u.f) * abs(zmm - s) / zmm;
+    } else {
+        coc = zmm < 0.0 ? 0.0 : u.k / zmm;
+    }
+    return min(u.max_r, 0.5 * coc * u.px_per_mm);
+}
+
+fragment float4 dof_fragment(PresentOut in [[stage_in]], constant DofUniforms& u [[buffer(0)]],
+                             texture2d<float> color [[texture(0)]], depth2d<float> depth [[texture(1)]]) {
+    int2 p = int2(in.pos.xy);
+    float4 c0 = color.read(uint2(p));
+    float zp = dof_mm(post_distance(depth, uint2(p), u.proj), u);
+    float r = dof_radius(zp, u);
+    if (r < 0.5) return float4(c0.rgb, 1.0);
+    int n = clamp(int(r * r * 1.5) + 4, 4, u.taps);
+    float3 sum = float3(0.0);
+    float weights = 0.0;
+    for (int t = 0; t < 128; ++t) {
+        if (t >= n) break;
+        float2 d = u.tap[t] * r;
+        int2 q = clamp(p + int2(round(d)), int2(0), u.size - 1);
+        float zq = dof_mm(post_distance(depth, uint2(q), u.proj), u);
+        float rq = dof_radius(zq, u);
+        // A nearer pixel reaches over this one; a farther one no further than this one's own circle.
+        bool nearer = zq >= 0.0 && (zp < 0.0 || zq < zp);
+        float reach = nearer ? rq : min(rq, r);
+        if (reach + 0.5 < length(d)) continue;
+        float3 c = color.read(uint2(q)).rgb;
+        float w = 1.0;
+        if (u.bright == 1) w += 8.0 * max(0.0, dot(c, float3(0.2126, 0.7152, 0.0722)) - 0.75);
+        sum += w * c;
+        weights += w;
+    }
+    return float4(weights > 0.0 ? sum / weights : c0.rgb, 1.0);
+}
+
+struct LookUniforms {
+    int2 size;
+    float k;
+    float fringe;
+    int pol;
+    float pol_strength;
+    float ring;
+    float sat;
+    float4 tint;
+    int cinema;
+    float vignette;
+    float sigma;
+    int grain;
+    int chroma;
+    uint seed;
+};
+
+static float post_s2l(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+static float post_l2s(float v) {
+    v = clamp(v, 0.0, 1.0);
+    return v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+static uint post_hash(uint x, uint y, uint seed) {
+    uint h = x * 0x8DA6B343u ^ y * 0xD8163841u ^ seed * 0xCB1AB31Fu;
+    h ^= h >> 13u;
+    h *= 0x5BD1E995u;
+    h ^= h >> 15u;
+    return h;
+}
+static float post_noise(uint h) { return (float(h & 0xFFFFu) + float(h >> 16u)) / 65535.0 - 1.0; }
+
+fragment float4 look_fragment(PresentOut in [[stage_in]], constant LookUniforms& u [[buffer(0)]],
+                              constant uchar4* curves [[buffer(1)]], texture2d<float> src [[texture(0)]]) {
+    constexpr sampler lin(coord::normalized, address::clamp_to_edge, filter::linear);
+    float2 xy = floor(in.pos.xy);
+    float2 size = float2(u.size);
+    float2 c = size * 0.5;
+    float hd = length(c);
+    float2 d = (xy + 0.5 - c) / hd;
+    float3 col;
+    if (u.k == 0.0 && u.fringe == 0.0) {
+        col = src.read(uint2(xy)).rgb;
+    } else {
+        // Distortion (the corners stay the corners) and fringing, radial.
+        float scale = (1.0 + u.k * dot(d, d)) / (1.0 + u.k);
+        col.g = src.sample(lin, (c + d * scale * hd) / size).g;
+        col.r = src.sample(lin, (c + d * scale * (1.0 + u.fringe) * hd) / size).r;
+        col.b = src.sample(lin, (c + d * scale * (1.0 - u.fringe) * hd) / size).b;
+    }
+    if (u.pol == 1) {
+        float hi = max(col.r, max(col.g, col.b));
+        float lo = min(col.r, min(col.g, col.b));
+        float saturation = hi > 1.0e-3 ? (hi - lo) / hi : 0.0;
+        float luma = dot(col, float3(0.2126, 0.7152, 0.0722));
+        float glare = smoothstep(0.55, 0.95, luma) * (1.0 - saturation);
+        float sky = clamp((col.b - max(col.r, col.g)) / max(col.b, 1.0e-3), 0.0, 1.0) * smoothstep(0.25, 0.7, col.b);
+        float polarized = clamp(0.15 + 0.85 * glare + 0.6 * sky, 0.0, 0.95);
+        float light = 0.5 * (xy.x / size.x - 0.5) + 0.3 * (xy.y / size.y - 0.5);
+        float s = sin(u.ring - light);
+        float held = u.pol_strength * polarized * s * s;
+        float3 lin3 = float3(post_s2l(col.r), post_s2l(col.g), post_s2l(col.b)) * (1.0 - held);
+        float l = dot(lin3, float3(0.2126, 0.7152, 0.0722));
+        lin3 = l + (lin3 - l) * (1.0 + 0.8 * held);
+        col = float3(post_l2s(lin3.r), post_l2s(lin3.g), post_l2s(lin3.b));
+    }
+    int3 i = int3(clamp(col * 255.0 + 0.5, 0.0, 255.0));
+    float3 v = float3(float(curves[i.r].r), float(curves[i.g].g), float(curves[i.b].b));
+    float luma = dot(v, float3(0.2126, 0.7152, 0.0722));
+    if (u.sat != 0.0) v = luma + (v - luma) * (1.0 + u.sat);
+    if (u.cinema == 1) {
+        float t = luma / 255.0;
+        v.r *= 0.92 + 0.16 * t;
+        v.b *= 1.08 - 0.18 * t;
+    } else {
+        v *= u.tint.rgb;
+    }
+    if (u.vignette > 0.0) {
+        float2 off = xy - c;
+        float rr = dot(off, off) / dot(c, c);
+        v *= 1.0 - u.vignette * rr * sqrt(rr);
+    }
+    if (u.sigma > 0.0) {
+        float shade = 1.3 - 0.7 * clamp(luma / 255.0, 0.0, 1.0);
+        uint gx = uint(xy.x) / uint(u.grain);
+        uint gy = uint(xy.y) / uint(u.grain);
+        v += post_noise(post_hash(gx, gy, u.seed)) * u.sigma * shade;
+        if (u.chroma == 1) {
+            v.r += post_noise(post_hash(gx, gy, u.seed ^ 0x9E3779B9u)) * u.sigma * 0.6 * shade;
+            v.b += post_noise(post_hash(gx, gy, u.seed ^ 0x7F4A7C15u)) * u.sigma * 0.6 * shade;
+        }
+    }
+    return float4(clamp((v + 0.5) / 255.0, 0.0, 1.0), 1.0);
+}
+
+struct SharpenUniforms {
+    int2 size;
+    float amount;
+};
+
+fragment float4 sharpen_fragment(PresentOut in [[stage_in]], constant SharpenUniforms& u [[buffer(0)]],
+                                 texture2d<float> src [[texture(0)]]) {
+    int2 p = int2(in.pos.xy);
+    float3 c = src.read(uint2(p)).rgb;
+    if (p.x == 0 || p.y == 0 || p.x == u.size.x - 1 || p.y == u.size.y - 1) return float4(c, 1.0);
+    float3 around = src.read(uint2(p + int2(1, 0))).rgb + src.read(uint2(p - int2(1, 0))).rgb +
+                    src.read(uint2(p + int2(0, 1))).rgb + src.read(uint2(p - int2(0, 1))).rgb;
+    return float4(clamp(c + u.amount * (c - around * 0.25), 0.0, 1.0), 1.0);
+}
+
 // ---- Enhanced shading (the Graphics setting; off: the game's per-vertex
 // light above). The same lights and the same formulas, evaluated for every
 // pixel from the interpolated position and normal, so the light no longer
@@ -499,6 +690,40 @@ struct Dmc3Uniforms {
     std::array<float, 4> alpha_ref;
     std::array<float, 4> camera;
     std::array<std::int32_t, 4> enhanced;
+};
+
+struct FocusUniforms {
+    std::array<std::int32_t, 2> size;
+    std::array<float, 2> proj;
+    float half_side;
+};
+
+struct DofUniforms {
+    std::array<std::int32_t, 2> size;
+    std::array<float, 2> proj;
+    float focus_mm, f, k, unit, px_per_mm, max_r;
+    std::int32_t taps, bright;
+    std::array<float, 256> tap;
+};
+static_assert(sizeof(DofUniforms) == 48 + 1024);
+
+struct LookUniforms {
+    std::array<std::int32_t, 2> size;
+    float k, fringe;
+    std::int32_t pol;
+    float pol_strength, ring, sat;
+    std::array<float, 4> tint;
+    std::int32_t cinema;
+    float vignette, sigma;
+    std::int32_t grain, chroma;
+    std::uint32_t seed;
+    std::array<std::uint32_t, 2> pad;
+};
+static_assert(sizeof(LookUniforms) == 80);
+
+struct SharpenUniforms {
+    std::array<std::int32_t, 2> size;
+    float amount;
 };
 
 // The DMC3 shader's function in the library (null: not written for Metal yet;
@@ -1014,8 +1239,8 @@ private:
 
     void draw_screen(id<MTLRenderCommandEncoder> encoder, id<MTLCommandBuffer> commands,
                      const std::vector<GpuScreenVertex>& vertices, std::size_t first, std::size_t count,
-                     const ImagePreview* image, Blend blend, const GpuViewFrame& frame) {
-        [encoder setRenderPipelineState:pipeline(true, blend, samples_)];
+                     const ImagePreview* image, Blend blend, const GpuViewFrame& frame, NSUInteger samples = 0U) {
+        [encoder setRenderPipelineState:pipeline(true, blend, samples != 0U ? samples : samples_)];
         ScreenUniforms su{};
         su.size = {static_cast<float>(frame.width), static_cast<float>(frame.height)};
         su.depth = {frame.projection[2], frame.projection[3], frame.camera_distance, 0.0F};
@@ -1027,6 +1252,26 @@ private:
         [encoder setFragmentSamplerState:sampler(true, frame.options) atIndex:0];
         set_vertices(encoder, vertices.data() + first, count * sizeof(GpuScreenVertex));
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:count];
+    }
+
+    // 8. The lines, crosses and labels (no depth test).
+    void draw_overlay(id<MTLRenderCommandEncoder> encoder, id<MTLCommandBuffer> commands, const GpuViewFrame& frame,
+                      float z, NSUInteger samples) {
+    if (!frame.overlay.empty()) {
+        std::vector<GpuScreenVertex> vertices = frame.overlay.triangles;
+        for (auto& v : vertices) v.z = z;
+        if (!vertices.empty()) draw_screen(encoder, commands, vertices, 0U, vertices.size(), nullptr, Blend::alpha, frame, samples);
+        for (const auto& label : frame.overlay.labels) {
+            const float x0 = label.x, y0 = label.y;
+            const float x1 = x0 + static_cast<float>(label.image.width);
+            const float y1 = y0 + static_cast<float>(label.image.height);
+            const std::array<float, 4> white{255.0F, 255.0F, 255.0F, 255.0F};
+            const std::vector<GpuScreenVertex> quad{{x0, y0, z, 0.0F, 0.0F, white}, {x1, y0, z, 1.0F, 0.0F, white},
+                                                    {x1, y1, z, 1.0F, 1.0F, white}, {x0, y0, z, 0.0F, 0.0F, white},
+                                                    {x1, y1, z, 1.0F, 1.0F, white}, {x0, y1, z, 0.0F, 1.0F, white}};
+            draw_screen(encoder, commands, quad, 0U, quad.size(), &label.image, Blend::alpha, frame, samples);
+        }
+    }
     }
 
     bool draw_frame(const GpuViewFrame& frame, RgbaImage& image) {
@@ -1070,6 +1315,19 @@ private:
         pass.depthAttachment.loadAction = MTLLoadActionClear;
         pass.depthAttachment.clearDepth = 1.0;
         pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+        // The development reads the depth: kept (resolved from sample 0).
+        const bool developing = frame.post != nullptr && frame.post->enabled &&
+                                static_cast<long long>(frame.width) * frame.height <= 4096LL * 4096LL &&
+                                ensure_post_targets();
+        if (developing) {
+            if (samples_ > 1) {
+                pass.depthAttachment.resolveTexture = depth_single_;
+                pass.depthAttachment.depthResolveFilter = MTLMultisampleDepthResolveFilterSample0;
+                pass.depthAttachment.storeAction = MTLStoreActionMultisampleResolve;
+            } else {
+                pass.depthAttachment.storeAction = MTLStoreActionStore;
+            }
+        }
         pass.stencilAttachment.texture = depth_;
         pass.stencilAttachment.loadAction = MTLLoadActionClear;
         pass.stencilAttachment.clearStencil = 0;
@@ -1206,27 +1464,23 @@ private:
                                                     {w, h, z, 0.0F, 0.0F, colour},       {0.0F, h, z, 0.0F, 0.0F, colour}};
             draw_screen(encoder, commands, quad, 0U, quad.size(), nullptr, Blend::alpha, frame);
         }
-        if (!frame.overlay.empty()) {
-            std::vector<GpuScreenVertex> vertices = frame.overlay.triangles;
-            for (auto& v : vertices) v.z = z;
-            if (!vertices.empty()) draw_screen(encoder, commands, vertices, 0U, vertices.size(), nullptr, Blend::alpha, frame);
-            for (const auto& label : frame.overlay.labels) {
-                const float x0 = label.x, y0 = label.y;
-                const float x1 = x0 + static_cast<float>(label.image.width);
-                const float y1 = y0 + static_cast<float>(label.image.height);
-                const std::array<float, 4> white{255.0F, 255.0F, 255.0F, 255.0F};
-                const std::vector<GpuScreenVertex> quad{{x0, y0, z, 0.0F, 0.0F, white}, {x1, y0, z, 1.0F, 0.0F, white},
-                                                        {x1, y1, z, 1.0F, 1.0F, white}, {x0, y0, z, 0.0F, 0.0F, white},
-                                                        {x1, y1, z, 1.0F, 1.0F, white}, {x0, y1, z, 0.0F, 1.0F, white}};
-                draw_screen(encoder, commands, quad, 0U, quad.size(), &label.image, Blend::alpha, frame);
-            }
-        }
+        if (!developing) draw_overlay(encoder, commands, frame, z, 0U);
         [encoder endEncoding];
 
+        // The photo camera's development on the frame and its depth, then the
+        // overlays over the developed frame.
+        id<MTLTexture> finished = samples_ > 1 ? resolve_ : color_;
+        if (developing) {
+            id<MTLTexture> developed = develop(commands, frame, *frame.post);
+            frame.post->applied = developed != nil;
+            if (developed != nil) finished = developed;
+            if (!frame.overlay.empty()) overlay_pass(commands, frame, finished, z);
+        }
+
         publish_stats();
-        // Straight to the window when the frame needs no development on the CPU.
-        const bool undeveloped = frame.post != nullptr && frame.post->enabled;
-        if (frame.present && layer_ != nil && !undeveloped && present(commands, frame)) {
+        // Straight to the window unless the CPU still has to develop it.
+        const bool undeveloped = frame.post != nullptr && frame.post->enabled && !frame.post->applied;
+        if (frame.present && layer_ != nil && !undeveloped && present(commands, frame, finished)) {
             frame.presented = true;
             trim_textures();
             return true;
@@ -1235,7 +1489,7 @@ private:
         // Read back: Metal row 0 is image row 0, as RgbaImage stores them.
         id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
         const NSUInteger row = static_cast<NSUInteger>(frame.width) * 4U;
-        [blit copyFromTexture:(samples_ > 1 ? resolve_ : color_)
+        [blit copyFromTexture:finished
                          sourceSlice:0
                          sourceLevel:0
                         sourceOrigin:MTLOriginMake(0, 0, 0)
@@ -1266,10 +1520,187 @@ private:
         dmcresource::set_gpu_shader_stats(std::move(stats));
     }
 
+    // Single-sample targets of the development: the depth it reads (the
+    // resolved one with MSAA), two colour targets, the auto focus grid.
+    bool ensure_post_targets() {
+        if (ping_ != nil && post_width_ == width_ && post_height_ == height_ && post_samples_ == samples_) return true;
+        const auto make = [this](MTLPixelFormat format, int w, int h) {
+            MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
+                                                                                         width:static_cast<NSUInteger>(w)
+                                                                                        height:static_cast<NSUInteger>(h)
+                                                                                     mipmapped:NO];
+            d.storageMode = MTLStorageModePrivate;
+            d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+            return [device_ newTextureWithDescriptor:d];
+        };
+        ping_ = make(MTLPixelFormatRGBA8Unorm, width_, height_);
+        pong_ = make(MTLPixelFormatRGBA8Unorm, width_, height_);
+        depth_single_ = samples_ > 1 ? make(MTLPixelFormatDepth32Float_Stencil8, width_, height_) : nil;
+        if (focus_ == nil) focus_ = make(MTLPixelFormatRGBA8Unorm, 16, 16);
+        if (focus_buffer_ == nil) focus_buffer_ = [device_ newBufferWithLength:16U * 16U * 4U options:MTLResourceStorageModeShared];
+        post_width_ = width_;
+        post_height_ = height_;
+        post_samples_ = samples_;
+        return ping_ != nil && pong_ != nil && focus_ != nil && focus_buffer_ != nil && (samples_ == 1 || depth_single_ != nil);
+    }
+
+    id<MTLRenderPipelineState> post_pipeline(const char* fragment) {
+        auto& slot = post_pipelines_[fragment];
+        if (slot != nil) return slot;
+        MTLRenderPipelineDescriptor* p = [[MTLRenderPipelineDescriptor alloc] init];
+        p.vertexFunction = function("present_vertex");
+        p.fragmentFunction = function(fragment);
+        if (p.fragmentFunction == nil) return nil;
+        p.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA8Unorm;
+        NSError* error = nil;
+        slot = [device_ newRenderPipelineStateWithDescriptor:p error:&error];
+        return slot;
+    }
+
+    // One full-screen pass of `fragment` into `target`.
+    template <typename Uniforms>
+    bool post_pass(id<MTLCommandBuffer> commands, id<MTLTexture> target, const char* fragment, const Uniforms& u,
+                   std::initializer_list<id<MTLTexture>> textures, const void* extra = nullptr,
+                   std::size_t extra_size = 0U) {
+        id<MTLRenderPipelineState> state = post_pipeline(fragment);
+        if (state == nil) return false;
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = target;
+        pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+        [encoder setRenderPipelineState:state];
+        [encoder setFragmentBytes:&u length:sizeof(u) atIndex:0];
+        if (extra != nullptr) [encoder setFragmentBytes:extra length:extra_size atIndex:1];
+        NSUInteger index = 0U;
+        for (id<MTLTexture> t : textures) [encoder setFragmentTexture:t atIndex:index++];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [encoder endEncoding];
+        return true;
+    }
+
+    // The development, as the OpenGL ES backend's: the auto focus when asked
+    // for (its grid read back for the median: the frame so far is committed
+    // and `commands` is a new buffer after it), the depth of field, the lens
+    // / polarizer / look, sharpening. The developed texture, or nil.
+    id<MTLTexture> develop(__strong id<MTLCommandBuffer>& commands, const GpuViewFrame& frame, const dmcresource::CameraPost& post) {
+        const int w = frame.width;
+        const int h = frame.height;
+        id<MTLTexture> depth = samples_ > 1 ? depth_single_ : depth_;
+        id<MTLTexture> source = samples_ > 1 ? resolve_ : color_;
+        const std::array<float, 2> proj{frame.projection[2], frame.projection[3]};
+        if (post.depth_of_field) {
+            float focus_mm = post.focus_mm;
+            if (focus_mm == 0.0F) {
+                // The auto focus: the median distance in the middle.
+                const FocusUniforms fu{{w, h}, proj, post.auto_focus_half};
+                if (!post_pass(commands, focus_, "focus_fragment", fu, {depth})) return nil;
+                id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+                [blit copyFromTexture:focus_ sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                           sourceSize:MTLSizeMake(16, 16, 1) toBuffer:focus_buffer_ destinationOffset:0
+               destinationBytesPerRow:64 destinationBytesPerImage:1024];
+                [blit endEncoding];
+                [commands commit];
+                [commands waitUntilCompleted];
+                if (commands.status != MTLCommandBufferStatusCompleted) return nil;
+                commands = [queue_ commandBuffer];
+                const auto* packed = static_cast<const std::uint8_t*>([focus_buffer_ contents]);
+                std::vector<float> near;
+                for (std::size_t i = 0; i < 1024U; i += 4U) {
+                    const std::uint32_t v = packed[i] | (packed[i + 1U] << 8U) | (packed[i + 2U] << 16U) |
+                                            (static_cast<std::uint32_t>(packed[i + 3U]) << 24U);
+                    if (v != 0U) near.push_back(static_cast<float>(v) / 16.0F);
+                }
+                if (near.empty()) {
+                    post.focus_found = 0.0F;  // the sky: infinity
+                    focus_mm = -1.0F;
+                } else {
+                    std::nth_element(near.begin(), near.begin() + static_cast<std::ptrdiff_t>(near.size() / 2U),
+                                     near.end());
+                    post.focus_found = near[near.size() / 2U];
+                    focus_mm = post.focus_found * post.unit_mm;
+                }
+            } else {
+                post.focus_found = focus_mm > 0.0F ? focus_mm / post.unit_mm : 0.0F;
+            }
+            DofUniforms du{};
+            du.size = {w, h};
+            du.proj = proj;
+            du.focus_mm = focus_mm;
+            du.f = post.focal_mm;
+            du.k = post.coc_k;
+            du.unit = post.unit_mm;
+            du.px_per_mm = post.px_per_mm;
+            du.max_r = post.max_radius;
+            du.taps = std::clamp(post.taps, 1, 128);
+            du.bright = post.bright_bokeh ? 1 : 0;
+            du.tap = post.tap_xy;
+            if (!post_pass(commands, ping_, "dof_fragment", du, {source, depth})) return nil;
+            source = ping_;
+        }
+
+        // The lens, the polarizer and the look.
+        std::array<std::uint8_t, 256U * 4U> curves{};
+        for (std::size_t v = 0; v < 256U; ++v) {
+            curves[v * 4U] = post.curves[v];
+            curves[v * 4U + 1U] = post.curves[256U + v];
+            curves[v * 4U + 2U] = post.curves[512U + v];
+            curves[v * 4U + 3U] = 255U;
+        }
+        LookUniforms lu{};
+        lu.size = {w, h};
+        lu.k = post.distortion_k;
+        lu.fringe = post.fringe;
+        lu.pol = post.polarizer ? 1 : 0;
+        lu.pol_strength = post.polarizer_strength;
+        lu.ring = post.polarizer_ring;
+        lu.sat = post.saturation;
+        lu.tint = {post.tint[0], post.tint[1], post.tint[2], 0.0F};
+        lu.cinema = post.cinema ? 1 : 0;
+        lu.vignette = post.vignette;
+        lu.sigma = post.noise_sigma;
+        lu.grain = std::max(1, post.grain);
+        lu.chroma = post.chroma_noise ? 1 : 0;
+        lu.seed = post.seed;
+        id<MTLTexture> result = source == ping_ ? pong_ : ping_;
+        if (!post_pass(commands, result, "look_fragment", lu, {source}, curves.data(), curves.size())) return nil;
+
+        if (post.sharpen > 0.0F) {
+            const SharpenUniforms su{{w, h}, post.sharpen};
+            id<MTLTexture> sharpened = result == ping_ ? pong_ : ping_;
+            if (!post_pass(commands, sharpened, "sharpen_fragment", su, {result})) return nil;
+            result = sharpened;
+        }
+        return result;
+    }
+
+    // The overlays over a single-sample texture (the developed frame).
+    void overlay_pass(id<MTLCommandBuffer> commands, const GpuViewFrame& frame, id<MTLTexture> target, float z) {
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = target;
+        pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTLTexture> depth = samples_ > 1 ? depth_single_ : depth_;
+        pass.depthAttachment.texture = depth;
+        pass.depthAttachment.loadAction = MTLLoadActionClear;
+        pass.depthAttachment.clearDepth = 1.0;
+        pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+        pass.stencilAttachment.texture = depth;
+        pass.stencilAttachment.loadAction = MTLLoadActionClear;
+        pass.stencilAttachment.storeAction = MTLStoreActionDontCare;
+        id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+        [encoder setViewport:MTLViewport{0.0, 0.0, static_cast<double>(frame.width),
+                                         static_cast<double>(frame.height), 0.0, 1.0}];
+        [encoder setCullMode:MTLCullModeNone];
+        [encoder setDepthStencilState:depth_state(0, false, false)];
+        draw_overlay(encoder, commands, frame, z, 1U);
+        [encoder endEncoding];
+    }
+
     // Copies the finished frame onto the layer's next drawable and presents
     // it with this command buffer; false (nothing committed) when the layer
     // has no drawable to give.
-    bool present(id<MTLCommandBuffer> commands, const GpuViewFrame& frame) {
+    bool present(id<MTLCommandBuffer> commands, const GpuViewFrame& frame, id<MTLTexture> finished) {
         const CGSize size = CGSizeMake(frame.width, frame.height);
         if (!CGSizeEqualToSize(layer_.drawableSize, size)) {
             [CATransaction begin];
@@ -1294,7 +1725,7 @@ private:
         pass.colorAttachments[0].storeAction = MTLStoreActionStore;
         id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
         [encoder setRenderPipelineState:present_state_];
-        [encoder setFragmentTexture:(samples_ > 1 ? resolve_ : color_) atIndex:0];
+        [encoder setFragmentTexture:finished atIndex:0];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [encoder endEncoding];
         [commands presentDrawable:drawable];
@@ -1324,6 +1755,11 @@ private:
     id<MTLBuffer> readback_{};
     CAMetalLayer* layer_{};
     id<MTLRenderPipelineState> present_state_{};
+    id<MTLTexture> ping_{}, pong_{}, depth_single_{}, focus_{};
+    id<MTLBuffer> focus_buffer_{};
+    int post_width_{}, post_height_{};
+    NSUInteger post_samples_{};
+    std::map<std::string, id<MTLRenderPipelineState>> post_pipelines_;
     int width_{}, height_{};
     NSUInteger samples_{1};
     std::unordered_map<const ImagePreview*, Texture> textures_;
