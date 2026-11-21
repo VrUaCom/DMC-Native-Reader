@@ -1057,8 +1057,16 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
             }
             v.include_top_level_mod_count = n;
             if (coat != 0U) {
-                v.part_attachments[0] = {body, coat, kPlayerCoatHostJoint, true, true, false};
+                // 0x140180C60: coat root = body joint 3, the sheathed Yamato
+                // (slot 28, its .clt in 30) root = body joint 13.
+                v.part_attachments[0] = {body, coat, kPlayerCoatHostJoint, true, true, true};
                 v.part_attachment_count = 1U;
+                for (const auto slot : slots) {
+                    if (slot == 28U) {
+                        v.part_attachments[1] = {body, 28U, 13U, true, true, true};
+                        v.part_attachment_count = 2U;
+                    }
+                }
             }
             out.push_back(std::move(v));
         };
