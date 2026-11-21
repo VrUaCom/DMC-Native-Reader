@@ -2095,6 +2095,7 @@ bool has_overlays(const ViewState& view, const HierarchyOverlay* hierarchy) {
 std::atomic<int> g_gpu_msaa{GpuViewOptions{}.msaa_samples};
 std::atomic<bool> g_gpu_mipmaps{GpuViewOptions{}.mipmaps};
 std::atomic<int> g_gpu_anisotropy{GpuViewOptions{}.anisotropy};
+std::atomic<int> g_gpu_shading{GpuViewOptions{}.shading};
 std::atomic<std::uint64_t> g_gpu_frames{0U};
 std::atomic<std::uint64_t> g_cpu_frames{0U};
 std::atomic<std::uint64_t> g_gpu_failures{0U};
@@ -2611,6 +2612,22 @@ GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& f
             out.light_colours[static_cast<std::size_t>(4 + k)] = batch.light_gain * unit;
             out.light_colours[static_cast<std::size_t>(12 + k)] = batch.light_base * unit;
         }
+        // Enhanced lighting (GpuViewOptions::shading): models whose vertex
+        // colours are their whole light get the camera light on top, a key
+        // along it, a weak one from behind and the rest constant, so their
+        // shape reads; the backend works it out per pixel where it can.
+        if (frame.options.shading != 0 && batch.colored && batch.light_gain == 0.0F && !layered && !d.model_rig) {
+            out.light_directions = {};
+            out.light_colours = {};
+            for (int k = 0; k < 3; ++k) {
+                out.light_directions[static_cast<std::size_t>(k * 4)] = l[static_cast<std::size_t>(k)];
+                out.light_directions[static_cast<std::size_t>(k * 4 + 1)] = -l[static_cast<std::size_t>(k)];
+                out.light_colours[static_cast<std::size_t>(k)] = 0.62F;
+                out.light_colours[static_cast<std::size_t>(4 + k)] = 0.18F;
+                out.light_colours[static_cast<std::size_t>(12 + k)] = 0.5F;
+            }
+            out.light_directions[15] = 1.0F;
+        }
         // The stage's lights instead (all but added / subtracted surfaces):
         // a row and a colour column each, and the constant term.
         if (d.model_rig && !layered) {
@@ -2662,10 +2679,11 @@ void set_gpu_view_options(const GpuViewOptions& options) noexcept {
     g_gpu_msaa.store(std::clamp(options.msaa_samples, 0, 16));
     g_gpu_mipmaps.store(options.mipmaps);
     g_gpu_anisotropy.store(std::clamp(options.anisotropy, 1, 16));
+    g_gpu_shading.store(std::clamp(options.shading, 0, 1));
 }
 
 GpuViewOptions gpu_view_options() noexcept {
-    return {g_gpu_msaa.load(), g_gpu_mipmaps.load(), g_gpu_anisotropy.load()};
+    return {g_gpu_msaa.load(), g_gpu_mipmaps.load(), g_gpu_anisotropy.load(), g_gpu_shading.load()};
 }
 
 GpuViewStats gpu_view_stats() noexcept {

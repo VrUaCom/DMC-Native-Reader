@@ -62,6 +62,7 @@ struct Applied final {
     int msaa = 4;
     bool mipmaps = true;
     int anisotropy = 8;
+    int shading = 0;
     std::uint32_t render_flags = 0;  // smooth, unlit, background, room lines, room animation
     int max_side = 720;
     int frame_ms = 33;

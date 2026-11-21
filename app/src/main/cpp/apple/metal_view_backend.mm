@@ -236,6 +236,8 @@ struct Dmc3Uniforms {
     float4 fog_scroll;       // xy fog coefficients, zw uv scroll (0..1 units)
     int4 alpha;              // x test, y function
     float4 alpha_ref;        // x
+    float4 camera;           // xyz the camera in the batch's coordinates (enhanced shading)
+    int4 enhanced;           // x lighting: 0 model_lit, 1 effect_model_lit, 2 stage_lit; y specular on
 };
 
 struct Dmc3Out {
@@ -328,6 +330,136 @@ fragment float4 texture_modulate_fog(Dmc3Out in [[stage_in]], constant Dmc3Unifo
     if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
     return c;
 }
+// ---- Enhanced shading (the Graphics setting; off: the game's per-vertex
+// light above). The same lights and the same formulas, evaluated for every
+// pixel from the interpolated position and normal, so the light no longer
+// follows the triangles; plus a soft highlight from the same lights (models:
+// their directional rig; stages: the point lights, weaker). Effects get no
+// highlight.
+
+struct Dmc3PxOut {
+    float4 pos [[position]];
+    float2 uv;
+    float4 colour;           // the vertex colour
+    float4 fog;
+    float3 p;                // the batch's coordinates
+    float3 n;
+};
+
+static Dmc3PxOut px_common(Dmc3In in, constant Dmc3Uniforms& u, thread float4& clip) {
+    Dmc3PxOut o;
+    clip = u.view_projection * float4(in.position, 1.0);
+    o.pos = metal_clip(clip);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.colour = in.colour;
+    o.p = in.position;
+    o.n = in.normal;
+    return o;
+}
+
+vertex Dmc3PxOut model_lit_px(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    float4 c;
+    Dmc3PxOut o = px_common(in, u, c);
+    o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
+    return o;
+}
+
+vertex Dmc3PxOut stage_lit_px(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    float4 c;
+    Dmc3PxOut o = px_common(in, u, c);
+    o.fog = float4(0.0, 0.0, 0.0, 1.0);
+    return o;
+}
+
+vertex Dmc3PxOut stage_lit_fog_px(Dmc3In in [[stage_in]], constant Dmc3Uniforms& u [[buffer(1)]]) {
+    float4 c;
+    Dmc3PxOut o = px_common(in, u, c);
+    o.fog = clamp(float4(u.fog_colour.rgb, u.fog_scroll.x + u.fog_scroll.y / abs(c.w)), 0.0, 1.0);
+    return o;
+}
+
+// The vertex shader's colour for this pixel, and the highlight to add.
+static float4 px_light(Dmc3PxOut in, constant Dmc3Uniforms& u, thread float3& spec) {
+    spec = float3(0.0);
+    float len = length(in.n);
+    float3 n = len > 1.0e-6 ? in.n / len : float3(0.0, 0.0, 1.0);
+    float3 v = normalize(u.camera.xyz - in.p);
+    if (u.enhanced.x == 2) {
+        float4 dx = u.light_x - in.p.x;
+        float4 dy = u.light_y - in.p.y;
+        float4 dz = u.light_z - in.p.z;
+        float4 dist2 = dx * dx + dy * dy + dz * dz;
+        float4 atten = clamp(1.0 - dist2 * u.light_falloff, 0.0, 1.0);
+        float4 facing = dx * n.x + dy * n.y + dz * n.z;
+        float4 w = max(facing * atten, 0.0);
+        float4 light = u.light_colour[0] * w.x + u.light_colour[1] * w.y + u.light_colour[2] * w.z +
+                       u.light_colour[3] * w.w;
+        light.rgb += u.ambient.rgb;
+        if (u.enhanced.y != 0) {
+            for (int i = 0; i < 4; ++i) {
+                float3 l = float3(dx[i], dy[i], dz[i]);
+                float d = length(l);
+                if (d < 1.0e-4 || atten[i] <= 0.0) continue;
+                l /= d;
+                if (dot(n, l) <= 0.0) continue;
+                float h = max(dot(n, normalize(l + v)), 0.0);
+                spec += u.light_colour[i].rgb * min(d, 64.0) * atten[i] * pow(h, 24.0) * 0.12;
+            }
+        }
+        return clamp(float4(light.rgb * in.colour.rgb, u.part_alpha.x), 0.0, 1.0);
+    }
+    float4 nn = float4(n, 1.0);
+    float4 lit = u.light_directions * nn;
+    float4 light;
+    float4 colour;
+    float unit;
+    if (u.enhanced.x == 1) {
+        unit = 1.0;
+        light = u.light_colours * clamp(lit, 0.0, 1.0);
+        colour.rgb = light.rgb * u.part_colour.rgb * in.colour.rgb * (255.0 / 128.0);
+    } else {
+        unit = 1.0 / 128.0;
+        light = (u.light_colours * max(lit, 0.0)) * unit;
+        colour.rgb = light.rgb * u.part_colour.rgb;
+    }
+    colour.a = u.part_alpha.x;
+    if (u.enhanced.y != 0) {
+        for (int i = 0; i < 3; ++i) {
+            float3 l = float3(u.light_directions[0][i], u.light_directions[1][i], u.light_directions[2][i]);
+            float d = length(l);
+            if (d < 1.0e-4 || lit[i] <= 0.0) continue;
+            l /= d;
+            float h = max(dot(n, normalize(l + v)), 0.0);
+            spec += u.light_colours[i].rgb * unit * d * pow(h, 32.0) * 0.4;
+        }
+        // A faint rim where the surface turns away from the camera.
+        float rim = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 3.0);
+        spec += colour.rgb * rim * 0.25;
+    }
+    return clamp(colour, 0.0, 1.0);
+}
+
+static float4 px_shade(Dmc3PxOut in, constant Dmc3Uniforms& u, texture2d<float> tex, sampler smp, bool fog) {
+    float3 spec;
+    float4 lit = px_light(in, u, spec);
+    float4 t = tex.sample(smp, in.uv);
+    float4 c = t * lit * 2.0;
+    c.rgb += spec * t.a;
+    if (fog) c.rgb = mix(in.fog.rgb, c.rgb, in.fog.a);
+    c = clamp(c, 0.0, 1.0);
+    if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
+    return c;
+}
+
+fragment float4 texture_modulate_px(Dmc3PxOut in [[stage_in]], constant Dmc3Uniforms& u [[buffer(0)]],
+                                    texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    return px_shade(in, u, tex, smp, false);
+}
+
+fragment float4 texture_modulate_fog_px(Dmc3PxOut in [[stage_in]], constant Dmc3Uniforms& u [[buffer(0)]],
+                                        texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    return px_shade(in, u, tex, smp, true);
+}
 )msl";
 
 struct Dmc3Uniforms {
@@ -346,6 +478,8 @@ struct Dmc3Uniforms {
     std::array<float, 4> fog_scroll;
     std::array<std::int32_t, 4> alpha;
     std::array<float, 4> alpha_ref;
+    std::array<float, 4> camera;
+    std::array<std::int32_t, 4> enhanced;
 };
 
 // The DMC3 shader's function in the library (null: not written for Metal yet;
@@ -361,6 +495,29 @@ const char* dmc3_function(dmcresource::dmc3::Shader shader) {
         case Shader::texture_modulate_fog_frag: return "texture_modulate_fog";
         default: return nullptr;
     }
+}
+
+// The enhanced-shading function in place of a DMC3 one (per-pixel light).
+const char* dmc3_enhanced_function(dmcresource::dmc3::Shader shader) {
+    using dmcresource::dmc3::Shader;
+    switch (shader) {
+        case Shader::model_lit_vert:
+        case Shader::effect_model_lit_vert: return "model_lit_px";
+        case Shader::stage_lit_vert: return "stage_lit_px";
+        case Shader::stage_lit_fog_vert: return "stage_lit_fog_px";
+        case Shader::texture_modulate_frag: return "texture_modulate_px";
+        case Shader::texture_modulate_fog_frag: return "texture_modulate_fog_px";
+        default: return nullptr;
+    }
+}
+
+// The camera in the coordinates `view` (column-major, rigid) maps to camera space.
+std::array<float, 4> camera_position(const std::array<float, 16>& v) noexcept {
+    std::array<float, 4> c{};
+    for (std::size_t i = 0U; i < 3U; ++i) {
+        c[i] = -(v[i * 4U + 0U] * v[12] + v[i * 4U + 1U] * v[13] + v[i * 4U + 2U] * v[14]);
+    }
+    return c;
 }
 
 // The DMC3 shaders' u_view_projection: the core's projection after the view.
@@ -728,8 +885,9 @@ private:
                    const std::array<float, 16>& view) {
         const auto d = dmcresource::dmc3_draw(batch, pass, frame);
         if (!d.drawn()) return false;
-        const char* vertex = dmc3_function(d.vertex);
-        const char* fragment = dmc3_function(d.fragment);
+        const bool enhanced = frame.options.shading != 0;
+        const char* vertex = enhanced ? dmc3_enhanced_function(d.vertex) : dmc3_function(d.vertex);
+        const char* fragment = enhanced ? dmc3_enhanced_function(d.fragment) : dmc3_function(d.fragment);
         if (vertex == nullptr || fragment == nullptr) return false;
         id<MTLRenderPipelineState> state = pipeline(vertex, fragment, dmc3_layout_, blend, samples_);
         if (state == nil) return false;
@@ -759,6 +917,17 @@ private:
         u.alpha = {d.alpha_func == dmcresource::dmc3::AlphaFunc::off ? 0 : 1, static_cast<std::int32_t>(d.alpha_func),
                    0, 0};
         u.alpha_ref = {d.alpha_ref, 0.0F, 0.0F, 0.0F};
+        if (enhanced) {
+            using dmcresource::dmc3::Shader;
+            u.camera = camera_position(view);
+            const int kind = d.vertex == Shader::effect_model_lit_vert ? 1
+                             : d.vertex == Shader::model_lit_vert   ? 0
+                                                                    : 2;
+            // Highlights on the model's own surfaces and the opaque stage, not
+            // on what is added or subtracted over the scene.
+            const bool spec = kind == 2 ? blend == Blend::none : batch.kind == dmcresource::GpuBatchKind::model;
+            u.enhanced = {kind, spec ? 1 : 0, 0, 0};
+        }
         id<MTLTexture> t = texture(batch.texture, commands);
         [encoder setRenderPipelineState:state];
         [encoder setVertexBytes:&u length:sizeof(u) atIndex:1];

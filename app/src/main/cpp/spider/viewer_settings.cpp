@@ -146,6 +146,16 @@ std::vector<Setting> viewer_settings(const Capabilities& caps) {
         "samples the next lower level is used. The CPU renderer ignores these three.";
     rows.push_back(std::move(aniso));
 
+    auto shading = numbers("set.gpuShading", kGraphics, "Lighting (DMC3 shaders, GPU)",
+                           {"As the game (per vertex)", "Enhanced (per pixel, highlights)"}, {0, 1}, 0);
+    shading.render_now = true;
+    shading.hint =
+        "Enhanced: the same lights as the game, worked out for every pixel instead of every corner, so the "
+        "light does not follow the triangles, with soft highlights and a faint rim on models, and models "
+        "whose vertex colours are all their light also get the camera's light, so their shape reads. Not how "
+        "the game looks. Per pixel on macOS (Metal); elsewhere the extra light is worked out per corner.";
+    rows.push_back(std::move(shading));
+
     auto side = numbers("set.maxSide", kGraphics, "Resolution (longest side, px; 2K-8K render larger than the screen)",
                         {"360", "540", "720", "1024", "2K", "4K", "5K", "6K", "8K"},
                         {360, 540, 720, 1024, 2048, 3840, 5120, 6144, 7680}, 720);
@@ -222,6 +232,7 @@ Applied resolve(const Stored& stored) {
     out.msaa = whole("set.gpuMsaa");
     out.mipmaps = on("set.gpuMipmaps");
     out.anisotropy = whole("set.gpuAnisotropy");
+    out.shading = std::clamp(whole("set.gpuShading"), 0, 1);
     out.max_side = std::clamp(whole("set.maxSide"), 128, 7680);
     out.frame_ms = std::max(8, whole("set.frameMs"));
     const float speed = value("set.speed");
@@ -247,7 +258,7 @@ Applied apply_settings(const Stored& stored) {
     set_gpu_present_enabled(applied.gpu_present);
     set_dmc3_shaders_enabled(applied.dmc3_shaders);
     set_game_lights_enabled(applied.game_lights);
-    set_gpu_view_options({applied.msaa, applied.mipmaps, applied.anisotropy});
+    set_gpu_view_options({applied.msaa, applied.mipmaps, applied.anisotropy, applied.shading});
     return applied;
 }
 
@@ -258,6 +269,7 @@ std::string benchmark_summary(const Applied& applied) {
         text += std::string{", mipmaps "} + (applied.mipmaps ? "on" : "off");
         text += ", anisotropy " +
                 (applied.anisotropy <= 1 ? std::string{"off"} : std::to_string(applied.anisotropy) + "x");
+        if (applied.shading != 0) text += ", enhanced lighting";
         text += std::string{", shown "} + (applied.gpu_present ? "directly" : "through a picture");
         text += std::string{", shaders "} + (applied.dmc3_shaders ? "DMC3" : "Reader");
         if (applied.game_lights) text += " with the stage's lights";

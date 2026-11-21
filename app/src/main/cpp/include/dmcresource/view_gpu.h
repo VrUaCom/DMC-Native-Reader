@@ -109,6 +109,7 @@ struct GpuViewOptions final {
     int msaa_samples{4};  // 0 (off), 2, 4, 8, 16; capped by the chip and target memory
     bool mipmaps{true};   // mipmapped sampling (smooth: trilinear, pixel: nearest mip)
     int anisotropy{8};    // 1 (off) .. 16; smooth textures only, capped by the chip
+    int shading{0};       // 0 the game's (per vertex), 1 enhanced (per pixel, highlights); backends without it draw 0
 };
 
 struct GpuCapabilities final {

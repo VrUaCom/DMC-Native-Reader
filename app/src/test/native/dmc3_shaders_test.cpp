@@ -120,6 +120,25 @@ void choices() {
     assert(std::fabs(d.light_colours[0] - 240.0F / 128.0F) < 1.0e-5F);
     assert(std::fabs(d.light_colours[12] - 220.0F / 128.0F) < 1.0e-5F);
 
+    // Enhanced lighting: a model lit only by its vertex colours gets the
+    // camera light (key, weak back, constant); the game's choice otherwise.
+    auto baked = model;
+    baked.colored = true;
+    baked.light_base = 1.0F;
+    baked.light_gain = 0.0F;
+    d = dmc3_draw(baked, GpuPass::model, frame_with(true, false));
+    assert(d.light_colours[0] == 0.0F && d.light_colours[12] == 1.0F);
+    auto enhanced = frame_with(true, false);
+    enhanced.options.shading = 1;
+    d = dmc3_draw(baked, GpuPass::model, enhanced);
+    assert(d.vertex == Shader::effect_model_lit_vert);
+    assert(d.light_directions[4] == 0.6F && d.light_directions[5] == -0.6F && d.light_directions[15] == 1.0F);
+    assert(d.light_colours[0] > d.light_colours[4] && d.light_colours[4] > 0.0F && d.light_colours[12] > 0.0F);
+    auto baked_added = baked;
+    baked_added.kind = GpuBatchKind::model_additive;
+    assert(dmc3_draw(baked_added, GpuPass::model, enhanced).light_colours[0] == 0.0F);
+    assert(dmc3_draw(baked, GpuPass::model, lit).light_colours[0] == 240.0F / 128.0F);
+
     // With fog: the fog variant, the frame's colour, the model's amount.
     d = dmc3_draw(model, GpuPass::model, frame_with(true, true));
     assert(d.fragment == Shader::texture_modulate_fog_frag);
