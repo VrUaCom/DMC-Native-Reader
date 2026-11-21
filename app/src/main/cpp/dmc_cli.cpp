@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "capi/include/dmc_reader.h"
+#include "linux_png.inl"
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/inspection_format.h"
 #include "dmcresource/resource_session.h"
@@ -174,7 +175,6 @@ std::unique_ptr<Session> OpenPath(const fs::path& path, std::string* error) {
 }
 
 // ---- PNG Encoding ---------------------------------------------------------
-#include "linux_png.inl"
 using linux_png::SaveRgbaToPng;
 
 // ---- Commands -------------------------------------------------------------

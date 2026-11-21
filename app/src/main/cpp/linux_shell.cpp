@@ -43,6 +43,8 @@
 #include "capi/include/dmc_reader.h"
 #include "linux_png.inl"
 #include "dmcresource/view_renderer.h"
+#include "dmcresource/dds_bcn.h"
+#include "dmcresource/dds_bcn_encode.h"
 
 #ifndef DMC_NATIVE_READER_BUILD_SHA
 #define DMC_NATIVE_READER_BUILD_SHA "unknown"
@@ -662,6 +664,7 @@ private:
     void push_session(dmc_session* new_session, const std::string& title);
     void load_marker_card(int marker);
     void handle_card_action(int marker, int action_id);
+    bool try_attach_custom_texture(const fs::path& path);
 
     void load_character_kit(const std::string& archive_name, const fs::path& archive_path);
     void toggle_kit_item(size_t index);
@@ -904,6 +907,20 @@ bool App::init_x11(int width, int height) {
     }
 
     XStoreName(host_.display, host_.window, "DMC Native Reader (Linux)");
+
+    const char* wayland_display = std::getenv("WAYLAND_DISPLAY");
+    if (wayland_display && *wayland_display) {
+        std::cout << "[Display] Detected Wayland environment ($WAYLAND_DISPLAY=" << wayland_display
+                  << ") via XWayland integration\n";
+    }
+
+    XClassHint class_hint{};
+    char res_name[] = "dmc_native_reader";
+    char res_class[] = "DMCNativeReader";
+    class_hint.res_name = res_name;
+    class_hint.res_class = res_class;
+    XSetClassHint(host_.display, host_.window, &class_hint);
+
     host_.wm_delete_window = XInternAtom(host_.display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(host_.display, host_.window, &host_.wm_delete_window, 1);
 
@@ -1129,7 +1146,72 @@ void App::update_button_states() {
     }
 }
 
+bool App::try_attach_custom_texture(const fs::path& path) {
+    if (!session_ || child_browser_mode_) return false;
+
+    const std::string ext = path.extension().string();
+    std::string ext_lower;
+    for (char c : ext) ext_lower += static_cast<char>(std::tolower(c));
+
+    const auto bytes = ReadFileBytes(path);
+    if (bytes.empty()) return false;
+
+    std::vector<uint8_t> dds_payload;
+
+    if (ext_lower == ".dds" || ext_lower == ".ptx") {
+        dds_payload = bytes;
+    } else if (ext_lower == ".png") {
+        int w = 0, h = 0;
+        std::vector<uint8_t> rgba;
+        if (!linux_png::DecodePngToRgba(bytes.data(), bytes.size(), w, h, rgba)) {
+            std::cerr << "error: failed to decode PNG texture: " << path.string() << "\n";
+            return false;
+        }
+
+        dmcresource::dds_bcn::RgbaImage img;
+        img.width = static_cast<uint32_t>(w);
+        img.height = static_cast<uint32_t>(h);
+        img.rgba = std::move(rgba);
+
+        auto enc_res = dmcresource::dds_bcn::encode_dds(dmcresource::dds_bcn::Format::bc7, {&img, 1});
+        if (!enc_res.ok || enc_res.bytes.empty()) {
+            enc_res = dmcresource::dds_bcn::encode_dds(dmcresource::dds_bcn::Format::bc3, {&img, 1});
+        }
+        if (!enc_res.ok || enc_res.bytes.empty()) {
+            std::cerr << "error: failed to encode PNG to DDS\n";
+            return false;
+        }
+
+        dds_payload.resize(enc_res.bytes.size());
+        std::memcpy(dds_payload.data(), enc_res.bytes.data(), enc_res.bytes.size());
+    } else {
+        return false;
+    }
+
+    const bool attached = dmc_attach_ptx(session_, -1, path.filename().string().c_str(),
+                                         dds_payload.data(), dds_payload.size());
+    if (attached) {
+        camera_message_ = "Hot-swapped texture: " + path.filename().string();
+        std::cout << "[Texture Hot-Swap] Successfully attached custom texture " << path.string()
+                  << " onto active model!\n";
+        return true;
+    }
+
+    return false;
+}
+
 void App::open_file(const fs::path& path) {
+    const std::string ext = path.extension().string();
+    std::string ext_lower;
+    for (char c : ext) ext_lower += static_cast<char>(std::tolower(c));
+
+    // Hot-swap texture onto active 3D model if already open
+    if (session_ && !child_browser_mode_ && (ext_lower == ".png" || ext_lower == ".dds" || ext_lower == ".ptx")) {
+        if (try_attach_custom_texture(path)) {
+            return;
+        }
+    }
+
     const auto bytes = ReadFileBytes(path);
     if (bytes.empty()) {
         std::cerr << "error: file not found or empty: " << path.string() << "\n";

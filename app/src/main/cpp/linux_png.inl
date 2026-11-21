@@ -1,11 +1,15 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
+
+#include "dmcresource/slot_inflate.h"
 
 namespace linux_png {
 
@@ -110,6 +114,104 @@ inline bool SaveRgbaToPng(const std::filesystem::path& path, int width, int heig
     if (!out) return false;
     out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     return out.good();
+}
+
+inline bool DecodePngToRgba(const uint8_t* png_data, size_t png_size, int& out_w, int& out_h, std::vector<uint8_t>& out_rgba) {
+    if (!png_data || png_size < 33) return false;
+    const uint8_t sig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    if (std::memcmp(png_data, sig, 8) != 0) return false;
+
+    size_t offset = 8;
+    int width = 0, height = 0;
+    int bit_depth = 0, color_type = 0;
+    std::vector<uint8_t> compressed_idat;
+
+    while (offset + 8 <= png_size) {
+        const uint32_t chunk_len = (static_cast<uint32_t>(png_data[offset]) << 24) |
+                                   (static_cast<uint32_t>(png_data[offset + 1]) << 16) |
+                                   (static_cast<uint32_t>(png_data[offset + 2]) << 8) |
+                                   static_cast<uint32_t>(png_data[offset + 3]);
+        const char* chunk_type = reinterpret_cast<const char*>(png_data + offset + 4);
+        offset += 8;
+        if (offset + chunk_len > png_size) return false;
+
+        if (std::memcmp(chunk_type, "IHDR", 4) == 0 && chunk_len >= 13) {
+            const uint8_t* p = png_data + offset;
+            width = (p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+            height = (p[4] << 24) | (p[5] << 16) | (p[6] << 8) | p[7];
+            bit_depth = p[8];
+            color_type = p[9];
+            if (bit_depth != 8 || (color_type != 2 && color_type != 6)) {
+                return false; // Only 8-bit truecolor RGB / RGBA
+            }
+        } else if (std::memcmp(chunk_type, "IDAT", 4) == 0) {
+            compressed_idat.insert(compressed_idat.end(), png_data + offset, png_data + offset + chunk_len);
+        } else if (std::memcmp(chunk_type, "IEND", 4) == 0) {
+            break;
+        }
+        offset += chunk_len + 4; // Skip chunk data + 4 bytes CRC
+    }
+
+    if (width <= 0 || height <= 0 || compressed_idat.empty()) return false;
+
+    const int channels = (color_type == 6) ? 4 : 3;
+    const size_t line_bytes = static_cast<size_t>(width * channels);
+    const size_t raw_size = static_cast<size_t>(height) * (1 + line_bytes);
+
+    auto inflated = ::dmcresource::slot_inflate::inflate_zlib(compressed_idat, raw_size + 4096);
+    if (!inflated || inflated->size() < raw_size) return false;
+
+    const uint8_t* in_ptr = inflated->data();
+    out_rgba.resize(static_cast<size_t>(width * height * 4));
+    std::vector<uint8_t> scanline(line_bytes);
+    std::vector<uint8_t> prev_scanline(line_bytes, 0);
+
+    const auto paeth = [](int a, int b, int c) -> int {
+        int p = a + b - c;
+        int pa = std::abs(p - a);
+        int pb = std::abs(p - b);
+        int pc = std::abs(p - c);
+        if (pa <= pb && pa <= pc) return a;
+        if (pb <= pc) return b;
+        return c;
+    };
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t filter = *in_ptr++;
+        for (size_t x = 0; x < line_bytes; ++x) {
+            const int a = (x >= static_cast<size_t>(channels)) ? scanline[x - channels] : 0;
+            const int b = prev_scanline[x];
+            const int c = (x >= static_cast<size_t>(channels)) ? prev_scanline[x - channels] : 0;
+            const int raw = *in_ptr++;
+            int val = raw;
+            switch (filter) {
+                case 0: val = raw; break;
+                case 1: val = raw + a; break;
+                case 2: val = raw + b; break;
+                case 3: val = raw + ((a + b) / 2); break;
+                case 4: val = raw + paeth(a, b, c); break;
+                default: break;
+            }
+            scanline[x] = static_cast<uint8_t>(val & 0xFF);
+        }
+
+        uint8_t* out_row = out_rgba.data() + y * width * 4;
+        if (channels == 4) {
+            std::memcpy(out_row, scanline.data(), line_bytes);
+        } else {
+            for (int x = 0; x < width; ++x) {
+                out_row[x * 4 + 0] = scanline[x * 3 + 0];
+                out_row[x * 4 + 1] = scanline[x * 3 + 1];
+                out_row[x * 4 + 2] = scanline[x * 3 + 2];
+                out_row[x * 4 + 3] = 255;
+            }
+        }
+        prev_scanline = scanline;
+    }
+
+    out_w = width;
+    out_h = height;
+    return true;
 }
 
 } // namespace linux_png
