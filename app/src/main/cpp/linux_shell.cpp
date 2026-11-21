@@ -38,6 +38,7 @@
 #endif
 
 #include "capi/include/dmc_reader.h"
+#include "linux_png.inl"
 #include "dmcresource/view_renderer.h"
 
 #ifndef DMC_NATIVE_READER_BUILD_SHA
@@ -157,6 +158,29 @@ public:
         fill_rect(rx + rw - 1, ry, 1, rh, color);
     }
 
+    void draw_line(int x0, int y0, int x1, int y1, uint32_t color) {
+        int dx = std::abs(x1 - x0);
+        int sx = x0 < x1 ? 1 : -1;
+        int dy = -std::abs(y1 - y0);
+        int sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy;
+        while (true) {
+            if (x0 >= 0 && x0 < width_ && y0 >= 0 && y0 < height_) {
+                pixels_[y0 * width_ + x0] = color;
+            }
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 >= dy) {
+                err += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+
     void draw_circle(int cx, int cy, int radius, uint32_t color) {
         for (int dy = -radius; dy <= radius; ++dy) {
             for (int dx = -radius; dx <= radius; ++dx) {
@@ -263,7 +287,13 @@ enum ButtonId : int {
     kBtnInfo = 206,
     kBtnCollision = 207,
     kBtnSound = 208,
-    kBtnResetView = 209,
+    kBtnCamera = 209,
+    kBtnResetView = 210,
+};
+
+struct CameraDialButton {
+    int key = 0;
+    Rect rect{};
 };
 
 // ---- Linux Audio Playback Engine ------------------------------------------
@@ -388,6 +418,15 @@ private:
     void trigger_open_dialog();
     void play_next_sound();
 
+    void init_camera();
+    void toggle_camera_mode();
+    void camera_focus_at(int x, int y);
+    void camera_focus_ring(float steps);
+    void camera_focus_lock();
+    void camera_level();
+    void step_camera_dial(int key);
+    void capture_photo_png();
+
     void close_all_sessions() {
         while (!nav_stack_.empty()) {
             if (nav_stack_.back().session) dmc_close(nav_stack_.back().session);
@@ -467,6 +506,12 @@ private:
     // Buttons
     std::vector<Button> header_buttons_{};
     std::vector<Button> toolbar_buttons_{};
+
+    // Photo Camera state
+    bool camera_mode_ = false;
+    std::string camera_message_{};
+    std::vector<int> camera_choices_{};
+    std::vector<CameraDialButton> camera_dial_buttons_{};
 
     // Pixel buffers
     std::vector<uint8_t> scene_rgba_{};
@@ -564,6 +609,7 @@ void App::init_buttons() {
         {kBtnInfo, "INFO", "File health and inspection (I)", {}, true, true, false},
         {kBtnCollision, "COLLIS", "Cycle hitboxes and collision (H)", {}, true, true, false},
         {kBtnSound, "SOUND", "Play resource sounds (S)", {}, true, true, false},
+        {kBtnCamera, "CAM", "Toggle Photo Camera viewfinder (V)", {}, true, true, false},
         {kBtnResetView, "RESET", "Reset camera view (R / 0)", {}, true, true, false},
     };
 }
@@ -635,6 +681,9 @@ void App::update_button_states() {
                 break;
             case kBtnCollision:
                 btn.active = (hitbox_attack_ != -2);
+                break;
+            case kBtnCamera:
+                btn.active = dmc_camera_mode();
                 break;
             case kBtnResetView:
                 btn.active = false;
@@ -1050,6 +1099,95 @@ void App::render_frame() {
         canvas_.draw_text(viewport_w - 192, viewport_y + 16, hit_str, kColorAccent);
     }
 
+    // Camera Viewfinder & Guides Overlay
+    if (dmc_camera_mode() && session_) {
+        dmc_finder finder = dmc_viewfinder(session_, viewport_w, viewport_h, view_.zoom, false, 0);
+        if (finder.shown) {
+            const int fx = static_cast<int>(finder.frame[0]);
+            const int fy = viewport_y + static_cast<int>(finder.frame[1]);
+            const int fw = static_cast<int>(finder.frame[2]);
+            const int fh = static_cast<int>(finder.frame[3]);
+
+            canvas_.draw_rect_outline(fx, fy, fw, fh, 0x00C49A45);
+
+            // Corner brackets
+            const int bl = std::min(24, std::min(fw, fh) / 4);
+            canvas_.fill_rect(fx, fy, bl, 3, 0x00FFCC00);
+            canvas_.fill_rect(fx, fy, 3, bl, 0x00FFCC00);
+            canvas_.fill_rect(fx + fw - bl, fy, bl, 3, 0x00FFCC00);
+            canvas_.fill_rect(fx + fw - 3, fy, 3, bl, 0x00FFCC00);
+            canvas_.fill_rect(fx, fy + fh - 3, bl, 3, 0x00FFCC00);
+            canvas_.fill_rect(fx, fy + fh - bl, 3, bl, 0x00FFCC00);
+            canvas_.fill_rect(fx + fw - bl, fy + fh - 3, bl, 3, 0x00FFCC00);
+            canvas_.fill_rect(fx + fw - 3, fy + fh - bl, 3, bl, 0x00FFCC00);
+
+            // Guide lines (rule of thirds)
+            for (size_t i = 0; i < finder.line_count; ++i) {
+                const float* l = finder.lines + i * 4;
+                canvas_.draw_line(static_cast<int>(l[0]), viewport_y + static_cast<int>(l[1]),
+                                  static_cast<int>(l[2]), viewport_y + static_cast<int>(l[3]),
+                                  0x004A5060);
+            }
+
+            // Viewfinder status
+            if (finder.status && finder.status[0] != '\0') {
+                const int sw = static_cast<int>(std::strlen(finder.status)) * 8 + 16;
+                canvas_.fill_rect(fx + 10, fy + fh - 26, sw, 20, 0x0014141C);
+                canvas_.draw_rect_outline(fx + 10, fy + fh - 26, sw, 20, 0x00FFCC00);
+                canvas_.draw_text(fx + 18, fy + fh - 22, finder.status, 0x00FFCC44);
+            }
+        }
+        dmc_finder_free(&finder);
+
+        // Camera message / toast
+        if (!camera_message_.empty()) {
+            const int mw = static_cast<int>(camera_message_.size()) * 8 + 16;
+            canvas_.fill_rect(14, viewport_y + 40, mw, 22, 0x00181824);
+            canvas_.draw_rect_outline(14, viewport_y + 40, mw, 22, 0x0044EE99);
+            canvas_.draw_text(22, viewport_y + 45, camera_message_, 0x0044EE99);
+        }
+
+        // Camera Dials Bar at top of viewport
+        camera_dial_buttons_.clear();
+        dmc_camera_dials* dials = dmc_camera_dials_list();
+        if (dials) {
+            const size_t dial_cnt = dmc_camera_dials_count(dials);
+            int dial_x = 14;
+            const int dial_y = viewport_y + 10;
+            for (size_t i = 0; i < dial_cnt; ++i) {
+                const dmc_camera_dial* d = dmc_camera_dials_at(dials, i);
+                if (!d) continue;
+                std::string label = (d->title ? std::string(d->title) : "") + ": " + (d->value ? std::string(d->value) : "");
+                const int dw = static_cast<int>(label.size()) * 8 + 16;
+                Rect dr{dial_x, dial_y, dw, 24};
+                camera_dial_buttons_.push_back({d->key, dr});
+                canvas_.fill_rect(dial_x, dial_y, dw, 24, 0x0020202E);
+                canvas_.draw_rect_outline(dial_x, dial_y, dw, 24, 0x0078AAFF);
+                canvas_.draw_text(dial_x + 8, dial_y + 6, label, 0x00EBEBEE);
+                dial_x += dw + 8;
+            }
+            dmc_camera_dials_free(dials);
+        }
+    }
+
+    // Cutscene Subtitles
+    if (session_) {
+        dmc_subtitle sub{};
+        if (dmc_cutscene_subtitle(session_, &sub)) {
+            if (sub.text && sub.text[0] != '\0') {
+                const int sub_y = viewport_y + static_cast<int>(sub.top * viewport_h);
+                const int sub_w = static_cast<int>(std::strlen(sub.text)) * 8;
+                const int sub_x = static_cast<int>(sub.centre_x * viewport_w) - sub_w / 2;
+                canvas_.fill_rect(std::max(10, sub_x - 8), sub_y - 2, sub_w + 16, 18, 0x000A0A0E);
+                const uint32_t f_color = (static_cast<uint32_t>(sub.front[0]) << 16) |
+                                         (static_cast<uint32_t>(sub.front[1]) << 8) |
+                                         sub.front[2];
+                canvas_.draw_text(std::max(10, sub_x), sub_y + 2, sub.text, f_color != 0 ? f_color : 0x00E0E0E0);
+            }
+            dmc_subtitle_free(&sub);
+        }
+    }
+
     // 3. Header Bar
     canvas_.fill_rect(0, 0, window_width_, kHeaderHeight, kColorHeaderBg);
     canvas_.fill_rect(0, kHeaderHeight - 1, window_width_, 1, kColorBtnBorder);
@@ -1243,6 +1381,9 @@ void App::handle_button_click(int id) {
         case kBtnSound:
             play_next_sound();
             break;
+        case kBtnCamera:
+            toggle_camera_mode();
+            break;
         case kBtnResetView:
             reset_view();
             break;
@@ -1299,7 +1440,35 @@ void App::handle_key_press(KeySym sym) {
             break;
         case XK_k:
         case XK_K:
-            toggle_kit_panel();
+            if (dmc_camera_mode()) {
+                camera_focus_lock();
+            } else {
+                toggle_kit_panel();
+            }
+            break;
+        case XK_v:
+        case XK_V:
+            toggle_camera_mode();
+            break;
+        case XK_l:
+        case XK_L:
+            if (dmc_camera_mode()) {
+                camera_level();
+            }
+            break;
+        case XK_comma:
+            if (dmc_camera_mode()) {
+                camera_focus_ring(-1.0f);
+            }
+            break;
+        case XK_period:
+            if (dmc_camera_mode()) {
+                camera_focus_ring(1.0f);
+            }
+            break;
+        case XK_p:
+        case XK_P:
+            capture_photo_png();
             break;
         case XK_s:
         case XK_S:
@@ -1493,6 +1662,143 @@ void App::reset_view() {
     dmc_view_reset(&view_);
 }
 
+void App::init_camera() {
+    dmc_camera_settings* list = dmc_camera_settings_list();
+    if (!list) return;
+    const size_t count = dmc_camera_settings_count(list);
+    camera_choices_.clear();
+    for (size_t i = 0; i < count; ++i) {
+        const dmc_camera_setting* s = dmc_camera_settings_at(list, i);
+        if (s) {
+            camera_choices_.push_back(s->start);
+        }
+    }
+    dmc_camera_settings_free(list);
+}
+
+void App::toggle_camera_mode() {
+    if (camera_choices_.empty()) {
+        init_camera();
+    }
+    dmc_camera_settings* list = dmc_camera_settings_list();
+    if (!list) return;
+    const size_t count = dmc_camera_settings_count(list);
+    int finder_idx = -1;
+    for (size_t i = 0; i < count; ++i) {
+        const dmc_camera_setting* s = dmc_camera_settings_at(list, i);
+        if (s && s->key == 0) { // Key::FinderMode
+            finder_idx = static_cast<int>(i);
+            break;
+        }
+    }
+    dmc_camera_settings_free(list);
+
+    if (finder_idx >= 0 && finder_idx < static_cast<int>(camera_choices_.size())) {
+        const bool currently_on = dmc_camera_mode();
+        camera_choices_[finder_idx] = currently_on ? 0 : 1;
+        dmc_camera_set_choices(camera_choices_.data(), camera_choices_.size());
+        camera_mode_ = dmc_camera_mode();
+        camera_message_ = camera_mode_ ? "Photo Camera Viewfinder Active" : "Normal 3D View";
+        std::cout << "Camera mode toggled: " << (camera_mode_ ? "ON" : "OFF") << "\n";
+    }
+}
+
+void App::camera_focus_at(int x, int y) {
+    if (!session_ || !dmc_camera_mode()) return;
+    const int viewport_h = std::max(64, window_height_ - kHeaderHeight - kToolbarHeight);
+    char* line = dmc_camera_focus_at(session_, window_width_, viewport_h, &view_, static_cast<float>(x), static_cast<float>(y));
+    if (line) {
+        camera_message_ = line;
+        dmc_string_free(line);
+    } else {
+        camera_message_ = "Nothing in focus there.";
+    }
+}
+
+void App::camera_focus_ring(float steps) {
+    char* line = dmc_camera_focus_ring(steps);
+    if (line) {
+        camera_message_ = line;
+        dmc_string_free(line);
+    }
+}
+
+void App::camera_focus_lock() {
+    char* line = dmc_camera_focus_lock();
+    if (line) {
+        camera_message_ = line;
+        dmc_string_free(line);
+    }
+}
+
+void App::camera_level() {
+    dmc_camera_level();
+    camera_message_ = "Camera Leveled";
+}
+
+void App::step_camera_dial(int key) {
+    dmc_camera_settings* list = dmc_camera_settings_list();
+    if (!list) return;
+    const size_t count = dmc_camera_settings_count(list);
+    int target_idx = -1;
+    size_t opt_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const dmc_camera_setting* s = dmc_camera_settings_at(list, i);
+        if (s && s->key == key) {
+            target_idx = static_cast<int>(i);
+            opt_count = s->option_count;
+            break;
+        }
+    }
+    dmc_camera_settings_free(list);
+
+    if (target_idx >= 0 && opt_count > 0 && target_idx < static_cast<int>(camera_choices_.size())) {
+        const int next_opt = (camera_choices_[target_idx] + 1) % static_cast<int>(opt_count);
+        camera_choices_[target_idx] = next_opt;
+
+        dmc_camera_follow_up follow{};
+        if (dmc_camera_follow_up_of(key, next_opt, &follow)) {
+            for (size_t f = 0; f < follow.count; ++f) {
+                const int f_key = follow.keys[f];
+                dmc_camera_settings* l2 = dmc_camera_settings_list();
+                if (l2) {
+                    for (size_t i = 0; i < dmc_camera_settings_count(l2); ++i) {
+                        const dmc_camera_setting* s2 = dmc_camera_settings_at(l2, i);
+                        if (s2 && s2->key == f_key && i < camera_choices_.size()) {
+                            camera_choices_[i] = follow.options[f];
+                            break;
+                        }
+                    }
+                    dmc_camera_settings_free(l2);
+                }
+            }
+            if (follow.message && follow.message[0] != '\0') {
+                camera_message_ = follow.message;
+            }
+            dmc_camera_follow_up_free(&follow);
+        }
+        dmc_camera_set_choices(camera_choices_.data(), camera_choices_.size());
+    }
+}
+
+void App::capture_photo_png() {
+    if (!session_) return;
+    const int viewport_h = std::max(64, window_height_ - kHeaderHeight - kToolbarHeight);
+    dmc_image* img = dmc_render_capture(session_, false, window_width_, viewport_h, &view_, 60.0f);
+    if (!img) {
+        std::cerr << "error: dmc_render_capture failed\n";
+        return;
+    }
+    const auto now = std::chrono::system_clock::now();
+    const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    const std::string filename = "dmc_capture_" + std::to_string(epoch) + ".png";
+    if (linux_png::SaveRgbaToPng(filename, img->width, img->height, img->rgba)) {
+        camera_message_ = "Saved capture: " + filename;
+        std::cout << "Captured photo saved to: " << filename << " (" << img->width << "x" << img->height << ")\n";
+    }
+    dmc_image_free(img);
+}
+
 void App::run() {
     auto last_tick = std::chrono::steady_clock::now();
 
@@ -1565,6 +1871,16 @@ void App::run() {
                             }
                         }
                     }
+                    // Check Camera Dials Clicks
+                    if (!clicked_btn && dmc_camera_mode()) {
+                        for (const auto& db : camera_dial_buttons_) {
+                            if (db.rect.contains(mx, my)) {
+                                step_camera_dial(db.key);
+                                clicked_btn = true;
+                                break;
+                            }
+                        }
+                    }
                     // Check Child Gallery Clicks
                     if (!clicked_btn && child_browser_mode_ && child_count_ > 0) {
                         const int viewport_y = kHeaderHeight;
@@ -1587,6 +1903,9 @@ void App::run() {
                     }
 
                     if (!clicked_btn && !show_info_panel_ && !show_kit_panel_) {
+                        if (dmc_camera_mode() && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
+                            camera_focus_at(mx, my - kHeaderHeight);
+                        }
                         drag_left_ = true;
                         last_mouse_x_ = mx;
                         last_mouse_y_ = my;
@@ -1647,8 +1966,19 @@ void App::run() {
                 } else if (drag_pan_) {
                     const float dx = static_cast<float>(mx - last_mouse_x_);
                     const float dy = static_cast<float>(my - last_mouse_y_);
-                    const int viewport_h = std::max(64, window_height_ - kHeaderHeight - kToolbarHeight);
-                    dmc_view_pan(&view_, dx, dy, window_width_, viewport_h);
+                    if (dmc_camera_mode()) {
+                        const float radians = dx * 0.01f;
+                        if (dmc_camera_polarizer_turnable()) {
+                            const float angle = dmc_camera_polarizer_turn(radians);
+                            camera_message_ = "Polarizer " + std::to_string(static_cast<int>(angle * 180.0f / 3.14159265f)) + " deg";
+                        } else {
+                            const float roll = dmc_camera_roll(radians);
+                            camera_message_ = "Roll " + std::to_string(static_cast<int>(roll * 180.0f / 3.14159265f)) + " deg";
+                        }
+                    } else {
+                        const int viewport_h = std::max(64, window_height_ - kHeaderHeight - kToolbarHeight);
+                        dmc_view_pan(&view_, dx, dy, window_width_, viewport_h);
+                    }
                     last_mouse_x_ = mx;
                     last_mouse_y_ = my;
                 }
