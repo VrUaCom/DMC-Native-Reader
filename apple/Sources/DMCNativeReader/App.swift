@@ -100,6 +100,7 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
+                if model.variants.count > 1 { VariantBar(model: model) }
                 main
                 if let message = model.message {
                     // The status line: below the view, never over it.
@@ -954,5 +955,70 @@ extension EnvironmentValues {
     var closePanel: ClosePanelAction {
         get { self[ClosePanelKey.self] }
         set { self[ClosePanelKey.self] = newValue }
+    }
+}
+
+/// The opened archive's in-game looks. Names made of the same number of
+/// " · " parts (Vergil: look · weapons · DT) get one switch per part;
+/// otherwise one menu lists them all.
+struct VariantBar: View {
+    @ObservedObject var model: ViewerModel
+
+    private var parts: [[String]] { model.variants.map { $0.components(separatedBy: " · ") } }
+
+    private var columns: Int? {
+        let counts = Set(parts.map(\.count))
+        guard counts.count == 1, let n = counts.first, n > 1 else { return nil }
+        return n
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let n = columns {
+                ForEach(0..<n, id: \.self) { column in
+                    Picker("", selection: Binding(
+                        get: { current(column) },
+                        set: { choose(column: column, value: $0) })) {
+                        ForEach(options(column), id: \.self) { Text($0).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            } else {
+                Picker("Look", selection: Binding(
+                    get: { model.variantIndex },
+                    set: { model.selectVariant($0) })) {
+                    ForEach(Array(model.variants.enumerated()), id: \.offset) { Text($0.element).tag($0.offset) }
+                }
+                .fixedSize()
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func options(_ column: Int) -> [String] {
+        var seen: [String] = []
+        for p in parts where !seen.contains(p[column]) { seen.append(p[column]) }
+        return seen
+    }
+
+    private func current(_ column: Int) -> String {
+        guard parts.indices.contains(model.variantIndex) else { return "" }
+        return parts[model.variantIndex][column]
+    }
+
+    /// The look with this part changed and the others kept; else the first with it.
+    private func choose(column: Int, value: String) {
+        guard parts.indices.contains(model.variantIndex) else { return }
+        var wanted = parts[model.variantIndex]
+        wanted[column] = value
+        if let exact = parts.firstIndex(of: wanted) {
+            model.selectVariant(exact)
+        } else if let any = parts.firstIndex(where: { $0[column] == value }) {
+            model.selectVariant(any)
+        }
     }
 }

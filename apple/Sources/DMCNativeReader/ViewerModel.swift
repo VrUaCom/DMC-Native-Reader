@@ -100,6 +100,9 @@ final class ViewerModel: ObservableObject {
             case .success(let (opened, data)):
                 self.stack.removeAll()
                 self.sourceFile = (name, data)
+                self.addedPacs.removeAll()
+                self.variantIndex = 0
+                self.variants = opened.openedAs == .assembledPac ? ReaderSession.variantNames(name) : []
                 self.staged.removeAll()
                 self.stagedMotions.removeAll()
                 self.show(opened)
@@ -336,6 +339,11 @@ final class ViewerModel: ObservableObject {
 
     /// The file opened from disk: the source for adding PACs or MOD parts.
     var sourceFile: (name: String, data: Data)?
+    /// PACs added to the opened character (weapons, motions), kept for re-assembly.
+    var addedPacs: [(name: String, data: Data)] = []
+    /// The opened archive's in-game looks (dmc_variant_names) and the one shown.
+    @Published var variants: [String] = []
+    @Published var variantIndex = 0
     @Published var askTextureFormat = false
     @Published var partsShown: [PartInfo] = []
     @Published var diagnosticsText = ""

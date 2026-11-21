@@ -206,10 +206,25 @@ extension ViewerModel {
 
     /// The opened character's PAC with more PACs (weapons, variants) as one scene.
     private func addArchives(_ urls: [URL]) {
-        guard let current = sourceFile else { message = "Open a character's PAC first."; return }
+        guard sourceFile != nil else { message = "Open a character's PAC first."; return }
+        addedPacs += urls.compactMap { url in read(url).map { (url.lastPathComponent, $0) } }
+        if let session { stack.append(session) }
+        reassemble()
+    }
+
+    /// Shows the in-game look `index` of the opened archive (dmc_variant_names).
+    func selectVariant(_ index: Int) {
+        guard variants.indices.contains(index), index != variantIndex else { return }
+        variantIndex = index
+        reassemble()
+    }
+
+    /// The opened character's PAC, the added PACs and the chosen look as one scene.
+    private func reassemble() {
+        guard let current = sourceFile else { return }
         var sources: [ReaderSession] = []
         var names: [String] = []
-        for (name, data) in [(current.name, current.data)] + urls.compactMap({ url in read(url).map { (url.lastPathComponent, $0) } }) {
+        for (name, data) in [(current.name, current.data)] + addedPacs.map({ ($0.name, $0.data) }) {
             guard let source = ReaderSession.openSource(name: name, bytes: data) else {
                 message = "\(name) is not an archive the core reads."
                 return
@@ -217,12 +232,12 @@ extension ViewerModel {
             sources.append(source)
             names.append(name)
         }
-        guard let scene = ReaderSession.assemble(sources, names: names, variant: 0,
-                                                 title: names.joined(separator: " + ") + " · assembled") else {
+        let look = variants.indices.contains(variantIndex) ? " · " + variants[variantIndex] : ""
+        guard let scene = ReaderSession.assemble(sources, names: names, variant: variantIndex,
+                                                 title: names.joined(separator: " + ") + look) else {
             message = "These archives could not be assembled."
             return
         }
-        if let session { stack.append(session) }
         show(scene)
     }
 

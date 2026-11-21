@@ -1046,37 +1046,45 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     // 24 / 27), 32, 55 (Beowulf), 58. One look per position, not all at once.
     if (archive_name.size() == 9U && std::tolower(static_cast<unsigned char>(archive_name[0])) == 'e' &&
         archive_name.substr(2, 7) == "035.pac") {
-        // The coat hangs from body joint 3 like the player's coat (slot 12).
-        const auto look = [&out](std::string label, std::initializer_list<std::uint32_t> slots,
-                                 std::uint32_t body, std::uint32_t coat) {
-            ArchiveVariant v;
-            v.label = std::move(label);
-            std::uint32_t n = 0U;
-            for (const auto slot : slots) {
-                if (n < v.include_top_level_mod_slots.size()) v.include_top_level_mod_slots[n++] = slot;
-            }
-            v.include_top_level_mod_count = n;
-            if (coat != 0U) {
-                // 0x140180C60: coat root = body joint 3, the sheathed Yamato
-                // (slot 28, its .clt in 30) root = body joint 13.
-                v.part_attachments[0] = {body, coat, kPlayerCoatHostJoint, true, true, true};
-                v.part_attachment_count = 1U;
-                for (const auto slot : slots) {
-                    if (slot == 28U) {
-                        v.part_attachments[1] = {body, 28U, 13U, true, true, true};
-                        v.part_attachment_count = 2U;
-                    }
+        // Positions are "look · weapons · DT" (the shell offers one switch per
+        // part). 0x140180C60 roots the coat at body joint 3 and the sheathed
+        // Yamato (slot 28, .clt 30) at joint 13; Beowulf (55) is drawn when
+        // [this+0xEF0C] == 2 and follows the body bones it lies on. The DT
+        // form (draw 0x140186930 form 2: 15 + 16 + 17 + 18) draws no sheath.
+        struct Look { const char* name; std::uint32_t body; std::uint32_t coat; };
+        constexpr std::array<Look, 4> looks{{
+            {"Look 1", 1U, 3U}, {"Look 2", 45U, 46U}, {"Look 3", 51U, 52U}, {"Look 4", 61U, 62U}}};
+        struct Arms { const char* name; bool yamato; bool beowulf; };
+        constexpr std::array<Arms, 4> arms{{
+            {"Yamato", true, false}, {"Yamato + Beowulf", true, true},
+            {"Beowulf", false, true}, {"No weapons", false, false}}};
+        for (const bool dt : {false, true}) {
+            for (const auto& l : looks) {
+                for (const auto& w : arms) {
+                    ArchiveVariant v;
+                    v.label = std::string{l.name} + " · " + w.name + (dt ? " · DT on" : " · DT off");
+                    std::uint32_t n = 0U;
+                    const auto add = [&v, &n](std::uint32_t slot) {
+                        if (n < v.include_top_level_mod_slots.size()) v.include_top_level_mod_slots[n++] = slot;
+                    };
+                    const std::uint32_t body = dt ? 15U : l.body;
+                    const std::uint32_t coat = dt ? 18U : l.coat;
+                    add(body);
+                    add(coat);
+                    if (dt) { add(16U); add(17U); }
+                    if (w.yamato && !dt) add(28U);
+                    if (w.beowulf) add(55U);
+                    v.include_top_level_mod_count = n;
+                    std::uint32_t k = 0U;
+                    v.part_attachments[k++] = {body, coat, kPlayerCoatHostJoint, true, true, true};
+                    if (w.yamato && !dt) v.part_attachments[k++] = {body, 28U, 13U, true, true, true};
+                    // DT cloth (0x140180C60 form 2): one on body joint 2, one on 3.
+                    if (dt) v.part_attachments[k++] = {body, 16U, 2U, true, true, true};
+                    v.part_attachment_count = k;
+                    out.push_back(std::move(v));
                 }
             }
-            out.push_back(std::move(v));
-        };
-        look("Vergil · look 1", {1U, 3U, 25U, 28U}, 1U, 3U);
-        look("Vergil · look 2", {45U, 46U, 25U, 28U}, 45U, 46U);
-        look("Vergil · look 3", {51U, 52U, 25U, 28U}, 51U, 52U);
-        look("Vergil · look 4", {61U, 62U, 25U, 28U}, 61U, 62U);
-        look("Vergil · devil trigger", {15U, 16U, 17U, 18U}, 15U, 18U);
-        look("Vergil · Beowulf", {1U, 3U, 55U}, 1U, 3U);
-        look("Vergil · weapons", {2U, 25U, 28U, 32U, 58U}, 0U, 0U);
+        }
         return out;
     }
 
