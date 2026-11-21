@@ -538,6 +538,10 @@ private:
     std::vector<int> camera_choices_{};
     std::vector<CameraDialButton> camera_dial_buttons_{};
 
+    // Stage destruction & Dual preview state
+    bool room_broken_ = false;
+    bool dual_info_preview_ = false;
+
     // Child thumbnail cache
     struct ChildThumb {
         int w = 0;
@@ -1526,6 +1530,30 @@ void App::handle_key_press(KeySym sym) {
         case XK_p:
         case XK_P:
             capture_photo_png();
+            break;
+        case XK_b:
+        case XK_B:
+            room_broken_ = !room_broken_;
+            dmc_room_set_broken(room_broken_);
+            camera_message_ = room_broken_ ? "Destruction: BROKEN" : "Destruction: INTACT";
+            break;
+        case XK_n:
+        case XK_N:
+            {
+                dmc_base_spot spot = dmc_next_base_spot();
+                if (spot.title) {
+                    camera_message_ = "Floor Spot: " + std::string(spot.title);
+                }
+                dmc_base_spot_free(&spot);
+            }
+            break;
+        case XK_t:
+        case XK_T:
+            if (session_ && dmc_has_dual_preview(session_)) {
+                dual_info_preview_ = !dual_info_preview_;
+                dmc_set_info_preview(session_, dual_info_preview_);
+                camera_message_ = dual_info_preview_ ? "Preview: Info Layout" : "Preview: Diffuse Texture";
+            }
             break;
         case XK_s:
         case XK_S:
