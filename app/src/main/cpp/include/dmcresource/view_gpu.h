@@ -260,6 +260,9 @@ struct GpuNrDraw final {
     // Stage: u_light_x / _y / _z / _falloff and u_light_colour[4].
     std::array<float, 4> light_x{}, light_y{}, light_z{}, light_falloff{};
     std::array<float, 16> light_colour{};
+    // Recolour (texture_recolour*): the rate (rgb, mix amount) at texel
+    // brightness 0 and 1.
+    std::array<float, 4> recolour_low{}, recolour_high{};
     [[nodiscard]] bool drawn() const noexcept { return vertex != nr::Shader::none; }
 };
 [[nodiscard]] GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept;

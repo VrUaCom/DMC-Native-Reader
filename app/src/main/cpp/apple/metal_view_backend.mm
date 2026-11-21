@@ -242,6 +242,9 @@ struct NrUniforms {
     float4 alpha_ref;        // x
     float4 camera;           // xyz the camera in the batch's coordinates (enhanced shading)
     int4 enhanced;           // x lighting: 0 model_lit, 1 effect_model_lit, 2 stage_lit; y specular on
+    int4 texfn;              // x texture function (TextureFunction), y cut-out alpha
+    float4 recolour_low;     // recolour: the rate at brightness 0
+    float4 recolour_high;    // and at brightness 1
 };
 
 struct NrOut {
@@ -320,16 +323,40 @@ static bool alpha_passes(float a, int func, float ref) {
     return true;
 }
 
-fragment float4 texture_modulate(NrOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
-                                 texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
-    float4 c = tex.sample(smp, in.uv) * in.colour * 2.0;
+// The PS2 texture functions, one shader for all (texfn.x): 0 MODULATE
+// (texel x colour x 2), 1 DECAL (texel), 2 HIGHLIGHT (MODULATE + colour
+// alpha), 3 HIGHLIGHT2 (HIGHLIGHT with the texel's alpha), 4 RECOLOUR
+// (brightness picks a rate between two colours, then MODULATE), 5 DECAL with
+// alpha 1. Cut-out (texfn.y): alpha 1 at 0.95 and above, else 0.
+static float4 texture_function(float4 t, float4 colour, constant NrUniforms& u) {
+    float4 c;
+    switch (u.texfn.x) {
+        case 1: c = t; break;
+        case 2: c = t * colour * 2.0 + float4(colour.a); break;
+        case 3: c = float4(t.rgb * colour.rgb * 2.0 + colour.a, t.a); break;
+        case 4: {
+            float b = (t.r + t.g + t.b) * 0.66666666;
+            float4 rate = mix(u.recolour_low, u.recolour_high, b);
+            c = float4(mix(t.rgb, rate.rgb, rate.a), t.a) * colour * 2.0;
+            break;
+        }
+        case 5: c = float4(t.rgb, 1.0); break;
+        default: c = t * colour * 2.0; break;
+    }
+    if (u.texfn.y != 0) c.a = c.a >= 0.95 ? 1.0 : 0.0;
+    return c;
+}
+
+fragment float4 nr_texture(NrOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
+                           texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    float4 c = texture_function(tex.sample(smp, in.uv), in.colour, u);
     if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
     return c;
 }
 
-fragment float4 texture_modulate_fog(NrOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
-                                     texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
-    float4 c = tex.sample(smp, in.uv) * in.colour * 2.0;
+fragment float4 nr_texture_fog(NrOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
+                               texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    float4 c = texture_function(tex.sample(smp, in.uv), in.colour, u);
     c.rgb = mix(in.fog.rgb, c.rgb, in.fog.a);
     if (u.alpha.x != 0 && !alpha_passes(c.a, u.alpha.y, u.alpha_ref.x)) discard_fragment();
     return c;
@@ -653,7 +680,7 @@ static float4 px_shade(NrPxOut in, constant NrUniforms& u, texture2d<float> tex,
     float3 spec;
     float4 lit = px_light(in, u, spec);
     float4 t = tex.sample(smp, in.uv);
-    float4 c = t * lit * 2.0;
+    float4 c = texture_function(t, lit, u);
     c.rgb += spec * t.a;
     if (fog) c.rgb = mix(in.fog.rgb, c.rgb, in.fog.a);
     c = clamp(c, 0.0, 1.0);
@@ -661,12 +688,12 @@ static float4 px_shade(NrPxOut in, constant NrUniforms& u, texture2d<float> tex,
     return c;
 }
 
-fragment float4 texture_modulate_px(NrPxOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
+fragment float4 nr_texture_px(NrPxOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
                                     texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
     return px_shade(in, u, tex, smp, false);
 }
 
-fragment float4 texture_modulate_fog_px(NrPxOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
+fragment float4 nr_texture_fog_px(NrPxOut in [[stage_in]], constant NrUniforms& u [[buffer(0)]],
                                         texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
     return px_shade(in, u, tex, smp, true);
 }
@@ -690,6 +717,9 @@ struct NrUniforms {
     std::array<float, 4> alpha_ref;
     std::array<float, 4> camera;
     std::array<std::int32_t, 4> enhanced;
+    std::array<std::int32_t, 4> texfn;
+    std::array<float, 4> recolour_low;
+    std::array<float, 4> recolour_high;
 };
 
 struct FocusUniforms {
@@ -728,15 +758,57 @@ struct SharpenUniforms {
 
 // The NR shader's function in the library (null: not written for Metal yet;
 // the Reader's own shader draws that batch).
+// The texture function and cut-out of an NR texture fragment shader
+// (-1: not one of them).
+std::array<std::int32_t, 2> texture_function_of(dmcresource::nr::Shader shader) {
+    using dmcresource::nr::Shader;
+    switch (shader) {
+        case Shader::texture_modulate_frag:
+        case Shader::texture_modulate_fog_frag: return {0, 0};
+        case Shader::texture_modulate_cutout_frag:
+        case Shader::texture_modulate_fog_cutout_frag: return {0, 1};
+        case Shader::texture_decal_frag:
+        case Shader::texture_decal_fog_frag: return {1, 0};
+        case Shader::texture_decal_cutout_frag:
+        case Shader::texture_decal_fog_cutout_frag: return {1, 1};
+        case Shader::texture_highlight_frag:
+        case Shader::texture_highlight_fog_frag: return {2, 0};
+        case Shader::texture_highlight2_frag:
+        case Shader::texture_highlight2_fog_frag: return {3, 0};
+        case Shader::texture_recolour_frag:
+        case Shader::texture_recolour_fog_frag: return {4, 0};
+        case Shader::texture_recolour_cutout_frag:
+        case Shader::texture_recolour_fog_cutout_frag: return {4, 1};
+        case Shader::texture_decal_opaque_frag: return {5, 0};
+        default: return {-1, 0};
+    }
+}
+
+bool fogged(dmcresource::nr::Shader shader) {
+    using dmcresource::nr::Shader;
+    switch (shader) {
+        case Shader::texture_modulate_fog_frag:
+        case Shader::texture_modulate_fog_cutout_frag:
+        case Shader::texture_decal_fog_frag:
+        case Shader::texture_decal_fog_cutout_frag:
+        case Shader::texture_highlight_fog_frag:
+        case Shader::texture_highlight2_fog_frag:
+        case Shader::texture_recolour_fog_frag:
+        case Shader::texture_recolour_fog_cutout_frag: return true;
+        default: return false;
+    }
+}
+
+// The NR shader's function in the library (null: not written for Metal yet;
+// the Reader's own shader draws that batch).
 const char* nr_function(dmcresource::nr::Shader shader) {
     using dmcresource::nr::Shader;
+    if (texture_function_of(shader)[0] >= 0) return fogged(shader) ? "nr_texture_fog" : "nr_texture";
     switch (shader) {
         case Shader::model_lit_vert: return "model_lit";
         case Shader::effect_model_lit_vert: return "effect_model_lit";
         case Shader::stage_lit_vert: return "stage_lit";
         case Shader::stage_lit_fog_vert: return "stage_lit_fog";
-        case Shader::texture_modulate_frag: return "texture_modulate";
-        case Shader::texture_modulate_fog_frag: return "texture_modulate_fog";
         default: return nullptr;
     }
 }
@@ -744,13 +816,12 @@ const char* nr_function(dmcresource::nr::Shader shader) {
 // The enhanced-shading function in place of an NR one (per-pixel light).
 const char* nr_enhanced_function(dmcresource::nr::Shader shader) {
     using dmcresource::nr::Shader;
+    if (texture_function_of(shader)[0] >= 0) return fogged(shader) ? "nr_texture_fog_px" : "nr_texture_px";
     switch (shader) {
         case Shader::model_lit_vert:
         case Shader::effect_model_lit_vert: return "model_lit_px";
         case Shader::stage_lit_vert: return "stage_lit_px";
         case Shader::stage_lit_fog_vert: return "stage_lit_fog_px";
-        case Shader::texture_modulate_frag: return "texture_modulate_px";
-        case Shader::texture_modulate_fog_frag: return "texture_modulate_fog_px";
         default: return nullptr;
     }
 }
@@ -1176,6 +1247,10 @@ private:
         u.alpha = {d.alpha_func == dmcresource::nr::AlphaFunc::off ? 0 : 1, static_cast<std::int32_t>(d.alpha_func),
                    0, 0};
         u.alpha_ref = {d.alpha_ref, 0.0F, 0.0F, 0.0F};
+        const auto fn = texture_function_of(d.fragment);
+        u.texfn = {fn[0], fn[1], 0, 0};
+        u.recolour_low = d.recolour_low;
+        u.recolour_high = d.recolour_high;
         if (enhanced) {
             using dmcresource::nr::Shader;
             u.camera = camera_position(view);
@@ -1514,7 +1589,7 @@ private:
 
     void publish_stats() {
         dmcresource::GpuShaderStats stats;
-        stats.compiled = 6;
+        stats.compiled = 21;  // 4 vertex shaders and the 17 texture-function fragment shaders
         stats.nr_batches = nr_batches_;
         stats.reader_batches = reader_batches_;
         dmcresource::set_gpu_shader_stats(std::move(stats));
