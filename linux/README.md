@@ -90,6 +90,31 @@ linux/register-desktop.sh
 linux/register-desktop.sh --remove
 ```
 
+### Standalone AppImage Packaging
+Build a self-contained, portable `DMC_Native_Reader-x86_64.AppImage` bundle that runs with a double-click on any Linux distribution (Ubuntu, Fedora, Arch, Debian, openSUSE) without installing dependencies:
+
+```sh
+# Package release binaries into standalone AppImage:
+linux/package-appimage.sh
+
+# Package existing binaries into AppDir and AppImage:
+linux/package-appimage.sh --no-build
+
+# Only assemble AppDir structure:
+linux/package-appimage.sh --appdir-only
+```
+
+The resulting package will be in `dist/DMC_Native_Reader-x86_64.AppImage` (or `dist/DMC_Native_Reader-x86_64.tar.gz` portable archive).
+You can run it directly:
+```sh
+chmod +x dist/DMC_Native_Reader-x86_64.AppImage
+./dist/DMC_Native_Reader-x86_64.AppImage path/to/pl000.pac
+```
+To run the headless CLI companion via AppImage:
+```sh
+./dist/DMC_Native_Reader-x86_64.AppImage --cli inspect path/to/pl000.pac
+```
+
 ---
 
 ## 3. Desktop Application Features (`dmc_native_reader_linux`)
@@ -129,7 +154,20 @@ linux/register-desktop.sh --remove
 | **`U`** | Toggles UV layout or gallery |
 | **`K`** | Toggles Character Kit & Attachment controls |
 | **`O`** | Opens file dialog |
+| **`T`** | Toggles Dual Info Layout preview vs diffuse texture / cycles texture format |
+| **`Shift + T`** | Triggers **Custom Texture Hot-Swap** file selection dialog (`.png`, `.dds`, `.ptx`) |
 | **`Escape`** | Closes active overlay, navigates Back from child resource, or exits app |
+
+### Custom Texture Hot-Swapping (Modding Preview)
+Preview custom costumes, altered faces, and modified weapons without repackaging PAC game archives:
+- **Direct Drag & Drop**: Drag any `.png`, `.dds`, or `.ptx` file from GNOME Files (Nautilus), KDE Dolphin, or Thunar directly into the viewport with Dante or any enemy model loaded.
+- **`[ MOD TEX ]` Button**: Located in the top header bar when a 3D model is active; opens a file picker filtered to texture assets.
+- **Automatic Clean-Room Conversion**: Truecolor PNGs (RGB/RGBA 8-bit) are decoded cleanly using built-in RFC 1950/1951 decompressors, re-encoded on-the-fly to DDS (BC7/BC3), and hot-swapped onto the active character model in real time.
+
+### Wayland & Fractional High-DPI Scaling
+- **Automatic Wayland Detection**: Detects `$WAYLAND_DISPLAY` and runs seamlessly with Wayland compositors (GNOME Mutter, KDE KWin, Sway, Hyprland).
+- **Fractional DPI Scaling**: Resolves blurriness on 125%, 150%, 175%, and 200% displays by detecting `$DMC_SCALE`, `$GDK_SCALE`, `$QT_SCALE_FACTOR`, or X11 `Xft.dpi` resources, automatically scaling the window, buttons, fonts, and framebuffer for razor-sharp rendering.
+- **Modern Window Manager Hints**: Sets `_NET_WM_PID`, `_NET_WM_WINDOW_TYPE`, `_NET_WM_NAME`, and `WM_CLASS` (`dmc_native_reader`, `DMCNativeReader`) for perfect taskbar grouping and desktop integration.
 
 ### Child Resource Navigation
 - For container formats (nested PAC archives, multi-texture PTX, MOD composites), clicking child items opens them as independent sub-sessions.

@@ -41,10 +41,16 @@ fi
 echo "== Installing DMC Native Reader desktop integration..."
 mkdir -p "$apps_dir" "$mime_dir" "$icons_dir" "$pixmaps_dir" "$bin_dir"
 
-# Symlink or copy desktop entry, adjusting Exec path if local binary exists
+# Symlink or copy desktop entry, adjusting Exec path if local binary or AppImage exists
 target_bin="$here/.build/bin/dmc_native_reader_linux"
-if [ ! -f "$target_bin" ]; then
-    target_bin="$repo/build/dmc_native_reader_linux"
+if [ -f "$repo/dist/DMC_Native_Reader-x86_64.AppImage" ]; then
+    target_bin="$repo/dist/DMC_Native_Reader-x86_64.AppImage"
+elif [ ! -f "$target_bin" ]; then
+    if [ -f "$repo/build/dmc_native_reader_linux" ]; then
+        target_bin="$repo/build/dmc_native_reader_linux"
+    elif [ -f "$here/.build/AppDir/AppRun" ]; then
+        target_bin="$here/.build/AppDir/AppRun"
+    fi
 fi
 
 if [ -f "$target_bin" ]; then

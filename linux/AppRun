@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# AppRun entrypoint for DMC Native Reader AppImage / AppDir
+set -e
+
+# Find application directory
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# Setup execution environment
+export PATH="${HERE}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
+export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+
+# Detect Wayland environment
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    export GDK_BACKEND=x11
+fi
+
+# If invoked with --cli, or as dmc_native_reader_cli symlink
+INVOKED_AS="$(basename "$0")"
+if [ "$INVOKED_AS" = "dmc_native_reader_cli" ] || [ "${1:-}" = "--cli" ]; then
+    if [ "${1:-}" = "--cli" ]; then shift; fi
+    exec "${HERE}/usr/bin/dmc_native_reader_cli" "$@"
+fi
+
+# Default: launch native desktop viewer
+if [ -f "${HERE}/usr/bin/dmc_native_reader_linux" ]; then
+    exec "${HERE}/usr/bin/dmc_native_reader_linux" "$@"
+else
+    exec "${HERE}/usr/bin/dmc_native_reader_cli" "$@"
+fi

@@ -310,6 +310,7 @@ enum ButtonId : int {
     kBtnKit = 102,
     kBtnBrowse = 103,
     kBtnSave = 104,
+    kBtnSwapTex = 105,
     kBtnWireframe = 201,
     kBtnHierarchy = 202,
     kBtnNormals = 203,
@@ -673,6 +674,7 @@ private:
 
     void open_child_resource(size_t index);
     void trigger_open_dialog();
+    void trigger_texture_open_dialog();
     void toggle_file_browser();
     void refresh_file_browser(const fs::path& dir);
     void load_stage_companion_archives(const fs::path& path);
@@ -715,6 +717,7 @@ private:
 
     int window_width_ = kDefaultWindowWidth;
     int window_height_ = kDefaultWindowHeight;
+    float dpi_scale_ = 1.0f;
     bool running_ = true;
 
     // DMC Core State
@@ -879,10 +882,52 @@ bool App::init_x11(int width, int height) {
         health_report_ = "Recovered Crash: " + prev_crash.substr(0, 80);
     }
 
+    // Check fractional scaling & display environment
+    float scale = 1.0f;
+    const char* dmc_scale_env = std::getenv("DMC_SCALE");
+    if (dmc_scale_env && *dmc_scale_env) {
+        float val = std::strtof(dmc_scale_env, nullptr);
+        if (val >= 0.5f && val <= 4.0f) scale = val;
+    } else {
+        const char* gdk_scale = std::getenv("GDK_SCALE");
+        const char* gdk_dpi_scale = std::getenv("GDK_DPI_SCALE");
+        if (gdk_scale || gdk_dpi_scale) {
+            float s = gdk_scale ? std::strtof(gdk_scale, nullptr) : 1.0f;
+            float ds = gdk_dpi_scale ? std::strtof(gdk_dpi_scale, nullptr) : 1.0f;
+            if (s > 0.0f && ds > 0.0f) scale = s * ds;
+        } else {
+            const char* qt_scale = std::getenv("QT_SCALE_FACTOR");
+            if (qt_scale && *qt_scale) {
+                float val = std::strtof(qt_scale, nullptr);
+                if (val >= 0.5f && val <= 4.0f) scale = val;
+            }
+        }
+    }
+
     host_.display = XOpenDisplay(nullptr);
     if (!host_.display) {
         std::cerr << "error: could not open X11 display. Check $DISPLAY.\n";
         return false;
+    }
+
+    if (scale == 1.0f) {
+        char* xresources = XResourceManagerString(host_.display);
+        if (xresources) {
+            const char* dpi_str = std::strstr(xresources, "Xft.dpi:");
+            if (dpi_str) {
+                float dpi = std::strtof(dpi_str + 8, nullptr);
+                if (dpi >= 48.0f && dpi <= 480.0f) {
+                    scale = dpi / 96.0f;
+                }
+            }
+        }
+    }
+    dpi_scale_ = scale;
+    if (std::abs(dpi_scale_ - 1.0f) > 0.01f) {
+        window_width_ = static_cast<int>(kDefaultWindowWidth * dpi_scale_);
+        window_height_ = static_cast<int>(kDefaultWindowHeight * dpi_scale_);
+        std::cout << "[Display] Configured fractional DPI scaling: "
+                  << static_cast<int>(dpi_scale_ * 100.0f) << "% (" << window_width_ << "x" << window_height_ << ")\n";
     }
 
     const int screen = DefaultScreen(host_.display);
@@ -911,7 +956,7 @@ bool App::init_x11(int width, int height) {
     const char* wayland_display = std::getenv("WAYLAND_DISPLAY");
     if (wayland_display && *wayland_display) {
         std::cout << "[Display] Detected Wayland environment ($WAYLAND_DISPLAY=" << wayland_display
-                  << ") via XWayland integration\n";
+                  << ") via XWayland integration with native DPI scaling\n";
     }
 
     XClassHint class_hint{};
@@ -920,6 +965,22 @@ bool App::init_x11(int width, int height) {
     class_hint.res_name = res_name;
     class_hint.res_class = res_class;
     XSetClassHint(host_.display, host_.window, &class_hint);
+
+    Atom net_wm_pid = XInternAtom(host_.display, "_NET_WM_PID", False);
+    pid_t pid = getpid();
+    XChangeProperty(host_.display, host_.window, net_wm_pid, XA_CARDINAL, 32,
+                    PropModeReplace, reinterpret_cast<const unsigned char*>(&pid), 1);
+
+    Atom net_wm_window_type = XInternAtom(host_.display, "_NET_WM_WINDOW_TYPE", False);
+    Atom net_wm_window_type_normal = XInternAtom(host_.display, "_NET_WM_WINDOW_TYPE_NORMAL", False);
+    XChangeProperty(host_.display, host_.window, net_wm_window_type, XA_ATOM, 32,
+                    PropModeReplace, reinterpret_cast<const unsigned char*>(&net_wm_window_type_normal), 1);
+
+    Atom net_wm_name = XInternAtom(host_.display, "_NET_WM_NAME", False);
+    Atom utf8_string = XInternAtom(host_.display, "UTF8_STRING", False);
+    const char title[] = "DMC Native Reader (Linux)";
+    XChangeProperty(host_.display, host_.window, net_wm_name, utf8_string, 8,
+                    PropModeReplace, reinterpret_cast<const unsigned char*>(title), std::strlen(title));
 
     host_.wm_delete_window = XInternAtom(host_.display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(host_.display, host_.window, &host_.wm_delete_window, 1);
@@ -988,7 +1049,8 @@ void App::teardown_x11() {
 void App::init_buttons() {
     header_buttons_ = {
         {kBtnBack, "< BACK", "Return to parent resource", {}, false, false, false},
-        {kBtnKit, "KIT", "Character kit and attachments", {}, false, false, false},
+        {kBtnKit, "KIT", "Character kit and attachments (K)", {}, false, false, false},
+        {kBtnSwapTex, "MOD TEX", "Import custom PNG/DDS texture onto model (Shift+T)", {}, false, false, false},
         {kBtnSave, "SAVE", "Export assembled or re-encoded file", {}, false, false, false},
         {kBtnBrowse, "FILES", "Browse directory files (O)", {}, true, true, false},
         {kBtnOpen, "OPEN", "Open DMC game file dialog", {}, true, true, false},
@@ -1026,6 +1088,10 @@ void App::update_layout(int width, int height) {
             hx += 85;
         } else if (btn.id == kBtnKit) {
             btn.rect = {hx, 6, 60, 30};
+            hx += 70;
+        } else if (btn.id == kBtnSwapTex) {
+            btn.rect = {hx, 6, 85, 30};
+            hx += 95;
         } else if (btn.id == kBtnSave) {
             btn.rect = {width - 220, 6, 60, 30};
         } else if (btn.id == kBtnBrowse) {
@@ -1066,6 +1132,9 @@ void App::update_button_states() {
             btn.visible = !kit_items_.empty();
             btn.enabled = btn.visible;
             btn.active = show_kit_panel_;
+        } else if (btn.id == kBtnSwapTex) {
+            btn.visible = (session_ != nullptr && !child_browser_mode_);
+            btn.enabled = btn.visible;
         } else if (btn.id == kBtnBrowse) {
             btn.active = show_file_browser_;
         } else if (btn.id == kBtnSave) {
@@ -1645,6 +1714,43 @@ void App::trigger_open_dialog() {
     }
 }
 
+void App::trigger_texture_open_dialog() {
+    std::string chosen_path;
+    FILE* p = popen("zenity --file-selection --title=\"Select Custom Texture (PNG/DDS/PTX)\" --file-filter=\"Textures (*.png, *.dds, *.ptx) | *.png *.PNG *.dds *.DDS *.ptx *.PTX\" 2>/dev/null", "r");
+    if (p) {
+        char buf[1024];
+        if (fgets(buf, sizeof(buf), p)) {
+            chosen_path = buf;
+            while (!chosen_path.empty() && (chosen_path.back() == '\n' || chosen_path.back() == '\r')) {
+                chosen_path.pop_back();
+            }
+        }
+        pclose(p);
+    }
+    if (chosen_path.empty()) {
+        p = popen("kdialog --getopenfilename . \"*.png *.dds *.ptx|Texture Files (*.png, *.dds, *.ptx)\" 2>/dev/null", "r");
+        if (p) {
+            char buf[1024];
+            if (fgets(buf, sizeof(buf), p)) {
+                chosen_path = buf;
+                while (!chosen_path.empty() && (chosen_path.back() == '\n' || chosen_path.back() == '\r')) {
+                    chosen_path.pop_back();
+                }
+            }
+            pclose(p);
+        }
+    }
+    if (!chosen_path.empty()) {
+        if (try_attach_custom_texture(chosen_path)) {
+            render_frame();
+            present_frame();
+        }
+    } else {
+        std::cout << "External dialog unavailable or cancelled. Opening in-engine file browser for textures.\n";
+        toggle_file_browser();
+    }
+}
+
 void App::load_stage_companion_archives(const fs::path& path) {
     char* fx_name = nullptr;
     char* cfg_name = nullptr;
@@ -1729,7 +1835,7 @@ void App::refresh_file_browser(const fs::path& dir) {
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
             if (ext == ".pac" || ext == ".mod" || ext == ".scm" || ext == ".ptx" ||
                 ext == ".mot" || ext == ".tm2" || ext == ".bin" || ext == ".dds" ||
-                ext == ".ogg" || ext == ".vag" || ext.rfind(".st", 0) == 0) {
+                ext == ".png" || ext == ".ogg" || ext == ".vag" || ext.rfind(".st", 0) == 0) {
                 BrowserEntry fe;
                 fe.name = fname;
                 fe.full_path = entry.path();
@@ -2315,6 +2421,9 @@ void App::handle_button_click(int id) {
         case kBtnKit:
             toggle_kit_panel();
             break;
+        case kBtnSwapTex:
+            trigger_texture_open_dialog();
+            break;
         case kBtnWireframe:
             render_flags_ ^= dmcresource::render_flag(dmcresource::RenderFlag::Wireframe);
             break;
@@ -2504,13 +2613,17 @@ void App::handle_key_press(KeySym sym) {
             }
             break;
         case XK_t:
-        case XK_T:
             if (session_ && dmc_has_dual_preview(session_)) {
                 dual_info_preview_ = !dual_info_preview_;
                 dmc_set_info_preview(session_, dual_info_preview_);
                 camera_message_ = dual_info_preview_ ? "Preview: Info Layout" : "Preview: Diffuse Texture";
             } else if (session_) {
                 cycle_texture_format();
+            }
+            break;
+        case XK_T:
+            if (session_) {
+                trigger_texture_open_dialog();
             }
             break;
         case XK_s:
