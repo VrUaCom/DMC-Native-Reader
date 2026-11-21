@@ -1791,7 +1791,17 @@ void App::toggle_uv_view() {
 }
 
 void App::reset_view() {
-    dmc_view_reset(&view_);
+    float start[3] = {0.0f, 0.0f, 1.0f};
+    if (session_ && dmc_stage_start_view(session_, start)) {
+        view_.yaw = start[0];
+        view_.pitch = start[1];
+        view_.zoom = start[2];
+        view_.pan_x = 0.0f;
+        view_.pan_y = 0.0f;
+        view_.room_yaw = 0.0f;
+    } else {
+        dmc_view_reset(&view_);
+    }
 }
 
 void App::init_camera() {
@@ -2037,6 +2047,19 @@ void App::run() {
                     if (!clicked_btn && !show_info_panel_ && !show_kit_panel_) {
                         if (dmc_camera_mode() && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
                             camera_focus_at(mx, my - kHeaderHeight);
+                        } else if (session_ && !child_browser_mode_ && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
+                            const int viewport_h = std::max(64, window_height_ - kHeaderHeight - kToolbarHeight);
+                            dmc_pick_result pick = dmc_pick(session_, window_width_, viewport_h, &view_,
+                                                            static_cast<float>(mx), static_cast<float>(my - kHeaderHeight), true);
+                            if (pick.kind == DMC_PICK_MODEL && pick.joint >= 0) {
+                                std::string bone = (pick.joint_name && pick.joint_name[0] != '\0') ? pick.joint_name : "Bone";
+                                camera_message_ = bone + " (Joint " + std::to_string(pick.joint) + ")";
+                            } else if (pick.kind == DMC_PICK_PLACED) {
+                                camera_message_ = "Placed on room floor";
+                            } else if (pick.marker >= 0 && pick.marker_title) {
+                                camera_message_ = "Marker: " + std::string(pick.marker_title);
+                            }
+                            dmc_pick_result_free(&pick);
                         }
                         drag_left_ = true;
                         last_mouse_x_ = mx;
