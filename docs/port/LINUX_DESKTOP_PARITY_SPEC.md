@@ -254,6 +254,10 @@ The Linux shell must delegate all camera gesture calculations to the C++ core ma
   - Retrieve supported target formats via `dmc_texture_format_names()` and `dmc_texture_format_labels()` (DXT1, DXT5, BC7, RGBA8, etc.).
   - Checkbox for "Always write DX10 header".
   - Invoke `dmc_reencode_textures(session, format, force_dx10, &detail)` to generate a newly formatted session ready for inspection and export.
+* **Custom Texture Hot-Swapping (Modding Preview):**
+  - Allows live preview of modified character costumes, weapons, and enemy textures (`.png`, `.dds`, `.ptx`) without repacking game PAC archives.
+  - Interactive drag-and-drop (XDND v5 protocol), dedicated `[ MOD TEX ]` header action, and `Shift+T` hotkey.
+  - Clean-room PNG truecolor decoder (`linux_png::DecodePngToRgba`) converting RGBA8 into modern BC7/BC3 DDS blocks via `dds_bcn::encode_dds` and attaching via `dmc_attach_ptx()`.
 
 ---
 
@@ -593,5 +597,8 @@ To guarantee quality and avoid untested drift, implementation will proceed in fo
 | **Phase 2: Navigation & Gestures** | **100% COMPLETE** | Modal in-engine file browser, child thumbnail gallery, inertial fling (`dmc_fling`), twist roll, WASD fly mode, pick raycast. |
 | **Phase 3: Kits, Looks & Motion** | **100% COMPLETE** | Variant Look selector (C), Character Kit panel (K), weapon/DT reassembly, 60 Hz motion carousel (M), multi-backend audio (PipeWire/Pulse/ALSA), subtitle overlays. |
 | **Phase 4: Stages, Collision & Pro Export** | **100% COMPLETE** | Stage companion discovery (`stNNN_effect`, `stNNNcfg`), base room floor spots, BREAK destruction toggle, Stage Marker Cards (`dmc_marker_card`), Collision & Hitbox report tab (`dmc_collision_report`), 16-bit linear RAW DNG (`dmc_capture_dng`), XDG settings persistence. |
+| **Packaging & Distribution (AppImage / Standalone)** | **100% COMPLETE** | `linux/package-appimage.sh` producing standalone `DMC_Native_Reader-x86_64.AppImage`, `AppRun` dispatcher, desktop file & icon associations (`register-desktop.sh`). |
+| **Modding Texture Hot-Swapping** | **100% COMPLETE** | Live PNG/DDS/PTX hot-swapping directly in UI (`[ MOD TEX ]`, `Shift+T`, drag & drop) with clean-room PNG decoder and DDS BC7 encoder. |
+| **Wayland & Fractional Scaling** | **100% COMPLETE** | Automatic `$WAYLAND_DISPLAY` detection, fractional scale factor parsing (125%, 150%, 200%), and `WM_CLASS` / `_NET_WM_PID` desktop registration. |
 | **Comprehensive PAC Corpus Verification** | **100.00% PASS** | 3,733 / 3,733 game archives read with 0 crashes, 21,816 sub-resources extracted (see [PAC_COMPREHENSIVE_TEST_REPORT.md](PAC_COMPREHENSIVE_TEST_REPORT.md)). |
 | **Automated Test Suite** | **100% PASS** | 59 / 59 CTest unit tests passed (8.77s execution time). Linux smoke test suite passed with 0 failures (1,497 indexed assets). |
