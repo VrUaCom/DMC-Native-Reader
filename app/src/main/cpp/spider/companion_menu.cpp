@@ -171,7 +171,7 @@ CompanionMenu companion_menu(const Session* session, const ShellFacts& facts) {
     if (has(widow::StateFlag::CanReencodeTextures)) {
         add(model_rows, Companion::TextureFormat, "Texture format (BC1\xE2\x80\xA6" "BC7)\xE2\x80\xA6");
     }
-    if (root && facts.assembled_pac_source) add(model_rows, Companion::AddPac, "Add weapon / .PAC\xE2\x80\xA6");
+    if (root && facts.assembled_pac_source) add(model_rows, Companion::AddPac, "Add a PAC by hand: weapon (plwp_*), motions (pl000_00_*), other\xE2\x80\xA6");
     // An assembled PAC already owns its part list; re-composing it from
     // picked files would drop the archive's own MODs.
     if (root && has(widow::StateFlag::CanAddModelPart) && !facts.assembled_pac_source) {

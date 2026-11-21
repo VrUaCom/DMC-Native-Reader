@@ -108,5 +108,18 @@ int main() {
     assert(jester[0].include_top_level_mod_slots[2] == 15U && jester[0].part_attachment_count == 2U);
     assert(jester[0].part_attachments[0].host_joint == 5U && jester[0].part_attachments[1].host_joint == 9U);
     assert(jester[0].part_attachments[1].zyx_offset && jester[1].include_top_level_mod_slots[0] == 17U);
+
+    // A character's kit: Dante's base motions, weapons by motion bank, DT bodies.
+    const auto kit = m::character_kit("PL000.pac");
+    const auto has = [&kit](std::string_view kind, std::string_view file, bool start) {
+        for (const auto& e : kit) {
+            if (e.kind == kind && e.file == file && e.start == start) return true;
+        }
+        return false;
+    };
+    assert(has("motions", "pl000_00_0.pac", true) && has("motions", "pl000_00_3.pac", true));
+    assert(has("weapon", "plwp_sword.pac", true) && has("weapon", "plwp_gun.pac", true));
+    assert(has("weapon", "plwp_fight.pac", false) && has("dt", "pl005.pac", false));
+    assert(!m::character_kit("pl021.pac").empty() && m::character_kit("em000.pac").empty());
     return 0;
 }

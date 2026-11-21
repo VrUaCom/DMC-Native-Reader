@@ -1355,3 +1355,66 @@ bool is_attached_part(const Session* session, std::size_t part) noexcept {
 }
 
 }  // namespace dmcresource::motion
+
+namespace dmcresource::motion {
+
+std::vector<KitEntry> character_kit(std::string_view archive_name) {
+    std::vector<KitEntry> out;
+    const auto slash = archive_name.find_last_of("/\\");
+    if (slash != std::string_view::npos) archive_name.remove_prefix(slash + 1U);
+    std::string stem;
+    for (const char c : archive_name.substr(0, archive_name.find('.'))) {
+        stem += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    const auto pac_of = [](std::string_view class_name) -> std::string {
+        static constexpr std::array<std::pair<std::string_view, std::string_view>, 13> pacs{{
+            {"CPlWpSword", "plwp_sword"}, {"CPlWpNunchaku", "plwp_nunchaku"},
+            {"CPlWp2Sword", "plwp_2sword"}, {"CPlWpGuitar", "plwp_guitar"},
+            {"CPlWpFight", "plwp_fight"}, {"CPlWpGun", "plwp_gun"},
+            {"CPlWpShotGun", "plwp_shotgun"}, {"CPlWpLaser", "plwp_laser"},
+            {"CPlWpRifle", "plwp_rifle"}, {"CPlWpLadyGun", "plwp_ladygun"},
+            {"CPlWpNewVergilSword", "plwp_newvergilsword"}, {"CPlWpFoeceEdge", "plwp_forceedge"},
+            {"CPlWpVergilSword", "plwp_vergilsword"}}};
+        for (const auto& [name, pac] : pacs) {
+            if (name == class_name) return std::string{pac} + ".pac";
+        }
+        return {};
+    };
+    const auto rule = visibility_rule_for(archive_name);
+    if (rule == VisibilityRule::dante || stem == "pl000") {
+        // Dante and his costumes share pl000's motion banks (0-2 base).
+        for (std::uint32_t base = 0U; base < 3U; ++base) {
+            out.push_back({"motions", "pl000_00_" + std::to_string(base) + ".pac",
+                           "Base motions " + std::to_string(base), true});
+        }
+        std::vector<std::string> weapons_seen;
+        for (const auto& bank : kDanteWeaponMotionBanks) {
+            const std::string name{bank.weapon_name};
+            const bool start = bank.weapon_id == 0U || bank.weapon_id == 5U;  // Rebellion, Ebony & Ivory
+            out.push_back({"motions", "pl000_00_" + std::to_string(bank.file_index) + ".pac",
+                           name + " motions", start});
+            const auto pac = pac_of(bank.class_name);
+            if (!pac.empty() && std::find(weapons_seen.begin(), weapons_seen.end(), pac) == weapons_seen.end()) {
+                weapons_seen.push_back(pac);
+                out.push_back({"weapon", pac, name.substr(0, name.find(" (")), start});
+            }
+        }
+        for (const char* dt : {"pl005", "pl006", "pl008", "pl009"}) {
+            out.push_back({"dt", std::string{dt} + ".pac", std::string{"Devil trigger "} + dt, false});
+        }
+    } else if (rule == VisibilityRule::new_vergil) {
+        for (std::uint32_t bank = 0U; bank < 10U; ++bank) {
+            out.push_back({"motions", "pl021_00_" + std::to_string(bank) + ".pac",
+                           "Motions " + std::to_string(bank), bank < 3U});
+        }
+        out.push_back({"weapon", "plwp_newvergilsword.pac", "Yamato", true});
+        out.push_back({"weapon", "plwp_newvergilfight.pac", "Beowulf", false});
+        out.push_back({"weapon", "plwp_forceedge.pac", "Force Edge", false});
+        for (const char* dt : {"pl010", "pl014"}) {
+            out.push_back({"dt", std::string{dt} + ".pac", std::string{"Devil trigger "} + dt, false});
+        }
+    }
+    return out;
+}
+
+}  // namespace dmcresource::motion

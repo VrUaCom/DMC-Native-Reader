@@ -297,6 +297,17 @@ dmc_strings* dmc_variant_names(const char* archive_name) {
     } catch (...) { return nullptr; }
 }
 
+dmc_strings* dmc_character_kit(const char* archive_name) {
+    try {
+        auto out = std::make_unique<dmc_strings>();
+        for (const auto& entry : dmcresource::motion::character_kit(text_or_empty(archive_name))) {
+            out->items.push_back(entry.kind + "\t" + entry.file + "\t" + entry.label + "\t" +
+                                 (entry.start ? "1" : "0"));
+        }
+        return out.release();
+    } catch (...) { return nullptr; }
+}
+
 dmc_session* dmc_compose(const dmc_session* const* parts, const char* const* names, size_t count) {
     try {
         const std::lock_guard lock{api_mutex()};

@@ -371,6 +371,19 @@ struct ArchiveVariant final {
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
 
+// A character's kit: the archives the game loads with it, for the shell to
+// add from the same folder. Kind: weapon (a plwp_*.pac on the body), motions
+// (a motion bank, pl000_00_<n>.pac, named by its weapon, kDanteWeaponMotionBanks),
+// dt (a devil-trigger body that replaces the body). `start`: added when the
+// character opens (the base motions and the first melee weapon and gun).
+struct KitEntry final {
+    std::string kind;
+    std::string file;
+    std::string label;
+    bool start{};
+};
+[[nodiscard]] std::vector<KitEntry> character_kit(std::string_view archive_name);
+
 // Canonical boss-Lady (CEm034) equipment contract. This is intentionally
 // separate from CPlWpLadyGun / player weapon state tables: CEm034 owns five
 // persistent MOD managers and several dynamic CShell actors.

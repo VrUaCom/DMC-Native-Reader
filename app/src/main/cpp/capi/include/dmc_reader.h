@@ -91,6 +91,11 @@ dmc_session* dmc_assemble(const dmc_session* const* archives, const char* const*
 /* The classes an archive holds, by its file name (em000.pac: CEm000...);
  * empty for an archive of one class. */
 dmc_strings* dmc_variant_names(const char* archive_name);
+/* The archives a character loads with it (the shell adds them from the same
+ * folder): one "kind\tfile\tlabel\tstart" line each; kind weapon, motions
+ * or dt (a devil-trigger body that replaces the body), start 1 when it is
+ * added as the character opens. Empty for other archives. */
+dmc_strings* dmc_character_kit(const char* archive_name);
 
 /* MODs as one composite model; part 0 is the host the others attach to.
  * At least two parts. */

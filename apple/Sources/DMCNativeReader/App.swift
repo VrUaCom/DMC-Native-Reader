@@ -206,6 +206,9 @@ struct ContentView: View {
                 Text(child.title)
                     .font(.system(.callout, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 1)
+                    .background(model.selectedChild == child.index ? Color.accentColor.opacity(0.25) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 4))
             }
             .buttonStyle(.plain)
         }
@@ -476,6 +479,17 @@ struct ContentView: View {
                 }
             } label: { Label("Actions", systemImage: "ellipsis.circle") }
                 .disabled(model.actions.isEmpty && model.moreActions.isEmpty)
+            if !model.kit.isEmpty {
+                Menu {
+                    kitSection("Weapons — models on the body", kind: "weapon")
+                    kitSection("Motions — animation banks (by weapon)", kind: "motions")
+                    kitSection("Devil Trigger — replaces the body", kind: "dt")
+                    Divider()
+                    Button("Add the whole kit (no DT)") { model.addWholeKit() }
+                    Button("Choose a PAC file…") { model.choosePacs() }
+                } label: { Label("Character", systemImage: "figure.stand") }
+                    .help("The character's weapons, motions and devil trigger: tick to add, untick to remove")
+            }
             if !model.effects.isEmpty {
                 Menu {
                     ForEach(model.effects) { row in
@@ -612,6 +626,24 @@ struct ContentView: View {
                                 .frame(width: 7, height: 7)
                         }
                     }
+            }
+        }
+    }
+}
+
+extension ContentView {
+    /// One part of the Character menu: a tick per PAC added, dimmed when it is not beside the file.
+    @ViewBuilder func kitSection(_ title: String, kind: String) -> some View {
+        let items = model.kit.filter { $0.kind == kind }
+        if !items.isEmpty {
+            Section(title) {
+                ForEach(items) { item in
+                    Button((model.isAdded(item) ? "✓ " : "    ") + item.label +
+                           (item.url == nil ? "  (\(item.file) not beside it)" : "  — \(item.file)")) {
+                        model.toggle(item)
+                    }
+                    .disabled(item.url == nil)
+                }
             }
         }
     }

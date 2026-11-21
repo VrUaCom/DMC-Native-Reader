@@ -103,6 +103,9 @@ final class ViewerModel: ObservableObject {
                 self.addedPacs.removeAll()
                 self.variantIndex = 0
                 self.variants = opened.openedAs == .assembledPac ? ReaderSession.variantNames(name) : []
+                self.sourceURL = url
+                self.dtBody = nil
+                self.loadKit(name: name, near: url)
                 self.staged.removeAll()
                 self.stagedMotions.removeAll()
                 self.show(opened)
@@ -117,14 +120,23 @@ final class ViewerModel: ObservableObject {
         }
     }
 
+    /// The archive whose files the left column lists; it stays while one of
+    /// its files is shown, so the column never disappears.
+    private(set) var listOwner: ReaderSession?
+    @Published private(set) var selectedChild: Int?
+
     func openChild(_ index: Int) {
-        guard let session, let child = session.openChild(index) else {
+        guard let owner = listOwner ?? session, let child = owner.openChild(index) else {
             message = "This file could not be opened."
             return
         }
-        stack.append(session)
+        // Going back returns to the archive, not through every file looked at.
+        if session === owner { stack.append(owner) }
+        keepList = true
         show(child)
+        selectedChild = index
     }
+    private var keepList = false
 
     // MARK: UV maps, the Info picture
 
@@ -162,7 +174,13 @@ final class ViewerModel: ObservableObject {
         session = next
         message = nil
         healthLevel = next.health().level
-        children = (0..<next.childCount).map { ChildFile(index: $0, title: next.childTitle($0)) }
+        if next.childCount > 0 || !keepList || listOwner == nil {
+            // A new archive (or a file with files of its own) takes the column.
+            children = (0..<next.childCount).map { ChildFile(index: $0, title: next.childTitle($0)) }
+            listOwner = next.childCount > 0 ? next : nil
+            selectedChild = nil
+        }
+        keepList = false
         stopMotion()
         subtitle = nil
         motionFrame = .nan
@@ -341,6 +359,12 @@ final class ViewerModel: ObservableObject {
     var sourceFile: (name: String, data: Data)?
     /// PACs added to the opened character (weapons, motions), kept for re-assembly.
     var addedPacs: [(name: String, data: Data)] = []
+    /// The opened file on disk (its folder holds the character's other PACs).
+    var sourceURL: URL?
+    /// The opened character's kit (dmc_character_kit) and the devil-trigger body in use.
+    @Published var kit: [KitItem] = []
+    @Published var dtBody: String?
+    var dtData: Data?
     /// The opened archive's in-game looks (dmc_variant_names) and the one shown.
     @Published var variants: [String] = []
     @Published var variantIndex = 0
@@ -782,4 +806,14 @@ struct ChildFile: Identifiable, Hashable {
     let index: Int
     let title: String
     var id: Int { index }
+}
+
+/// One PAC of a character's kit (dmc_character_kit); `url` when it is beside the opened file.
+struct KitItem: Identifiable, Hashable {
+    let kind: String
+    let file: String
+    let label: String
+    let start: Bool
+    let url: URL?
+    var id: String { file + kind }
 }

@@ -72,6 +72,15 @@ extension ReaderSession {
     /// The classes an archive holds (em000.pac: several enemies), by its name.
     static func variantNames(_ archive: String) -> [String] { strings(dmc_variant_names(archive)) }
 
+    /// The character's kit: (kind, file, label, start) per PAC (dmc_character_kit).
+    static func characterKit(_ archive: String) -> [(kind: String, file: String, label: String, start: Bool)] {
+        strings(dmc_character_kit(archive)).compactMap { line in
+            let f = line.components(separatedBy: "\t")
+            guard f.count == 4 else { return nil }
+            return (f[0], f[1], f[2], f[3] == "1")
+        }
+    }
+
     /// The formats textures can be re-encoded to: the core's names and the labels shown.
     static var textureFormats: [(name: String, label: String)] {
         let names = strings(dmc_texture_format_names())
@@ -207,10 +216,55 @@ extension ViewerModel {
     /// The opened character's PAC with more PACs (weapons, variants) as one scene.
     private func addArchives(_ urls: [URL]) {
         guard sourceFile != nil else { message = "Open a character's PAC first."; return }
-        addedPacs += urls.compactMap { url in read(url).map { (url.lastPathComponent, $0) } }
-        if let session { stack.append(session) }
+        let fresh = urls.compactMap { url in read(url).map { (url.lastPathComponent, $0) } }
+            .filter { new in !addedPacs.contains { $0.name.caseInsensitiveCompare(new.0) == .orderedSame } }
+        addedPacs += fresh
         reassemble()
     }
+
+    /// Picks PAC files by hand and adds them to the opened character.
+    func choosePacs() { pickFiles { [weak self] in self?.addArchives($0) } }
+
+    /// The opened character's kit from the core; its start entries are added at once.
+    func loadKit(name: String, near url: URL) {
+        let folder = url.deletingLastPathComponent()
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        kit = ReaderSession.characterKit(name).map { row in
+            let found = files.first { $0.caseInsensitiveCompare(row.file) == .orderedSame }
+            return KitItem(kind: row.kind, file: row.file, label: row.label, start: row.start,
+                           url: found.map { folder.appendingPathComponent($0) })
+        }
+        let start = kit.filter { $0.start && $0.url != nil && $0.kind != "dt" }.compactMap(\.url)
+        if !start.isEmpty {
+            addArchives(start)
+            let missing = kit.filter { $0.start && $0.url == nil }.map(\.file)
+            message = "Added with it: " + start.map(\.lastPathComponent).joined(separator: ", ") +
+                (missing.isEmpty ? "" : "\nNot beside it: " + missing.joined(separator: ", "))
+        }
+    }
+
+    func isAdded(_ item: KitItem) -> Bool {
+        if item.kind == "dt" { return dtBody?.caseInsensitiveCompare(item.file) == .orderedSame }
+        return addedPacs.contains { $0.name.caseInsensitiveCompare(item.file) == .orderedSame }
+    }
+
+    /// Adds or removes one kit PAC; a devil-trigger body replaces the body (or puts it back).
+    func toggle(_ item: KitItem) {
+        guard let url = item.url else { message = "\(item.file) is not beside the opened file."; return }
+        if item.kind == "dt" {
+            dtBody = isAdded(item) ? nil : item.file
+            dtData = dtBody == nil ? nil : read(url)
+            reassemble()
+        } else if isAdded(item) {
+            addedPacs.removeAll { $0.name.caseInsensitiveCompare(item.file) == .orderedSame }
+            reassemble()
+        } else {
+            addArchives([url])
+        }
+    }
+
+    /// Every PAC of the kit found beside the opened file (no devil trigger).
+    func addWholeKit() { addArchives(kit.filter { $0.kind != "dt" }.compactMap(\.url)) }
 
     /// Shows the in-game look `index` of the opened archive (dmc_variant_names).
     func selectVariant(_ index: Int) {
@@ -224,7 +278,10 @@ extension ViewerModel {
         guard let current = sourceFile else { return }
         var sources: [ReaderSession] = []
         var names: [String] = []
-        for (name, data) in [(current.name, current.data)] + addedPacs.map({ ($0.name, $0.data) }) {
+        // A devil-trigger body takes the body's place; the character's PAC
+        // still names the archive so its motions and rules apply.
+        let body = dtBody.flatMap { name in dtData.map { (name, $0) } }
+        for (name, data) in [body ?? (current.name, current.data)] + addedPacs.map({ ($0.name, $0.data) }) {
             guard let source = ReaderSession.openSource(name: name, bytes: data) else {
                 message = "\(name) is not an archive the core reads."
                 return
