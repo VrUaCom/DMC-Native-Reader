@@ -562,6 +562,35 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                 }
             }
+            // Player devil-trigger / costume archives without the slot-12 coat
+            // (pl005 ... pl025): each cloth MOD (a .clt follows it) hangs from
+            // the body like the coat bank of draw 0x140218960, which roots the
+            // DT cloth at body joint 3 (back) or 14 (hips). A cloth whose first
+            // bone rises (wings) takes joint 3, one that hangs takes joint 14.
+            if (player && body && !coat) {
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    if (part == *body) continue;
+                    const auto& entry = entries[model_entry[part]];
+                    if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                    bool cloth = false;
+                    for (const auto& other : entries) {
+                        if (other.archive == 0U && other.container.empty() && other.slot &&
+                            *other.slot == *entry.slot + 1U && other.kind.format == Format::Clt) {
+                            cloth = true;
+                        }
+                    }
+                    if (!cloth) continue;
+                    const auto& nodes = assembled->composite_parts[part].scene.nodes;
+                    const bool rises = nodes.size() > 1U && nodes[1].world.values[13] > 0.0F;
+                    const std::uint32_t host = rises ? 3U : 14U;
+                    if (host >= assembled->composite_parts[*body].scene.nodes.size()) continue;
+                    if (motion::attach_part_skeleton(assembled.get(), *body, part, host, true)) {
+                        ++report.attached_parts;
+                        report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
+                            "->bodyJoint" + std::to_string(host);
+                    }
+                }
+            }
             // Enemy node constraints (CEm028 init 0x140130480): top-level part
             // slots follow body joints node by node.
             for (std::size_t part = 0U; !player && part < model_entry.size(); ++part) {

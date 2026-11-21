@@ -1011,6 +1011,33 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         return out;
     }
 
+    // Vergil as the player (pl001, pl021, pl023, pl026): body 1 and coat 12;
+    // after the motion data the PAC keeps its own PTX and the summoned
+    // swords (two MODs) -- projectiles, not worn, so a look of their own.
+    {
+        const auto stem = [&archive_name]() {
+            std::string out;
+            for (const char c : archive_name.substr(0, archive_name.find('.'))) {
+                out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return out;
+        }();
+        if (stem == "pl001" || stem == "pl021" || stem == "pl023" || stem == "pl026") {
+            const bool shifted = stem == "pl023";  // one motion PAC fewer: swords 22, 24
+            ArchiveVariant vergil;
+            vergil.label = "Vergil";
+            vergil.include_top_level_mod_slots = {1U, 12U};
+            vergil.include_top_level_mod_count = 2U;
+            out.push_back(vergil);
+            ArchiveVariant swords;
+            swords.label = "Summoned swords";
+            swords.include_top_level_mod_slots = {shifted ? 22U : 23U, shifted ? 24U : 25U};
+            swords.include_top_level_mod_count = 2U;
+            out.push_back(swords);
+            return out;
+        }
+    }
+
     // em035.pac (Vergil). The draw 0x140186930 shows one of four forms
     // ([this+0xEF10]); every model of a form is drawn in the actor world.
     // The PAC keeps each look as a PTX followed by its body and coat MODs:
