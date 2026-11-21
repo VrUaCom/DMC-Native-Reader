@@ -315,6 +315,16 @@ enum ButtonId : int {
     kBtnResetView = 210,
     kBtnEvents = 211,
     kBtnEffects = 212,
+    kBtnLook = 213,
+    kBtnMotion = 214,
+};
+
+struct MotionCardEntry {
+    std::string name;
+    int library_index = 0;
+    std::string description;
+    std::string kind;
+    size_t script_count = 0;
 };
 
 struct CameraDialButton {
@@ -483,6 +493,8 @@ private:
     void play_next_sound();
     void trigger_next_class_event();
     void trigger_next_effect();
+    void cycle_variant();
+    void cycle_motion();
     void refresh_session_metadata();
 
     void init_camera();
@@ -535,6 +547,14 @@ private:
     int active_class_event_ = -1;
     std::vector<std::pair<int, std::string>> effect_items_{};
     int active_effect_idx_ = -1;
+
+    // Variant look selector (dmc_variant_names)
+    std::vector<std::string> variant_names_{};
+    int variant_index_ = 0;
+
+    // Motion cards & strip (dmc_motion_strip_build)
+    std::vector<MotionCardEntry> motion_cards_{};
+    int current_motion_idx_ = -1;
 
     // Animation state
     bool animation_playing_ = false;
@@ -704,6 +724,8 @@ void App::init_buttons() {
         {kBtnSound, "SOUND", "Play resource sounds (S)", {}, true, true, false},
         {kBtnEvents, "EVENT", "Trigger enemy class event (E)", {}, false, false, false},
         {kBtnEffects, "EFFECT", "Play effect bank action (X)", {}, false, false, false},
+        {kBtnLook, "LOOK", "Cycle appearance variant (C)", {}, false, false, false},
+        {kBtnMotion, "MOT", "Cycle library motions (M)", {}, false, false, false},
         {kBtnCamera, "CAM", "Toggle Photo Camera viewfinder (V)", {}, true, true, false},
         {kBtnResetView, "RESET", "Reset camera view (R / 0)", {}, true, true, false},
     };
@@ -797,6 +819,16 @@ void App::update_button_states() {
                 btn.enabled = btn.visible;
                 btn.active = (active_effect_idx_ >= 0);
                 break;
+            case kBtnLook:
+                btn.visible = (variant_names_.size() > 1);
+                btn.enabled = btn.visible;
+                btn.active = (variant_index_ > 0);
+                break;
+            case kBtnMotion:
+                btn.visible = !motion_cards_.empty();
+                btn.enabled = btn.visible;
+                btn.active = animation_playing_;
+                break;
             case kBtnCamera:
                 btn.active = dmc_camera_mode();
                 break;
@@ -868,6 +900,19 @@ void App::open_file(const fs::path& path) {
 
 void App::load_character_kit(const std::string& archive_name, const fs::path& archive_path) {
     kit_items_.clear();
+    variant_names_.clear();
+    variant_index_ = 0;
+
+    dmc_strings* raw_vars = dmc_variant_names(archive_name.c_str());
+    if (raw_vars) {
+        const size_t vcnt = dmc_strings_count(raw_vars);
+        for (size_t i = 0; i < vcnt; ++i) {
+            const char* v = dmc_strings_at(raw_vars, i);
+            if (v && *v) variant_names_.emplace_back(v);
+        }
+        dmc_strings_free(raw_vars);
+    }
+
     dmc_strings* raw_kit = dmc_character_kit(archive_name.c_str());
     if (!raw_kit) return;
 
@@ -972,14 +1017,30 @@ void App::reassemble_character() {
     name_ptrs.reserve(source_names.size());
     for (const auto& n : source_names) name_ptrs.push_back(n.c_str());
 
-    dmc_session* assembled = dmc_assemble(open_sources.data(), name_ptrs.data(), open_sources.size(), 0);
+    dmc_session* assembled = dmc_assemble(open_sources.data(), name_ptrs.data(), open_sources.size(),
+                                          static_cast<size_t>(std::max(0, variant_index_)));
     for (auto* s : open_sources) dmc_close(s);
 
     if (assembled) {
         if (session_) dmc_close(session_);
         session_ = assembled;
-        current_title_ = base_character_name_ + " (Assembled)";
+        std::string look = (!variant_names_.empty() && variant_index_ < static_cast<int>(variant_names_.size()))
+                           ? (" · " + variant_names_[variant_index_]) : "";
+        current_title_ = base_character_name_ + look + " (Assembled)";
+        refresh_session_metadata();
+        if (host_.display && host_.window) {
+            XStoreName(host_.display, host_.window, ("DMC Native Reader - " + current_title_).c_str());
+        }
     }
+}
+
+void App::cycle_variant() {
+    if (variant_names_.empty()) return;
+    variant_index_ = (variant_index_ + 1) % static_cast<int>(variant_names_.size());
+    reassemble_character();
+    camera_message_ = "Look Variant [" + std::to_string(variant_index_ + 1) + "/" +
+                      std::to_string(variant_names_.size()) + "]: " + variant_names_[variant_index_];
+    std::cout << camera_message_ << "\n";
 }
 
 void App::toggle_kit_item(size_t index) {
@@ -1051,6 +1112,27 @@ void App::refresh_session_metadata() {
             if (it && it->label) effect_items_.emplace_back(it->id, it->label);
         }
         dmc_menu_free(eff);
+    }
+
+    // Motion strip & library motions
+    motion_cards_.clear();
+    current_motion_idx_ = -1;
+    dmc_motion_strip* strip = dmc_motion_strip_build(session_, true, nullptr, 0);
+    if (strip) {
+        const size_t cnt = dmc_motion_strip_count(strip);
+        for (size_t i = 0; i < cnt; ++i) {
+            const auto* card = dmc_motion_strip_card(strip, i);
+            if (card && card->name) {
+                MotionCardEntry entry;
+                entry.name = card->name;
+                entry.library_index = card->library_index;
+                entry.description = card->description ? card->description : "";
+                entry.kind = card->kind ? card->kind : "";
+                entry.script_count = card->script_count;
+                motion_cards_.push_back(entry);
+            }
+        }
+        dmc_motion_strip_free(strip);
     }
 
     update_button_states();
@@ -1252,11 +1334,14 @@ void App::render_frame() {
     }
 
     if (animation_playing_ || std::isfinite(view_.motion_frame)) {
-        char anim_buf[96];
-        std::snprintf(anim_buf, sizeof(anim_buf), "Frame: %.1f / %.1f  %s  [Space] Play/Pause  [ [ / ] ] Step",
-                      view_.motion_frame, motion_end_frame_, animation_playing_ ? "[>] PLAYING" : "[||] PAUSED");
-        canvas_.fill_rect(12, viewport_y + viewport_h - 32, 420, 24, 0x181822);
-        canvas_.draw_rect_outline(12, viewport_y + viewport_h - 32, 420, 24, kColorBtnBorder);
+        char anim_buf[140];
+        std::string mot_title = (current_motion_idx_ >= 0 && current_motion_idx_ < static_cast<int>(motion_cards_.size()))
+                                ? (" · " + motion_cards_[current_motion_idx_].name) : "";
+        std::snprintf(anim_buf, sizeof(anim_buf), "Motion%s: %.1f / %.1f  %s  [Space]  [[ / ]] Step  [M] Next",
+                      mot_title.c_str(), view_.motion_frame, motion_end_frame_,
+                      animation_playing_ ? "[>] PLAY" : "[||] PAUSE");
+        canvas_.fill_rect(12, viewport_y + viewport_h - 32, 460, 24, 0x181822);
+        canvas_.draw_rect_outline(12, viewport_y + viewport_h - 32, 460, 24, kColorBtnBorder);
         canvas_.draw_text(18, viewport_y + viewport_h - 26, anim_buf, kColorText);
     }
 
@@ -1555,6 +1640,12 @@ void App::handle_button_click(int id) {
         case kBtnEffects:
             trigger_next_effect();
             break;
+        case kBtnLook:
+            cycle_variant();
+            break;
+        case kBtnMotion:
+            cycle_motion();
+            break;
         case kBtnCamera:
             toggle_camera_mode();
             break;
@@ -1686,6 +1777,14 @@ void App::handle_key_press(KeySym sym) {
         case XK_X:
             trigger_next_effect();
             break;
+        case XK_c:
+        case XK_C:
+            cycle_variant();
+            break;
+        case XK_m:
+        case XK_M:
+            cycle_motion();
+            break;
         case XK_o:
         case XK_O:
             trigger_open_dialog();
@@ -1790,7 +1889,11 @@ void App::step_animation(float delta) {
     if (view_.motion_frame < 0.0f) view_.motion_frame = 0.0f;
     if (motion_end_frame_ > motion_loop_start_ && view_.motion_frame > motion_end_frame_) {
         const float span = motion_end_frame_ - motion_loop_start_;
-        view_.motion_frame = motion_loop_start_ + std::fmod(view_.motion_frame - motion_end_frame_, span);
+        if (span > 0.001f) {
+            view_.motion_frame = motion_loop_start_ + std::fmod(view_.motion_frame - motion_end_frame_, span);
+        } else {
+            view_.motion_frame = motion_loop_start_;
+        }
     }
 }
 
@@ -1837,6 +1940,23 @@ void App::trigger_next_effect() {
                       std::to_string(effect_items_.size()) + "]: " + item.second + " (" + msg + ")";
     std::cout << camera_message_ << "\n";
     dmc_outcome_free(&out);
+}
+
+void App::cycle_motion() {
+    if (!session_ || motion_cards_.empty()) return;
+    current_motion_idx_ = (current_motion_idx_ + 1) % static_cast<int>(motion_cards_.size());
+    const auto& card = motion_cards_[current_motion_idx_];
+    char* rep = dmc_load_library_motion(session_, static_cast<size_t>(card.library_index));
+    std::string report = rep ? rep : "";
+    if (rep) dmc_string_free(rep);
+
+    dmc_motion_range(session_, &motion_end_frame_, &motion_loop_start_);
+    view_.motion_frame = motion_loop_start_;
+    animation_playing_ = true;
+
+    camera_message_ = "Motion [" + std::to_string(current_motion_idx_ + 1) + "/" +
+                      std::to_string(motion_cards_.size()) + "]: " + card.name;
+    std::cout << camera_message_ << " (" << report << ")\n";
 }
 
 void App::cycle_hitboxes() {
@@ -2268,7 +2388,11 @@ void App::run() {
             view_.motion_frame += dt * 60.0f;
             if (motion_end_frame_ > motion_loop_start_ && view_.motion_frame > motion_end_frame_) {
                 const float span = motion_end_frame_ - motion_loop_start_;
-                view_.motion_frame = motion_loop_start_ + std::fmod(view_.motion_frame - motion_end_frame_, span);
+                if (span > 0.001f) {
+                    view_.motion_frame = motion_loop_start_ + std::fmod(view_.motion_frame - motion_end_frame_, span);
+                } else {
+                    view_.motion_frame = motion_loop_start_;
+                }
             }
         }
 
