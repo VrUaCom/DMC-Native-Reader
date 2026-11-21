@@ -1973,7 +1973,7 @@ RgbaImage render_view_software(const Mesh& mesh, int width, int height,
 std::atomic<GpuViewBackend*> g_gpu_backend{nullptr};
 std::atomic<bool> g_gpu_enabled{true};
 std::atomic<bool> g_gpu_present{true};
-std::atomic<bool> g_dmc3_shaders{true};
+std::atomic<bool> g_nr_shaders{true};
 std::atomic<bool> g_game_lights{false};
 
 // The stage's lights (game_lights.h), as the game lights its objects
@@ -2005,7 +2005,7 @@ Vec3 room_unplace(const ViewState& view, const Vec3& p) {
 // The stage's lights for the frame: the four the game would pick for the
 // framing centre (the stage) and for the model's centre (its rig).
 void stage_lights_frame(const ViewState& view, const Vec3& centre, const Vec3& model_centre,
-                        GpuViewFrame::Dmc3& out) {
+                        GpuViewFrame::Nr& out) {
     if (!g_game_lights.load() || view.stage_lights == nullptr) return;
     const auto& table = *view.stage_lights;
     const Vec3 q = room_unplace(view, centre);
@@ -2045,14 +2045,14 @@ std::atomic<std::uint64_t> g_presented_frames{0U};
 std::mutex g_shader_stats_mutex;
 GpuShaderStats g_shader_stats;
 
-// The DMC3 shaders' fog and light for the frame (GpuViewFrame::Dmc3). Their
+// The NR shaders' fog and light for the frame (GpuViewFrame::Nr). Their
 // fog has one colour: the far one when the near end has no fog (its colour
 // then hardly shows); a fog that changes colour otherwise keeps the Reader's
 // shaders.
-GpuViewFrame::Dmc3 dmc3_frame(const ViewState& view, float camera_distance, const Vec3& centre,
+GpuViewFrame::Nr nr_frame(const ViewState& view, float camera_distance, const Vec3& centre,
                               const Vec3& model_centre) {
-    GpuViewFrame::Dmc3 out;
-    out.enabled = dmc3_shaders_enabled();
+    GpuViewFrame::Nr out;
+    out.enabled = nr_shaders_enabled();
     const Vec3 l = model_light_direction(view.yaw_radians, view.pitch_radians);
     out.light_direction = {l.x, l.y, l.z};
     if (out.enabled) stage_lights_frame(view, centre, model_centre, out);
@@ -2155,7 +2155,7 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
     GpuGeometry out;
     const bool textured = textures != nullptr && triangle_texture_slots != nullptr && mesh.has_uv0() &&
         mesh.indices.size() % 3U == 0U && triangle_texture_slots->size() == mesh.indices.size() / 3U;
-    // Normals for the DMC3 model shaders, which light the vertices
+    // Normals for the NR model shaders, which light the vertices
     // themselves: a vertex without one gets the light's direction at the
     // length that gives it the same light.
     const auto normals = view.unlit ? std::vector<Vec3>{} : vertex_normals(mesh, radius);
@@ -2449,7 +2449,7 @@ GpuViewFrame build_gpu_frame(const Mesh& mesh, int width, int height, const View
         const float inv = 1.0F / static_cast<float>(mesh.vertices.size());
         model_centre = {sum.x * inv, sum.y * inv, sum.z * inv};
     }
-    out.dmc3 = dmc3_frame(view, frame.camera_distance, frame.center, model_centre);
+    out.nr = nr_frame(view, frame.camera_distance, frame.center, model_centre);
     if (view.fog.enabled) {
         const auto& f = view.fog;
         out.fog = {.enabled = true, .start = f.start, .end = f.end,
@@ -2535,10 +2535,10 @@ void set_gpu_view_enabled(bool enabled) noexcept { g_gpu_enabled.store(enabled);
 void set_gpu_present_enabled(bool enabled) noexcept { g_gpu_present.store(enabled); }
 bool gpu_present_enabled() noexcept { return g_gpu_present.load(); }
 bool gpu_view_enabled() noexcept { return g_gpu_enabled.load(); }
-void set_dmc3_shaders_enabled(bool enabled) noexcept { g_dmc3_shaders.store(enabled); }
+void set_nr_shaders_enabled(bool enabled) noexcept { g_nr_shaders.store(enabled); }
 void set_game_lights_enabled(bool enabled) noexcept { g_game_lights.store(enabled); }
 bool game_lights_enabled() noexcept { return g_game_lights.load(); }
-bool dmc3_shaders_enabled() noexcept { return g_dmc3_shaders.load(); }
+bool nr_shaders_enabled() noexcept { return g_nr_shaders.load(); }
 
 void set_gpu_shader_stats(GpuShaderStats stats) {
     const std::lock_guard lock{g_shader_stats_mutex};
@@ -2550,25 +2550,25 @@ GpuShaderStats gpu_shader_stats() {
     return g_shader_stats;
 }
 
-std::string dmc3_shader_report() {
+std::string nr_shader_report() {
     const auto stats = gpu_shader_stats();
-    const auto total = dmc3::shaders().size();
-    std::string text = "DMC3 shaders: ";
-    if (!dmc3_shaders_enabled()) text += "off; ";
+    const auto total = nr::shaders().size();
+    std::string text = "NR shaders: ";
+    if (!nr_shaders_enabled()) text += "off; ";
     if (stats.compiled + stats.failed == 0) {
         text += std::to_string(total) + " in the library, not compiled yet (no GPU frame)";
         return text;
     }
     text += std::to_string(stats.compiled) + " of " + std::to_string(total) + " compiled";
     if (stats.failed != 0) text += " (first failure: " + stats.first_failure + ")";
-    text += "; last frame: " + std::to_string(stats.dmc3_batches) + " batches with them";
+    text += "; last frame: " + std::to_string(stats.nr_batches) + " batches with them";
     if (!stats.used.empty()) {
         text += " (";
         for (std::size_t i = 0U; i < stats.used.size(); ++i) {
-            const auto* entry = dmc3::info(stats.used[i]);
+            const auto* entry = nr::info(stats.used[i]);
             if (entry == nullptr) continue;
             if (i != 0U) text += ", ";
-            text += std::string(entry->name) + " = " + entry->dmc3_name;
+            text += std::string(entry->name) + " = " + entry->game_name;
         }
         text += ")";
     }
@@ -2576,13 +2576,13 @@ std::string dmc3_shader_report() {
     return text;
 }
 
-// Which DMC3 shaders draw which batch: one rule a pass, the place to change
+// Which NR shaders draw which batch: one rule a pass, the place to change
 // when a batch should be drawn with another of them (docs/SHADERS.md).
-GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept {
-    using dmc3::AlphaFunc;
-    using dmc3::Shader;
-    GpuDmc3Draw out;
-    const auto& d = frame.dmc3;
+GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept {
+    using nr::AlphaFunc;
+    using nr::Shader;
+    GpuNrDraw out;
+    const auto& d = frame.nr;
     // Untextured surfaces are the Reader's grey preview; the game has none.
     if (!d.enabled || batch.texture == nullptr) return out;
     // The object's part alpha (MDL_PARTS_COLOR_PKT alpha; game_material.h).

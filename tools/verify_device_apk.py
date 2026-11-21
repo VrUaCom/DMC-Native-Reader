@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 
 # 8 MiB since v149: the 4 MiB of v72 predates video playback (FFmpeg), the
-# 67 DMC3 shaders and cutscenes; one stripped DSO with --gc-sections still.
+# 67 NR shaders and cutscenes; one stripped DSO with --gc-sections still.
 MAX_APK_BYTES = 8 * 1024 * 1024
 MAX_NATIVE_BYTES = 8 * 1024 * 1024
 MAX_DEX_BYTES = 1024 * 1024

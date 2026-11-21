@@ -331,10 +331,10 @@ APK verifier.
       clip texts show as EMPTY.
   - Shaders: 67 GLSL ES shaders of our own that behave like the HD
     port's, written clean-room from behaviour specifications
-    (`docs/cleanroom/`, `app/src/main/cpp/shaders/dmc3/`).
+    (`docs/cleanroom/`, `app/src/main/cpp/shaders/nr/`).
   - v121:
     - The 67 DMC3 shaders are in the Reader: the core holds them with the
-      game's names (`dmcresource::dmc3`, docs/SHADERS.md), the GPU compiles
+      game's names (`dmcresource::nr`, docs/SHADERS.md), the GPU compiles
       all of them, and draws models and vertex-coloured stages with the
       game's (dmc3_mod, dmc3_efm, dmc3_stg and tex_col_mod2, with fog). The
       picture stays as before; fog follows the game's curve.

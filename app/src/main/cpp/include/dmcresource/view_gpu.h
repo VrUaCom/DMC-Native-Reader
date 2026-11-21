@@ -10,7 +10,7 @@
 #include "dmcresource/mesh.h"
 #include "dmcresource/render_scene.h"
 #include "dmcresource/camera_post.h"
-#include "dmcresource/dmc3_shaders.h"
+#include "dmcresource/nr_shaders.h"
 
 // GPU view rendering: render_view's triangle passes on the graphics chip.
 //
@@ -58,7 +58,7 @@ struct GpuBatch final {
     float light_gain{0.0F};
     std::uint32_t scroll_slot{kNoTextureSlot};  // room texture slot (scrolls)
     // The object's material (game_material.h): point sampling, and the
-    // part alpha the DMC3 shaders draw with (128/255, or 1 above 0x80).
+    // part alpha the NR shaders draw with (128/255, or 1 above 0x80).
     bool nearest{};
     float part_alpha{128.0F / 255.0F};
 };
@@ -193,10 +193,10 @@ struct GpuViewFrame final {
     };
     Overlay overlay;
 
-    // The DMC3 shaders (dmc3_shaders.h, dmc3_draw): when enabled, a batch
+    // The NR shaders (nr_shaders.h, nr_draw): when enabled, a batch
     // the game has a shader for is drawn with it instead of the Reader's
     // own; everything else keeps the Reader's shaders.
-    struct Dmc3 final {
+    struct Nr final {
         bool enabled{};
         bool fog{};                          // the fog variants
         std::array<float, 3> fog_colour{};   // rgb 0..1
@@ -223,7 +223,7 @@ struct GpuViewFrame final {
         std::array<float, 9> model_light_colours{};
         std::array<float, 3> model_light_ambient{};
     };
-    Dmc3 dmc3{};
+    Nr nr{};
 
     // Show the frame on the backend's window (set_window) instead of
     // reading it back; the backend sets `presented` when it did, and the
@@ -240,13 +240,13 @@ enum class GpuPass : std::uint8_t {
     room_layered, // 4. room light shafts (added / subtracted)
 };
 
-// How a batch is drawn with the DMC3 shaders: the pair, the alpha test and
+// How a batch is drawn with the NR shaders: the pair, the alpha test and
 // the light rig. vertex == none: with the Reader's own shaders. The rules are
-// Core's (dmc3_draw); the backend sets the uniforms CONVENTIONS.md names.
-struct GpuDmc3Draw final {
-    dmc3::Shader vertex{dmc3::Shader::none};
-    dmc3::Shader fragment{dmc3::Shader::none};
-    dmc3::AlphaFunc alpha_func{dmc3::AlphaFunc::off};
+// Core's (nr_draw); the backend sets the uniforms CONVENTIONS.md names.
+struct GpuNrDraw final {
+    nr::Shader vertex{nr::Shader::none};
+    nr::Shader fragment{nr::Shader::none};
+    nr::AlphaFunc alpha_func{nr::AlphaFunc::off};
     float alpha_ref{};
     std::array<float, 3> fog_colour{};  // black for added / subtracted surfaces
     float fog_amount{1.0F};             // model: the part's amount
@@ -260,9 +260,9 @@ struct GpuDmc3Draw final {
     // Stage: u_light_x / _y / _z / _falloff and u_light_colour[4].
     std::array<float, 4> light_x{}, light_y{}, light_z{}, light_falloff{};
     std::array<float, 16> light_colour{};
-    [[nodiscard]] bool drawn() const noexcept { return vertex != dmc3::Shader::none; }
+    [[nodiscard]] bool drawn() const noexcept { return vertex != nr::Shader::none; }
 };
-[[nodiscard]] GpuDmc3Draw dmc3_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept;
+[[nodiscard]] GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept;
 
 class GpuViewBackend {
 public:
@@ -292,10 +292,10 @@ void set_gpu_view_options(const GpuViewOptions& options) noexcept;
 void set_gpu_present_enabled(bool enabled) noexcept;
 [[nodiscard]] bool gpu_present_enabled() noexcept;
 [[nodiscard]] GpuViewOptions gpu_view_options() noexcept;
-// Draw with the DMC3 shaders where the game has one (on by default).
-void set_dmc3_shaders_enabled(bool enabled) noexcept;
-[[nodiscard]] bool dmc3_shaders_enabled() noexcept;
-// Light the DMC3 shaders' stage and models with the stage's light table
+// Draw with the NR shaders where the game has one (on by default).
+void set_nr_shaders_enabled(bool enabled) noexcept;
+[[nodiscard]] bool nr_shaders_enabled() noexcept;
+// Light the NR shaders' stage and models with the stage's light table
 // (LIG2 is the main list of the game's CLightMgr, research
 // dmc3-gates-archive-v124.md), with the game's object masks, selection and
 // packing. Experimental and off by default: one query point per frame, and
@@ -310,21 +310,21 @@ struct GpuViewStats final {
     std::uint64_t presented_frames{};  // GPU frames shown straight on the window
 };
 
-// What the backend did with the DMC3 shaders: how many compiled when it
+// What the backend did with the NR shaders: how many compiled when it
 // started, and the batches of the last frame drawn with them.
 struct GpuShaderStats final {
     int compiled{};
     int failed{};
     std::string first_failure;  // "name: log"
-    std::uint64_t dmc3_batches{};    // last frame
+    std::uint64_t nr_batches{};    // last frame
     std::uint64_t reader_batches{};  // last frame, with the Reader's shaders
-    std::vector<dmc3::Shader> used;  // last frame, each shader once
+    std::vector<nr::Shader> used;  // last frame, each shader once
 };
 void set_gpu_shader_stats(GpuShaderStats stats);
 [[nodiscard]] GpuShaderStats gpu_shader_stats();
-// "DMC3 shaders: 67 of 67 compiled; last frame: 24 batches with them
+// "NR shaders: 67 of 67 compiled; last frame: 24 batches with them
 // (effect_model_lit.vert = dmc3_efm, ...), 21 with the Reader's" (Info).
-[[nodiscard]] std::string dmc3_shader_report();
+[[nodiscard]] std::string nr_shader_report();
 [[nodiscard]] GpuViewStats gpu_view_stats() noexcept;
 
 // What draws the next frame: "GPU: <backend>" or "CPU (software)".

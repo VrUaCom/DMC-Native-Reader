@@ -5,12 +5,12 @@
 #include <span>
 #include <string_view>
 
-// The DMC3 shaders: our own GLSL ES 3.00 shaders (shaders/dmc3/) that behave
+// The NR shaders: our own GLSL ES 3.00 shaders (shaders/nr/) that behave
 // like the HD port's, written clean-room from behaviour specifications
 // (docs/cleanroom/). One entry each: our name, the name of the game's shader
 // it stands for, and the source, built into the library from the files.
 // docs/SHADERS.md is the map, and says which of them the Reader draws with.
-namespace dmcresource::dmc3 {
+namespace dmcresource::nr {
 
 enum class ShaderStage : std::uint8_t { vertex, fragment };
 
@@ -103,7 +103,7 @@ enum class Shader : std::uint8_t {
 struct ShaderInfo final {
     Shader id{Shader::none};
     const char* name{};       // our file, "model_lit.vert"
-    const char* dmc3_name{};  // the HD port's shader it behaves like, "dmc3_mod"
+    const char* game_name{};  // the HD port's shader it behaves like, "dmc3_mod"
     ShaderStage stage{};
     ShaderFamily family{};
     const char* role{};       // what it draws
@@ -114,7 +114,7 @@ struct ShaderInfo final {
 // Null for none.
 [[nodiscard]] const ShaderInfo* info(Shader shader) noexcept;
 // By our name ("model_lit.vert"; "texture_modulate" when only one stage has
-// it) or by the DMC3 name ("dmc3_mod"); none when unknown.
+// it) or by the game's name ("dmc3_mod"); none when unknown.
 [[nodiscard]] Shader find(std::string_view name) noexcept;
 // The GLSL text; empty when the build has no file for it.
 [[nodiscard]] std::string_view source(Shader shader) noexcept;
@@ -132,7 +132,7 @@ enum class AlphaFunc : std::int32_t {
     greater_equal = 7,
 };
 
-// The sources built into the library (generated from shaders/dmc3/).
+// The sources built into the library (generated from shaders/nr/).
 namespace detail {
 struct EmbeddedSource final {
     const char* file;
@@ -141,4 +141,4 @@ struct EmbeddedSource final {
 [[nodiscard]] std::span<const EmbeddedSource> embedded_sources() noexcept;
 }  // namespace detail
 
-}  // namespace dmcresource::dmc3
+}  // namespace dmcresource::nr

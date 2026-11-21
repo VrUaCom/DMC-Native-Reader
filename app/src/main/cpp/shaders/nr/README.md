@@ -1,4 +1,4 @@
-# DMC3 shaders (clean room)
+# NR shaders (clean room)
 
 Our own GLSL ES 3.00 shaders that behave like the HD port's: 29 vertex and
 38 fragment shaders. Each was written by an implementer who saw only
@@ -15,7 +15,7 @@ with OpenGL ES 3.0 (Mesa).
 - Attribute locations, varyings, the alpha test and the fog rule are in
   CONVENTIONS.md.
 - Built into the core as text (CMake embeds every file here);
-  `dmcresource::dmc3` names them, and the GPU backend compiles all of them
-  and draws with them where the core's `dmc3_draw()` picks one. The map of
+  `dmcresource::nr` names them, and the GPU backend compiles all of them
+  and draws with them where the core's `nr_draw()` picks one. The map of
   our names to the game's, and what the Reader draws with which, is
   docs/SHADERS.md.

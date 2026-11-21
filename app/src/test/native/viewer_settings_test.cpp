@@ -46,7 +46,7 @@ int main() {
 
     // Nothing stored: the defaults the Android app always had.
     const auto defaults = settings::resolve({});
-    assert(defaults.gpu && defaults.gpu_present && defaults.dmc3_shaders && !defaults.game_lights);
+    assert(defaults.gpu && defaults.gpu_present && defaults.nr_shaders && !defaults.game_lights);
     assert(defaults.msaa == 4 && defaults.mipmaps && defaults.anisotropy == 8);
     assert(defaults.max_side == 720 && defaults.frame_ms == 33 && defaults.speed == 1.0F);
     assert(defaults.shadows && defaults.fast_preview && defaults.mesh_line == 1 && defaults.collision_line == 1);
@@ -66,6 +66,6 @@ int main() {
     assert(applied.speed == 0.5F && !applied.gpu && applied.max_side == 7680);
     assert(settings::benchmark_summary(applied) == "smooth textures, unlit");
     assert(settings::benchmark_summary(defaults) ==
-           "MSAA 4x, mipmaps on, anisotropy 8x, shown directly, shaders DMC3, pixel textures");
+           "MSAA 4x, mipmaps on, anisotropy 8x, shown directly, shaders NR, pixel textures");
     return 0;
 }

@@ -118,7 +118,7 @@ struct ViewState {
     };
     Fog fog{};
     // The light table (LIG2) of the configuration of the stage or room
-    // drawn; the DMC3 shaders light with it when the stage lights are on
+    // drawn; the NR shaders light with it when the stage lights are on
     // (set_game_lights_enabled). Null: none.
     std::shared_ptr<const game_lights::LightTable> stage_lights;
     // The camera turned about its own axis (radians; positive clockwise,

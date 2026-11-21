@@ -1,22 +1,22 @@
-# DMC3 shaders: our names and the game's
+# NR shaders: our names and the game's
 
-The Reader's 67 GLSL ES 3.00 shaders in `app/src/main/cpp/shaders/dmc3/`
+The Reader's 67 GLSL ES 3.00 shaders in `app/src/main/cpp/shaders/nr/`
 behave like the shaders of the DMC3 HD port. They were written clean-room
 from behaviour specifications (`docs/cleanroom/`), not copied. This page maps
 each one to the game's shader it stands for.
 
-In the code, `dmcresource::dmc3` (`include/dmcresource/dmc3_shaders.h`) holds
+In the code, `dmcresource::nr` (`include/dmcresource/nr_shaders.h`) holds
 the same table:
-- `dmc3::Shader::model_lit_vert` is `model_lit.vert`, which is `dmc3_mod`.
-- `dmc3::find("dmc3_mod")` and `dmc3::find("model_lit.vert")` both give it.
-- `dmc3::source()` gives its text; the build embeds the files.
+- `nr::Shader::model_lit_vert` is `model_lit.vert`, which is `dmc3_mod`.
+- `nr::find("dmc3_mod")` and `nr::find("model_lit.vert")` both give it.
+- `nr::source()` gives its text; the build embeds the files.
 
-The test `dmc3_shaders` keeps this page and the table in step.
+The test `nr_shaders` keeps this page and the table in step.
 
 ## How the Reader uses them
 
 - When the GPU backend starts, it compiles all 67.
-- For every batch, the core's `dmc3_draw()` (`view_renderer.cpp`) picks the
+- For every batch, the core's `nr_draw()` (`view_renderer.cpp`) picks the
   pair, the alpha test and the light rig. That function is the one place to
   change when a batch should use another shader.
 - The backend links a pair the first time a frame needs it and sets the
@@ -42,7 +42,7 @@ The Reader's own shaders stay in use for:
 - the floor, the shadow footprint, effect quads, the fade, overlays and the
   photo camera's development.
 
-To turn the DMC3 shaders off, set Settings → Graphics → Shaders (GPU) to
+To turn the NR shaders off, set Settings → Graphics → Shaders (GPU) to
 "Reader's own". The Renderer info shows which shaders the last frame used.
 
 The other shaders are in the library and compile. They wait for the data

@@ -264,7 +264,7 @@ public final class NativeBridge {
     /** Frames of the view straight onto its window (true) or read back into a picture. */
 
     /** Draw with the DMC3 (game) shaders where the game has one; the core picks them. */
-    /** Light the DMC3 shaders' stage and models with the stage configuration's LIG2 table (experimental). */
+    /** Light the NR shaders' stage and models with the stage configuration's LIG2 table (experimental). */
     /** GPU picture quality: MSAA samples (0 = off), mipmaps, anisotropic filtering (1 = off). */
     /** The graphics chip's limits: {max MSAA samples, max anisotropy}; zeros without a GPU. */
     /** A frame buffer in native memory (not the Java heap); free it once with freeFrameBuffer. */

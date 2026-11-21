@@ -432,7 +432,7 @@ GLuint compile_logged(GLenum type, const char* source, std::string& log) {
 }
 
 // camera = view * p; clip = (p0 x, p1 y, p2 z + p3, z) as one matrix
-// (column-major), for the DMC3 shaders' u_view_projection.
+// (column-major), for the NR shaders' u_view_projection.
 std::array<float, 16> view_projection(const std::array<float, 16>& view, const std::array<float, 4>& p) noexcept {
     std::array<float, 16> m{};
     for (std::size_t c = 0U; c < 4U; ++c) {
@@ -625,11 +625,11 @@ private:
         mesh_layout(model_vao_, model_vbo_);
         mesh_layout(room_vao_, room_vbo_);
         mesh_layout(aux_vao_, aux_vbo_);
-        glGenVertexArrays(1, &model_dmc3_vao_);
-        glGenVertexArrays(1, &room_dmc3_vao_);
-        dmc3_layout(model_dmc3_vao_, model_vbo_, true);
-        dmc3_layout(room_dmc3_vao_, room_vbo_, false);
-        compile_dmc3_shaders();
+        glGenVertexArrays(1, &model_nr_vao_);
+        glGenVertexArrays(1, &room_nr_vao_);
+        nr_layout(model_nr_vao_, model_vbo_, true);
+        nr_layout(room_nr_vao_, room_vbo_, false);
+        compile_nr_shaders();
         glBindVertexArray(screen_vao_);
         glBindBuffer(GL_ARRAY_BUFFER, screen_vbo_);
         constexpr auto stride = static_cast<GLsizei>(sizeof(GpuScreenVertex));
@@ -685,10 +685,10 @@ private:
         glBindVertexArray(0);
     }
 
-    // The DMC3 shaders' inputs (CONVENTIONS.md) on the same vertices:
+    // The NR shaders' inputs (CONVENTIONS.md) on the same vertices:
     // 0 position, 1 normal, 2 uv, 3 colour (0..1 for the models, 0..255 for
-    // the stage); the bones and weights are constants (dmc3_constants).
-    static void dmc3_layout(GLuint vao, GLuint vbo, bool unit_colour) {
+    // the stage); the bones and weights are constants (nr_constants).
+    static void nr_layout(GLuint vao, GLuint vbo, bool unit_colour) {
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         constexpr auto stride = static_cast<GLsizei>(sizeof(GpuVertex));
@@ -706,7 +706,7 @@ private:
 
     // The vertices come posed: every one follows bone 0 (rows 0..3, the
     // identity) alone; no per-vertex fog.
-    static void dmc3_constants() {
+    static void nr_constants() {
         glVertexAttribI4i(4, 0, 0, 0, 0);
         glVertexAttrib4f(5, 31.0F, 0.0F, 0.0F, 1.0F);
         glVertexAttrib4f(6, 1.0F, 0.0F, 0.0F, 1.0F);
@@ -714,19 +714,19 @@ private:
 
     // All of them once, when the context is made: the count goes to the
     // Info screen, and a pair is linked when a frame first needs it.
-    void compile_dmc3_shaders() {
+    void compile_nr_shaders() {
         dmcresource::GpuShaderStats stats;
-        for (const auto& entry : dmcresource::dmc3::shaders()) {
-            const auto text = dmcresource::dmc3::source(entry.id);
+        for (const auto& entry : dmcresource::nr::shaders()) {
+            const auto text = dmcresource::nr::source(entry.id);
             std::string log = text.empty() ? "no source in this build" : "";
             GLuint shader = 0U;
             if (!text.empty()) {
                 const std::string source(text);
-                shader = compile_logged(entry.stage == dmcresource::dmc3::ShaderStage::vertex ? GL_VERTEX_SHADER
+                shader = compile_logged(entry.stage == dmcresource::nr::ShaderStage::vertex ? GL_VERTEX_SHADER
                                                                                              : GL_FRAGMENT_SHADER,
                                         source.c_str(), log);
             }
-            dmc3_objects_[static_cast<std::size_t>(entry.id)] = shader;
+            nr_objects_[static_cast<std::size_t>(entry.id)] = shader;
             if (shader != 0U) {
                 ++stats.compiled;
             } else {
@@ -734,14 +734,14 @@ private:
                 if (stats.first_failure.empty()) stats.first_failure = std::string(entry.name) + ": " + log;
             }
         }
-        dmc3_compiled_ = stats.compiled;
-        dmc3_failed_ = stats.failed;
-        dmc3_first_failure_ = stats.first_failure;
+        nr_compiled_ = stats.compiled;
+        nr_failed_ = stats.failed;
+        nr_first_failure_ = stats.first_failure;
         dmcresource::set_gpu_shader_stats(std::move(stats));
     }
 
-    // Uniform locations of a DMC3 pair (-1 where the pair has none).
-    struct Dmc3Program final {
+    // Uniform locations of a NR pair (-1 where the pair has none).
+    struct NrProgram final {
         GLuint id{};
         GLint view_projection{}, world_view_projection{}, screen_scale{}, screen_offset{}, bone_rows{};
         GLint light_directions{}, light_colours{}, part_colour{}, part_alpha{}, uv_scroll{}, uv_scale{};
@@ -749,22 +749,22 @@ private:
         GLint ambient{}, texture{}, alpha_test{}, alpha_func{}, alpha_ref{};
     };
 
-    const Dmc3Program* dmc3_program(dmcresource::dmc3::Shader vertex, dmcresource::dmc3::Shader fragment) {
+    const NrProgram* nr_program(dmcresource::nr::Shader vertex, dmcresource::nr::Shader fragment) {
         const auto key = static_cast<std::uint32_t>(vertex) << 8U | static_cast<std::uint32_t>(fragment);
-        if (const auto it = dmc3_programs_.find(key); it != dmc3_programs_.end()) {
+        if (const auto it = nr_programs_.find(key); it != nr_programs_.end()) {
             return it->second.id != 0U ? &it->second : nullptr;
         }
-        Dmc3Program program;
+        NrProgram program;
         const auto vs = static_cast<std::size_t>(vertex);
         const auto fs = static_cast<std::size_t>(fragment);
-        if (vs < dmc3_objects_.size() && fs < dmc3_objects_.size() && dmc3_objects_[vs] != 0U &&
-            dmc3_objects_[fs] != 0U) {
+        if (vs < nr_objects_.size() && fs < nr_objects_.size() && nr_objects_[vs] != 0U &&
+            nr_objects_[fs] != 0U) {
             const GLuint id = glCreateProgram();
-            glAttachShader(id, dmc3_objects_[vs]);
-            glAttachShader(id, dmc3_objects_[fs]);
+            glAttachShader(id, nr_objects_[vs]);
+            glAttachShader(id, nr_objects_[fs]);
             glLinkProgram(id);
-            glDetachShader(id, dmc3_objects_[vs]);
-            glDetachShader(id, dmc3_objects_[fs]);
+            glDetachShader(id, nr_objects_[vs]);
+            glDetachShader(id, nr_objects_[fs]);
             GLint ok = GL_FALSE;
             glGetProgramiv(id, GL_LINK_STATUS, &ok);
             if (ok == GL_TRUE) {
@@ -815,7 +815,7 @@ private:
             glUniform4fv(program.light_colour, 4, kNoLights);
             glUniform1i(program.texture, 0);
         }
-        const auto [it, inserted] = dmc3_programs_.emplace(key, program);
+        const auto [it, inserted] = nr_programs_.emplace(key, program);
         (void)inserted;
         return it->second.id != 0U ? &it->second : nullptr;
     }
@@ -1229,28 +1229,28 @@ private:
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(batch.first), static_cast<GLsizei>(batch.count));
     }
 
-    // A mesh batch in its pass: with the DMC3 pair Core chose for it
-    // (dmc3_draw), else with the Reader's shader in `mode`. The Reader's
+    // A mesh batch in its pass: with the NR pair Core chose for it
+    // (nr_draw), else with the Reader's shader in `mode`. The Reader's
     // program and `reader_vao` are bound again when the batch leaves them.
     void draw_mesh_batch(const GpuBatch& batch, dmcresource::GpuPass pass, int mode, bool smooth,
-                         const GpuViewFrame& frame, GLuint reader_vao, GLuint dmc3_vao,
+                         const GpuViewFrame& frame, GLuint reader_vao, GLuint nr_vao,
                          const std::array<float, 16>& view) {
-        const auto d = dmcresource::dmc3_draw(batch, pass, frame);
-        const Dmc3Program* program = d.drawn() ? dmc3_program(d.vertex, d.fragment) : nullptr;
+        const auto d = dmcresource::nr_draw(batch, pass, frame);
+        const NrProgram* program = d.drawn() ? nr_program(d.vertex, d.fragment) : nullptr;
         if (program == nullptr) {
-            if (in_dmc3_) {
+            if (in_nr_) {
                 glUseProgram(mesh_program_);
                 glBindVertexArray(reader_vao);
-                in_dmc3_ = false;
+                in_nr_ = false;
             }
             ++reader_batches_;
             draw_batch(batch, mode, smooth, frame);
             return;
         }
-        if (!in_dmc3_) {
-            glBindVertexArray(dmc3_vao);
-            dmc3_constants();
-            in_dmc3_ = true;
+        if (!in_nr_) {
+            glBindVertexArray(nr_vao);
+            nr_constants();
+            in_nr_ = true;
         }
         glUseProgram(program->id);
         const auto vp = view_projection(view, frame.projection);
@@ -1267,8 +1267,8 @@ private:
         glUniform4fv(program->light_falloff, 1, d.light_falloff.data());
         glUniform4fv(program->light_colour, 4, d.light_colour.data());
         glUniform3f(program->fog_colour, d.fog_colour[0], d.fog_colour[1], d.fog_colour[2]);
-        glUniform2f(program->fog_coeffs, frame.dmc3.fog_coeffs[0], frame.dmc3.fog_coeffs[1]);
-        glUniform1i(program->alpha_test, d.alpha_func == dmcresource::dmc3::AlphaFunc::off ? 0 : 1);
+        glUniform2f(program->fog_coeffs, frame.nr.fog_coeffs[0], frame.nr.fog_coeffs[1]);
+        glUniform1i(program->alpha_test, d.alpha_func == dmcresource::nr::AlphaFunc::off ? 0 : 1);
         glUniform1i(program->alpha_func, static_cast<GLint>(d.alpha_func));
         glUniform1f(program->alpha_ref, d.alpha_ref);
         float su = 0.0F, sv = 0.0F;
@@ -1285,27 +1285,27 @@ private:
         glUniform2f(program->uv_scroll, su * 4096.0F, sv * 4096.0F);
         bind_texture(-1, batch.texture, smooth && !batch.nearest);
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(batch.first), static_cast<GLsizei>(batch.count));
-        ++dmc3_batches_;
+        ++nr_batches_;
         used_[static_cast<std::size_t>(d.vertex)] = true;
         used_[static_cast<std::size_t>(d.fragment)] = true;
     }
 
-    // Back to the Reader's program after a run of DMC3 batches.
-    void leave_dmc3() {
-        if (!in_dmc3_) return;
+    // Back to the Reader's program after a run of NR batches.
+    void leave_nr() {
+        if (!in_nr_) return;
         glUseProgram(mesh_program_);
-        in_dmc3_ = false;
+        in_nr_ = false;
     }
 
     void publish_shader_stats() {
         dmcresource::GpuShaderStats stats;
-        stats.compiled = dmc3_compiled_;
-        stats.failed = dmc3_failed_;
-        stats.first_failure = dmc3_first_failure_;
-        stats.dmc3_batches = dmc3_batches_;
+        stats.compiled = nr_compiled_;
+        stats.failed = nr_failed_;
+        stats.first_failure = nr_first_failure_;
+        stats.nr_batches = nr_batches_;
         stats.reader_batches = reader_batches_;
         for (std::size_t i = 0U; i < used_.size(); ++i) {
-            if (used_[i]) stats.used.push_back(static_cast<dmcresource::dmc3::Shader>(i));
+            if (used_[i]) stats.used.push_back(static_cast<dmcresource::nr::Shader>(i));
         }
         dmcresource::set_gpu_shader_stats(std::move(stats));
     }
@@ -1345,8 +1345,8 @@ private:
         // come back opaque without a pass over them.
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
-        in_dmc3_ = false;
-        dmc3_batches_ = 0U;
+        in_nr_ = false;
+        nr_batches_ = 0U;
         reader_batches_ = 0U;
         used_.fill(false);
         glUseProgram(mesh_program_);
@@ -1385,9 +1385,9 @@ private:
             for (const auto& batch : room_batches_) {
                 if (batch.kind != GpuBatchKind::room) continue;
                 draw_mesh_batch(batch, dmcresource::GpuPass::room_opaque, 2, frame.smooth_room, frame, room_vao_,
-                                room_dmc3_vao_, frame.room_view);
+                                room_nr_vao_, frame.room_view);
             }
-            leave_dmc3();
+            leave_nr();
         }
 
         // 2. Plain floor.
@@ -1417,9 +1417,9 @@ private:
                 glDepthMask(layered ? GL_FALSE : GL_TRUE);
                 set_blend(batch.kind, !layered);
                 draw_mesh_batch(batch, dmcresource::GpuPass::model, layered ? 1 : 0, frame.smooth_model, frame,
-                                model_vao_, model_dmc3_vao_, frame.model_view);
+                                model_vao_, model_nr_vao_, frame.model_view);
             }
-            leave_dmc3();
+            leave_nr();
         }
 
         // 4. Soft room texels, then light shafts.
@@ -1432,15 +1432,15 @@ private:
                 if (batch.kind != GpuBatchKind::room || !batch.translucent) continue;
                 set_blend(batch.kind, true);
                 draw_mesh_batch(batch, dmcresource::GpuPass::room_soft, 3, frame.smooth_room, frame, room_vao_,
-                                room_dmc3_vao_, frame.room_view);
+                                room_nr_vao_, frame.room_view);
             }
             for (const auto& batch : room_batches_) {
                 if (batch.kind == GpuBatchKind::room) continue;
                 set_blend(batch.kind, true);
                 draw_mesh_batch(batch, dmcresource::GpuPass::room_layered, 4, frame.smooth_room, frame, room_vao_,
-                                room_dmc3_vao_, frame.room_view);
+                                room_nr_vao_, frame.room_view);
             }
-            leave_dmc3();
+            leave_nr();
         }
 
         // 5. Shadow footprint: darkens what is visible there once per pixel.
@@ -1772,15 +1772,15 @@ private:
     GLint screen_size_{}, screen_depth_{}, screen_tex_{}, screen_textured_{};
     GLuint model_vbo_{}, room_vbo_{}, aux_vbo_{}, screen_vbo_{};
     GLuint model_vao_{}, room_vao_{}, aux_vao_{}, screen_vao_{};
-    // The DMC3 shaders: compiled objects by Shader, linked pairs, this frame.
-    GLuint model_dmc3_vao_{}, room_dmc3_vao_{};
-    std::array<GLuint, static_cast<std::size_t>(dmcresource::dmc3::Shader::count)> dmc3_objects_{};
-    std::unordered_map<std::uint32_t, Dmc3Program> dmc3_programs_;
-    int dmc3_compiled_{}, dmc3_failed_{};
-    std::string dmc3_first_failure_;
-    bool in_dmc3_{false};
-    std::uint64_t dmc3_batches_{}, reader_batches_{};
-    std::array<bool, static_cast<std::size_t>(dmcresource::dmc3::Shader::count)> used_{};
+    // The NR shaders: compiled objects by Shader, linked pairs, this frame.
+    GLuint model_nr_vao_{}, room_nr_vao_{};
+    std::array<GLuint, static_cast<std::size_t>(dmcresource::nr::Shader::count)> nr_objects_{};
+    std::unordered_map<std::uint32_t, NrProgram> nr_programs_;
+    int nr_compiled_{}, nr_failed_{};
+    std::string nr_first_failure_;
+    bool in_nr_{false};
+    std::uint64_t nr_batches_{}, reader_batches_{};
+    std::array<bool, static_cast<std::size_t>(dmcresource::nr::Shader::count)> used_{};
     GLuint nearest_{}, smooth_{};
     GLint max_samples_{0}, max_target_{4096}, max_texture_{4096};
     float max_anisotropy_{0.0F};

@@ -57,7 +57,7 @@ struct Stored final {
 struct Applied final {
     bool gpu = true;
     bool gpu_present = true;
-    bool dmc3_shaders = true;
+    bool nr_shaders = true;
     bool game_lights = false;
     int msaa = 4;
     bool mipmaps = true;

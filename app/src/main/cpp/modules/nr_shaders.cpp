@@ -1,10 +1,10 @@
-// The DMC3 shader library (dmc3_shaders.h).
-#include "dmcresource/dmc3_shaders.h"
+// The NR shader library (nr_shaders.h).
+#include "dmcresource/nr_shaders.h"
 
 #include <array>
 #include <cstring>
 
-namespace dmcresource::dmc3 {
+namespace dmcresource::nr {
 namespace {
 
 constexpr std::array<ShaderInfo, static_cast<std::size_t>(Shader::count)> kShaders{{
@@ -158,7 +158,7 @@ Shader find(std::string_view name) noexcept {
     int stems = 0;
     for (const auto& s : kShaders) {
         const std::string_view file = s.name;
-        if (name == file || name == s.dmc3_name) return s.id;
+        if (name == file || name == s.game_name) return s.id;
         if (file.substr(0, file.rfind('.')) == name) {
             by_stem = s.id;
             ++stems;
@@ -192,4 +192,4 @@ std::string_view family_name(ShaderFamily family) noexcept {
     return "?";
 }
 
-}  // namespace dmcresource::dmc3
+}  // namespace dmcresource::nr

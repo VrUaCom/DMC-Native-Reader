@@ -82,7 +82,7 @@ Capabilities current_capabilities() {
                        std::to_string(stats.cpu_frames) + " CPU" +
                        (stats.gpu_failures != 0U ? ", " + std::to_string(stats.gpu_failures) + " GPU fallbacks"
                                                  : std::string{}) +
-                       "\n" + dmc3_shader_report();
+                       "\n" + nr_shader_report();
     } catch (...) {
     }
     return out;
@@ -113,17 +113,17 @@ std::vector<Setting> viewer_settings(const Capabilities& caps) {
         "still go through a picture. Choose \"Through a picture\" if the view stays black or does not change.";
     rows.push_back(std::move(present));
 
-    auto shaders = toggle("set.dmc3Shaders", kGraphics, "Shaders (GPU)", {"DMC3 (the game's)", "Reader's own"},
+    auto shaders = toggle("set.nrShaders", kGraphics, "Shaders (GPU)", {"NR (Native Reader)", "Reader's own"},
                           true, true);
     shaders.render_now = true;
     shaders.hint =
-        "DMC3: our own shaders that behave like the game's (67 of them, docs/SHADERS.md) draw what the game has "
+        "NR: the Native Reader's own shaders that behave like the game's (67 of them, docs/SHADERS.md) draw what the game has "
         "a shader for: textured models and stages lit by their vertex colours, with the game's fog. The rest, "
         "and every frame with \"Reader's own\", uses the Reader's shaders. Info under Renderer says which ones "
         "the last frame used.";
     rows.push_back(std::move(shaders));
 
-    auto lights = toggle("set.gameLights", kGraphics, "Stage lights (DMC3 shaders, experimental)", {"Off", "On"},
+    auto lights = toggle("set.gameLights", kGraphics, "Stage lights (NR shaders, experimental)", {"Off", "On"},
                          false, false);
     lights.render_now = true;
     lights.hint =
@@ -146,7 +146,7 @@ std::vector<Setting> viewer_settings(const Capabilities& caps) {
         "samples the next lower level is used. The CPU renderer ignores these three.";
     rows.push_back(std::move(aniso));
 
-    auto shading = numbers("set.gpuShading", kGraphics, "Lighting (DMC3 shaders, GPU)",
+    auto shading = numbers("set.gpuShading", kGraphics, "Lighting (NR shaders, GPU)",
                            {"As the game (per vertex)", "Enhanced (per pixel, highlights)"}, {0, 1}, 0);
     shading.render_now = true;
     shading.hint =
@@ -227,7 +227,7 @@ Applied resolve(const Stored& stored) {
     Applied out;
     out.gpu = on("set.gpu");
     out.gpu_present = on("set.gpuPresent");
-    out.dmc3_shaders = on("set.dmc3Shaders");
+    out.nr_shaders = on("set.nrShaders");
     out.game_lights = on("set.gameLights");
     out.msaa = whole("set.gpuMsaa");
     out.mipmaps = on("set.gpuMipmaps");
@@ -256,7 +256,7 @@ Applied apply_settings(const Stored& stored) {
     const Applied applied = resolve(stored);
     set_gpu_view_enabled(applied.gpu);
     set_gpu_present_enabled(applied.gpu_present);
-    set_dmc3_shaders_enabled(applied.dmc3_shaders);
+    set_nr_shaders_enabled(applied.nr_shaders);
     set_game_lights_enabled(applied.game_lights);
     set_gpu_view_options({applied.msaa, applied.mipmaps, applied.anisotropy, applied.shading});
     return applied;
@@ -271,7 +271,7 @@ std::string benchmark_summary(const Applied& applied) {
                 (applied.anisotropy <= 1 ? std::string{"off"} : std::to_string(applied.anisotropy) + "x");
         if (applied.shading != 0) text += ", enhanced lighting";
         text += std::string{", shown "} + (applied.gpu_present ? "directly" : "through a picture");
-        text += std::string{", shaders "} + (applied.dmc3_shaders ? "DMC3" : "Reader");
+        text += std::string{", shaders "} + (applied.nr_shaders ? "NR" : "Reader");
         if (applied.game_lights) text += " with the stage's lights";
         text += ", ";
     }
