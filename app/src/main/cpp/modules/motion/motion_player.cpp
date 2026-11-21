@@ -2253,6 +2253,25 @@ bool apply_motion_frame(Session* session, float frame) noexcept {
         if (session->object_visibility) {
             motion::set_hand_variant(session, motion::hand_variant_at(state.script_signals, frame));
         }
+        // The coat's parameters as the script's opcode-3 channel 3 says
+        // (motion/coat_states.h); state 0 keeps the .clt's own.
+        if (session->coat_states && session->coat_part && *session->coat_part < session->composite_parts.size()) {
+            const int wanted = motion::coat_state_at(state.script_signals, frame);
+            auto& cloth = session->composite_parts[*session->coat_part].placement.cloth;
+            if (cloth != nullptr && wanted != session->coat_state) {
+                const auto* record =
+                    wanted > 0 ? session->coat_states->record(static_cast<std::size_t>(wanted)) : nullptr;
+                if (record != nullptr) {
+                    cloth->params = motion::coat_params(session->coat_base, *record);
+                    cloth->blocks = session->coat_base_blocks;
+                    for (auto& block : cloth->blocks) block = motion::coat_params(block, *record);
+                } else {
+                    cloth->params = session->coat_base;
+                    cloth->blocks = session->coat_base_blocks;
+                }
+                session->coat_state = wanted;
+            }
+        }
         // Resolve current body-driven equipment before Lady runtime signals
         // query slot20 node worlds for Shl spawn transforms. This pass does not
         // advance cloth; the final attachment pass below performs the actual

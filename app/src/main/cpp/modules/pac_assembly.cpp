@@ -792,6 +792,28 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                     const auto nodes =
                         motion::attach_part_cloth(assembled.get(), part, text, 60U, capsules);
+                    // The coat's motion states (slot 10 after the ff&A table).
+                    if (nodes > 0U && player && coat && part == *coat) {
+                        for (const auto& e : entries) {
+                            if (e.archive != 0U || !e.container.empty() || e.slot != motion::kPlayerCoatStatesSlot ||
+                                e.bytes == nullptr) {
+                                continue;
+                            }
+                            if (auto states = motion::CoatStates::parse(*e.bytes)) {
+                                const auto& cloth = assembled->composite_parts[part].placement.cloth;
+                                if (cloth != nullptr) {
+                                    assembled->coat_states =
+                                        std::make_shared<const motion::CoatStates>(std::move(*states));
+                                    assembled->coat_part = part;
+                                    assembled->coat_base = cloth->params;
+                                    assembled->coat_base_blocks = cloth->blocks;
+                                    assembled->coat_state = 0;
+                                    report.detail_attachments += " coat states slot10(" +
+                                        std::to_string(assembled->coat_states->count()) + ")";
+                                }
+                            }
+                        }
+                    }
                     if (nodes > 0U) {
                         ++report.cloth_parts;
                         report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +

@@ -306,6 +306,14 @@ ProbeResult probe(std::string_view filename,
     // Attack index tables have no content identity of their own (4-byte
     // entries); a PAC names them .colidx when the next slot is their shape
     // table, and the module validates the entries.
+    if (extension == "coatst") {
+        return result(Format::CoatStates, false, "COATST", "animation", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.coatst");
+    }
+    if (extension == "pltune") {
+        return result(Format::PlayerTuning, false, "PLTUNE", "table", "inspection",
+                      "EXE_CONFIRMED", "application/vnd.dmc.pltune");
+    }
     if (extension == "colidx") {
         return result(Format::AttackIndex, false, "COLINDEX", "collision", "inspection",
                       "EXE_CONFIRMED", "application/vnd.dmc.colidx");
@@ -424,6 +432,8 @@ const char* format_name(Format format) noexcept {
     case Format::PlainText: return "TEXT";
     case Format::Ipu: return "IPU";
     case Format::SoundHeader: return "SNDHD";
+    case Format::CoatStates: return "COATST";
+    case Format::PlayerTuning: return "PLTUNE";
     case Format::Unknown: return "UNKNOWN";
     }
     return "UNKNOWN";

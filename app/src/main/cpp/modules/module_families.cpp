@@ -17,6 +17,7 @@
 #include "dmcresource/decode_pipeline.h"
 #include "dmcresource/game_lights.h"
 #include "dmcresource/messages.h"
+#include "dmcresource/motion/coat_states.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/plain_text.h"
 #include "dmcresource/raster_card.h"
@@ -391,6 +392,50 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             out.detail = "ff&A | " + std::to_string(rows) + " rows";
             return out;
         }
+        case Format::CoatStates: {
+            const auto table = motion::CoatStates::parse(data);
+            if (!table) break;
+            auto out = start(module, probe, size, "COATST - coat motion states (player slot 10)");
+            auto& root = out.inspection.root;
+            property(root, "States", std::to_string(table->count()) +
+                         " entries of two u16 halves; the second is the record (5 floats)",
+                     EvidenceLevel::ExeConfirmed);
+            property(root, "Use",
+                     "The motion script's opcode-3 channel 3 picks the state (0x1401F01F0 -> +0x39C5); on a "
+                     "non-zero change 0x1401FBD00 / 0x1401FBD90 give the coat cloth the record's stiffness, "
+                     "vertical wind and gravity. State 0 keeps the .clt's own values.",
+                     EvidenceLevel::ExeConfirmed);
+            InspectionNode rows;
+            rows.id = "states";
+            rows.title = "States";
+            rows.kind = InspectionKind::Collection;
+            for (std::size_t i = 0; i < table->count(); ++i) {
+                const auto& r = table->records()[i];
+                char line[160];
+                std::snprintf(line, sizeof line, "record +0x%X (group +0x%X): stiffness %.4g, wind y %.4g, "
+                              "gravity %.4g %.4g %.4g",
+                              r.offset, r.group, static_cast<double>(r.stiffness), static_cast<double>(r.wind_y),
+                              static_cast<double>(r.gravity[0]), static_cast<double>(r.gravity[1]),
+                              static_cast<double>(r.gravity[2]));
+                property(rows, "state " + std::to_string(i), line, EvidenceLevel::StructuralConfirmed);
+            }
+            root.children.push_back(std::move(rows));
+            out.detail = "COATST | " + std::to_string(table->count()) + " coat states";
+            return out;
+        }
+        case Format::PlayerTuning: {
+            if (size < 16U) break;
+            auto out = start(module, probe, size, "PLTUNE - player tuning constants (player slot 11)");
+            auto& root = out.inspection.root;
+            property(root, "Use",
+                     "Kept at the player object +0x3DF8 (0x140225D70) and read at fixed offsets by its action "
+                     "handlers and the objects it owns (timers, speeds, ranges; 0x1401FEFF0, 0x1401D85D0 ...). "
+                     "Gameplay only: nothing drawn depends on it.",
+                     EvidenceLevel::ExeConfirmed);
+            add_rows(root, "Values (four per row: floats, a few ints)", data, 0U, 16U, size / 16U);
+            out.detail = "PLTUNE | " + std::to_string(size / 4U) + " values";
+            return out;
+        }
         case Format::Hid: {
             if (size < 8U) break;
             auto out = start(module, probe, size, "HID - dispatch payload");
@@ -537,6 +582,8 @@ std::vector<NativeModule> family_modules() noexcept {
         make("formats.movie.wmv", "WMV", Format::Wmv, true),
         make("formats.movie.ipu", "IPU", Format::Ipu, true),
         make("formats.sound.header", "SNDHD", Format::SoundHeader),
+        make("formats.player.coat-states", "COATST", Format::CoatStates),
+        make("formats.player.tuning", "PLTUNE", Format::PlayerTuning),
     };
 }
 

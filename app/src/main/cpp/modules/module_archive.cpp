@@ -20,6 +20,7 @@
 #include "dmcresource/plain_text.h"
 #include "dmcresource/video.h"
 #include "dmcresource/collision_shapes.h"
+#include "dmcresource/motion/coat_states.h"
 #include "dmcresource/demo.h"
 #include "dmcresource/sound.h"
 #include "dmcresource/effect_bank.h"
@@ -219,6 +220,8 @@ PipelineResult run_pac_module(const NativeModule& module,
         std::size_t shadows = 0U;
         // The names a name list slot gave the container after it.
         std::vector<std::string> listed_names;
+        // The kind of the slot before (player slots 10 / 11 follow the ff&A table).
+        Format previous_format = Format::Unknown;
         for (const auto& entry : document.entries) {
             if (!entry.populated || entry.size == 0U || !entry.valid(document.container_size)) {
                 continue;
@@ -246,6 +249,18 @@ PipelineResult run_pac_module(const NativeModule& module,
                     break;
                 }
             }
+            // Player archives: the coat's motion states after the ff&A table,
+            // then the player's tuning constants (0x140225D70 keeps slots 9,
+            // 10 and 11 together; motion/coat_states.h).
+            if (kind.format == Format::Unknown && std::string_view{kind.family} == "BIN") {
+                if (previous_format == Format::FloatTable &&
+                    motion::CoatStates::parse(std::span<const std::uint8_t>{payload, payload_size})) {
+                    kind = {Format::CoatStates, "COATST", "coatst"};
+                } else if (previous_format == Format::CoatStates) {
+                    kind = {Format::PlayerTuning, "PLTUNE", "pltune"};
+                }
+            }
+            previous_format = kind.format;
             const auto format_index = static_cast<std::size_t>(kind.format);
             if (format_index < std::size(by_format)) ++by_format[format_index];
             if (kind.shadow) ++shadows;

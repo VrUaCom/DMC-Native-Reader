@@ -16,6 +16,7 @@
 #include "dmcresource/effect_bank.h"
 #include "dmcresource/uv_gallery.h"
 #include "dmcresource/decode_pipeline.h"
+#include "dmcresource/motion/coat_states.h"
 #include "dmcresource/motion/effect_runtime.h"
 #include "dmcresource/motion/motion_script.h"
 #include "dmcresource/motion/object_visibility.h"
@@ -168,6 +169,13 @@ struct Session {
     // Which body objects the player class draws now (hands, Beowulf parts):
     // motion/object_visibility.h. Null for any other model.
     std::shared_ptr<motion::ObjectVisibility> object_visibility;
+    // The player's coat states (archive slot 10, motion/coat_states.h), the
+    // composite part of the coat, its .clt parameters and the state applied.
+    std::shared_ptr<const motion::CoatStates> coat_states;
+    std::optional<std::size_t> coat_part;
+    std::vector<motion::ClothParams> coat_base_blocks;
+    motion::ClothParams coat_base;
+    int coat_state{0};
     // Enemy class of an em000-style archive position (EnemyVariant) and the
     // composite part its weapon model was attached as (script object 1).
     std::string enemy_class;

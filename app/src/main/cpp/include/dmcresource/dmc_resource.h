@@ -63,6 +63,11 @@ enum class Format : std::uint8_t {
     // The sound bank header beside a VAG body (snd_*.pac slot 1): "Head",
     // then "Prog", "Smpl", "Vagi" chunks.
     SoundHeader,
+    // Player archive slots 10 and 11 (after the ff&A table): the coat's
+    // motion states (motion/coat_states.h) and the player's tuning constants.
+    // No content identity: a PAC names them .coatst / .pltune.
+    CoatStates,
+    PlayerTuning,
 };
 
 struct ProbeResult {
