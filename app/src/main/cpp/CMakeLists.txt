@@ -471,25 +471,57 @@ if(WIN32)
 
     dmc_native_reader_require_cpp23(dmc_native_reader_win PRIVATE)
 
-    # Headless CLI companion (master plan section 5.1.G): same core, console
-    # subsystem, no GUI/file-dialog dependencies.
+    if(MINGW)
+        # wWinMain: MinGW links the wide entry points with -municode.
+        target_compile_options(dmc_native_reader_win PRIVATE -municode)
+        target_link_options(dmc_native_reader_win PRIVATE -municode)
+    endif()
+endif()
+
+# Linux native desktop shell: X11 window host with near-black visual styling,
+# interactive camera / fly navigation, animation playback, hitboxes, character kit,
+# and extensible architecture for EGL/GLES contexts.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR (UNIX AND NOT APPLE AND NOT ANDROID))
+    find_package(X11 REQUIRED)
+    add_executable(dmc_native_reader_linux
+        linux_shell.cpp
+    )
+    target_link_libraries(dmc_native_reader_linux PRIVATE
+        dmc_reader_capi
+        DMCNativeReader::Core
+        ${X11_LIBRARIES}
+        Threads::Threads
+    )
+    target_include_directories(dmc_native_reader_linux PRIVATE
+        ${X11_INCLUDE_DIR}
+    )
+    dmc_native_reader_require_cpp23(dmc_native_reader_linux PRIVATE)
+    target_compile_definitions(dmc_native_reader_linux PRIVATE
+        DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
+    )
+    if(X11_XShm_FOUND)
+        target_compile_definitions(dmc_native_reader_linux PRIVATE DMC_HAS_XSHM=1)
+        if(X11_Xext_LIB)
+            target_link_libraries(dmc_native_reader_linux PRIVATE ${X11_Xext_LIB})
+        endif()
+    endif()
+endif()
+
+# Portable CLI companion for Linux, macOS, and Windows:
+# inspection topics, reports, workspace scan, PNG export, and benchmarking.
+if(NOT ANDROID)
     add_executable(dmc_native_reader_cli
-        win_cli.cpp
+        dmc_cli.cpp
     )
     target_link_libraries(dmc_native_reader_cli PRIVATE
+        dmc_reader_capi
         DMCNativeReader::Core
+        Threads::Threads
     )
     target_compile_definitions(dmc_native_reader_cli PRIVATE
         DMC_NATIVE_READER_BUILD_SHA="${DMC_NATIVE_READER_BUILD_SHA}"
     )
     dmc_native_reader_require_cpp23(dmc_native_reader_cli PRIVATE)
-    if(MINGW)
-        # wWinMain and wmain: MinGW links the wide entry points with -municode.
-        target_compile_options(dmc_native_reader_win PRIVATE -municode)
-        target_link_options(dmc_native_reader_win PRIVATE -municode)
-        target_compile_options(dmc_native_reader_cli PRIVATE -municode)
-        target_link_options(dmc_native_reader_cli PRIVATE -municode)
-    endif()
 endif()
 
 option(DMC_NATIVE_READER_BUILD_TESTS "Build portable native regressions" OFF)
