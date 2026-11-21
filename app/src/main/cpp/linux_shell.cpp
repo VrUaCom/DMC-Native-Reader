@@ -304,6 +304,7 @@ enum ButtonId : int {
     kBtnOpen = 101,
     kBtnKit = 102,
     kBtnBrowse = 103,
+    kBtnSave = 104,
     kBtnWireframe = 201,
     kBtnHierarchy = 202,
     kBtnNormals = 203,
@@ -525,6 +526,10 @@ private:
     void camera_level();
     void step_camera_dial(int key);
     void capture_photo_png();
+    void export_high_res_png();
+    void export_source_file();
+    void load_settings();
+    void save_settings();
 
     void close_all_sessions() {
         child_thumb_cache_.clear();
@@ -620,6 +625,8 @@ private:
 
     // UI Panels
     bool show_info_panel_ = false;
+    int info_topic_ = 0; // 0: Overview, 1: UV Layout, 2: Meshes, 3: Bones
+    std::array<Rect, 4> info_tab_rects_{};
     bool show_kit_panel_ = false;
 
     // Character Kit
@@ -740,6 +747,7 @@ bool App::init_x11(int width, int height) {
 
     canvas_.resize(window_width_, window_height_);
     update_layout(window_width_, window_height_);
+    load_settings();
 
     XMapWindow(host_.display, host_.window);
     XFlush(host_.display);
@@ -748,6 +756,7 @@ bool App::init_x11(int width, int height) {
 }
 
 void App::teardown_x11() {
+    save_settings();
     if (host_.display) {
         XAutoRepeatOn(host_.display);
         if (host_.gc) XFreeGC(host_.display, host_.gc);
@@ -775,6 +784,7 @@ void App::init_buttons() {
     header_buttons_ = {
         {kBtnBack, "< BACK", "Return to parent resource", {}, false, false, false},
         {kBtnKit, "KIT", "Character kit and attachments", {}, false, false, false},
+        {kBtnSave, "SAVE", "Export assembled or re-encoded file", {}, false, false, false},
         {kBtnBrowse, "FILES", "Browse directory files (O)", {}, true, true, false},
         {kBtnOpen, "OPEN", "Open DMC game file dialog", {}, true, true, false},
     };
@@ -811,6 +821,8 @@ void App::update_layout(int width, int height) {
             hx += 85;
         } else if (btn.id == kBtnKit) {
             btn.rect = {hx, 6, 60, 30};
+        } else if (btn.id == kBtnSave) {
+            btn.rect = {width - 220, 6, 60, 30};
         } else if (btn.id == kBtnBrowse) {
             btn.rect = {width - 155, 6, 65, 30};
         } else if (btn.id == kBtnOpen) {
@@ -851,6 +863,12 @@ void App::update_button_states() {
             btn.active = show_kit_panel_;
         } else if (btn.id == kBtnBrowse) {
             btn.active = show_file_browser_;
+        } else if (btn.id == kBtnSave) {
+            const char* sname = nullptr;
+            const uint8_t* sbytes = nullptr;
+            size_t ssize = 0;
+            btn.visible = (session_ != nullptr && dmc_source(session_, &sname, &sbytes, &ssize) && ssize > 0);
+            btn.enabled = btn.visible;
         }
     }
 
@@ -1690,8 +1708,8 @@ void App::render_frame() {
 
     // 5. Overlays (Info Panel & Kit Panel)
     if (show_info_panel_) {
-        const int pw = std::min(640, window_width_ - 40);
-        const int ph = std::min(460, window_height_ - 80);
+        const int pw = std::min(680, window_width_ - 40);
+        const int ph = std::min(500, window_height_ - 80);
         const int px = (window_width_ - pw) / 2;
         const int py = (window_height_ - ph) / 2;
 
@@ -1699,28 +1717,47 @@ void App::render_frame() {
         canvas_.draw_rect_outline(px, py, pw, ph, kColorAccent);
 
         canvas_.fill_rect(px, py, pw, 34, 0x1C1C24);
-        canvas_.draw_text(px + 14, py + 10, "Resource Information & Health Report", kColorAccent);
+        canvas_.draw_text(px + 14, py + 10, "Resource Information & Deep Diagnostics", kColorAccent);
         canvas_.draw_text(px + pw - 30, py + 10, "[X]", kColorTextDim);
 
-        int cur_y = py + 46;
+        // Topic tabs: 0: Diag, 1: UV Layout, 2: Meshes, 3: Bones
+        const char* tab_names[4] = {"[0] Overview", "[1] UV Map", "[2] Meshes", "[3] Bones"};
+        int tab_x = px + 14;
+        const int tab_y = py + 40;
+        for (int t = 0; t < 4; ++t) {
+            const int tw = 120;
+            const int th = 24;
+            info_tab_rects_[t] = {tab_x, tab_y, tw, th};
+            const bool active_tab = (info_topic_ == t);
+            canvas_.fill_rect(tab_x, tab_y, tw, th, active_tab ? kColorBtnActive : kColorBtnNormal);
+            canvas_.draw_rect_outline(tab_x, tab_y, tw, th, active_tab ? kColorAccent : kColorBtnBorder);
+            canvas_.draw_text_centered(tab_x, tab_y, tw, th, tab_names[t], active_tab ? kColorAccent : kColorText);
+            tab_x += tw + 8;
+        }
+
+        int cur_y = py + 72;
         canvas_.draw_text(px + 16, cur_y, "File: " + current_path_.filename().string(), kColorText);
         cur_y += 20;
 
-        char* diag_c = session_ ? dmc_diagnostics(session_) : nullptr;
-        std::string diag_str = diag_c ? diag_c : "Diagnostics unavailable.";
-        if (diag_c) dmc_string_free(diag_c);
-
-        canvas_.draw_text(px + 16, cur_y, "Diagnostics:", kColorAccent);
-        cur_y += 18;
+        char* topic_text = nullptr;
+        if (session_) {
+            if (info_topic_ == 0) {
+                topic_text = dmc_diagnostics(session_);
+            } else {
+                topic_text = dmc_inspect(session_, info_topic_);
+            }
+        }
+        std::string diag_str = topic_text ? topic_text : "Information unavailable.";
+        if (topic_text) dmc_string_free(topic_text);
 
         std::string_view lines(diag_str);
         size_t l_start = 0;
         int line_count = 0;
-        while (l_start < lines.size() && line_count < 15) {
+        while (l_start < lines.size() && line_count < 14) {
             size_t l_end = lines.find('\n', l_start);
             if (l_end == std::string_view::npos) l_end = lines.size();
             std::string line(lines.substr(l_start, l_end - l_start));
-            if (line.size() > 70) line = line.substr(0, 67) + "...";
+            if (line.size() > 76) line = line.substr(0, 73) + "...";
             canvas_.draw_text(px + 20, cur_y, line, kColorTextDim);
             cur_y += 16;
             l_start = l_end + 1;
@@ -1728,7 +1765,7 @@ void App::render_frame() {
         }
 
         if (!health_report_.empty()) {
-            cur_y += 10;
+            cur_y += 8;
             canvas_.draw_text(px + 16, cur_y, "Health Note: " + health_report_.substr(0, 60), kColorHealthNotice);
         }
 
@@ -1739,7 +1776,7 @@ void App::render_frame() {
             canvas_.draw_text(px + 16, cur_y, "Texture Compression: " + cur_fmt + "  [Press 'T' to cycle]", kColorAccent);
         }
 
-        canvas_.draw_text_centered(px, py + ph - 28, pw, 20, "[ Press 'I' or 'Escape' or click [X] to close ]", kColorAccent);
+        canvas_.draw_text_centered(px, py + ph - 28, pw, 20, "[ Press 0-3 or Tab to switch topics | 'I' or [X] to close ]", kColorAccent);
     }
 
     if (show_kit_panel_) {
@@ -1868,6 +1905,9 @@ void App::handle_button_click(int id) {
         case kBtnBrowse:
             toggle_file_browser();
             break;
+        case kBtnSave:
+            export_source_file();
+            break;
         case kBtnOpen:
             trigger_open_dialog();
             break;
@@ -1952,6 +1992,17 @@ void App::handle_key_press(KeySym sym) {
         }
     }
 
+    if (show_info_panel_) {
+        if (sym >= XK_0 && sym <= XK_3) {
+            info_topic_ = static_cast<int>(sym - XK_0);
+            return;
+        }
+        if (sym == XK_Tab) {
+            info_topic_ = (info_topic_ + 1) % 4;
+            return;
+        }
+    }
+
     if (show_kit_panel_ && sym >= XK_1 && sym <= XK_9) {
         const size_t idx = static_cast<size_t>(sym - XK_1);
         if (idx < kit_items_.size()) {
@@ -2028,7 +2079,11 @@ void App::handle_key_press(KeySym sym) {
             break;
         case XK_p:
         case XK_P:
-            capture_photo_png();
+            if (dmc_camera_mode()) {
+                capture_photo_png();
+            } else {
+                export_high_res_png();
+            }
             break;
         case XK_b:
         case XK_B:
@@ -2497,6 +2552,105 @@ void App::capture_photo_png() {
     dmc_image_free(img);
 }
 
+void App::export_high_res_png() {
+    if (!session_) return;
+    dmc_image* exp_img = dmc_render_export(session_);
+    if (!exp_img || !exp_img->rgba) {
+        capture_photo_png();
+        return;
+    }
+    const auto now = std::chrono::system_clock::now();
+    const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    const std::string filename = "dmc_export_" + std::to_string(epoch) + ".png";
+    if (linux_png::SaveRgbaToPng(filename, exp_img->width, exp_img->height, exp_img->rgba)) {
+        camera_message_ = "Exported Pro PNG: " + filename + " (" + std::to_string(exp_img->width) + "x" + std::to_string(exp_img->height) + ")";
+        std::cout << "[Export] " << camera_message_ << "\n";
+    }
+    dmc_image_free(exp_img);
+}
+
+void App::export_source_file() {
+    if (!session_) return;
+    const char* src_name = nullptr;
+    const uint8_t* src_bytes = nullptr;
+    size_t src_size = 0;
+    if (dmc_source(session_, &src_name, &src_bytes, &src_size) && src_bytes && src_size > 0) {
+        std::string fname = src_name ? src_name : "exported.pac";
+        std::ofstream out(fname, std::ios::binary);
+        if (out) {
+            out.write(reinterpret_cast<const char*>(src_bytes), src_size);
+            camera_message_ = "Saved file: " + fname + " (" + std::to_string(src_size) + " bytes)";
+            std::cout << "[Save] " << camera_message_ << "\n";
+        }
+    } else {
+        camera_message_ = "Current session has no serializable source file.";
+        std::cout << "[Save] " << camera_message_ << "\n";
+    }
+}
+
+namespace {
+fs::path get_xdg_settings_path() {
+    const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
+    fs::path base_dir;
+    if (xdg_config && *xdg_config) {
+        base_dir = fs::path(xdg_config) / "dmc-native-reader";
+    } else {
+        const char* home = std::getenv("HOME");
+        base_dir = (home && *home) ? (fs::path(home) / ".config" / "dmc-native-reader") : fs::current_path();
+    }
+    return base_dir / "settings.json";
+}
+} // namespace
+
+void App::load_settings() {
+    try {
+        const fs::path p = get_xdg_settings_path();
+        if (!fs::exists(p)) return;
+        std::ifstream f(p);
+        if (!f) return;
+        std::string line;
+        std::vector<std::string> keys;
+        std::vector<float> values;
+        while (std::getline(f, line)) {
+            size_t eq = line.find(':');
+            if (eq == std::string::npos) eq = line.find('=');
+            if (eq != std::string::npos) {
+                std::string k = line.substr(0, eq);
+                k.erase(std::remove_if(k.begin(), k.end(), [](char c) { return c == '"' || c == ' ' || c == '\t'; }), k.end());
+                std::string v_str = line.substr(eq + 1);
+                v_str.erase(std::remove_if(v_str.begin(), v_str.end(), [](char c) { return c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n'; }), v_str.end());
+                try {
+                    float v = std::stof(v_str);
+                    keys.push_back(k);
+                    values.push_back(v);
+                } catch (...) {}
+            }
+        }
+        if (!keys.empty()) {
+            std::vector<const char*> key_ptrs;
+            for (const auto& k : keys) key_ptrs.push_back(k.c_str());
+            dmc_applied_settings applied = dmc_apply_settings(key_ptrs.data(), values.data(), keys.size());
+            render_flags_ = applied.render_flags;
+            view_.render_flags = applied.render_flags;
+            std::cout << "[Settings] Loaded " << keys.size() << " user settings from " << p.string() << "\n";
+        }
+    } catch (...) {}
+}
+
+void App::save_settings() {
+    try {
+        const fs::path p = get_xdg_settings_path();
+        fs::create_directories(p.parent_path());
+        std::ofstream f(p);
+        if (!f) return;
+        f << "{\n";
+        f << "  \"render_flags\": " << render_flags_ << ",\n";
+        f << "  \"smooth_textures\": " << ((render_flags_ & dmcresource::render_flag(dmcresource::RenderFlag::SmoothTextures)) ? 1 : 0) << ",\n";
+        f << "  \"unlit\": " << ((render_flags_ & dmcresource::render_flag(dmcresource::RenderFlag::Unlit)) ? 1 : 0) << "\n";
+        f << "}\n";
+    } catch (...) {}
+}
+
 void App::run() {
     auto last_tick = std::chrono::steady_clock::now();
 
@@ -2633,14 +2787,25 @@ void App::run() {
                 }
 
                 if (ev.xbutton.button == Button1) {
-                    // Check info panel close button
+                    // Check info panel clicks (close and topic tabs)
                     if (show_info_panel_) {
-                        const int pw = std::min(640, window_width_ - 40);
-                        const int ph = std::min(460, window_height_ - 80);
+                        const int pw = std::min(680, window_width_ - 40);
+                        const int ph = std::min(500, window_height_ - 80);
                         const int px = (window_width_ - pw) / 2;
                         const int py = (window_height_ - ph) / 2;
                         if (mx >= px + pw - 34 && mx <= px + pw - 8 && my >= py + 6 && my <= py + 30) {
                             show_info_panel_ = false;
+                            continue;
+                        }
+                        bool clicked_tab = false;
+                        for (int t = 0; t < 4; ++t) {
+                            if (info_tab_rects_[t].contains(mx, my)) {
+                                info_topic_ = t;
+                                clicked_tab = true;
+                                break;
+                            }
+                        }
+                        if (clicked_tab || (mx >= px && mx <= px + pw && my >= py && my <= py + ph)) {
                             continue;
                         }
                     }
