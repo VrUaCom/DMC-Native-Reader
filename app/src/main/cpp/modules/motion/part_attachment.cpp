@@ -1067,7 +1067,8 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         look("Vergil · look 3", {51U, 52U, 25U, 28U}, 51U, 52U);
         look("Vergil · look 4", {61U, 62U, 25U, 28U}, 61U, 62U);
         look("Vergil · devil trigger", {15U, 16U, 17U, 18U}, 15U, 18U);
-        look("Vergil · weapons", {2U, 25U, 28U, 32U, 55U, 58U}, 0U, 0U);
+        look("Vergil · Beowulf", {1U, 3U, 55U}, 1U, 3U);
+        look("Vergil · weapons", {2U, 25U, 28U, 32U, 58U}, 0U, 0U);
         return out;
     }
 

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <new>
@@ -887,6 +888,54 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         "(hidden objects " + hidden + ")";
                 }
                 break;
+            }
+        }
+
+        // A part whose bones sit exactly on bones of the body (Vergil's
+        // Beowulf, em035 slot 55: its nodes 1-10 on body joints 8, 9, 16, 17,
+        // 18, 12, 13, 20, 21, 22, as the plwp_fight table 0x1404E0BD0 copies
+        // them) follows those body joints, node by node.
+        if (assembled->composite_parts.size() > 1U) {
+            // The body: the free part (not hung from another) with the most bones.
+            std::size_t host = 0U;
+            std::size_t most = 0U;
+            for (std::size_t part = 0U; part < assembled->composite_parts.size(); ++part) {
+                const auto& candidate = assembled->composite_parts[part];
+                if (candidate.placement.mode != CompositePlacementMode::SourceCoordinates) continue;
+                if (candidate.scene.nodes.size() > most) {
+                    most = candidate.scene.nodes.size();
+                    host = part;
+                }
+            }
+            const auto& body_nodes = assembled->composite_parts[host].scene.nodes;
+            for (std::size_t part = 0U; part < assembled->composite_parts.size(); ++part) {
+                const auto& child = assembled->composite_parts[part];
+                if (part == host || child.placement.mode != CompositePlacementMode::SourceCoordinates ||
+                    child.scene.nodes.size() < 3U || child.scene.nodes.size() >= body_nodes.size()) {
+                    continue;
+                }
+                std::vector<CompositeNodeConstraint> nodes;
+                bool all = true;
+                for (std::uint32_t k = 1U; k < child.scene.nodes.size() && all; ++k) {
+                    const auto& p = child.scene.nodes[k].world.values;
+                    if (std::abs(p[12]) + std::abs(p[13]) + std::abs(p[14]) < 0.01F) { all = false; break; }
+                    std::optional<std::uint32_t> joint;
+                    for (std::uint32_t j = 1U; j < body_nodes.size(); ++j) {
+                        const auto& q = body_nodes[j].world.values;
+                        if (std::abs(p[12] - q[12]) + std::abs(p[13] - q[13]) + std::abs(p[14] - q[14]) < 0.01F) {
+                            joint = j;
+                            break;
+                        }
+                    }
+                    if (!joint) { all = false; break; }
+                    nodes.push_back({k, *joint, Matrix4{}});
+                }
+                if (!all || nodes.size() < 2U) continue;
+                if (motion::attach_part_nodes(assembled.get(), host, part, nodes)) {
+                    ++report.attached_parts;
+                    report.detail_attachments += " part" + std::to_string(part) + "->bodyJoints(" +
+                        std::to_string(nodes.size()) + " nodes on matching joints)";
+                }
             }
         }
 
