@@ -27,6 +27,7 @@ cmake -S "$repo/app/src/main/cpp" -B "$core" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
     -DDMC_NATIVE_READER_FFMPEG="${DMC_FFMPEG:-ON}" \
+    -DDMC_NATIVE_READER_METAL="${DMC_METAL:-ON}" \
     -DDMC_NATIVE_READER_BUILD_TESTS=OFF >/dev/null
 cmake --build "$core" --target dmc_reader_capi -j "$jobs"
 

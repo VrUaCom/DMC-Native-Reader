@@ -367,6 +367,17 @@ target_link_libraries(dmc_reader_capi PUBLIC DMCNativeReader::Core)
 dmc_native_reader_require_cpp23(dmc_reader_capi PRIVATE)
 set_target_properties(dmc_reader_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# The Metal view backend (macOS app builds: apple/build-mac.sh turns it on;
+# host tests keep the software rasteriser so their pictures stay exact).
+option(DMC_NATIVE_READER_METAL "Draw the view with Metal (macOS / iOS)" OFF)
+if(APPLE AND DMC_NATIVE_READER_METAL)
+    enable_language(OBJCXX)
+    target_sources(dmc_reader_capi PRIVATE apple/metal_view_backend.mm)
+    set_source_files_properties(apple/metal_view_backend.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-std=c++2b")
+    target_compile_definitions(dmc_reader_capi PRIVATE DMC_NATIVE_READER_METAL=1)
+    target_link_libraries(dmc_reader_capi PUBLIC "-framework Metal" "-framework Foundation")
+endif()
+
 # Diagnostics build identity shared by every shell (the C API reports it too).
 # Best-effort: source archives/non-git builders fall back to "unknown".
 if(TRUE)

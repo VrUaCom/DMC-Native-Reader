@@ -1,0 +1,833 @@
+// The Metal view backend (macOS, iOS): draws render_view's GpuViewFrame on
+// the graphics chip and reads the pixels back, the way the OpenGL ES 3
+// backend does on Android (android/gles_view_backend.cpp). Same passes, same
+// blending, same depth and stencil rules; the shaders are the Reader's own
+// written in the Metal shading language and compiled from source when the
+// backend starts (no offline `metal` compiler needed).
+//
+// Clip space: the core's projection is OpenGL's (z in -w..w, image row 0
+// at y = -1). Metal wants z in 0..w and row 0 at y = +1, so every vertex
+// stage maps z to (z + w) / 2 and negates y.
+//
+// Not yet here (frames still correct, drawn like with the DMC3 shaders
+// switched off): the DMC3 material shaders and the photo camera's
+// development (the CPU develops the read-back frame instead).
+
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "dmcresource/view_gpu.h"
+
+namespace {
+
+using dmcresource::GpuBatch;
+using dmcresource::GpuBatchKind;
+using dmcresource::GpuScreenVertex;
+using dmcresource::GpuVertex;
+using dmcresource::GpuViewFrame;
+using dmcresource::ImagePreview;
+using dmcresource::RgbaImage;
+
+constexpr const char* kShaders = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+// ---- Models, rooms, floor and shadow (the Reader's mesh shader) -----------
+
+struct MeshIn {
+    float3 pos [[attribute(0)]];
+    float2 uv [[attribute(1)]];
+    float4 color [[attribute(2)]];
+    float3 normal [[attribute(3)]];
+    float light [[attribute(4)]];
+};
+
+struct MeshVertexUniforms {
+    float4x4 view;
+    float4 proj;
+    float cd;
+    int room;
+    float2 light;
+    float2 scroll;
+    float depth_bias;
+    float pad;
+};
+
+struct MeshOut {
+    float4 pos [[position]];
+    float2 uv;
+    float4 color;
+    float light;
+    float z;
+};
+
+static float4 metal_clip(float4 p) {
+    p.y = -p.y;
+    p.z = 0.5 * (p.z + p.w);
+    return p;
+}
+
+vertex MeshOut mesh_vertex(MeshIn in [[stage_in]], constant MeshVertexUniforms& u [[buffer(1)]]) {
+    float3 c = (u.view * float4(in.pos, 1.0)).xyz;
+    float term = in.light;
+    if (u.room == 1) {
+        float3 n = float3x3(u.view[0].xyz, u.view[1].xyz, u.view[2].xyz) * in.normal;
+        float nl = length(n);
+        float pl = length(c);
+        term = (nl > 0.0 && pl > 0.0) ? abs(dot(n, c)) / (nl * pl) : 1.0;
+    }
+    MeshOut o;
+    o.light = u.light.x + u.light.y * term;
+    o.uv = in.uv + u.scroll;
+    o.color = in.color * (255.0 / 128.0);
+    o.z = c.z - u.cd;
+    float4 p = float4(u.proj.x * c.x, u.proj.y * c.y, u.proj.z * c.z + u.proj.w, c.z);
+    if (u.depth_bias != 0.0) {
+        float zb = max(c.z - u.depth_bias, 1.0e-4);
+        p.z = (u.proj.z + u.proj.w / zb) * c.z;
+    }
+    o.pos = metal_clip(p);
+    return o;
+}
+
+struct MeshFragmentUniforms {
+    int textured;
+    int mode;      // 0 model, 1 model added, 2 room opaque, 3 room soft, 4 room added, 5 solid, 6 shadow
+    int colored;
+    int translucent;
+    float radius;
+    float cd;
+    float2 pad;
+    float4 solid;
+    float4 fog;       // x on, y start, z end
+    float4 fog_near;
+    float4 fog_far;
+};
+
+static float4 fog_at(float vz, constant MeshFragmentUniforms& u) {
+    if (u.fog.x < 0.5) return float4(0.0);
+    float z = vz + u.cd;
+    float span = u.fog.z - u.fog.y;
+    float t = span > 1.0e-3 ? clamp((z - u.fog.y) / span, 0.0, 1.0) : (z >= u.fog.z ? 1.0 : 0.0);
+    return float4(mix(u.fog_near.rgb, u.fog_far.rgb, t), clamp(mix(u.fog_near.a, u.fog_far.a, t), 0.0, 1.0));
+}
+
+fragment float4 mesh_fragment(MeshOut in [[stage_in]], constant MeshFragmentUniforms& u [[buffer(0)]],
+                              texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    float4 fog = fog_at(in.z, u);
+    if (u.mode == 5) return u.solid;
+    if (u.mode == 6) return float4(0.45, 0.45, 0.45, 1.0);
+    if (u.mode <= 1) {
+        if (u.textured == 0) {
+            float zn = 0.5 + 0.5 * tanh(-in.z / u.radius);
+            float s = floor(145.0 + 80.0 * zn) / 255.0;
+            return float4(s, s, min(1.0, s + 10.0 / 255.0), 1.0);
+        }
+        float4 t = tex.sample(smp, in.uv);
+        if (u.colored == 1) t = min(t * in.color, float4(1.0));
+        t.rgb = min(t.rgb * in.light, float3(1.0));
+        if (t.a < 0.5 / 255.0) discard_fragment();
+        t.rgb = u.mode == 1 ? t.rgb * (1.0 - fog.a) : mix(t.rgb, fog.rgb, fog.a);
+        return t;
+    }
+    float4 t = u.textured == 1 ? tex.sample(smp, in.uv) : float4(128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0);
+    if (t.a < 7.5 / 255.0) discard_fragment();
+    bool opaque = (u.mode == 2 || u.mode == 3) ? (t.a >= 239.5 / 255.0 || u.translucent == 0) : false;
+    if (u.mode == 2) {
+        if (!opaque) discard_fragment();
+        if (u.translucent == 0 && t.a < 31.5 / 255.0) discard_fragment();
+    } else if (opaque) {
+        discard_fragment();
+    }
+    float3 c = t.rgb;
+    if (u.colored == 1) c *= in.color.rgb;
+    c *= in.light;
+    if (u.mode == 4) {
+        float k = t.a;
+        if (u.colored == 1) k *= min(1.0, in.color.a);
+        return float4(c * k * (1.0 - fog.a), 1.0);
+    }
+    return float4(mix(min(c, float3(1.0)), fog.rgb, fog.a), u.mode == 3 ? t.a : 1.0);
+}
+
+// ---- Effect quads, the fade and the overlays (image space) ----------------
+
+struct ScreenIn {
+    float3 pos [[attribute(0)]];
+    float2 uv [[attribute(1)]];
+    float4 color [[attribute(2)]];
+};
+
+struct ScreenUniforms {
+    float2 size;
+    float2 pad;
+    float4 depth;  // x proj z, y proj w, z camera distance
+    int textured;
+    int pad2[3];
+};
+
+struct ScreenOut {
+    float4 pos [[position]];
+    float2 uv;
+    float4 color;
+};
+
+vertex ScreenOut screen_vertex(ScreenIn in [[stage_in]], constant ScreenUniforms& u [[buffer(1)]]) {
+    float cz = in.pos.z + u.depth.z;
+    float4 p = float4(in.pos.x * 2.0 / u.size.x - 1.0, in.pos.y * 2.0 / u.size.y - 1.0,
+                      u.depth.x + u.depth.y / cz, 1.0);
+    ScreenOut o;
+    o.pos = metal_clip(p);
+    o.uv = in.uv;
+    o.color = in.color / 255.0;
+    return o;
+}
+
+fragment float4 screen_fragment(ScreenOut in [[stage_in]], constant ScreenUniforms& u [[buffer(0)]],
+                                texture2d<float> tex [[texture(0)]], sampler smp [[sampler(0)]]) {
+    float4 t = u.textured == 1 ? tex.sample(smp, in.uv) : float4(1.0);
+    bool tinted = any(in.color < float4(254.5 / 255.0));
+    if (tinted) t *= in.color;
+    if (t.a < (tinted ? 1.5 : 7.5) / 255.0) discard_fragment();
+    return t;
+}
+)msl";
+
+struct MeshVertexUniforms {
+    std::array<float, 16> view;
+    std::array<float, 4> proj;
+    float cd;
+    std::int32_t room;
+    std::array<float, 2> light;
+    std::array<float, 2> scroll;
+    float depth_bias;
+    float pad;
+};
+
+struct MeshFragmentUniforms {
+    std::int32_t textured;
+    std::int32_t mode;
+    std::int32_t colored;
+    std::int32_t translucent;
+    float radius;
+    float cd;
+    std::array<float, 2> pad;
+    std::array<float, 4> solid;
+    std::array<float, 4> fog;
+    std::array<float, 4> fog_near;
+    std::array<float, 4> fog_far;
+};
+
+struct ScreenUniforms {
+    std::array<float, 2> size;
+    std::array<float, 2> pad;
+    std::array<float, 4> depth;
+    std::int32_t textured;
+    std::array<std::int32_t, 3> pad2;
+};
+
+enum class Blend : std::uint8_t { none, alpha, add_src_alpha, add_one, sub_src_alpha, sub_one, multiply };
+
+std::uint64_t texel_signature(const ImagePreview& image) noexcept {
+    std::uint64_t h = 0xCBF29CE484222325ULL;
+    const auto n = image.rgba8.size();
+    for (std::size_t k = 0U; k < 32U && n != 0U; ++k) {
+        h ^= image.rgba8[k * (n - 1U) / 31U];
+        h *= 0x100000001B3ULL;
+    }
+    return h ^ (static_cast<std::uint64_t>(image.width) << 32U) ^ image.height;
+}
+
+class MetalViewBackend final : public dmcresource::GpuViewBackend {
+public:
+    bool draw(const GpuViewFrame& frame, RgbaImage& image) override {
+        const std::lock_guard lock{mutex_};
+        if (!initialize() || frame.width <= 0 || frame.height <= 0) return false;
+        @autoreleasepool {
+            const bool ok = draw_frame(frame, image);
+            if (!ok && ++failures_ >= 8U) failed_ = true;
+            if (ok) failures_ = 0U;
+            return ok;
+        }
+    }
+
+    std::string describe() override {
+        const std::lock_guard lock{mutex_};
+        if (!initialize()) return {};
+        return "Metal / " + std::string{[[device_ name] UTF8String]};
+    }
+
+    dmcresource::GpuCapabilities capabilities() override {
+        const std::lock_guard lock{mutex_};
+        if (!initialize()) return {};
+        int samples = 1;
+        for (const int n : {8, 4, 2}) {
+            if ([device_ supportsTextureSampleCount:static_cast<NSUInteger>(n)]) {
+                samples = n;
+                break;
+            }
+        }
+        return {samples, 16.0F};
+    }
+
+private:
+    struct Texture final {
+        id<MTLTexture> texture{};
+        const void* data{};
+        std::uint64_t signature{};
+        std::uint64_t last_frame{};
+        std::size_t bytes{};
+    };
+
+    bool initialize() {
+        if (failed_) return false;
+        if (device_ != nil) return true;
+        device_ = MTLCreateSystemDefaultDevice();
+        if (device_ == nil) {
+            failed_ = true;
+            return false;
+        }
+        queue_ = [device_ newCommandQueue];
+        NSError* error = nil;
+        library_ = [device_ newLibraryWithSource:[NSString stringWithUTF8String:kShaders] options:nil error:&error];
+        if (library_ == nil) {
+            NSLog(@"Metal view backend: shaders did not compile: %@", error);
+            failed_ = true;
+            return false;
+        }
+        mesh_vertex_ = [library_ newFunctionWithName:@"mesh_vertex"];
+        mesh_fragment_ = [library_ newFunctionWithName:@"mesh_fragment"];
+        screen_vertex_ = [library_ newFunctionWithName:@"screen_vertex"];
+        screen_fragment_ = [library_ newFunctionWithName:@"screen_fragment"];
+
+        mesh_layout_ = [MTLVertexDescriptor vertexDescriptor];
+        const auto attribute = [](MTLVertexDescriptor* d, int index, MTLVertexFormat format, std::size_t offset) {
+            d.attributes[index].format = format;
+            d.attributes[index].offset = offset;
+            d.attributes[index].bufferIndex = 0;
+        };
+        attribute(mesh_layout_, 0, MTLVertexFormatFloat3, offsetof(GpuVertex, x));
+        attribute(mesh_layout_, 1, MTLVertexFormatFloat2, offsetof(GpuVertex, u));
+        attribute(mesh_layout_, 2, MTLVertexFormatUChar4Normalized, offsetof(GpuVertex, rgba));
+        attribute(mesh_layout_, 3, MTLVertexFormatFloat3, offsetof(GpuVertex, nx));
+        attribute(mesh_layout_, 4, MTLVertexFormatFloat, offsetof(GpuVertex, light));
+        mesh_layout_.layouts[0].stride = sizeof(GpuVertex);
+
+        screen_layout_ = [MTLVertexDescriptor vertexDescriptor];
+        attribute(screen_layout_, 0, MTLVertexFormatFloat3, offsetof(GpuScreenVertex, x));
+        attribute(screen_layout_, 1, MTLVertexFormatFloat2, offsetof(GpuScreenVertex, u));
+        attribute(screen_layout_, 2, MTLVertexFormatFloat4, offsetof(GpuScreenVertex, rgba));
+        screen_layout_.layouts[0].stride = sizeof(GpuScreenVertex);
+
+        // A 1x1 white texture for draws without one (the shaders ignore it).
+        MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                                                     width:1
+                                                                                    height:1
+                                                                                 mipmapped:NO];
+        blank_ = [device_ newTextureWithDescriptor:d];
+        const std::uint32_t white = 0xFFFFFFFFU;
+        [blank_ replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:&white bytesPerRow:4];
+        return true;
+    }
+
+    id<MTLRenderPipelineState> pipeline(bool screen, Blend blend, NSUInteger samples) {
+        const int key = (screen ? 1 : 0) | (static_cast<int>(blend) << 1) | (static_cast<int>(samples) << 8);
+        auto& slot = pipelines_[key];
+        if (slot != nil) return slot;
+        MTLRenderPipelineDescriptor* p = [[MTLRenderPipelineDescriptor alloc] init];
+        p.vertexFunction = screen ? screen_vertex_ : mesh_vertex_;
+        p.fragmentFunction = screen ? screen_fragment_ : mesh_fragment_;
+        p.vertexDescriptor = screen ? screen_layout_ : mesh_layout_;
+        p.rasterSampleCount = samples;
+        p.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+        p.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+        auto* c = p.colorAttachments[0];
+        c.pixelFormat = MTLPixelFormatRGBA8Unorm;
+        // The cleared alpha (1) stays: the pixels come back opaque.
+        c.writeMask = MTLColorWriteMaskRed | MTLColorWriteMaskGreen | MTLColorWriteMaskBlue;
+        if (blend != Blend::none) {
+            c.blendingEnabled = YES;
+            const bool sub = blend == Blend::sub_src_alpha || blend == Blend::sub_one;
+            c.rgbBlendOperation = sub ? MTLBlendOperationReverseSubtract : MTLBlendOperationAdd;
+            c.alphaBlendOperation = c.rgbBlendOperation;
+            switch (blend) {
+                case Blend::alpha:
+                    c.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                    c.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+                    break;
+                case Blend::add_src_alpha:
+                case Blend::sub_src_alpha:
+                    c.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                    c.destinationRGBBlendFactor = MTLBlendFactorOne;
+                    break;
+                case Blend::add_one:
+                case Blend::sub_one:
+                    c.sourceRGBBlendFactor = MTLBlendFactorOne;
+                    c.destinationRGBBlendFactor = MTLBlendFactorOne;
+                    break;
+                case Blend::multiply:
+                    c.sourceRGBBlendFactor = MTLBlendFactorZero;
+                    c.destinationRGBBlendFactor = MTLBlendFactorSourceColor;
+                    break;
+                case Blend::none:
+                    break;
+            }
+            c.sourceAlphaBlendFactor = c.sourceRGBBlendFactor;
+            c.destinationAlphaBlendFactor = c.destinationRGBBlendFactor;
+        }
+        NSError* error = nil;
+        slot = [device_ newRenderPipelineStateWithDescriptor:p error:&error];
+        if (slot == nil) NSLog(@"Metal view backend: pipeline: %@", error);
+        return slot;
+    }
+
+    // depth: 0 off, 1 less, 2 less-equal; stencil: the shadow's once-per-pixel count.
+    id<MTLDepthStencilState> depth_state(int depth, bool write, bool stencil) {
+        const int key = depth | (write ? 4 : 0) | (stencil ? 8 : 0);
+        auto& slot = depth_states_[key];
+        if (slot != nil) return slot;
+        MTLDepthStencilDescriptor* d = [[MTLDepthStencilDescriptor alloc] init];
+        d.depthCompareFunction = depth == 0   ? MTLCompareFunctionAlways
+                                 : depth == 1 ? MTLCompareFunctionLess
+                                              : MTLCompareFunctionLessEqual;
+        d.depthWriteEnabled = write;
+        if (stencil) {
+            MTLStencilDescriptor* s = [[MTLStencilDescriptor alloc] init];
+            s.stencilCompareFunction = MTLCompareFunctionEqual;
+            s.stencilFailureOperation = MTLStencilOperationKeep;
+            s.depthFailureOperation = MTLStencilOperationKeep;
+            s.depthStencilPassOperation = MTLStencilOperationIncrementClamp;
+            s.readMask = 0xFF;
+            s.writeMask = 0xFF;
+            d.frontFaceStencil = s;
+            d.backFaceStencil = s;
+        }
+        slot = [device_ newDepthStencilStateWithDescriptor:d];
+        return slot;
+    }
+
+    id<MTLSamplerState> sampler(bool smooth, const dmcresource::GpuViewOptions& options) {
+        const int key = (smooth ? 1 : 0) | (options.mipmaps ? 2 : 0) | (std::clamp(options.anisotropy, 1, 16) << 2);
+        auto& slot = samplers_[key];
+        if (slot != nil) return slot;
+        MTLSamplerDescriptor* d = [[MTLSamplerDescriptor alloc] init];
+        d.sAddressMode = MTLSamplerAddressModeRepeat;
+        d.tAddressMode = MTLSamplerAddressModeRepeat;
+        d.minFilter = smooth ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+        d.magFilter = d.minFilter;
+        d.mipFilter = !options.mipmaps ? MTLSamplerMipFilterNotMipmapped
+                      : smooth         ? MTLSamplerMipFilterLinear
+                                       : MTLSamplerMipFilterNearest;
+        d.maxAnisotropy = smooth ? static_cast<NSUInteger>(std::clamp(options.anisotropy, 1, 16)) : 1;
+        slot = [device_ newSamplerStateWithDescriptor:d];
+        return slot;
+    }
+
+    bool ensure_target(int width, int height, int msaa) {
+        NSUInteger samples = 1;
+        for (const int n : {std::min(msaa, 8), 4, 2}) {
+            if (n > 1 && [device_ supportsTextureSampleCount:static_cast<NSUInteger>(n)]) {
+                samples = static_cast<NSUInteger>(n);
+                break;
+            }
+        }
+        if (msaa <= 1) samples = 1;
+        if (color_ != nil && width_ == width && height_ == height && samples_ == samples) return true;
+        width_ = width;
+        height_ = height;
+        samples_ = samples;
+        const auto make = [this](MTLPixelFormat format, NSUInteger count) {
+            MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
+                                                                                         width:static_cast<NSUInteger>(width_)
+                                                                                        height:static_cast<NSUInteger>(height_)
+                                                                                     mipmapped:NO];
+            d.textureType = count > 1 ? MTLTextureType2DMultisample : MTLTextureType2D;
+            d.sampleCount = count;
+            d.storageMode = MTLStorageModePrivate;
+            d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+            return [device_ newTextureWithDescriptor:d];
+        };
+        color_ = make(MTLPixelFormatRGBA8Unorm, samples_);
+        resolve_ = samples_ > 1 ? make(MTLPixelFormatRGBA8Unorm, 1) : nil;
+        depth_ = make(MTLPixelFormatDepth32Float_Stencil8, samples_);
+        readback_ = [device_ newBufferWithLength:static_cast<NSUInteger>(width_) * static_cast<NSUInteger>(height_) * 4U
+                                         options:MTLResourceStorageModeShared];
+        return color_ != nil && depth_ != nil && readback_ != nil;
+    }
+
+    id<MTLTexture> texture(const ImagePreview* image, id<MTLCommandBuffer> commands) {
+        if (image == nullptr || !image->available()) return nil;
+        if (image->width > 16384U || image->height > 16384U) return nil;
+        auto& entry = textures_[image];
+        const auto signature = texel_signature(*image);
+        if (entry.texture == nil || entry.data != image->rgba8.data() || entry.signature != signature) {
+            MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                                                                         width:image->width
+                                                                                        height:image->height
+                                                                                     mipmapped:YES];
+            d.usage = MTLTextureUsageShaderRead;
+            entry.texture = [device_ newTextureWithDescriptor:d];
+            [entry.texture replaceRegion:MTLRegionMake2D(0, 0, image->width, image->height)
+                             mipmapLevel:0
+                               withBytes:image->rgba8.data()
+                             bytesPerRow:image->width * 4U];
+            id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+            [blit generateMipmapsForTexture:entry.texture];
+            [blit endEncoding];
+            texture_bytes_ -= entry.bytes;
+            entry.bytes = image->rgba8.size() * 4U / 3U;
+            texture_bytes_ += entry.bytes;
+            entry.data = image->rgba8.data();
+            entry.signature = signature;
+        }
+        entry.last_frame = frame_number_;
+        return entry.texture;
+    }
+
+    void trim_textures() {
+        constexpr std::size_t kBudget = 1024U * 1024U * 1024U;
+        for (auto it = textures_.begin(); it != textures_.end();) {
+            const bool stale = frame_number_ - it->second.last_frame > 900U;
+            const bool over = texture_bytes_ > kBudget && it->second.last_frame != frame_number_;
+            if (stale || over) {
+                texture_bytes_ -= it->second.bytes;
+                it = textures_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // Vertices for this frame: small ones inline, the rest in a buffer.
+    void set_vertices(id<MTLRenderCommandEncoder> encoder, const void* data, std::size_t bytes) {
+        if (bytes <= 4096U) {
+            [encoder setVertexBytes:data length:bytes atIndex:0];
+        } else {
+            id<MTLBuffer> buffer = [device_ newBufferWithBytes:data length:bytes options:MTLResourceStorageModeShared];
+            [encoder setVertexBuffer:buffer offset:0 atIndex:0];
+        }
+    }
+
+    static Blend blend_for(GpuBatchKind kind, bool soft_alpha) {
+        switch (kind) {
+            case GpuBatchKind::model_additive: return Blend::add_src_alpha;
+            case GpuBatchKind::room_additive: return Blend::add_one;
+            case GpuBatchKind::model_subtractive: return Blend::sub_src_alpha;
+            case GpuBatchKind::room_subtractive: return Blend::sub_one;
+            default: return soft_alpha ? Blend::alpha : Blend::none;
+        }
+    }
+
+    void draw_batch(id<MTLRenderCommandEncoder> encoder, id<MTLCommandBuffer> commands, const GpuBatch& batch,
+                    int mode, bool smooth, Blend blend, const GpuViewFrame& frame, MeshVertexUniforms& vu,
+                    MeshFragmentUniforms& fu) {
+        [encoder setRenderPipelineState:pipeline(false, blend, samples_)];
+        id<MTLTexture> t = texture(batch.texture, commands);
+        fu.textured = t != nil ? 1 : 0;
+        fu.mode = mode;
+        fu.colored = batch.colored ? 1 : 0;
+        fu.translucent = batch.translucent ? 1 : 0;
+        vu.light = {batch.light_base, batch.light_gain};
+        vu.scroll = {0.0F, 0.0F};
+        if (batch.scroll_slot != dmcresource::kNoTextureSlot) {
+            for (const auto& s : frame.room_scrolls) {
+                if (s.slot == batch.scroll_slot) {
+                    vu.scroll = {s.u, s.v};
+                    break;
+                }
+            }
+        }
+        [encoder setVertexBytes:&vu length:sizeof(vu) atIndex:1];
+        [encoder setFragmentBytes:&fu length:sizeof(fu) atIndex:0];
+        [encoder setFragmentTexture:(t != nil ? t : blank_) atIndex:0];
+        [encoder setFragmentSamplerState:sampler(smooth && !batch.nearest, frame.options) atIndex:0];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:batch.first vertexCount:batch.count];
+    }
+
+    static std::vector<GpuVertex> plain(const std::vector<dmcresource::Vec3>& points) {
+        std::vector<GpuVertex> out(points.size());
+        for (std::size_t i = 0U; i < points.size(); ++i) {
+            out[i].x = points[i].x;
+            out[i].y = points[i].y;
+            out[i].z = points[i].z;
+        }
+        return out;
+    }
+
+    void draw_screen(id<MTLRenderCommandEncoder> encoder, id<MTLCommandBuffer> commands,
+                     const std::vector<GpuScreenVertex>& vertices, std::size_t first, std::size_t count,
+                     const ImagePreview* image, Blend blend, const GpuViewFrame& frame) {
+        [encoder setRenderPipelineState:pipeline(true, blend, samples_)];
+        ScreenUniforms su{};
+        su.size = {static_cast<float>(frame.width), static_cast<float>(frame.height)};
+        su.depth = {frame.projection[2], frame.projection[3], frame.camera_distance, 0.0F};
+        id<MTLTexture> t = texture(image, commands);
+        su.textured = t != nil ? 1 : 0;
+        [encoder setVertexBytes:&su length:sizeof(su) atIndex:1];
+        [encoder setFragmentBytes:&su length:sizeof(su) atIndex:0];
+        [encoder setFragmentTexture:(t != nil ? t : blank_) atIndex:0];
+        [encoder setFragmentSamplerState:sampler(true, frame.options) atIndex:0];
+        set_vertices(encoder, vertices.data() + first, count * sizeof(GpuScreenVertex));
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:count];
+    }
+
+    bool draw_frame(const GpuViewFrame& frame, RgbaImage& image) {
+        ++frame_number_;
+        if (!ensure_target(frame.width, frame.height, frame.options.msaa_samples)) return false;
+        id<MTLCommandBuffer> commands = [queue_ commandBuffer];
+
+        // Textures upload (and their mipmaps build) before the pass begins.
+        std::vector<const ImagePreview*> wanted;
+        if (frame.room && (!room_cached_ || !(room_key_ == frame.room_key))) {
+            const auto geometry = frame.build_room();
+            room_buffer_ = geometry.vertices.empty()
+                ? nil
+                : [device_ newBufferWithBytes:geometry.vertices.data()
+                                       length:geometry.vertices.size() * sizeof(GpuVertex)
+                                      options:MTLResourceStorageModeShared];
+            room_batches_ = geometry.batches;
+            room_key_ = frame.room_key;
+            room_cached_ = true;
+        }
+        if (frame.room) for (const auto& b : room_batches_) wanted.push_back(b.texture);
+        for (const auto& b : frame.model.batches) wanted.push_back(b.texture);
+        for (const auto& q : frame.effects) wanted.push_back(q.texture);
+        for (const auto& l : frame.overlay.labels) wanted.push_back(&l.image);
+        for (const auto* w : wanted) (void)texture(w, commands);
+
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = color_;
+        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(frame.background[0] / 255.0, frame.background[1] / 255.0,
+                                                                frame.background[2] / 255.0, 1.0);
+        if (samples_ > 1) {
+            pass.colorAttachments[0].resolveTexture = resolve_;
+            pass.colorAttachments[0].storeAction = MTLStoreActionMultisampleResolve;
+        } else {
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        }
+        pass.depthAttachment.texture = depth_;
+        pass.depthAttachment.loadAction = MTLLoadActionClear;
+        pass.depthAttachment.clearDepth = 1.0;
+        pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+        pass.stencilAttachment.texture = depth_;
+        pass.stencilAttachment.loadAction = MTLLoadActionClear;
+        pass.stencilAttachment.clearStencil = 0;
+        pass.stencilAttachment.storeAction = MTLStoreActionDontCare;
+
+        id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+        [encoder setViewport:MTLViewport{0.0, 0.0, static_cast<double>(frame.width),
+                                         static_cast<double>(frame.height), 0.0, 1.0}];
+        [encoder setCullMode:MTLCullModeNone];
+
+        MeshVertexUniforms vu{};
+        vu.proj = frame.projection;
+        vu.cd = frame.camera_distance;
+        MeshFragmentUniforms fu{};
+        fu.radius = std::max(frame.radius, 1.0e-4F);
+        fu.cd = frame.camera_distance;
+        const auto& fog = frame.fog;
+        fu.fog = {fog.enabled ? 1.0F : 0.0F, fog.start, fog.end, 0.0F};
+        fu.fog_near = fog.near_colour;
+        fu.fog_far = fog.far_colour;
+
+        // 1. Opaque room texels.
+        if (frame.room && room_buffer_ != nil) {
+            [encoder setVertexBuffer:room_buffer_ offset:0 atIndex:0];
+            [encoder setDepthStencilState:depth_state(1, true, false)];
+            vu.view = frame.room_view;
+            vu.room = 1;
+            for (const auto& batch : room_batches_) {
+                if (batch.kind != GpuBatchKind::room) continue;
+                draw_batch(encoder, commands, batch, 2, frame.smooth_room, Blend::none, frame, vu, fu);
+            }
+        }
+
+        // 2. Plain floor.
+        vu.view = frame.model_view;
+        vu.room = 0;
+        vu.light = {1.0F, 0.0F};
+        vu.scroll = {0.0F, 0.0F};
+        if (!frame.floor.empty()) {
+            const auto floor = plain(frame.floor);
+            set_vertices(encoder, floor.data(), floor.size() * sizeof(GpuVertex));
+            [encoder setRenderPipelineState:pipeline(false, Blend::none, samples_)];
+            [encoder setDepthStencilState:depth_state(1, true, false)];
+            fu.mode = 5;
+            fu.textured = 0;
+            fu.solid = {frame.floor_rgb[0] / 255.0F, frame.floor_rgb[1] / 255.0F, frame.floor_rgb[2] / 255.0F, 1.0F};
+            [encoder setVertexBytes:&vu length:sizeof(vu) atIndex:1];
+            [encoder setFragmentBytes:&fu length:sizeof(fu) atIndex:0];
+            [encoder setFragmentTexture:blank_ atIndex:0];
+            [encoder setFragmentSamplerState:sampler(true, frame.options) atIndex:0];
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:floor.size()];
+        }
+
+        // 3. The model: blended-over batches writing depth, then the added /
+        // subtracted ones on top without it.
+        if (!frame.model.vertices.empty()) {
+            set_vertices(encoder, frame.model.vertices.data(), frame.model.vertices.size() * sizeof(GpuVertex));
+            vu.view = frame.model_view;
+            vu.room = 0;
+            for (const auto& batch : frame.model.batches) {
+                const bool layered = batch.kind != GpuBatchKind::model;
+                [encoder setDepthStencilState:depth_state(1, !layered, false)];
+                draw_batch(encoder, commands, batch, layered ? 1 : 0, frame.smooth_model, blend_for(batch.kind, !layered),
+                           frame, vu, fu);
+            }
+        }
+
+        // 4. Soft room texels, then light shafts.
+        if (frame.room && room_buffer_ != nil) {
+            [encoder setVertexBuffer:room_buffer_ offset:0 atIndex:0];
+            [encoder setDepthStencilState:depth_state(1, false, false)];
+            vu.view = frame.room_view;
+            vu.room = 1;
+            for (const auto& batch : room_batches_) {
+                if (batch.kind != GpuBatchKind::room || !batch.translucent) continue;
+                draw_batch(encoder, commands, batch, 3, frame.smooth_room, blend_for(batch.kind, true), frame, vu, fu);
+            }
+            for (const auto& batch : room_batches_) {
+                if (batch.kind == GpuBatchKind::room) continue;
+                draw_batch(encoder, commands, batch, 4, frame.smooth_room, blend_for(batch.kind, true), frame, vu, fu);
+            }
+        }
+
+        // 5. Shadow footprint: darkens what is visible there once per pixel.
+        if (!frame.shadow.empty()) {
+            const auto shadow = plain(frame.shadow);
+            set_vertices(encoder, shadow.data(), shadow.size() * sizeof(GpuVertex));
+            vu.view = frame.model_view;
+            vu.room = 0;
+            vu.light = {1.0F, 0.0F};
+            vu.scroll = {0.0F, 0.0F};
+            vu.depth_bias = frame.radius * 0.01F;
+            fu.mode = 6;
+            fu.textured = 0;
+            [encoder setRenderPipelineState:pipeline(false, Blend::multiply, samples_)];
+            [encoder setDepthStencilState:depth_state(2, false, true)];
+            [encoder setStencilReferenceValue:0];
+            [encoder setVertexBytes:&vu length:sizeof(vu) atIndex:1];
+            [encoder setFragmentBytes:&fu length:sizeof(fu) atIndex:0];
+            [encoder setFragmentTexture:blank_ atIndex:0];
+            [encoder setFragmentSamplerState:sampler(true, frame.options) atIndex:0];
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:shadow.size()];
+            vu.depth_bias = 0.0F;
+        }
+
+        // 6. Effect quads (image space).
+        if (!frame.effects.empty()) {
+            std::vector<GpuScreenVertex> vertices;
+            vertices.reserve(frame.effects.size() * 6U);
+            for (const auto& quad : frame.effects) {
+                for (const int k : {0, 1, 2, 0, 2, 3}) vertices.push_back(quad.vertices[static_cast<std::size_t>(k)]);
+            }
+            [encoder setDepthStencilState:depth_state(1, false, false)];
+            for (std::size_t i = 0U; i < frame.effects.size(); ++i) {
+                const auto& quad = frame.effects[i];
+                draw_screen(encoder, commands, vertices, i * 6U, 6U, quad.texture,
+                            quad.additive ? Blend::add_src_alpha : Blend::alpha, frame);
+            }
+        }
+
+        // 7. A cutscene's fade, then 8. the overlays (no depth test).
+        const float z = 0.5F * (frame.near_z + frame.far_z) - frame.camera_distance;
+        const float w = static_cast<float>(frame.width);
+        const float h = static_cast<float>(frame.height);
+        [encoder setDepthStencilState:depth_state(0, false, false)];
+        if (frame.fade[3] > 0.0F) {
+            const std::array<float, 4> colour{frame.fade[0], frame.fade[1], frame.fade[2],
+                                              std::clamp(frame.fade[3], 0.0F, 1.0F) * 255.0F};
+            const std::vector<GpuScreenVertex> quad{{0.0F, 0.0F, z, 0.0F, 0.0F, colour}, {w, 0.0F, z, 0.0F, 0.0F, colour},
+                                                    {w, h, z, 0.0F, 0.0F, colour},       {0.0F, 0.0F, z, 0.0F, 0.0F, colour},
+                                                    {w, h, z, 0.0F, 0.0F, colour},       {0.0F, h, z, 0.0F, 0.0F, colour}};
+            draw_screen(encoder, commands, quad, 0U, quad.size(), nullptr, Blend::alpha, frame);
+        }
+        if (!frame.overlay.empty()) {
+            std::vector<GpuScreenVertex> vertices = frame.overlay.triangles;
+            for (auto& v : vertices) v.z = z;
+            if (!vertices.empty()) draw_screen(encoder, commands, vertices, 0U, vertices.size(), nullptr, Blend::alpha, frame);
+            for (const auto& label : frame.overlay.labels) {
+                const float x0 = label.x, y0 = label.y;
+                const float x1 = x0 + static_cast<float>(label.image.width);
+                const float y1 = y0 + static_cast<float>(label.image.height);
+                const std::array<float, 4> white{255.0F, 255.0F, 255.0F, 255.0F};
+                const std::vector<GpuScreenVertex> quad{{x0, y0, z, 0.0F, 0.0F, white}, {x1, y0, z, 1.0F, 0.0F, white},
+                                                        {x1, y1, z, 1.0F, 1.0F, white}, {x0, y0, z, 0.0F, 0.0F, white},
+                                                        {x1, y1, z, 1.0F, 1.0F, white}, {x0, y1, z, 0.0F, 1.0F, white}};
+                draw_screen(encoder, commands, quad, 0U, quad.size(), &label.image, Blend::alpha, frame);
+            }
+        }
+        [encoder endEncoding];
+
+        // Read back: Metal row 0 is image row 0, as RgbaImage stores them.
+        id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+        const NSUInteger row = static_cast<NSUInteger>(frame.width) * 4U;
+        [blit copyFromTexture:(samples_ > 1 ? resolve_ : color_)
+                         sourceSlice:0
+                         sourceLevel:0
+                        sourceOrigin:MTLOriginMake(0, 0, 0)
+                          sourceSize:MTLSizeMake(static_cast<NSUInteger>(frame.width),
+                                                 static_cast<NSUInteger>(frame.height), 1)
+                            toBuffer:readback_
+                   destinationOffset:0
+              destinationBytesPerRow:row
+            destinationBytesPerImage:row * static_cast<NSUInteger>(frame.height)];
+        [blit endEncoding];
+        [commands commit];
+        [commands waitUntilCompleted];
+        if (commands.status != MTLCommandBufferStatusCompleted) return false;
+
+        image.width = frame.width;
+        image.height = frame.height;
+        image.pixels.resize(row * static_cast<std::size_t>(frame.height));
+        std::memcpy(image.pixels.data(), [readback_ contents], image.pixels.size());
+        trim_textures();
+        return true;
+    }
+
+    std::mutex mutex_;
+    bool failed_{};
+    unsigned failures_{};
+    std::uint64_t frame_number_{};
+    id<MTLDevice> device_{};
+    id<MTLCommandQueue> queue_{};
+    id<MTLLibrary> library_{};
+    id<MTLFunction> mesh_vertex_{}, mesh_fragment_{}, screen_vertex_{}, screen_fragment_{};
+    MTLVertexDescriptor* mesh_layout_{};
+    MTLVertexDescriptor* screen_layout_{};
+    id<MTLTexture> blank_{};
+    std::map<int, id<MTLRenderPipelineState>> pipelines_;
+    std::map<int, id<MTLDepthStencilState>> depth_states_;
+    std::map<int, id<MTLSamplerState>> samplers_;
+    id<MTLTexture> color_{}, resolve_{}, depth_{};
+    id<MTLBuffer> readback_{};
+    int width_{}, height_{};
+    NSUInteger samples_{1};
+    std::unordered_map<const ImagePreview*, Texture> textures_;
+    std::size_t texture_bytes_{};
+    id<MTLBuffer> room_buffer_{};
+    std::vector<GpuBatch> room_batches_;
+    dmcresource::GpuRoomKey room_key_{};
+    bool room_cached_{};
+};
+
+}  // namespace
+
+// Registers the Metal backend for render_view (the C API calls it once).
+extern "C" void dmc_install_metal_view_backend() {
+    static MetalViewBackend backend;
+    dmcresource::set_gpu_view_backend(&backend);
+}

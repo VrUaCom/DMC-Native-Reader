@@ -297,6 +297,14 @@ dmc_strings* dmc_variant_names(const char* archive_name) {
     } catch (...) { return nullptr; }
 }
 
+#if defined(DMC_NATIVE_READER_METAL)
+// The Metal view backend (apple/metal_view_backend.mm) draws every view.
+extern "C" void dmc_install_metal_view_backend();
+namespace {
+const bool kMetalInstalled = (dmc_install_metal_view_backend(), true);
+}  // namespace
+#endif
+
 dmc_strings* dmc_character_kit(const char* archive_name) {
     try {
         auto out = std::make_unique<dmc_strings>();
