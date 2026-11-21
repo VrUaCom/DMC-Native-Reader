@@ -26,6 +26,21 @@
 namespace dmcresource::adapters {
 namespace {
 
+// The alpha control the SCM initializer keeps (0x140302F10): the file byte,
+// except two objects it corrects by their index, byte and the texture slots
+// of their first four meshes (0xEA -> 0xC5, 0xC4 -> 0x80, the second turning
+// off that object's punch-through alpha).
+std::uint8_t scm_alpha_control(const dmc::rengine::formats::scm::Object& object, std::size_t object_index) {
+    if ((object.flags & 0xFU) != 0U || object.meshes.size() < 4U) return object.alpha_control;
+    const auto slots_are = [&object](std::uint16_t a, std::uint16_t b, std::uint16_t c, std::uint16_t d) {
+        return object.meshes[0].texture_index == a && object.meshes[1].texture_index == b &&
+               object.meshes[2].texture_index == c && object.meshes[3].texture_index == d;
+    };
+    if (object.alpha_control == 0xEAU && object_index == 10U && slots_are(0x74U, 0x3BU, 0x45U, 0xADU)) return 0xC5U;
+    if (object.alpha_control == 0xC4U && object_index == 0x10U && slots_are(0x74EU, 4U, 0xCU, 0x134U)) return 0x80U;
+    return object.alpha_control;
+}
+
 namespace scm = dmc::rengine::formats::scm;
 
 using namespace dmcresource::resource_limits;
@@ -452,9 +467,11 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                         "SCM canonical local-mesh projection exceeded topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
-                // The object's material byte, as for MOD (game_material.h).
+                // The object's material byte, as for MOD (game_material.h),
+                // with the SCM initializer's two fixes of the alpha control.
                 primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
-                                             game_material::material_byte(object.flags, object.alpha_control));
+                                             game_material::material_byte(object.flags,
+                                                                          scm_alpha_control(object, object_index)));
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());

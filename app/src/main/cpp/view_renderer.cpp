@@ -2351,6 +2351,7 @@ GpuGeometry build_room_geometry(const ViewState& view) {
         key.scroll_slot = textured ? slot : kNoTextureSlot;
         key.nearest = game_material::material_nearest(material);
         key.part_alpha = game_material::material_part_alpha(material);
+        key.punch_through = game_material::material_punch_through(material);
         const auto [tex_it, tex_new] =
             texture_ids.try_emplace(texture, static_cast<std::uint32_t>(texture_ids.size()));
         (void)tex_new;
@@ -2728,7 +2729,13 @@ GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame
         return out;
     }
     out.vertex = d.fog ? Shader::stage_lit_fog_vert : Shader::stage_lit_vert;
-    out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
+    // Stage objects with the alpha override draw punch-through (A1) as the
+    // models do (0x140302F10 sets object +0x178 by the same rule).
+    if (batch.punch_through) {
+        out.fragment = d.fog ? Shader::texture_modulate_fog_cutout_frag : Shader::texture_modulate_cutout_frag;
+    } else {
+        out.fragment = d.fog ? Shader::texture_modulate_fog_frag : Shader::texture_modulate_frag;
+    }
     if (d.fog) out.fog_colour = d.fog_colour;
     // 0x80 is 1: ambient x colour / 255 x 2 = colour / 128.
     out.ambient = {255.0F / 256.0F, 255.0F / 256.0F, 255.0F / 256.0F};

@@ -165,4 +165,13 @@ Vertex 14 (DMC3_PTCL); pixel 0 (MODULATE) when the material word has bit
   sheen.w is file object +0x18 (float), the power file +0x1C (int). The
   Reader keeps strength and power per vertex (Mesh::sheen0) and uses the
   camera direction alone.
-- Still open: stages' A1, particles, the scene axis of the sheen.
+- Stages: SCM objects (0x3C0 bytes, 0x140302F10) set +0x178 by the same
+  rule, after two fixes of the alpha control for one object each (index 10
+  with byte 0xEA and texture slots 0x74/0x3B/0x45/0xAD becomes 0xC5; index
+  0x10 with byte 0xC4 and slots 0x74E/4/0xC/0x134 becomes 0x80). The SCM
+  packet (0x140309C60) uploads object +0x180 (+ctx*0x30) to VU 0x3D5, which
+  the interpreter also hands to the mesh draw, refreshed by 0x140304280
+  with +0x28 = +0x178. So stages draw punch-through exactly like models;
+  the Reader applies the fixes in its SCM adapter. 1787 of the retail SCM
+  objects qualify.
+- Still open: particles, the scene axis of the sheen.
