@@ -560,9 +560,56 @@ int CmdExportDng(const fs::path& input_path, const fs::path& out_path) {
     return 0;
 }
 
+int CmdCollision(const fs::path& input_path, bool attack) {
+    const auto bytes = ReadFileBytes(input_path);
+    if (bytes.empty()) {
+        std::cerr << "error: could not read " << input_path.string() << "\n";
+        return 1;
+    }
+    auto res = dmc_open(input_path.string().c_str(), bytes.data(), bytes.size());
+    if (res.session == nullptr) {
+        std::cerr << "error: open rejected: " << (res.title ? res.title : "unknown reason") << "\n";
+        dmc_string_free(res.title);
+        return 1;
+    }
+    dmc_string_free(res.title);
+
+    dmc_report* rep = dmc_collision_report(res.session, attack);
+    if (!rep) {
+        std::cout << "No collision or hitbox report available for " << input_path.filename().string() << "\n";
+        dmc_close(res.session);
+        return 0;
+    }
+
+    const char* title = dmc_report_title(rep);
+    const char* summary = dmc_report_summary(rep);
+    std::cout << "=== " << (title ? title : "Collision Report") << " ===\n";
+    if (summary) std::cout << summary << "\n\n";
+
+    const size_t group_count = dmc_report_group_count(rep);
+    for (size_t i = 0; i < group_count; ++i) {
+        const dmc_report_group* g = dmc_report_group_at(rep, i);
+        if (!g) continue;
+        std::cout << "[" << i << "] " << (g->heading ? g->heading : "Group");
+        if (g->rgb >= 0) {
+            std::cout << " (RGB: #" << std::hex << g->rgb << std::dec << ")";
+        }
+        std::cout << "\n";
+        if (g->lines && g->lines[0] != '\0') {
+            std::cout << g->lines << "\n";
+        }
+        std::cout << "\n";
+    }
+
+    dmc_report_free(rep);
+    dmc_close(res.session);
+    return 0;
+}
+
 void PrintUsage() {
     std::cerr << "dmc_native_reader_cli <command> [args]\n"
               << "  inspect <file> [topic: uv | mesh | hierarchy | all]\n"
+              << "  collision <file> [--attack]\n"
               << "  report <file> --json <out.json>\n"
               << "  workspace-scan <folder> --json <out.json>\n"
               << "  export <file> <out.png>\n"
@@ -589,6 +636,10 @@ int main(int argc, char** argv) {
     }
     if (command == "export-dng" && argc >= 4) {
         return CmdExportDng(fs::path(argv[2]), fs::path(argv[3]));
+    }
+    if (command == "collision" && argc >= 3) {
+        const bool attack = (argc >= 4 && std::string_view(argv[3]) == "--attack");
+        return CmdCollision(fs::path(argv[2]), attack);
     }
     if (command == "inspect" && argc >= 3) {
         const std::string topic = (argc >= 4) ? argv[3] : "";

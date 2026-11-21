@@ -659,6 +659,9 @@ private:
     void toggle_kit_panel();
     void reset_view();
     void go_back();
+    void push_session(dmc_session* new_session, const std::string& title);
+    void load_marker_card(int marker);
+    void handle_card_action(int marker, int action_id);
 
     void load_character_kit(const std::string& archive_name, const fs::path& archive_path);
     void toggle_kit_item(size_t index);
@@ -786,9 +789,29 @@ private:
 
     // UI Panels
     bool show_info_panel_ = false;
-    int info_topic_ = 0; // 0: Overview, 1: UV Layout, 2: Meshes, 3: Bones
-    std::array<Rect, 4> info_tab_rects_{};
+    int info_topic_ = 0; // 0: Overview, 1: UV Layout, 2: Meshes, 3: Bones, 4: Collision
+    std::array<Rect, 5> info_tab_rects_{};
     bool show_kit_panel_ = false;
+
+    // Stage Marker Card
+    struct MarkerCardRow {
+        std::string name;
+        std::string value;
+    };
+    struct MarkerCardButton {
+        int id = 0;
+        std::string title;
+        Rect rect{};
+    };
+    struct ActiveMarkerCard {
+        int marker = -1;
+        std::string title;
+        std::vector<MarkerCardRow> rows;
+        std::vector<MarkerCardButton> buttons;
+        Rect panel_rect{};
+        Rect close_btn{};
+    };
+    std::optional<ActiveMarkerCard> active_card_{};
 
     // Character Kit
     std::vector<KitItem> kit_items_{};
@@ -1412,6 +1435,70 @@ void App::refresh_session_metadata() {
     update_layout(window_width_, window_height_);
 }
 
+void App::push_session(dmc_session* new_session, const std::string& title) {
+    if (!new_session) return;
+    if (session_) {
+        nav_stack_.push_back({session_, current_title_, current_path_.string(), view_});
+    }
+    session_ = new_session;
+    current_title_ = title;
+    dmc_view_reset(&view_);
+    refresh_session_metadata();
+}
+
+void App::load_marker_card(int marker) {
+    dmc_card* card = dmc_marker_card(marker);
+    if (!card) return;
+
+    ActiveMarkerCard mc;
+    mc.marker = marker;
+    const char* ct = dmc_card_title(card);
+    mc.title = ct ? ct : "Marker Configuration";
+
+    const size_t row_count = dmc_card_row_count(card);
+    for (size_t i = 0; i < row_count; ++i) {
+        const char* name = nullptr;
+        const char* value = nullptr;
+        if (dmc_card_row(card, i, &name, &value)) {
+            mc.rows.push_back({name ? name : "", value ? value : ""});
+        }
+    }
+
+    const dmc_menu* actions = dmc_card_actions(card);
+    if (actions) {
+        for (size_t i = 0; i < actions->count; ++i) {
+            mc.buttons.push_back({actions->items[i].id, actions->items[i].title ? actions->items[i].title : "Action", {}});
+        }
+    }
+
+    dmc_card_free(card);
+    active_card_ = std::move(mc);
+}
+
+void App::handle_card_action(int marker, int action_id) {
+    dmc_session* opened = nullptr;
+    dmc_outcome outcome = dmc_run_card_action(marker, action_id, &opened);
+    if (opened) {
+        active_card_.reset();
+        push_session(opened, outcome.title ? outcome.title : "Resource");
+    } else if (outcome.step == DMC_STEP_SHOW_MARKER_CARD && outcome.marker >= 0) {
+        load_marker_card(outcome.marker);
+    } else if (outcome.step == DMC_STEP_RESET_VIEW) {
+        dmc_view_reset(&view_);
+        active_card_.reset();
+    } else if (outcome.step == DMC_STEP_PICK_STAGE_CONFIG) {
+        active_card_.reset();
+        toggle_file_browser();
+    } else {
+        active_card_.reset();
+    }
+    if (outcome.message && outcome.message[0] != '\0') {
+        camera_message_ = outcome.message;
+        std::cout << "[Marker Action] " << outcome.message << "\n";
+    }
+    dmc_outcome_free(&outcome);
+}
+
 void App::open_child_resource(size_t index) {
     if (!session_ || index >= child_count_) return;
     dmc_session* child = dmc_open_child(session_, index);
@@ -1421,15 +1508,7 @@ void App::open_child_resource(size_t index) {
     std::string child_name = c_title ? c_title : ("Child " + std::to_string(index));
     if (c_title) dmc_string_free(c_title);
 
-    // Push parent to navigation stack
-    nav_stack_.push_back({session_, current_title_, current_path_.string(), view_});
-
-    session_ = child;
-    current_title_ = child_name;
-    dmc_view_reset(&view_);
-
-    refresh_session_metadata();
-
+    push_session(child, child_name);
     std::cout << "Navigated into child: " << current_title_ << "\n";
 }
 
@@ -1889,35 +1968,55 @@ void App::render_frame() {
         canvas_.draw_text(px + 14, py + 10, "Resource Information & Deep Diagnostics", kColorAccent);
         canvas_.draw_text(px + pw - 30, py + 10, "[X]", kColorTextDim);
 
-        // Topic tabs: 0: Diag, 1: UV Layout, 2: Meshes, 3: Bones
-        const char* tab_names[4] = {"[0] Overview", "[1] UV Map", "[2] Meshes", "[3] Bones"};
+        // Topic tabs: 0: Diag, 1: UV Layout, 2: Meshes, 3: Bones, 4: Collision
+        const char* tab_names[5] = {"[0] Overview", "[1] UV Map", "[2] Meshes", "[3] Bones", "[4] Collision"};
         int tab_x = px + 14;
         const int tab_y = py + 40;
-        for (int t = 0; t < 4; ++t) {
-            const int tw = 120;
+        for (int t = 0; t < 5; ++t) {
+            const int tw = 100;
             const int th = 24;
             info_tab_rects_[t] = {tab_x, tab_y, tw, th};
             const bool active_tab = (info_topic_ == t);
             canvas_.fill_rect(tab_x, tab_y, tw, th, active_tab ? kColorBtnActive : kColorBtnNormal);
             canvas_.draw_rect_outline(tab_x, tab_y, tw, th, active_tab ? kColorAccent : kColorBtnBorder);
             canvas_.draw_text_centered(tab_x, tab_y, tw, th, tab_names[t], active_tab ? kColorAccent : kColorText);
-            tab_x += tw + 8;
+            tab_x += tw + 6;
         }
 
         int cur_y = py + 72;
         canvas_.draw_text(px + 16, cur_y, "File: " + current_path_.filename().string(), kColorText);
         cur_y += 20;
 
-        char* topic_text = nullptr;
+        std::string diag_str;
         if (session_) {
             if (info_topic_ == 0) {
-                topic_text = dmc_diagnostics(session_);
+                char* topic_text = dmc_diagnostics(session_);
+                if (topic_text) { diag_str = topic_text; dmc_string_free(topic_text); }
+            } else if (info_topic_ == 4) {
+                dmc_report* rep = dmc_collision_report(session_, hitbox_mode_ != 0);
+                if (rep) {
+                    const char* title = dmc_report_title(rep);
+                    const char* summary = dmc_report_summary(rep);
+                    if (title) { diag_str += std::string(title) + "\n"; }
+                    if (summary) { diag_str += std::string(summary) + "\n\n"; }
+                    const size_t g_count = dmc_report_group_count(rep);
+                    for (size_t gi = 0; gi < g_count; ++gi) {
+                        const dmc_report_group* g = dmc_report_group_at(rep, gi);
+                        if (g) {
+                            if (g->heading) { diag_str += "--- " + std::string(g->heading) + " ---\n"; }
+                            if (g->lines) { diag_str += std::string(g->lines) + "\n"; }
+                        }
+                    }
+                    dmc_report_free(rep);
+                } else {
+                    diag_str = "No collision data or hitboxes to report for current resource.";
+                }
             } else {
-                topic_text = dmc_inspect(session_, info_topic_);
+                char* topic_text = dmc_inspect(session_, info_topic_);
+                if (topic_text) { diag_str = topic_text; dmc_string_free(topic_text); }
             }
         }
-        std::string diag_str = topic_text ? topic_text : "Information unavailable.";
-        if (topic_text) dmc_string_free(topic_text);
+        if (diag_str.empty()) diag_str = "Information unavailable.";
 
         std::string_view lines(diag_str);
         size_t l_start = 0;
@@ -2034,6 +2133,52 @@ void App::render_frame() {
                                   "-" + std::to_string(std::min(total_items, browser_scroll_ + max_visible)) +
                                   " of " + std::to_string(total_items) + "  |  [Wheel/Arrows] Scroll  [ESC] Close";
         canvas_.draw_text(px + 14, py + ph - 22, scroll_info, kColorTextDim);
+    }
+
+    // 6. Stage Marker Card Overlay
+    if (active_card_.has_value()) {
+        const int card_w = std::min(480, window_width_ - 40);
+        const int header_h = 32;
+        const int row_h = 18;
+        const int footer_h = 42;
+        const int content_h = static_cast<int>(active_card_->rows.size()) * row_h;
+        const int card_h = std::min(420, header_h + content_h + footer_h + 16);
+        const int card_x = (window_width_ - card_w) / 2;
+        const int card_y = viewport_y + (viewport_h - card_h) / 2;
+
+        active_card_->panel_rect = {card_x, card_y, card_w, card_h};
+        active_card_->close_btn = {card_x + card_w - 30, card_y + 6, 22, 20};
+
+        // Dark modal frame
+        canvas_.fill_rect(card_x, card_y, card_w, card_h, 0x14141E);
+        canvas_.draw_rect_outline(card_x, card_y, card_w, card_h, 0x00FFCC00);
+
+        // Header
+        canvas_.fill_rect(card_x, card_y, card_w, header_h, 0x1E1E2C);
+        canvas_.draw_text(card_x + 12, card_y + 10, active_card_->title, 0x00FFCC00);
+        canvas_.draw_text(card_x + card_w - 24, card_y + 10, "[X]", kColorTextDim);
+
+        // Rows
+        int ry = card_y + header_h + 8;
+        for (const auto& r : active_card_->rows) {
+            if (ry + row_h > card_y + card_h - footer_h) break;
+            canvas_.draw_text(card_x + 14, ry, r.name, kColorTextDim);
+            canvas_.draw_text(card_x + 160, ry, r.value, kColorText);
+            ry += row_h;
+        }
+
+        // Action Buttons at bottom
+        const int btn_h = 26;
+        const int btn_y = card_y + card_h - footer_h + 8;
+        int bx = card_x + 12;
+        for (auto& btn : active_card_->buttons) {
+            const int bw = static_cast<int>(btn.title.size()) * 8 + 18;
+            btn.rect = {bx, btn_y, bw, btn_h};
+            canvas_.fill_rect(bx, btn_y, bw, btn_h, kColorBtnNormal);
+            canvas_.draw_rect_outline(bx, btn_y, bw, btn_h, kColorBtnBorder);
+            canvas_.draw_text_centered(bx, btn_y, bw, btn_h, btn.title, kColorAccent);
+            bx += bw + 8;
+        }
     }
 }
 
@@ -2167,12 +2312,12 @@ void App::handle_key_press(KeySym sym) {
     }
 
     if (show_info_panel_) {
-        if (sym >= XK_0 && sym <= XK_3) {
+        if (sym >= XK_0 && sym <= XK_4) {
             info_topic_ = static_cast<int>(sym - XK_0);
             return;
         }
         if (sym == XK_Tab) {
-            info_topic_ = (info_topic_ + 1) % 4;
+            info_topic_ = (info_topic_ + 1) % 5;
             return;
         }
     }
@@ -2187,7 +2332,8 @@ void App::handle_key_press(KeySym sym) {
 
     switch (sym) {
         case XK_Escape:
-            if (show_file_browser_) show_file_browser_ = false;
+            if (active_card_.has_value()) active_card_.reset();
+            else if (show_file_browser_) show_file_browser_ = false;
             else if (show_info_panel_) show_info_panel_ = false;
             else if (show_kit_panel_) show_kit_panel_ = false;
             else if (!nav_stack_.empty()) go_back();
@@ -2996,6 +3142,27 @@ void App::run() {
                 }
 
                 if (ev.xbutton.button == Button1) {
+                    // Check active marker card clicks
+                    if (active_card_.has_value()) {
+                        if (active_card_->close_btn.contains(mx, my)) {
+                            active_card_.reset();
+                            continue;
+                        }
+                        bool hit_action = false;
+                        for (const auto& btn : active_card_->buttons) {
+                            if (btn.rect.contains(mx, my)) {
+                                handle_card_action(active_card_->marker, btn.id);
+                                hit_action = true;
+                                break;
+                            }
+                        }
+                        if (hit_action || active_card_->panel_rect.contains(mx, my)) {
+                            continue;
+                        }
+                        active_card_.reset();
+                        continue;
+                    }
+
                     // Check info panel clicks (close and topic tabs)
                     if (show_info_panel_) {
                         const int pw = std::min(680, window_width_ - 40);
@@ -3007,7 +3174,7 @@ void App::run() {
                             continue;
                         }
                         bool clicked_tab = false;
-                        for (int t = 0; t < 4; ++t) {
+                        for (int t = 0; t < 5; ++t) {
                             if (info_tab_rects_[t].contains(mx, my)) {
                                 info_topic_ = t;
                                 clicked_tab = true;
@@ -3083,7 +3250,7 @@ void App::run() {
                         }
                     }
 
-                    if (!clicked_btn && !show_info_panel_ && !show_kit_panel_ && !show_file_browser_) {
+                    if (!clicked_btn && !show_info_panel_ && !show_kit_panel_ && !show_file_browser_ && !active_card_.has_value()) {
                         if (dmc_camera_mode() && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
                             camera_focus_at(mx, my - kHeaderHeight);
                         } else if (session_ && !child_browser_mode_ && my >= kHeaderHeight && my < window_height_ - kToolbarHeight) {
@@ -3095,8 +3262,11 @@ void App::run() {
                                 camera_message_ = bone + " (Joint " + std::to_string(pick.joint) + ")";
                             } else if (pick.kind == DMC_PICK_PLACED) {
                                 camera_message_ = "Placed on room floor";
-                            } else if (pick.marker >= 0 && pick.marker_title) {
-                                camera_message_ = "Marker: " + std::string(pick.marker_title);
+                            } else if (pick.marker >= 0) {
+                                if (pick.marker_title) {
+                                    camera_message_ = "Marker: " + std::string(pick.marker_title);
+                                }
+                                load_marker_card(pick.marker);
                             }
                             dmc_pick_result_free(&pick);
                         }
