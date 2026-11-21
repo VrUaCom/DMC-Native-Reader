@@ -109,7 +109,11 @@
 - зібрати `apple/build-mac.sh` на M1 користувача (через Remote Control) і виправити, що не збереться;
 - далі налаштування, анімації, стейджі, катсцени — до рівня Android.
 
-**Фаза 2 — GPU поза Android.** ANGLE: OpenGL ES 3 поверх Metal / D3D11. Рішення користувача ще не прийнято; пропозиція — ANGLE. Запасний шлях — свій Metal/D3D11 + SPIRV-Cross. Міняти лише прив'язку вікна: `dmc_gpu_attach(native_window)`.
+**Фаза 2 — GPU поза Android.** Рішення користувача (2026-11-21): **свій Metal (macOS, iOS) і D3D11 (Windows)**, не ANGLE. Ядро вже дає бекенду незалежний від API кадр (`view_gpu.h`: `GpuViewFrame`, `GpuViewBackend`); кожен бекенд малює його так само, як `android/gles_view_backend.cpp`. Етапи:
+1. Metal: власні шейдери бекенда (сітка, екранні квади, пост) на MSL. Шейдери збираються з тексту під час роботи (`newLibraryWithSource`), тож офлайн-компілятор `metal` не потрібен. Кадр малюється поза екраном і читається назад, як на Android.
+2. 67 шейдерів DMC3 (`shaders/dmc3`): переклад на MSL — SPIRV-Cross (glslang → SPIR-V → MSL) під час збирання або перекладач цього підмножини GLSL ES 3.00.
+3. Показ напряму у вікно: `dmc_gpu_attach(native_window)` (CAMetalLayer), без читання назад.
+4. D3D11 для Windows тим самим шляхом (HLSL).
 
 **Фаза 3 — звук і відео:**
 - miniaudio в ядрі (рішення ще не прийнято, пропозиція — так);
