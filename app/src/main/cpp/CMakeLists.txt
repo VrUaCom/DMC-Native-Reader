@@ -491,6 +491,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR (UNIX AND NOT APPLE AND NOT ANDROID))
         DMCNativeReader::Core
         ${X11_LIBRARIES}
         Threads::Threads
+        ${CMAKE_DL_LIBS}
     )
     target_include_directories(dmc_native_reader_linux PRIVATE
         ${X11_INCLUDE_DIR}

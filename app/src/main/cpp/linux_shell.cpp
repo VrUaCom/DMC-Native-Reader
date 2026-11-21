@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -338,6 +339,7 @@ struct CameraDialButton {
 };
 
 // ---- Linux Audio Playback Engine ------------------------------------------
+// Supports PipeWire (pw-play), PulseAudio (paplay), and ALSA (aplay).
 class LinuxAudioPlayer {
 public:
     LinuxAudioPlayer() = default;
@@ -350,7 +352,7 @@ public:
         stop_requested_.store(false);
         std::vector<int16_t> pcm_data(samples, samples + sample_count);
         worker_ = std::thread([this, rate, data = std::move(pcm_data)]() {
-            std::string cmd = "aplay -q -f S16_LE -c 1 -r " + std::to_string(rate) + " 2>/dev/null";
+            const std::string cmd = get_command(rate);
             FILE* pipe = popen(cmd.c_str(), "w");
             if (!pipe) return;
             const size_t chunk_size = 4096;
@@ -370,6 +372,28 @@ public:
     }
 
 private:
+    std::string get_command(uint32_t rate) {
+        if (backend_.empty()) {
+            if (system("command -v pw-play >/dev/null 2>&1") == 0) {
+                backend_ = "pw-play";
+            } else if (system("command -v paplay >/dev/null 2>&1") == 0) {
+                backend_ = "paplay";
+            } else if (system("command -v aplay >/dev/null 2>&1") == 0) {
+                backend_ = "aplay";
+            } else {
+                backend_ = "aplay";
+            }
+        }
+        if (backend_ == "pw-play") {
+            return "pw-play --rate=" + std::to_string(rate) + " --channels=1 --format=s16 - 2>/dev/null";
+        }
+        if (backend_ == "paplay") {
+            return "paplay --raw --channels=1 --rate=" + std::to_string(rate) + " --format=s16le 2>/dev/null";
+        }
+        return "aplay -q -f S16_LE -c 1 -r " + std::to_string(rate) + " 2>/dev/null";
+    }
+
+    std::string backend_{};
     std::atomic<bool> stop_requested_{false};
     std::thread worker_{};
 };
@@ -435,7 +459,9 @@ struct HostContext {
     Atom primary = 0;
     Window xdnd_source_window = 0;
 
-    // Extensible EGL/GLES hook structure
+    // Extensible dynamic EGL/GLES context loader
+    void* egl_lib = nullptr;
+    void* gles_lib = nullptr;
     void* egl_display = nullptr;
     void* egl_surface = nullptr;
     void* egl_context = nullptr;
@@ -450,15 +476,147 @@ struct HostContext {
     XImage* ximage = nullptr;
 
     bool init_egl_context() {
-        // Architecture hook: allows transparent initialization of EGL/GLES if present
-        return false;
+        if (!display || !window) return false;
+
+        // Dynamically probe libEGL if present on the host
+        egl_lib = dlopen("libEGL.so.1", RTLD_LAZY);
+        if (!egl_lib) egl_lib = dlopen("libEGL.so", RTLD_LAZY);
+        if (!egl_lib) return false;
+
+        gles_lib = dlopen("libGLESv2.so.2", RTLD_LAZY);
+        if (!gles_lib) gles_lib = dlopen("libGLESv2.so", RTLD_LAZY);
+
+        using EGLGetDisplayFn = void* (*)(void*);
+        using EGLInitializeFn = int (*)(void*, int*, int*);
+        using EGLBindAPIFn = int (*)(unsigned int);
+        using EGLChooseConfigFn = int (*)(void*, const int*, void**, int, int*);
+        using EGLCreateWindowSurfaceFn = void* (*)(void*, void*, unsigned long, const int*);
+        using EGLCreateContextFn = void* (*)(void*, void*, void*, const int*);
+        using EGLMakeCurrentFn = int (*)(void*, void*, void*, void*);
+
+        auto fn_get_display = reinterpret_cast<EGLGetDisplayFn>(dlsym(egl_lib, "eglGetDisplay"));
+        auto fn_init = reinterpret_cast<EGLInitializeFn>(dlsym(egl_lib, "eglInitialize"));
+        auto fn_bind_api = reinterpret_cast<EGLBindAPIFn>(dlsym(egl_lib, "eglBindAPI"));
+        auto fn_choose_config = reinterpret_cast<EGLChooseConfigFn>(dlsym(egl_lib, "eglChooseConfig"));
+        auto fn_create_surface = reinterpret_cast<EGLCreateWindowSurfaceFn>(dlsym(egl_lib, "eglCreateWindowSurface"));
+        auto fn_create_context = reinterpret_cast<EGLCreateContextFn>(dlsym(egl_lib, "eglCreateContext"));
+        auto fn_make_current = reinterpret_cast<EGLMakeCurrentFn>(dlsym(egl_lib, "eglMakeCurrent"));
+
+        if (!fn_get_display || !fn_init || !fn_bind_api || !fn_choose_config ||
+            !fn_create_surface || !fn_create_context || !fn_make_current) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        egl_display = fn_get_display(reinterpret_cast<void*>(display));
+        if (!egl_display) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        int major = 0, minor = 0;
+        if (!fn_init(egl_display, &major, &minor)) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        constexpr unsigned int kEglOpenGlEsApi = 0x30A0;
+        fn_bind_api(kEglOpenGlEsApi);
+
+        constexpr int kEglSurfaceType = 0x3033;
+        constexpr int kEglWindowBit = 0x0004;
+        constexpr int kEglRenderableType = 0x3040;
+        constexpr int kEglOpenGlEs2Bit = 0x0004;
+        constexpr int kEglOpenGlEs3Bit = 0x00000040;
+        constexpr int kEglNone = 0x3038;
+        constexpr int kEglContextClientVersion = 0x3098;
+
+        const int attribs[] = {
+            kEglSurfaceType, kEglWindowBit,
+            0x3024, 8, // red
+            0x3023, 8, // green
+            0x3022, 8, // blue
+            0x3021, 8, // alpha
+            0x3025, 24, // depth
+            kEglRenderableType, kEglOpenGlEs2Bit | kEglOpenGlEs3Bit,
+            kEglNone
+        };
+
+        void* config = nullptr;
+        int num_configs = 0;
+        if (!fn_choose_config(egl_display, attribs, &config, 1, &num_configs) || num_configs < 1) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        egl_surface = fn_create_surface(egl_display, config, window, nullptr);
+        if (!egl_surface) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        const int ctx_attribs[] = {
+            kEglContextClientVersion, 3,
+            kEglNone
+        };
+        egl_context = fn_create_context(egl_display, config, nullptr, ctx_attribs);
+        if (!egl_context) {
+            const int fallback_ctx_attribs[] = {
+                kEglContextClientVersion, 2,
+                kEglNone
+            };
+            egl_context = fn_create_context(egl_display, config, nullptr, fallback_ctx_attribs);
+        }
+        if (!egl_context) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        if (!fn_make_current(egl_display, egl_surface, egl_surface, egl_context)) {
+            dlclose(egl_lib);
+            egl_lib = nullptr;
+            return false;
+        }
+
+        egl_active = true;
+        std::cout << "[HostContext] Hardware EGL/GLES context successfully initialized (EGL "
+                  << major << "." << minor << ")\n";
+        return true;
     }
 
     void swap_egl_buffers() {
-        // Architecture hook for hardware context
+        if (!egl_active || !egl_lib || !egl_display || !egl_surface) return;
+        using EGLSwapBuffersFn = int (*)(void*, void*);
+        auto fn_swap = reinterpret_cast<EGLSwapBuffersFn>(dlsym(egl_lib, "eglSwapBuffers"));
+        if (fn_swap) {
+            fn_swap(egl_display, egl_surface);
+        }
     }
 
     void destroy_egl_context() {
+        if (egl_active && egl_lib) {
+            using EGLDestroyContextFn = int (*)(void*, void*);
+            using EGLDestroySurfaceFn = int (*)(void*, void*);
+            using EGLTerminateFn = int (*)(void*);
+            auto fn_destroy_ctx = reinterpret_cast<EGLDestroyContextFn>(dlsym(egl_lib, "eglDestroyContext"));
+            auto fn_destroy_surf = reinterpret_cast<EGLDestroySurfaceFn>(dlsym(egl_lib, "eglDestroySurface"));
+            auto fn_term = reinterpret_cast<EGLTerminateFn>(dlsym(egl_lib, "eglTerminate"));
+
+            if (fn_destroy_ctx && egl_context) fn_destroy_ctx(egl_display, egl_context);
+            if (fn_destroy_surf && egl_surface) fn_destroy_surf(egl_display, egl_surface);
+            if (fn_term && egl_display) fn_term(egl_display);
+        }
+        if (gles_lib) { dlclose(gles_lib); gles_lib = nullptr; }
+        if (egl_lib) { dlclose(egl_lib); egl_lib = nullptr; }
+        egl_context = nullptr;
+        egl_surface = nullptr;
+        egl_display = nullptr;
         egl_active = false;
     }
 };
@@ -755,11 +913,15 @@ bool App::init_x11(int width, int height) {
     XMapWindow(host_.display, host_.window);
     XFlush(host_.display);
 
+    // Initialize hardware EGL/GLES context if available
+    host_.init_egl_context();
+
     return true;
 }
 
 void App::teardown_x11() {
     save_settings();
+    host_.destroy_egl_context();
     if (host_.display) {
         XAutoRepeatOn(host_.display);
         if (host_.gc) XFreeGC(host_.display, host_.gc);
@@ -1692,6 +1854,10 @@ void App::render_frame() {
         canvas_.draw_text(dot_x + 10, 15, health_lbl, dot_col);
     }
 
+    const char* render_mode = host_.egl_active ? "[EGL GLES3]" : "[CPU Raster]";
+    const uint32_t mode_col = host_.egl_active ? 0x2ECC71 : kColorTextDim;
+    canvas_.draw_text(std::max(10, window_width_ - 240), 15, render_mode, mode_col);
+
     // 4. Toolbar Bar
     const int toolbar_y = window_height_ - kToolbarHeight;
     canvas_.fill_rect(0, toolbar_y, window_width_, kToolbarHeight, kColorToolbarBg);
@@ -1873,6 +2039,11 @@ void App::render_frame() {
 
 void App::present_frame() {
     if (!host_.display || !host_.window) return;
+
+    if (host_.egl_active) {
+        host_.swap_egl_buffers();
+        return;
+    }
 
     if (!host_.ximage || host_.ximage->width != window_width_ || host_.ximage->height != window_height_) {
         if (host_.ximage) {
