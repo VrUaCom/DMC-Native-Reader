@@ -69,8 +69,8 @@ void main() {
     vec4 intensity = clamp(u_light_directions * vec4(skinned_nrm, 1.0), 0.0, 1.0);
     vec3 light = (u_light_colours * intensity).rgb;
 
-    // Sheen factor: s, multiplied by s once per counter step below the power.
-    float s = dot(skinned_nrm, u_sheen.xyz) * u_sheen.w;
+    // Sheen factor (|dot|: the Reader's normals have no reliable sign): s, multiplied by s once per counter step below the power.
+    float s = abs(dot(skinned_nrm, u_sheen.xyz)) * u_sheen.w;
     float sheen = s;
     for (float i = 0.0; i < u_sheen_power; i += 1.0) {
         sheen *= s;

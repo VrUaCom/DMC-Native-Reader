@@ -747,7 +747,7 @@ private:
         GLint light_directions{}, light_colours{}, part_colour{}, part_alpha{}, uv_scroll{}, uv_scale{};
         GLint fog_colour{}, fog_coeffs{}, light_x{}, light_y{}, light_z{}, light_falloff{}, light_colour{};
         GLint ambient{}, texture{}, alpha_test{}, alpha_func{}, alpha_ref{};
-        GLint recolour_low{-1}, recolour_high{-1};
+        GLint recolour_low{-1}, recolour_high{-1}, sheen{-1}, sheen_power{-1};
     };
 
     const NrProgram* nr_program(dmcresource::nr::Shader vertex, dmcresource::nr::Shader fragment) {
@@ -801,6 +801,8 @@ private:
             program.alpha_ref = at("u_alpha_ref");
             program.recolour_low = at("u_recolour_low");
             program.recolour_high = at("u_recolour_high");
+            program.sheen = at("u_sheen");
+            program.sheen_power = at("u_sheen_power");
             // What never changes: bone 0 the identity, no screen mapping,
             // the Reader's 0..1 coordinates (x 4096 undoes the fixed point),
             // no point lights, texture unit 0.
@@ -1276,6 +1278,8 @@ private:
         glUniform1f(program->alpha_ref, d.alpha_ref);
         if (program->recolour_low >= 0) glUniform4fv(program->recolour_low, 1, d.recolour_low.data());
         if (program->recolour_high >= 0) glUniform4fv(program->recolour_high, 1, d.recolour_high.data());
+        if (program->sheen >= 0) glUniform4fv(program->sheen, 1, d.sheen.data());
+        if (program->sheen_power >= 0) glUniform1f(program->sheen_power, d.sheen_power);
         float su = 0.0F, sv = 0.0F;
         if (batch.scroll_slot != dmcresource::kNoTextureSlot) {
             for (const auto& s : frame.room_scrolls) {

@@ -157,5 +157,12 @@ Vertex 14 (DMC3_PTCL); pixel 0 (MODULATE) when the material word has bit
   model_lit and the light rig.
 - Objects with the alpha override draw with the cut-out (A1) fragment
   shaders, with and without fog.
-- Still open: the SP (sheen) and VA variants (they need the object's sheen
-  parameters and vertex alpha in the batch), stages' A1, particles.
+- Effect models with source flag 0x10 draw with the vertex-alpha shader
+  (material bit 7), without A1.
+- Sheen: the direction is one vector per frame, normalize(normalize(eye -
+  target) + an axis of the scene's second matrix) (0x140306560, called once
+  a frame from 0x140303DE0, for objects with state 0x1000 / 0x2000 alike);
+  sheen.w is file object +0x18 (float), the power file +0x1C (int). The
+  Reader keeps strength and power per vertex (Mesh::sheen0) and uses the
+  camera direction alone.
+- Still open: stages' A1, particles, the scene axis of the sheen.

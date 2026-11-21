@@ -127,6 +127,12 @@ void choices() {
     assert(nr_draw(cut, GpuPass::model, frame_with(true, false)).fragment == Shader::texture_modulate_cutout_frag);
     assert(nr_draw(cut, GpuPass::model, frame_with(true, true)).fragment == Shader::texture_modulate_fog_cutout_frag);
 
+    // Effect models with vertex alpha: DMC3_EFM_VA, which has no A1 variant.
+    auto va = model;
+    va.colored = true;
+    va.vertex_alpha = true;
+    assert(nr_draw(va, GpuPass::model, frame_with(true, false)).vertex == Shader::effect_model_vertex_alpha_vert);
+
     // Enhanced lighting: a model lit only by its vertex colours gets the
     // camera light (key, weak back, constant); the game's choice otherwise.
     auto baked = model;

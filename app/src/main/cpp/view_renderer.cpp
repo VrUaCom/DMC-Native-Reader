@@ -2209,11 +2209,15 @@ GpuGeometry build_model_geometry(const Mesh& mesh, const ViewState& view,
         key.light_gain = lit ? (neutral ? 0.85F : 0.42F) : 0.0F;
         key.nearest = game_material::material_nearest(material);
         key.part_alpha = game_material::material_part_alpha(material);
-        key.punch_through = game_material::material_punch_through(material);
+        key.vertex_alpha = key.colored && game_material::material_vertex_alpha(material);
+        if (mesh.has_sheen0()) key.sheen = mesh.sheen0[ia];
+        // The vertex-alpha shaders have no A1 variant (0x140044310).
+        key.punch_through = game_material::material_punch_through(material) && !key.vertex_alpha;
         const auto same = [&key](const GpuBatch& b) {
             return b.texture == key.texture && b.kind == key.kind && b.colored == key.colored &&
                    b.light_base == key.light_base && b.light_gain == key.light_gain && b.nearest == key.nearest &&
-                   b.part_alpha == key.part_alpha && b.punch_through == key.punch_through;
+                   b.part_alpha == key.part_alpha && b.punch_through == key.punch_through &&
+                   b.vertex_alpha == key.vertex_alpha && b.sheen == key.sheen;
         };
         if (buckets.empty() || !same(buckets[last].batch)) {
             last = buckets.size();
@@ -2605,7 +2609,31 @@ GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame
         // textures never select another function); the punch-through (A1)
         // variant for objects with the alpha override; fog when the frame
         // has it.
-        out.vertex = batch.colored ? Shader::effect_model_lit_vert : Shader::model_lit_vert;
+        const bool sheen = batch.sheen[0] != 0.0F;
+        if (!batch.colored) {
+            out.vertex = sheen ? Shader::model_lit_sheen_vert : Shader::model_lit_vert;
+        } else if (batch.vertex_alpha) {
+            out.vertex = sheen ? Shader::effect_model_vertex_alpha_sheen_vert : Shader::effect_model_vertex_alpha_vert;
+        } else {
+            out.vertex = sheen ? Shader::effect_model_lit_sheen_vert : Shader::effect_model_lit_vert;
+        }
+        if (sheen) {
+            // The game's direction is the camera's (eye - target, 0x140306560;
+            // plus a scene axis the Reader has no counterpart for), in model
+            // coordinates: the view's third row. The shaders take the facing
+            // as |dot| (the Reader's normals have no reliable sign), so the
+            // row's sign does not matter.
+            const auto& m = frame.model_view;
+            float x = m[2], y = m[6], z = m[10];
+            const float len = std::sqrt(x * x + y * y + z * z);
+            if (len > 1.0e-6F) {
+                x /= len;
+                y /= len;
+                z /= len;
+            }
+            out.sheen = {x, y, z, batch.sheen[0]};
+            out.sheen_power = batch.sheen[1];
+        }
         if (batch.punch_through) {
             out.fragment = d.fog ? Shader::texture_modulate_fog_cutout_frag : Shader::texture_modulate_cutout_frag;
         } else {

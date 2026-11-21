@@ -29,6 +29,14 @@ The test `nr_shaders` keeps this page and the table in step.
 | Stage lit by its vertex colours: opaque texels | `stage_lit[_fog].vert` (dmc3_stg[_fog]) | `texture_modulate[_fog].frag` | Alpha test ≥ 31.5/255, or ≥ 239.5/255 on soft-alpha textures. The ambient makes 0x80 equal 1. With Stage lights on: the game's stage rig (`game_lights::stage_rig`, as `0x1402FCED0` packs it). Up to the table's static count of point lights picked with mask 1 for the framing centre, falloff = the record's aux, colour × 1/255, and the table's main ambient; the colours and ambient are divided by 255 again because the Reader feeds vertex colours as 0..255. |
 | The same: soft texels | `stage_lit[_fog].vert` | `texture_modulate[_fog].frag` | Alpha test < 239.5/255, blended. |
 | Added and subtracted models | as above | as above | Fog colour is black, so they fade into the fog. |
+| Model object with a sheen (source flags 0x200 / 0x400) | `model_lit_sheen.vert` (dmc3_mod_sp), `effect_model_lit_sheen.vert` (dmc3_efm_sp), `effect_model_vertex_alpha_sheen.vert` (dmc3_efm_va_sp) | as above | Strength and power from the file object (+0x18, +0x1C, Mesh::sheen0); the direction is the camera's in model coordinates. The facing is taken as |dot| because the Reader's normals have no reliable sign. |
+| Effect model with vertex alpha (EFM, source flag 0x10) | `effect_model_vertex_alpha.vert` (dmc3_efm_va) | `texture_modulate[_fog].frag` | No punch-through variant, as in the game. |
+| Object with the alpha override (no blend mode, alpha control above 0x80) | as above | `texture_modulate[_fog]_cutout.frag` (tex_col_mod2[_fog]_a1) | The game's A1 pixel shaders. |
+
+Which object gets which pair follows the game's own choice (research
+`dmc3-shader-selection-exe.md`): MOD objects the model shaders (they ignore
+vertex colours), EFM objects the effect-model ones; model textures always
+select MODULATE.
 
 Fog uses the game's curve: amount = x + y / distance. It matches the Reader
 fog's amounts at its start and its end, and between them it follows the

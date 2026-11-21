@@ -73,7 +73,7 @@ void main()
     vec4 light = u_light_colours * intensity;
 
     // Sheen: s multiplied by itself once per counter step below the power.
-    float s = dot(skinned_normal.xyz, u_sheen.xyz) * u_sheen.w;
+    float s = abs(dot(skinned_normal.xyz, u_sheen.xyz)) * u_sheen.w;
     float sheen = s;
     for (float counter = 0.0; counter < u_sheen_power; counter += 1.0) {
         sheen *= s;

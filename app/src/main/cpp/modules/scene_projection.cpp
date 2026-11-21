@@ -46,7 +46,7 @@ using namespace dmcresource::resource_limits;
 }  // namespace
 
 void append_vertex_channels(const Mesh& source, bool color0, bool blend0, Mesh* out,
-                            bool normal0) {
+                            bool normal0, bool sheen0) {
     if (out == nullptr) return;
     const auto count = source.vertices.size();
     if (normal0) {
@@ -69,6 +69,13 @@ void append_vertex_channels(const Mesh& source, bool color0, bool blend0, Mesh* 
             out->blend0.insert(out->blend0.end(), source.blend0.begin(), source.blend0.end());
         } else {
             out->blend0.insert(out->blend0.end(), count, std::uint8_t{0U});
+        }
+    }
+    if (sheen0) {
+        if (source.has_sheen0()) {
+            out->sheen0.insert(out->sheen0.end(), source.sheen0.begin(), source.sheen0.end());
+        } else {
+            out->sheen0.insert(out->sheen0.end(), count, std::array<float, 2>{0.0F, 0.0F});
         }
     }
 }
@@ -97,7 +104,9 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
         bool any_color0 = false;
         bool any_blend0 = false;
         bool any_normal0 = false;
+        bool any_sheen0 = false;
         for (const auto& primitive : scene.meshes) {
+            any_sheen0 = any_sheen0 || primitive.mesh.has_sheen0();
             any_normal0 = any_normal0 || primitive.mesh.has_normal0();
             any_color0 = any_color0 || primitive.mesh.has_color0();
             any_blend0 = any_blend0 || primitive.mesh.has_blend0();
@@ -126,7 +135,7 @@ bool materialize_render_scene(const RenderScene& scene, Mesh* out) noexcept {
                     primitive.mesh.uv0.begin(),
                     primitive.mesh.uv0.end());
             }
-            append_vertex_channels(primitive.mesh, any_color0, any_blend0, &materialized, any_normal0);
+            append_vertex_channels(primitive.mesh, any_color0, any_blend0, &materialized, any_normal0, any_sheen0);
 
             if (base > static_cast<std::size_t>(
                            std::numeric_limits<std::uint32_t>::max())) {

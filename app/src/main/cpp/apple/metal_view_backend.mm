@@ -241,10 +241,12 @@ struct NrUniforms {
     int4 alpha;              // x test, y function
     float4 alpha_ref;        // x
     float4 camera;           // xyz the camera in the batch's coordinates (enhanced shading)
-    int4 enhanced;           // x lighting: 0 model_lit, 1 effect_model_lit, 2 stage_lit; y specular on
+    int4 enhanced;           // x lighting: 0 model_lit, 1 effect models, 2 stage_lit; y specular on; z vertex alpha
     int4 texfn;              // x texture function (TextureFunction), y cut-out alpha
     float4 recolour_low;     // recolour: the rate at brightness 0
     float4 recolour_high;    // and at brightness 1
+    float4 sheen;            // xyz direction, w strength (the *_sheen shaders)
+    float4 sheen_power;      // x
 };
 
 struct NrOut {
@@ -277,6 +279,68 @@ vertex NrOut effect_model_lit(NrIn in [[stage_in]], constant NrUniforms& u [[buf
     o.uv = in.uv + u.fog_scroll.zw;
     o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
     return o;
+}
+
+// effect_model_vertex_alpha: effect_model_lit, its alpha the vertex's stored
+// byte as it is (so any non-zero byte is opaque after the clamp).
+vertex NrOut effect_model_vertex_alpha(NrIn in [[stage_in]], constant NrUniforms& u [[buffer(1)]]) {
+    NrOut o;
+    o.pos = metal_clip(u.view_projection * float4(in.position, 1.0));
+    float4 intensity = clamp(u.light_directions * float4(in.normal, 1.0), 0.0, 1.0);
+    float4 light = u.light_colours * intensity;
+    float4 colour;
+    colour.rgb = light.rgb * u.part_colour.rgb * in.colour.rgb * (255.0 / 128.0);
+    colour.a = in.colour.a * 255.0;
+    o.colour = clamp(colour, 0.0, 1.0);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
+    return o;
+}
+
+// The sheen factor: s = |dot(n, sheen.xyz)| * sheen.w, multiplied by s again
+// while a counter from 0 is below the power. The game's dot is positive on
+// every surface it shows (they face the camera); the Reader's normals have
+// no reliable sign (its lights are two-sided), hence the |dot|.
+static float sheen_factor(float3 n, constant NrUniforms& u) {
+    float s = abs(dot(n, u.sheen.xyz)) * u.sheen.w;
+    float f = s;
+    for (float i = 0.0; i < u.sheen_power.x; i += 1.0) f *= s;
+    return f;
+}
+
+vertex NrOut model_lit_sheen(NrIn in [[stage_in]], constant NrUniforms& u [[buffer(1)]]) {
+    NrOut o;
+    o.pos = metal_clip(u.view_projection * float4(in.position, 1.0));
+    float4 intensity = clamp(u.light_directions * float4(in.normal, 1.0), 0.0, 1.0);
+    float4 light = (u.light_colours * intensity) / 128.0;
+    light.rgb *= sheen_factor(in.normal, u);
+    o.colour = clamp(float4(light.rgb * u.part_colour.rgb, u.part_alpha.x), 0.0, 1.0);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
+    return o;
+}
+
+static NrOut effect_sheen(NrIn in, constant NrUniforms& u, bool vertex_alpha) {
+    NrOut o;
+    o.pos = metal_clip(u.view_projection * float4(in.position, 1.0));
+    float4 intensity = clamp(u.light_directions * float4(in.normal, 1.0), 0.0, 1.0);
+    float4 light = u.light_colours * intensity;
+    light.rgb *= sheen_factor(in.normal, u);
+    float4 colour;
+    colour.rgb = light.rgb * u.part_colour.rgb * in.colour.rgb * (255.0 / 128.0);
+    colour.a = vertex_alpha ? in.colour.a * 255.0 : u.part_alpha.x;
+    o.colour = clamp(colour, 0.0, 1.0);
+    o.uv = in.uv + u.fog_scroll.zw;
+    o.fog = clamp(float4(u.fog_colour.rgb, u.part_colour.w), 0.0, 1.0);
+    return o;
+}
+
+vertex NrOut effect_model_lit_sheen(NrIn in [[stage_in]], constant NrUniforms& u [[buffer(1)]]) {
+    return effect_sheen(in, u, false);
+}
+
+vertex NrOut effect_model_vertex_alpha_sheen(NrIn in [[stage_in]], constant NrUniforms& u [[buffer(1)]]) {
+    return effect_sheen(in, u, true);
 }
 
 static float4 stage_light(NrIn in, constant NrUniforms& u) {
@@ -647,19 +711,23 @@ static float4 px_light(NrPxOut in, constant NrUniforms& u, thread float3& spec) 
     }
     float4 nn = float4(n, 1.0);
     float4 lit = u.light_directions * nn;
+    float sheen = u.sheen.w != 0.0 ? sheen_factor(n, u) : 1.0;
     float4 light;
     float4 colour;
     float unit;
     if (u.enhanced.x == 1) {
         unit = 1.0;
         light = u.light_colours * clamp(lit, 0.0, 1.0);
+        light.rgb *= sheen;
         colour.rgb = light.rgb * u.part_colour.rgb * in.colour.rgb * (255.0 / 128.0);
+        colour.a = u.enhanced.z != 0 ? in.colour.a * 255.0 : u.part_alpha.x;
     } else {
         unit = 1.0 / 128.0;
         light = (u.light_colours * max(lit, 0.0)) * unit;
+        light.rgb *= sheen;
         colour.rgb = light.rgb * u.part_colour.rgb;
+        colour.a = u.part_alpha.x;
     }
-    colour.a = u.part_alpha.x;
     if (u.enhanced.y != 0) {
         for (int i = 0; i < 3; ++i) {
             float3 l = float3(u.light_directions[0][i], u.light_directions[1][i], u.light_directions[2][i]);
@@ -720,6 +788,8 @@ struct NrUniforms {
     std::array<std::int32_t, 4> texfn;
     std::array<float, 4> recolour_low;
     std::array<float, 4> recolour_high;
+    std::array<float, 4> sheen;
+    std::array<float, 4> sheen_power;
 };
 
 struct FocusUniforms {
@@ -807,6 +877,10 @@ const char* nr_function(dmcresource::nr::Shader shader) {
     switch (shader) {
         case Shader::model_lit_vert: return "model_lit";
         case Shader::effect_model_lit_vert: return "effect_model_lit";
+        case Shader::effect_model_vertex_alpha_vert: return "effect_model_vertex_alpha";
+        case Shader::model_lit_sheen_vert: return "model_lit_sheen";
+        case Shader::effect_model_lit_sheen_vert: return "effect_model_lit_sheen";
+        case Shader::effect_model_vertex_alpha_sheen_vert: return "effect_model_vertex_alpha_sheen";
         case Shader::stage_lit_vert: return "stage_lit";
         case Shader::stage_lit_fog_vert: return "stage_lit_fog";
         default: return nullptr;
@@ -819,7 +893,11 @@ const char* nr_enhanced_function(dmcresource::nr::Shader shader) {
     if (texture_function_of(shader)[0] >= 0) return fogged(shader) ? "nr_texture_fog_px" : "nr_texture_px";
     switch (shader) {
         case Shader::model_lit_vert:
-        case Shader::effect_model_lit_vert: return "model_lit_px";
+        case Shader::effect_model_lit_vert:
+        case Shader::effect_model_vertex_alpha_vert:
+        case Shader::model_lit_sheen_vert:
+        case Shader::effect_model_lit_sheen_vert:
+        case Shader::effect_model_vertex_alpha_sheen_vert: return "model_lit_px";
         case Shader::stage_lit_vert: return "stage_lit_px";
         case Shader::stage_lit_fog_vert: return "stage_lit_fog_px";
         default: return nullptr;
@@ -1251,16 +1329,22 @@ private:
         u.texfn = {fn[0], fn[1], 0, 0};
         u.recolour_low = d.recolour_low;
         u.recolour_high = d.recolour_high;
+        u.sheen = d.sheen;
+        u.sheen_power = {d.sheen_power, 0.0F, 0.0F, 0.0F};
         if (enhanced) {
             using dmcresource::nr::Shader;
             u.camera = camera_position(view);
-            const int kind = d.vertex == Shader::effect_model_lit_vert ? 1
-                             : d.vertex == Shader::model_lit_vert   ? 0
-                                                                    : 2;
+            const bool effect = d.vertex == Shader::effect_model_lit_vert ||
+                                d.vertex == Shader::effect_model_vertex_alpha_vert ||
+                                d.vertex == Shader::effect_model_lit_sheen_vert ||
+                                d.vertex == Shader::effect_model_vertex_alpha_sheen_vert;
+            const int kind = effect ? 1 : d.vertex == Shader::model_lit_vert ? 0 : 2;
             // Highlights on the model's own surfaces and the opaque stage, not
             // on what is added or subtracted over the scene.
             const bool spec = kind == 2 ? blend == Blend::none : batch.kind == dmcresource::GpuBatchKind::model;
-            u.enhanced = {kind, spec ? 1 : 0, 0, 0};
+            const bool vertex_alpha = d.vertex == Shader::effect_model_vertex_alpha_vert ||
+                                      d.vertex == Shader::effect_model_vertex_alpha_sheen_vert;
+            u.enhanced = {kind, spec ? 1 : 0, vertex_alpha ? 1 : 0, 0};
         }
         id<MTLTexture> t = texture(batch.texture, commands);
         [encoder setRenderPipelineState:state];
@@ -1589,7 +1673,7 @@ private:
 
     void publish_stats() {
         dmcresource::GpuShaderStats stats;
-        stats.compiled = 21;  // 4 vertex shaders and the 17 texture-function fragment shaders
+        stats.compiled = 25;  // 8 vertex shaders and the 17 texture-function fragment shaders
         stats.nr_batches = nr_batches_;
         stats.reader_batches = reader_batches_;
         dmcresource::set_gpu_shader_stats(std::move(stats));

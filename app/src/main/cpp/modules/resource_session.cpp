@@ -205,8 +205,16 @@ void retain_lazy_child_sources(Session* session,
         merged->render_mesh.vertices.insert(
             merged->render_mesh.vertices.end(),
             source_mesh.vertices.begin(), source_mesh.vertices.end());
-        // COLOR0 / blend channels ride along (neutral when a part has none).
-        append_vertex_channels(source_mesh, true, true, &merged->render_mesh, true);
+        // COLOR0 / blend channels ride along (neutral when a part has none);
+        // the sheen once a part has one (earlier parts get none).
+        if (source_mesh.has_sheen0()) {
+            const auto before = merged->render_mesh.vertices.size() - source_mesh.vertices.size();
+            if (merged->render_mesh.sheen0.size() < before) {
+                merged->render_mesh.sheen0.resize(before, {0.0F, 0.0F});
+            }
+        }
+        append_vertex_channels(source_mesh, true, true, &merged->render_mesh, true,
+                               !merged->render_mesh.sheen0.empty() || source_mesh.has_sheen0());
 
         if (*uv_complete) {
             if (!source_mesh.has_uv0()) {
@@ -2206,6 +2214,7 @@ struct DynamicVertexInfluences final {
                     mesh.vertices.size(), {128U, 128U, 128U, 128U});
             }
         }
+        if (!mesh.sheen0.empty()) mesh.sheen0.resize(mesh.vertices.size(), {0.0F, 0.0F});
         if (!mesh.blend0.empty()) {
             if (visual.source_mesh.has_blend0()) {
                 mesh.blend0.insert(mesh.blend0.end(),

@@ -64,6 +64,10 @@ struct GpuBatch final {
     // Model: the object's punch-through alpha (game_material.h, the game's A1
     // pixel shaders).
     bool punch_through{};
+    // Effect model whose alpha is its vertex alpha (the game's EFM_VA).
+    bool vertex_alpha{};
+    // Model: the object's sheen strength and power (Mesh::sheen0); 0: none.
+    std::array<float, 2> sheen{};
 };
 
 struct GpuGeometry final {
@@ -266,6 +270,10 @@ struct GpuNrDraw final {
     // Recolour (texture_recolour*): the rate (rgb, mix amount) at texel
     // brightness 0 and 1.
     std::array<float, 4> recolour_low{}, recolour_high{};
+    // Sheen (the *_sheen vertex shaders): u_sheen (unit direction towards
+    // the camera in model coordinates, strength) and u_sheen_power.
+    std::array<float, 4> sheen{};
+    float sheen_power{};
     [[nodiscard]] bool drawn() const noexcept { return vertex != nr::Shader::none; }
 };
 [[nodiscard]] GpuNrDraw nr_draw(const GpuBatch& batch, GpuPass pass, const GpuViewFrame& frame) noexcept;

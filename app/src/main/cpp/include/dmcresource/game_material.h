@@ -75,7 +75,9 @@ struct Addressing {
 
 // ---- Per-vertex material byte (Mesh::blend0) ------------------------------
 // Bits 0..3 blend mode, bit 4 nearest filter, bit 5 alpha override, bit 6
-// effect model (EFM; set by the MOD adapter, not by material_byte), bit 7 zero.
+// effect model (EFM), bit 7 vertex alpha (an EFM object with source flag
+// 0x10: the game's DMC3_EFM_VA shaders, 0x1402F8C50). Bits 6 and 7 are set
+// by the MOD adapter, not by material_byte.
 //
 // The game's shader choice follows from them (research
 // dmc3-shader-selection-exe.md): an EFM object draws with the effect-model
@@ -89,6 +91,8 @@ inline constexpr std::uint8_t kMaterialBlendMask = 0x0F;
 inline constexpr std::uint8_t kMaterialNearestBit = 0x10;
 inline constexpr std::uint8_t kMaterialOverrideBit = 0x20;
 inline constexpr std::uint8_t kMaterialEffectModelBit = 0x40;
+inline constexpr std::uint8_t kMaterialVertexAlphaBit = 0x80;
+inline constexpr std::uint32_t kSourceFlagVertexAlpha = 0x10;
 
 // Blend nibble, plus the nearest-filter and alpha-override bits.
 [[nodiscard]] constexpr std::uint8_t material_byte(
@@ -116,6 +120,11 @@ inline constexpr std::uint8_t kMaterialEffectModelBit = 0x40;
 // The effect-model flag: bit 6.
 [[nodiscard]] constexpr bool material_effect_model(std::uint8_t byte) noexcept {
     return (byte & kMaterialEffectModelBit) != 0;
+}
+
+// The vertex-alpha flag: bit 7 (effect models only).
+[[nodiscard]] constexpr bool material_vertex_alpha(std::uint8_t byte) noexcept {
+    return (byte & kMaterialVertexAlphaBit) != 0;
 }
 
 // The punch-through alpha (the game's A1 shaders): the override bit.
