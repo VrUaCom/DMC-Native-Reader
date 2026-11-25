@@ -34,6 +34,11 @@ inline constexpr std::uint32_t kPlayerCoatHostJoint = 3U;
 // manager's copy of header +0x13 (player +0x76BA) and uses joint 3 + that
 // byte. Retail coats carry 0 (pl000, pl001), so they stay on joint 3. Out of
 // range values fall back to joint 3.
+// The retail amulet of the coatless costumes (pl011, pl016, pl023: 8 bones,
+// header +0x13 = 5). It hangs from joint 3 like a coat, but its root keeps its
+// own place (0x140214D50: costumes 1 and 4), which puts the chain at the neck.
+[[nodiscard]] bool player_amulet(std::span<const std::uint8_t> coat_mod) noexcept;
+
 [[nodiscard]] std::uint32_t player_coat_host_joint(std::span<const std::uint8_t> coat_mod,
                                                    std::size_t body_joint_count) noexcept;
 inline constexpr std::uint32_t kPlayerBodySlot = 1U;
@@ -51,7 +56,20 @@ struct EnemyClothSource final {
     std::uint32_t clt_slot;
 };
 
-inline constexpr std::array<EnemyClothSource, 18> kEnemyClothSources{{
+inline constexpr std::array<EnemyClothSource, 35> kEnemyClothSources{{
+    // Player devil triggers (inits 0x140212BE0, 0x140220970, 0x140225D70).
+    {"pl005", 2U, 3U}, {"pl005", 4U, 5U},
+    {"pl008", 2U, 3U}, {"pl008", 4U, 5U},
+    {"pl006", 2U, 3U}, {"pl009", 2U, 3U},
+    {"pl010", 2U, 3U}, {"pl010", 5U, 6U},
+    {"pl014", 2U, 3U}, {"pl017", 2U, 3U}, {"pl025", 2U, 3U},
+    // CEm008 (Vanguard) init 0x1400B57A0.
+    {"em008", 3U, 2U},
+    {"em008", 5U, 4U},
+    {"em008", 7U, 6U},
+    {"em008", 9U, 8U},
+    {"em008", 11U, 10U},
+    {"em008", 13U, 12U},
     {"em028", 4U, 7U},
     {"em028", 5U, 8U},
     {"em000", 3U, 2U},
@@ -99,8 +117,9 @@ inline constexpr std::array<TscSource, 2> kTscSources{{
 [[nodiscard]] std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
                                                             std::uint32_t model_slot) noexcept;
 
-// CEm035 coats and wings whose chains collide with the body capsules.
-[[nodiscard]] bool em035_body_capsule_coat(std::string_view archive_name,
+// Coats and wings (CEm035, player devil triggers) whose chains collide with
+// the body capsules 0x14058B260.
+[[nodiscard]] bool body_capsule_coat(std::string_view archive_name,
                                            std::uint32_t model_slot) noexcept;
 
 struct WeaponAttachRecord final {
@@ -167,7 +186,40 @@ inline constexpr std::array<CompositeNodeConstraint, 1> kEm032Slot2{{{0U, 2U}}};
 // CEm029Cart (Geryon's carriage) init 0x14013DE90: its node 16 follows the horse's joint 3.
 inline constexpr std::array<CompositeNodeConstraint, 1> kEm029Cart{{{16U, 3U}}};
 
-inline constexpr std::array<EnemyPartConstraints, 10> kEnemyPartConstraints{{
+// Vergil's player DT archives hold the same models byte for byte: pl010 slots
+// 1, 5, 4, 2 = em035 15, 18, 17, 16; pl014 slots 1, 2 = em035 45, 46.
+inline constexpr std::array<CompositeNodeConstraint, 1> kVergilDtSheath{{{0U, 12U}}};
+
+// CEm008 (Vanguard): the sleeves hang by three nodes at the hand, the elbow
+// and the shoulder, upright (CCnsDirPos; init 0x1400B57A0, update 0x1400B5240).
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm008Slot9{
+    {{1U, 9U, {}, true}, {2U, 8U, {}, true}, {3U, 7U, {}, true}}};
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm008Slot11{
+    {{1U, 13U, {}, true}, {2U, 12U, {}, true}, {3U, 11U, {}, true}}};
+
+// Dante's devil triggers: node records of the init 0x140212BE0, the root by the
+// draw 0x140218960 (node 0). pl005 / pl008 draw the coat 4 or, gliding, the
+// wings 2; pl006 / pl009 one wing model; pl017 (Sparda) and pl025 one cape.
+inline constexpr std::array<CompositeNodeConstraint, 3> kDanteDtCoat{{{0U, 3U}, {1U, 2U}, {2U, 14U}}};
+inline constexpr std::array<CompositeNodeConstraint, 2> kDanteDtWings{{{0U, 14U}, {1U, 3U}}};
+inline constexpr std::array<CompositeNodeConstraint, 1> kSpardaDtCape{{{0U, 2U}}};
+inline constexpr std::array<CompositeNodeConstraint, 1> kPl025Cape{{{0U, 3U}}};
+
+inline constexpr std::array<EnemyPartConstraints, 24> kEnemyPartConstraints{{
+    {"pl005", 1U, 4U, kDanteDtCoat},
+    {"pl005", 1U, 2U, kDanteDtWings},
+    {"pl008", 1U, 4U, kDanteDtCoat},
+    {"pl008", 1U, 2U, kDanteDtWings},
+    {"pl006", 1U, 2U, kEm035Slot46},
+    {"pl009", 1U, 2U, kEm035Slot46},
+    {"pl017", 1U, 2U, kSpardaDtCape},
+    {"pl025", 1U, 2U, kPl025Cape},
+    {"em008", 1U, 9U, kEm008Slot9},
+    {"em008", 1U, 11U, kEm008Slot11},
+    {"pl010", 1U, 5U, kEm035Slot18},
+    {"pl010", 1U, 2U, kEm035Slot16},
+    {"pl010", 1U, 4U, kVergilDtSheath},
+    {"pl014", 1U, 2U, kEm035Slot46},
     {"em029", 9U, 13U, kEm029Cart},
     {"em030", 1U, 5U, kEm030Slot5},
     {"em031", 1U, 2U, kEm031Slot2},

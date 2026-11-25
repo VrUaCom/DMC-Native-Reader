@@ -675,7 +675,7 @@ int main() {
         dmcresource::pac_assembly::AssemblyReport em_report;
         auto pride = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 0U);
         assert(pride != nullptr && em_report.models == 3U && em_report.attached_parts == 2U);
-        assert(em_report.enemy_class == "CEm000 A" && em_report.variant_models_skipped == 1U);
+        assert(em_report.enemy_class == "Hell Pride, weapon A (CEm000)" && em_report.variant_models_skipped == 1U);
         const auto weapon_offset = motion::attach_local_matrix_zyx(variants[0].weapon_translation,
                                                                    variants[0].weapon_rotation_zyx);
         const std::size_t weapon_node = pride->composite_parts[0].scene.nodes.size() +
@@ -694,14 +694,14 @@ int main() {
         // Position 1: CEm000 with its variant 2-3 weapon (slot 29, absent here)
         // and no cloth (0x140097980 draws it for variants 0-1 only).
         auto pride_b = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 1U);
-        assert(pride_b != nullptr && em_report.enemy_class == "CEm000 B");
+        assert(pride_b != nullptr && em_report.enemy_class == "Hell Pride, weapon B (CEm000)");
         assert(em_report.models == 1U && em_report.attached_parts == 0U);
         auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 2U);
-        assert(lust != nullptr && em_report.enemy_class == "CEm001 A");
+        assert(lust != nullptr && em_report.enemy_class == "Hell Gluttony, weapon A (CEm001)");
         const auto positions = motion::archive_variants("em000.pac");
-        assert(positions.size() == 12U && positions[8].label == "CEm004" &&
-               positions[9].label == "CEm005" && positions[10].label == "CEm005Shl00");
-        assert(positions.back().label == "CEm005Shl01" && positions.back().enemy->body_slot == 23U &&
+        assert(positions.size() == 12U && positions[8].label == "Hell Wrath (CEm004)" &&
+               positions[9].label == "Hell Greed (CEm005)" && positions[10].enemy->class_name == "CEm005Shl00");
+        assert(positions.back().enemy->class_name == "CEm005Shl01" && positions.back().enemy->body_slot == 23U &&
                positions.back().enemy->texture_slot == 32U);
         assert(motion::tsc_slot_for("em000.pac", 23U) == 24U);
         const auto nevan_positions = motion::archive_variants("EM028.pac");

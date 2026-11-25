@@ -564,7 +564,9 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 const auto body_joints =
                     assembled->composite_parts[*body].scene.nodes.size();
                 const auto host = motion::player_coat_host_joint(coat_bytes, body_joints);
-                if (motion::attach_part_skeleton(assembled.get(), *body, *coat, host, true)) {
+                // Coats take the joint; the amulet keeps its root's own place.
+                const bool at_joint = !motion::player_amulet(coat_bytes);
+                if (motion::attach_part_skeleton(assembled.get(), *body, *coat, host, at_joint)) {
                     ++report.attached_parts;
                     report.detail_attachments += " coat=slot12->bodyJoint" + std::to_string(host);
                     if (host != motion::kPlayerCoatHostJoint) {
@@ -617,7 +619,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             }
             // Enemy node constraints (CEm028 init 0x140130480): top-level part
             // slots follow body joints node by node.
-            for (std::size_t part = 0U; !player && part < model_entry.size(); ++part) {
+            for (std::size_t part = 0U; part < model_entry.size(); ++part) {
                 const auto& entry = entries[model_entry[part]];
                 if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
                 const auto record = motion::enemy_constraints_for(archive_name, *entry.slot);
@@ -656,6 +658,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         if (motion::attach_part_skeleton(assembled.get(), *host, part,
                                                          variant->cloth[c].host_joint,
                                                          variant->cloth_root_at_joint)) {
+                            // Nodes of their own (Vanguard's sleeves).
+                            if (const auto nodes = motion::enemy_constraints_for(archive_name, *entry.slot)) {
+                                (void)motion::set_part_node_constraints(assembled.get(), part, nodes->constraints);
+                            }
                             ++report.attached_parts;
                             report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
                                 "->bodyJoint" + std::to_string(variant->cloth[c].host_joint);
@@ -786,8 +792,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     const auto& entry = entries[model_entry[part]];
                     if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
                     std::optional<std::uint32_t> clt_slot;
-                    if (player) {
-                        if (coat && part == *coat) clt_slot = motion::kPlayerCoatClothSlot;
+                    if (player && coat) {
+                        if (part == *coat) clt_slot = motion::kPlayerCoatClothSlot;
                     } else {
                         clt_slot = motion::enemy_cloth_slot(archive_name, *entry.slot);
                     }
@@ -798,7 +804,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     // body capsules, CEm028 hair on the neck/head capsules.
                     std::span<const motion::ClothCapsule> capsules;
                     std::array<motion::ClothCapsule, 6> coat_capsules{};
-                    if (player) {
+                    if (player && coat) {
                         // Slot 15 may replace the shapes (coat patch).
                         std::span<const std::uint8_t> slot15;
                         for (const auto& e : entries) {
@@ -809,10 +815,11 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         }
                         coat_capsules = motion::player_coat_capsules(slot15);
                         capsules = coat_capsules;
+                        if (motion::player_amulet(*entry.bytes)) capsules = motion::kPlayerAmuletCapsules;
                     } else if (*entry.slot == 4U && *clt_slot == 7U &&
                                motion::enemy_constraints_for(archive_name, 4U).has_value()) {
                         capsules = motion::kEm028HairCapsules;
-                    } else if (motion::em035_body_capsule_coat(archive_name, *entry.slot)) {
+                    } else if (motion::body_capsule_coat(archive_name, *entry.slot)) {
                         // The same six body capsules (0x14058B260) as the player's coat.
                         capsules = motion::kPlayerCoatCapsules;
                     }

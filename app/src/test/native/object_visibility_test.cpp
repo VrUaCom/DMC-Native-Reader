@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <set>
+#include <vector>
 
 using namespace dmcresource;
 namespace m = dmcresource::motion;
@@ -104,7 +105,7 @@ int main() {
 
     // Jester: his look (body, hat on joint 5, cane on joint 9) apart from the ball and shells.
     const auto jester = m::archive_variants("EM037.pac");
-    assert(jester.size() == 3U && jester[0].include_top_level_mod_count == 3U);
+    assert(jester.size() == 6U && jester[0].include_top_level_mod_count == 3U);
     assert(jester[0].include_top_level_mod_slots[2] == 15U && jester[0].part_attachment_count == 2U);
     assert(jester[0].part_attachments[0].host_joint == 5U && jester[0].part_attachments[1].host_joint == 9U);
     assert(jester[0].part_attachments[1].zyx_offset && jester[1].include_top_level_mod_slots[0] == 17U);
@@ -127,13 +128,29 @@ int main() {
     assert(shows(boss[4], 45U) && shows(boss[4], 46U) && shows(boss[4], 55U) && shows(boss[5], 32U));
     assert(m::enemy_constraints_for("em035.pac", 18U)->body_slot == 15U);
     assert(m::enemy_cloth_slot("em035.pac", 46U) == 47U);
-    assert(m::em035_body_capsule_coat("em035.pac", 3U) && !m::em035_body_capsule_coat("em035.pac", 46U));
-    assert(!m::em035_body_capsule_coat("em028.pac", 5U));
+    assert(m::body_capsule_coat("em035.pac", 3U) && !m::body_capsule_coat("em035.pac", 46U));
+    assert(!m::body_capsule_coat("em028.pac", 5U));
 
     // Shadows of the shown models only: SHW 5 for the body of either fight.
     assert(boss[0].shadow_pair_count == 4U && boss[0].shadow_pairs[0].model_slot == 1U);
     assert(boss[1].shadow_pairs[0].model_slot == 51U && boss[1].shadow_pairs[0].texture_slot == 5U);
     assert(boss[2].shadow_pair_count == 5U && boss[3].shadow_pair_count == 2U && boss[4].shadow_pairs[0].texture_slot == 48U);
+
+    // Vanguard's sleeves: hand, elbow and shoulder, upright.
+    const auto sleeve = m::enemy_constraints_for("em008.pac", 9U);
+    assert(sleeve && sleeve->constraints.size() == 3U && sleeve->constraints[0].host_node == 9U &&
+           sleeve->constraints[0].upright && sleeve->constraints[2].host_node == 7U);
+    // Player devil triggers: one cloth model at a time.
+    const auto dt = m::archive_variants("pl005.pac");
+    assert(dt.size() == 2U && shows(dt[0], 4U) && !shows(dt[0], 2U) && shows(dt[1], 2U) && !shows(dt[1], 4U));
+    assert(shows(m::archive_variants("pl010.pac")[0], 5U) && m::enemy_cloth_slot("pl010.pac", 5U) == 6U);
+    assert(m::enemy_constraints_for("pl010.pac", 4U)->constraints[0].host_node == 12U);
+    // The amulet of the coatless costumes: joint 3, its root in its own place.
+    std::vector<std::uint8_t> amulet(0x40U, 0U);
+    amulet[0] = 'M'; amulet[1] = 'O'; amulet[2] = 'D'; amulet[0x11] = 8U; amulet[0x13] = 5U;
+    assert(m::player_amulet(amulet) && m::player_coat_host_joint(amulet, 24U) == 3U);
+    amulet[0x11] = 33U;
+    assert(!m::player_amulet(amulet) && m::player_coat_host_joint(amulet, 24U) == 8U);
 
     // One actor per chess piece, each with its own motions.
     const auto chess = m::archive_variants("em017.pac");

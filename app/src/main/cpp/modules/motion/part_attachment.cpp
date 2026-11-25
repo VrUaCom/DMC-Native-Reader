@@ -71,6 +71,28 @@ struct Range final {
     return true;
 }
 
+// A CCnsDirPos node as CEm008's sleeves set it (0x1400B5240): the joint's
+// position, its X axis, the world's up for Y (0x14032EEE0 builds the basis).
+[[nodiscard]] world::Matrix4f upright_matrix(const world::Matrix4f& joint) {
+    const auto& m = joint.values;
+    const float length = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+    if (!(length > 1.0e-6F)) return joint;
+    const std::array<float, 3> x{m[0] / length, m[1] / length, m[2] / length};
+    // Z = X x up, Y = Z x X.
+    std::array<float, 3> z{-x[2], 0.0F, x[0]};
+    const float flat = std::sqrt(z[0] * z[0] + z[2] * z[2]);
+    if (!(flat > 1.0e-4F)) return joint;
+    z = {z[0] / flat, 0.0F, z[2] / flat};
+    const std::array<float, 3> y{z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]};
+    world::Matrix4f out = joint;
+    for (std::size_t c = 0U; c < 3U; ++c) {
+        out.values[c] = x[c];
+        out.values[4U + c] = y[c];
+        out.values[8U + c] = z[c];
+    }
+    return out;
+}
+
 [[nodiscard]] bool pose_part(Session* session, std::size_t part_index, std::uint32_t cloth_steps = 0U) {
     auto& part = session->composite_parts[part_index];
     const auto& placement = part.placement;
@@ -177,7 +199,8 @@ struct Range final {
                         session->scene.nodes[host_nodes->begin + constraint->host_node].world.values;
                     world::Matrix4f local_offset{};
                     local_offset.values = constraint->offset.values;
-                    (*current)[node] = world::multiply_dmc3_matrices(local_offset, joint);
+                    (*current)[node] = constraint->upright ? upright_matrix(joint)
+                                                           : world::multiply_dmc3_matrices(local_offset, joint);
                     continue;
                 }
                 const auto parent = binding->by_node_index[node].parent_node_index;
@@ -475,10 +498,14 @@ std::optional<std::uint32_t> tsc_slot_for(std::string_view archive_name,
     return std::nullopt;
 }
 
-bool em035_body_capsule_coat(std::string_view archive_name, std::uint32_t model_slot) noexcept {
-    return (model_slot == 3U || model_slot == 16U || model_slot == 18U || model_slot == 52U) &&
-           enemy_cloth_slot(archive_name, model_slot).has_value() &&
-           archive_name.find("035.") != std::string_view::npos;
+bool body_capsule_coat(std::string_view archive_name, std::uint32_t model_slot) noexcept {
+    constexpr std::array<std::pair<std::string_view, std::uint32_t>, 7> coats{{
+        {"035.", 3U}, {"035.", 16U}, {"035.", 18U}, {"035.", 52U}, {"005.", 4U}, {"008.", 4U}, {"010.", 5U}}};
+    if (!enemy_cloth_slot(archive_name, model_slot).has_value()) return false;
+    for (const auto& [stem, slot] : coats) {
+        if (slot == model_slot && archive_name.find(stem) != std::string_view::npos) return true;
+    }
+    return false;
 }
 
 std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
@@ -980,19 +1007,33 @@ std::span<const EnemyVariant> enemy_variants_for(std::string_view archive_name) 
 
 std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     std::vector<ArchiveVariant> out;
+    // The enemies' names, by the order of their classes (em000 - em008).
+    const auto shown_name = [](std::string_view class_name) -> std::string {
+        constexpr std::array<std::pair<std::string_view, std::string_view>, 11> names{{
+            {"CEm000", "Hell Pride"}, {"CEm001", "Hell Gluttony"}, {"CEm002", "Hell Lust"},
+            {"CEm003", "Hell Sloth"}, {"CEm004", "Hell Wrath"}, {"CEm005", "Hell Greed"},
+            {"CEm005Shl00", "Greed's coffin"}, {"CEm005Shl01", "Greed's shot"},
+            {"CEm006", "Abyss"}, {"CEm007", "Envy"}, {"CEm008", "Hell Vanguard"}}};
+        for (const auto& [known, name] : names) {
+            if (known == class_name) return std::string{name};
+        }
+        return std::string{class_name};
+    };
     for (const auto& enemy : enemy_variants_for(archive_name)) {
         ArchiveVariant first;
         first.enemy = &enemy;
-        first.label = std::string{enemy.class_name};
+        const auto name = shown_name(enemy.class_name);
+        const auto tail = " (" + std::string{enemy.class_name} + ")";
+        first.label = name + tail;
         if (enemy.weapon_slot_alt == enemy.weapon_slot) {
             out.push_back(std::move(first));
             continue;
         }
-        first.label += " A";
+        first.label = name + ", weapon A" + tail;
         out.push_back(first);
         ArchiveVariant second = first;
         second.alternate_weapon = true;
-        second.label = std::string{enemy.class_name} + " B";
+        second.label = name + ", weapon B" + tail;
         out.push_back(std::move(second));
     }
     if (!out.empty()) return out;
@@ -1040,6 +1081,35 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
             swords.include_top_level_mod_slots = {shifted ? 22U : 23U, shifted ? 24U : 25U};
             swords.include_top_level_mod_count = 2U;
             out.push_back(swords);
+            return out;
+        }
+    }
+
+    // Player devil triggers with two cloth models: one is drawn at a time
+    // (Dante 0x140218960: the coat, or the wings while gliding; Vergil as
+    // CEm035, [this+0xED38]).
+    {
+        const auto looks_of = [&out](std::initializer_list<std::uint32_t> coat,
+                                     std::initializer_list<std::uint32_t> wings) {
+            for (const bool open : {false, true}) {
+                ArchiveVariant v;
+                v.label = open ? "Wings on" : "Wings off";
+                for (const auto slot : open ? wings : coat) {
+                    v.include_top_level_mod_slots[v.include_top_level_mod_count++] = slot;
+                }
+                out.push_back(std::move(v));
+            }
+        };
+        std::string stem;
+        for (const char c : archive_name.substr(0, archive_name.find('.'))) {
+            stem += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (stem == "pl005" || stem == "pl008") {
+            looks_of({1U, 4U}, {1U, 2U});
+            return out;
+        }
+        if (stem == "pl010") {
+            looks_of({1U, 5U, 4U}, {1U, 2U, 4U});
             return out;
         }
     }
@@ -1364,17 +1434,23 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         body.part_attachment_count = 2U;
         out.push_back(body);
         ArchiveVariant ball;
-        ball.label = "Jester · ball";
+        ball.label = "Jester, ball";
         ball.include_top_level_mod_slots = {17U};
         ball.include_top_level_mod_count = 1U;
         ball.texture_overrides = {{{17U, 16U}}};
         ball.texture_override_count = 1U;
         out.push_back(ball);
-        ArchiveVariant shells;
-        shells.label = "Jester · shells";
-        shells.include_top_level_mod_slots = {21U, 23U, 25U, 27U};
-        shells.include_top_level_mod_count = 4U;
-        out.push_back(shells);
+        constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 4> shells{
+            {{21U, 20U}, {23U, 22U}, {25U, 24U}, {27U, 26U}}};
+        for (std::size_t k = 0U; k < shells.size(); ++k) {
+            ArchiveVariant shell;
+            shell.label = "Jester, shell " + std::to_string(k + 1U);
+            shell.include_top_level_mod_slots = {shells[k].first};
+            shell.include_top_level_mod_count = 1U;
+            shell.texture_overrides[0] = {shells[k].first, shells[k].second};
+            shell.texture_override_count = 1U;
+            out.push_back(std::move(shell));
+        }
         return out;
     }
 
@@ -1459,12 +1535,17 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     return out;
 }
 
+bool player_amulet(std::span<const std::uint8_t> coat_mod) noexcept {
+    return coat_mod.size() >= 0x40U && coat_mod[0x11] == 8U && coat_mod[0x13] == 5U;
+}
+
 std::uint32_t player_coat_host_joint(std::span<const std::uint8_t> coat_mod,
                                     std::size_t body_joint_count) noexcept {
     if (coat_mod.size() < 0x40U || coat_mod[0] != 'M' || coat_mod[1] != 'O' ||
         coat_mod[2] != 'D') {
         return kPlayerCoatHostJoint;
     }
+    if (player_amulet(coat_mod)) return kPlayerCoatHostJoint;
     const std::uint32_t joint = kPlayerCoatHostJoint + coat_mod[0x13];
     return joint < body_joint_count ? joint : kPlayerCoatHostJoint;
 }
