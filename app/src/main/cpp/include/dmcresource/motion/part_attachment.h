@@ -407,6 +407,11 @@ struct ArchiveVariant final {
     std::array<ArchivePartAttachment, 12> part_attachments{};
     std::uint32_t part_attachment_count{};
 
+    // Shadow hulls (SHW slot -> model slot) the class loads for this look;
+    // none = each SHW casts for the model it follows in the archive.
+    std::array<ArchiveTextureOverride, 12> shadow_pairs{};  // {model, shw}
+    std::uint32_t shadow_pair_count{};
+
     // Motion PACs (top-level slots) of this look; none = all of the archive's.
     std::array<std::uint32_t, 4> motion_packs{};
     std::uint32_t motion_pack_count{};

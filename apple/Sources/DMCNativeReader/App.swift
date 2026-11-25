@@ -109,7 +109,11 @@ struct ContentView: View {
     @State private var track = GestureTrack()
     @State private var spinTimer: Timer?
 
+    /// The side panel's width: its share of the window, so the view keeps its own.
+    private func panelWidth(_ total: CGFloat) -> CGFloat { min(400, max(300, total * 0.36)) }
+
     var body: some View {
+        GeometryReader { window in
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 if model.variants.count > 1 { VariantBar(model: model) }
@@ -128,8 +132,9 @@ struct ContentView: View {
             if hasPanel {
                 Divider()
                 sidePanel
-                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 400)
+                    .frame(width: panelWidth(window.size.width))
             }
+        }
         }
         .frame(minWidth: 640, minHeight: 480)
         .navigationTitle(model.title)
@@ -191,8 +196,8 @@ struct ContentView: View {
                 viewer
             } else {
                 HSplitView {
-                    files.frame(minWidth: 200, idealWidth: 260, maxWidth: 420)
-                    viewer.frame(minWidth: 320)
+                    files.frame(minWidth: 130, idealWidth: 260, maxWidth: 420)
+                    viewer.frame(minWidth: 180)
                 }
             }
         }

@@ -1068,9 +1068,11 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     " meshes)";
             }
         }
-        // SHW: pair each shadow file with the MOD of the same archive and
-        // container whose node count matches header +0x11 (nearest MOD before
-        // it wins); its hulls then follow that model's joints.
+        // SHW: a shadow belongs to one MOD of its archive and container, looked
+        // up among all of them -- a look draws the shadows of its own models
+        // only. The owner is the class's own pair (shadow_pairs) or, in order,
+        // the MOD since the last run of SHWs with the same node count (header
+        // +0x11) or one more. The hulls follow that model's joints.
         {
             std::vector<std::size_t> node_begin(models.size(), 0U);
             std::vector<std::size_t> node_count(models.size(), 0U);
@@ -1088,21 +1090,75 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     cursor += scene.nodes.size();
                 }
             }
+            const auto mod_nodes = [&entries](std::size_t index) -> std::uint32_t {
+                const auto& bytes = entries[index].bytes;
+                return bytes != nullptr && bytes->size() > 0x11U ? (*bytes)[0x11] : 0U;
+            };
+            std::vector<bool> claimed(entries.size(), false);
+            // The MOD entry an SHW entry casts for, by the order of the archive.
+            const auto owner_entry = [&](std::size_t index, std::uint32_t nodes) -> std::optional<std::size_t> {
+                const auto& shw = entries[index];
+                const auto beside = [&](std::size_t k) {
+                    return entries[k].archive == shw.archive && entries[k].container == shw.container;
+                };
+                // The MODs of the block: those after the run of SHWs before this one's.
+                std::size_t block = 0U;
+                bool in_run = true;
+                for (std::size_t k = index; k-- > 0U;) {
+                    if (!beside(k) || entries[k].effect_bank) continue;
+                    if (entries[k].kind.format == Format::Mod) in_run = false;
+                    if (entries[k].kind.format == Format::Shw && !in_run) {
+                        block = k;
+                        break;
+                    }
+                }
+                for (std::uint32_t spare = 0U; spare < 2U; ++spare) {
+                    for (std::size_t k = block; k < index; ++k) {
+                        if (beside(k) && entries[k].kind.format == Format::Mod && !entries[k].effect_bank &&
+                            !claimed[k] && mod_nodes(k) == nodes + spare) {
+                            return k;
+                        }
+                    }
+                }
+                std::optional<std::size_t> nearest;
+                for (std::size_t k = 0U; k < entries.size(); ++k) {
+                    if (!beside(k) || entries[k].kind.format != Format::Mod || entries[k].effect_bank ||
+                        mod_nodes(k) != nodes) {
+                        continue;
+                    }
+                    if (!nearest || k < index) nearest = k;
+                }
+                return nearest;
+            };
             for (std::size_t index = 0U; index < entries.size(); ++index) {
                 const auto& entry = entries[index];
                 if (entry.kind.format != Format::Shw || entry.effect_bank) continue;
                 auto hulls = shadow::parse_hulls(entry.bytes->data(), entry.bytes->size());
                 if (!hulls || hulls->hulls.empty()) continue;
+                std::optional<std::size_t> source;
+                if (position != nullptr && position->shadow_pair_count != 0U && entry.archive == 0U &&
+                    entry.container.empty()) {
+                    for (std::uint32_t s = 0U; s < position->shadow_pair_count; ++s) {
+                        if (entry.slot != position->shadow_pairs[s].texture_slot) continue;
+                        for (std::size_t k = 0U; k < entries.size(); ++k) {
+                            if (entries[k].archive == 0U && entries[k].container.empty() &&
+                                entries[k].slot == position->shadow_pairs[s].model_slot) {
+                                source = k;
+                            }
+                        }
+                    }
+                } else {
+                    source = owner_entry(index, hulls->node_count);
+                    if (source) claimed[*source] = true;
+                }
+                if (!source) continue;
                 std::optional<std::size_t> owner;
                 for (std::size_t part = 0U; part < model_entry.size(); ++part) {
-                    const auto& model = entries[model_entry[part]];
-                    if (model.archive != entry.archive || model.container != entry.container ||
-                        rigs[part] == nullptr || node_count[part] != hulls->node_count ||
-                        rigs[part]->node_count() != node_count[part] ||
-                        hulls->max_selector() >= node_count[part]) {
-                        continue;
+                    if (model_entry[part] == *source && rigs[part] != nullptr &&
+                        rigs[part]->node_count() == node_count[part] &&
+                        hulls->max_selector() < node_count[part]) {
+                        owner = part;
                     }
-                    if (!owner || model_entry[part] < index) owner = part;
                 }
                 if (!owner) continue;
                 shadow::ShadowBinding binding;

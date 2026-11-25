@@ -1123,6 +1123,16 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
                 hang(body, 32U, 3U, edge_t, edge_r);
             }
             if (beowulf) add(55U, 54U);  // its nodes follow the body joints
+            // Shadows as the inits load them: SHW 5 / 6 also for 51 / 52, none
+            // for the DT wings, the DT coat and Beowulf.
+            const auto cast = [&v](std::uint32_t shw, std::uint32_t model) {
+                v.shadow_pairs[v.shadow_pair_count++] = {model, shw};
+            };
+            cast(dt ? (beowulf ? 48U : 21U) : 5U, body);
+            if (!dt) cast(6U, beowulf ? 52U : 3U);
+            cast(26U, 25U);
+            if (!dt || beowulf) cast(29U, 28U);
+            if (w.arms == Arms::sparda) cast(33U, 32U);
             v.include_top_level_mod_count = n;
             v.texture_override_count = t;
             v.part_attachment_count = k;
@@ -1440,6 +1450,10 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         }};
         second.texture_override_count = 7U;
         bind_core(second, 32U, 34U);
+        // The second costume has no SHW of its own: the first one's (same skeleton).
+        second.shadow_pairs[0] = {32U, 16U};
+        second.shadow_pairs[1] = {20U, 27U};
+        second.shadow_pair_count = 2U;
         out.push_back(second);
     }
     return out;

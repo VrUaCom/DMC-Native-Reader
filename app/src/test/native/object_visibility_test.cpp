@@ -130,6 +130,11 @@ int main() {
     assert(m::em035_body_capsule_coat("em035.pac", 3U) && !m::em035_body_capsule_coat("em035.pac", 46U));
     assert(!m::em035_body_capsule_coat("em028.pac", 5U));
 
+    // Shadows of the shown models only: SHW 5 for the body of either fight.
+    assert(boss[0].shadow_pair_count == 4U && boss[0].shadow_pairs[0].model_slot == 1U);
+    assert(boss[1].shadow_pairs[0].model_slot == 51U && boss[1].shadow_pairs[0].texture_slot == 5U);
+    assert(boss[2].shadow_pair_count == 5U && boss[3].shadow_pair_count == 2U && boss[4].shadow_pairs[0].texture_slot == 48U);
+
     // One actor per chess piece, each with its own motions.
     const auto chess = m::archive_variants("em017.pac");
     assert(chess.size() == 4U && chess[3].label == "Rook" && chess[3].motion_packs[0] == 18U);
