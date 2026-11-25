@@ -28,8 +28,8 @@ does the same for the second model set).
 - 0x1401FBD00 / 0x1401FBD90 (through the vtable) act when that byte is
   non-zero and differs from the last one (+0x3A13): they take record
   `state` and write into the coat cloth (the first 0xF0-byte chain at
-  +0xA230): float 0 the stiffness (+0x6C), (0, float 1, 0) the wind
-  (+0xA0), floats 2..4 the gravity (+0xB0). The values fit the coat's .clt
+  +0xA210): float 0 the stiffness (+0x6C), (0, float 1, 0) the gravity
+  (+0xB0), floats 2..4 the wind (+0xA0). The values fit the coat's .clt
   (Stiffness 0.3, Gravity -0.05, WindLocal 1).
 - pl000's script sets a coat state in 241 of its 769 actions (state 12
   most, then 2 and 1).

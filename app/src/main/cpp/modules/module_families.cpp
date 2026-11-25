@@ -403,7 +403,7 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             property(root, "Use",
                      "The motion script's opcode-3 channel 3 picks the state (0x1401F01F0 -> +0x39C5); on a "
                      "non-zero change 0x1401FBD00 / 0x1401FBD90 give the coat cloth the record's stiffness, "
-                     "vertical wind and gravity. State 0 keeps the .clt's own values.",
+                     "vertical gravity and wind. State 0 keeps the .clt's own values.",
                      EvidenceLevel::ExeConfirmed);
             InspectionNode rows;
             rows.id = "states";
@@ -412,11 +412,11 @@ PipelineResult run_family(const NativeModule& module, std::string_view filename,
             for (std::size_t i = 0; i < table->count(); ++i) {
                 const auto& r = table->records()[i];
                 char line[160];
-                std::snprintf(line, sizeof line, "record +0x%X (group +0x%X): stiffness %.4g, wind y %.4g, "
-                              "gravity %.4g %.4g %.4g",
-                              r.offset, r.group, static_cast<double>(r.stiffness), static_cast<double>(r.wind_y),
-                              static_cast<double>(r.gravity[0]), static_cast<double>(r.gravity[1]),
-                              static_cast<double>(r.gravity[2]));
+                std::snprintf(line, sizeof line, "record +0x%X (group +0x%X): stiffness %.4g, gravity y %.4g, "
+                              "wind %.4g %.4g %.4g",
+                              r.offset, r.group, static_cast<double>(r.stiffness), static_cast<double>(r.gravity_y),
+                              static_cast<double>(r.wind[0]), static_cast<double>(r.wind[1]),
+                              static_cast<double>(r.wind[2]));
                 property(rows, "state " + std::to_string(i), line, EvidenceLevel::StructuralConfirmed);
             }
             root.children.push_back(std::move(rows));

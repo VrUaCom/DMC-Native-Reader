@@ -51,7 +51,7 @@ struct EnemyClothSource final {
     std::uint32_t clt_slot;
 };
 
-inline constexpr std::array<EnemyClothSource, 10> kEnemyClothSources{{
+inline constexpr std::array<EnemyClothSource, 18> kEnemyClothSources{{
     {"em028", 4U, 7U},
     {"em028", 5U, 8U},
     {"em000", 3U, 2U},
@@ -64,6 +64,15 @@ inline constexpr std::array<EnemyClothSource, 10> kEnemyClothSources{{
     // 2/4/6/8, exactly matching the four chains of both 9-node companion MODs.
     {"em034", 17U, 18U},
     {"em034", 34U, 18U},
+    // CEm035 (Vergil): inits 0x140183DB0, 0x140182C50, 0x1401820C0, 0x140181B40.
+    {"em035", 3U, 4U},
+    {"em035", 16U, 19U},
+    {"em035", 18U, 20U},
+    {"em035", 28U, 30U},
+    {"em035", 46U, 47U},
+    {"em035", 52U, 53U},
+    {"em030", 3U, 7U},  // CEm030 init 0x14014D8B0
+    {"em031", 2U, 4U},  // CEm031 init 0x140157A10
 }};
 
 // Texture scroll (.tsc) slot and the model slots its CDrawUV objects drive:
@@ -89,6 +98,10 @@ inline constexpr std::array<TscSource, 2> kTscSources{{
 // Match "<stem>.pac" (any directory, any case) and a model slot to its .clt slot.
 [[nodiscard]] std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
                                                             std::uint32_t model_slot) noexcept;
+
+// CEm035 coats and wings whose chains collide with the body capsules.
+[[nodiscard]] bool em035_body_capsule_coat(std::string_view archive_name,
+                                           std::uint32_t model_slot) noexcept;
 
 struct WeaponAttachRecord final {
     std::string_view class_name;
@@ -135,10 +148,36 @@ inline constexpr std::array<CompositeNodeConstraint, 4> kEm028Slot5{
 inline constexpr std::array<CompositeNodeConstraint, 5> kEm028Slot6{
     {{0U, 14U}, {1U, 7U}, {6U, 11U}, {2U, 8U}, {7U, 12U}}};
 
-inline constexpr std::array<EnemyPartConstraints, 3> kEnemyPartConstraints{{
+// CEm035 (Vergil): the devil-trigger cloth models. Init 0x1401820C0 (Yamato
+// form, body 15) links nodes of slot 18 and of its alternative 16 to body
+// joints 2, 3 and 14; init 0x140181B40 (Beowulf form, body 45) links four
+// nodes of the coat 46. Identity offsets; the other nodes are cloth chains.
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm035Slot18{{{0U, 2U}, {1U, 3U}, {2U, 14U}}};
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm035Slot16{{{0U, 2U}, {1U, 3U}, {14U, 14U}}};
+inline constexpr std::array<CompositeNodeConstraint, 4> kEm035Slot46{
+    {{0U, 2U}, {1U, 3U}, {2U, 6U}, {8U, 10U}}};
+
+// CEm030 (Beowulf) init 0x14014D8B0: model 5 follows body joints 2, 3 and 0.
+// CEm031 (Doppelganger) init 0x140157A10: the wings (2) follow 14, 3 and 2.
+// CEm032 init 0x140160760: model 2 hangs from body joint 2 by its root.
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm030Slot5{{{0U, 2U}, {1U, 3U}, {18U, 0U}}};
+inline constexpr std::array<CompositeNodeConstraint, 3> kEm031Slot2{{{0U, 14U}, {1U, 3U}, {8U, 2U}}};
+inline constexpr std::array<CompositeNodeConstraint, 1> kEm032Slot2{{{0U, 2U}}};
+
+// CEm029Cart (Geryon's carriage) init 0x14013DE90: its node 16 follows the horse's joint 3.
+inline constexpr std::array<CompositeNodeConstraint, 1> kEm029Cart{{{16U, 3U}}};
+
+inline constexpr std::array<EnemyPartConstraints, 10> kEnemyPartConstraints{{
+    {"em029", 9U, 13U, kEm029Cart},
+    {"em030", 1U, 5U, kEm030Slot5},
+    {"em031", 1U, 2U, kEm031Slot2},
+    {"em032", 1U, 2U, kEm032Slot2},
     {"em028", 1U, 4U, kEm028Slot4},
     {"em028", 1U, 5U, kEm028Slot5},
     {"em028", 1U, 6U, kEm028Slot6},
+    {"em035", 15U, 18U, kEm035Slot18},
+    {"em035", 15U, 16U, kEm035Slot16},
+    {"em035", 45U, 46U, kEm035Slot46},
 }};
 
 // Match "em028.pac" (any directory, any case) and a top-level part slot.
@@ -347,7 +386,7 @@ struct ArchiveVariant final {
     const EnemyVariant* enemy{};  // em000 family
     bool alternate_weapon{};      // [this+0x670] in 2..3
     std::uint32_t hide_slot{};    // model slot whose objects are hidden
-    std::array<std::uint32_t, 2> hide_objects{};
+    std::array<std::uint32_t, 12> hide_objects{};
     std::uint32_t hide_count{};
 
     // Some actor PACs carry several complete appearances and equipment models
@@ -367,9 +406,18 @@ struct ArchiveVariant final {
     // before the exact class-init EXE consumer has been recovered.
     std::array<ArchivePartAttachment, 12> part_attachments{};
     std::uint32_t part_attachment_count{};
+
+    // Motion PACs (top-level slots) of this look; none = all of the archive's.
+    std::array<std::uint32_t, 4> motion_packs{};
+    std::uint32_t motion_pack_count{};
 };
 
 [[nodiscard]] std::vector<ArchiveVariant> archive_variants(std::string_view archive_name);
+
+// True when `added` joins `archive_name` for its motions alone: Rudra
+// (em027.pac) has none of his own, CEm026 plays em026.pac's for both brothers.
+[[nodiscard]] bool motions_only_archive(std::string_view archive_name,
+                                        std::string_view added) noexcept;
 
 // A character's kit: the archives the game loads with it, for the shell to
 // add from the same folder. Kind: weapon (a plwp_*.pac on the body), motions

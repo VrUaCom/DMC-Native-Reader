@@ -109,6 +109,38 @@ int main() {
     assert(jester[0].part_attachments[0].host_joint == 5U && jester[0].part_attachments[1].host_joint == 9U);
     assert(jester[0].part_attachments[1].zyx_offset && jester[1].include_top_level_mod_slots[0] == 17U);
 
+    // Vergil: three weapons, each with the devil trigger off and on.
+    const auto boss = m::archive_variants("EM035.pac");
+    assert(boss.size() == 6U);
+    assert(boss[0].label == "Yamato · DT off" && boss[1].label == "Beowulf · DT off");
+    assert(boss[2].label == "Force Edge (Sparda) + Yamato · DT off");
+    assert(boss[3].label == "Yamato · DT on" && boss[5].label == "Force Edge (Sparda) + Yamato · DT on");
+    const auto shows = [](const m::ArchiveVariant& v, std::uint32_t slot) {
+        for (std::uint32_t k = 0U; k < v.include_top_level_mod_count; ++k) {
+            if (v.include_top_level_mod_slots[k] == slot) return true;
+        }
+        return false;
+    };
+    assert(shows(boss[0], 1U) && shows(boss[0], 28U) && !shows(boss[0], 32U) && !shows(boss[0], 55U));
+    assert(shows(boss[1], 51U) && shows(boss[1], 55U) && shows(boss[2], 32U));
+    assert(shows(boss[3], 15U) && shows(boss[3], 17U) && !shows(boss[3], 28U));
+    assert(shows(boss[4], 45U) && shows(boss[4], 46U) && shows(boss[4], 55U) && shows(boss[5], 32U));
+    assert(m::enemy_constraints_for("em035.pac", 18U)->body_slot == 15U);
+    assert(m::enemy_cloth_slot("em035.pac", 46U) == 47U);
+    assert(m::em035_body_capsule_coat("em035.pac", 3U) && !m::em035_body_capsule_coat("em035.pac", 46U));
+    assert(!m::em035_body_capsule_coat("em028.pac", 5U));
+
+    // One actor per chess piece, each with its own motions.
+    const auto chess = m::archive_variants("em017.pac");
+    assert(chess.size() == 4U && chess[3].label == "Rook" && chess[3].motion_packs[0] == 18U);
+    // Doppelganger: the sword on the back or in the hand, extra body objects hidden.
+    const auto shadow = m::archive_variants("em031.pac");
+    assert(shadow.size() == 2U && shadow[0].part_attachments[0].host_joint == 3U && shadow[0].hide_count == 9U);
+    assert(m::archive_variants("em012.pac")[0].texture_overrides[0].texture_slot == 1U);
+    // Rudra plays em026.pac's motions without its models.
+    assert(m::character_kit("em027.pac").size() == 1U && m::character_kit("em027.pac")[0].start);
+    assert(m::motions_only_archive("a/em027.pac", "EM026.PAC") && !m::motions_only_archive("em026.pac", "em027.pac"));
+
     // A character's kit: Dante's base motions, weapons by motion bank, DT bodies.
     const auto kit = m::character_kit("PL000.pac");
     const auto has = [&kit](std::string_view kind, std::string_view file, bool start) {

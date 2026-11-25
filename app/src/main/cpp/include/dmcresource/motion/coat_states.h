@@ -21,7 +21,7 @@
 // - 0x1401FBD00 / 0x1401FBD90, when the state is non-zero and changed, take
 //   entry `state` of the table (u16 pairs, the second the record's offset)
 //   and write the record's five floats into the coat cloth: stiffness, a
-//   vertical wind and a gravity vector.
+//   vertical gravity and a wind vector.
 namespace dmcresource::motion {
 
 // The slot of a player archive that holds the coat states.
@@ -31,8 +31,8 @@ struct CoatStateRecord final {
     std::uint16_t group{};   // first half of the entry (0x5C / 0x70; not read by the consumers)
     std::uint16_t offset{};  // the record's offset in the table
     float stiffness{};       // float 0
-    float wind_y{};          // float 1 -> wind (0, y, 0)
-    std::array<float, 3> gravity{};  // floats 2..4
+    float gravity_y{};       // float 1 -> gravity (0, y, 0)
+    std::array<float, 3> wind{};  // floats 2..4
 };
 
 class CoatStates final {

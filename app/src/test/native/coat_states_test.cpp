@@ -37,7 +37,7 @@ int main() {
     const auto table = CoatStates::parse(b);
     assert(table && table->count() == 3U);
     assert(table->record(1)->offset == 0x20U && table->record(1)->stiffness == 0.8F);
-    assert(table->record(1)->gravity[2] == 0.16F && table->record(1)->wind_y == -0.02F);
+    assert(table->record(1)->wind[2] == 0.16F && table->record(1)->gravity_y == -0.02F);
     assert(table->record(3) == nullptr);
 
     // Not a table: an entry pointing outside, or a zero half.
@@ -67,7 +67,7 @@ int main() {
     base.stiffness = 0.3F;
     base.bones.push_back({2U, 1U});
     const auto p = coat_params(base, *table->record(1));
-    assert(p.stiffness == 0.8F && p.wind[1] == -0.02F && p.gravity[2] == 0.16F && p.bones.size() == 1U);
+    assert(p.stiffness == 0.8F && p.gravity[1] == -0.02F && p.wind[2] == 0.16F && p.bones.size() == 1U);
     assert(p.max_speed == base.max_speed && p.spring_force == base.spring_force);
     return 0;
 }

@@ -46,6 +46,10 @@ struct DMCNativeReaderApp: App {
                 Button("Reset View") { model.resetCamera() }.keyboardShortcut("0")
                 Divider()
             }
+            CommandMenu("Model") { ModelMenuItems(model: model) }
+            CommandMenu("Scene") { SceneMenuItems(model: model) }
+            CommandMenu("Inspect") { InspectMenuItems(model: model) }
+            CommandMenu("Camera") { CameraMenuItems(model: model) }
         }
     }
 }
@@ -95,7 +99,6 @@ enum OpenPanel {
 
 struct ContentView: View {
     @ObservedObject var model: ViewerModel
-    @State private var showInfo = false
     /// Where a gesture was at its last event: kept outside SwiftUI's state so
     /// that moving the camera never rebuilds the window's views.
     final class GestureTrack {
@@ -143,7 +146,7 @@ struct ContentView: View {
 
     /// What used to be sheets over the window: one at a time, in a panel beside the view.
     private var hasPanel: Bool {
-        model.settingsShown || model.texturesShown || model.crashReport != nil || showInfo || model.markerCard != nil || model.collisionReport != nil ||
+        model.settingsShown || model.texturesShown || model.crashReport != nil || model.infoShown || model.markerCard != nil || model.collisionReport != nil ||
             model.askTextureFormat || !model.partsShown.isEmpty || !model.diagnosticsText.isEmpty
     }
 
@@ -167,9 +170,9 @@ struct ContentView: View {
         } else if !model.diagnosticsText.isEmpty {
             TextSheet(title: model.diagnosticsTitle, text: model.diagnosticsText)
                 .environment(\.closePanel, ClosePanelAction { model.diagnosticsText = "" })
-        } else if showInfo {
+        } else if model.infoShown {
             InfoSheet(model: model)
-                .environment(\.closePanel, ClosePanelAction { showInfo = false })
+                .environment(\.closePanel, ClosePanelAction { model.infoShown = false })
         } else if model.texturesShown {
             TexturesPanel(model: model)
                 .environment(\.closePanel, ClosePanelAction { model.texturesShown = false })
@@ -471,208 +474,6 @@ struct ContentView: View {
                 }
             }
             .onEnded { _ in track.twistLast = nil }
-    }
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigation) {
-            Button { model.goBack() } label: { Label("Back", systemImage: "chevron.backward") }
-                .disabled(!model.canGoBack)
-        }
-        ToolbarItemGroup {
-            Button { model.texturesShown.toggle() } label: { Label("Textures", systemImage: "paintpalette") }
-                .help("Textures: drop a PNG or DDS of your own on one to see it on the model (nothing is written)")
-                .disabled(model.session == nil || model.isPicture)
-            Button { model.settingsShown.toggle() } label: { Label("Settings", systemImage: "gearshape") }
-                .help("Settings: graphics, lines, animation, base room and the photo camera (the same as on Android)")
-            Button { OpenPanel.choose { model.open(url: $0) } } label: { Label("Open", systemImage: "folder") }
-            Button { model.resetCamera() } label: { Label("Reset view", systemImage: "scope") }
-                .disabled(model.session == nil || model.isPicture)
-            Button {
-                OpenPanel.choose { model.loadMotion(url: $0) }
-            } label: { Label("Load motion", systemImage: "figure.walk") }
-                .help("Load a motion file (MOT, a motion PAC) onto the model")
-                .disabled(model.session == nil || model.isPicture)
-            Menu {
-                ForEach(model.actions) { row in
-                    Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.runCompanion(row) }
-                }
-                if !model.moreActions.isEmpty {
-                    Menu("Other actions") {
-                        ForEach(model.moreActions) { row in
-                            Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.runCompanion(row) }
-                        }
-                    }
-                }
-            } label: { Label("Actions", systemImage: "ellipsis.circle") }
-                .disabled(model.actions.isEmpty && model.moreActions.isEmpty)
-            if !model.kit.isEmpty {
-                Menu {
-                    kitSection("Weapons — models on the body", kind: "weapon")
-                    kitSection("Motions — animation banks (by weapon)", kind: "motions")
-                    kitSection("Devil Trigger — replaces the body", kind: "dt")
-                    Divider()
-                    Button("Add the whole kit (no DT)") { model.addWholeKit() }
-                    Button("Choose a PAC file…") { model.choosePacs() }
-                } label: { Label("Character", systemImage: "figure.stand") }
-                    .help("The character's weapons, motions and devil trigger: tick to add, untick to remove")
-            }
-            if !model.effects.isEmpty {
-                Menu {
-                    ForEach(model.effects) { row in
-                        Button(row.icon.isEmpty ? row.label : "\(row.icon) \(row.label)") { model.playEffect(row) }
-                    }
-                } label: { Label("Effects", systemImage: "sparkles") }
-            }
-            if !model.classEvents.isEmpty {
-                Menu {
-                    ForEach(Array(model.classEvents.enumerated()), id: \.offset) { i, title in
-                        Button(title) { model.triggerClassEvent(i) }
-                    }
-                } label: { Label("Events", systemImage: "bolt") }
-            }
-            if model.session != nil {
-                Menu {
-                    Button("UV") { model.showInspection(1, title: "UV") }
-                    Button("Meshes") { model.showInspection(2, title: "Meshes") }
-                    Button("Hierarchy") { model.showInspection(3, title: "Hierarchy") }
-                    Divider()
-                    Button("Benchmark (10 s)") { model.runBenchmark() }.disabled(model.isPicture)
-                } label: { Label("Inspect", systemImage: "list.bullet.rectangle") }
-            }
-            if model.canShowUV {
-                Button { model.openUVMaps() } label: { Label("UV maps", systemImage: "square.grid.3x3") }
-                    .help("The model's UV layout, one map per texture")
-            }
-            if model.dualPreview {
-                Picker("Picture", selection: Binding(get: { model.infoPreviewShown },
-                                                     set: { model.setInfoPreview($0) })) {
-                    Text("Texture").tag(false)
-                    Text("Info").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .help("The texture, or the core's Info picture of it")
-            }
-            if model.canShowHitboxes || model.canShowStageCollision {
-                Menu {
-                    if model.canShowHitboxes {
-                        Button("Next hitboxes") { model.cycleHitboxes() }.keyboardShortcut("h", modifiers: [])
-                        Button("All attacks") { model.showHitboxes(-1) }
-                        ForEach(model.attackIDs, id: \.self) { id in
-                            Button("Attack \(id)") { model.showHitboxes(id) }
-                        }
-                        Button("Hide hitboxes") { model.showHitboxes(nil) }.disabled(model.hitboxAttack == nil)
-                        Button("Hitbox report…") { model.showCollisionReport(attack: true) }
-                    }
-                    if model.canShowStageCollision {
-                        Divider()
-                        Button(model.stageCollisionShown ? "Hide stage collision" : "Show stage collision") {
-                            model.toggleStageCollision()
-                        }
-                        Button("Stage collision report…") { model.showCollisionReport(attack: false) }
-                    }
-                } label: { Label("Collision", systemImage: "scope") }
-            }
-            if !model.sounds.isEmpty {
-                Menu {
-                    ForEach(model.sounds) { row in
-                        Button(row.label) { model.playSound(row) }
-                    }
-                    Divider()
-                    Button("Stop") { model.stopSound() }
-                } label: { Label("Sounds", systemImage: "speaker.wave.2") }
-            }
-            Menu {
-                Button("Load base room…") { OpenPanel.choose { model.loadRoom(url: $0) } }
-                Button("Clear base room") { model.clearRoom() }
-                    .disabled(model.roomName == nil)
-                if model.roomName != nil {
-                    Button("Next spot") { model.nextSpot() }.keyboardShortcut("n", modifiers: [])
-                    let spawns = model.spawnPoints
-                    if !spawns.isEmpty {
-                        Menu("Spawn points") {
-                            ForEach(Array(spawns.enumerated()), id: \.offset) { i, title in Button(title) { model.standOnSpawn(i) } }
-                        }
-                    }
-                }
-                if model.canBreakRoom {
-                    Toggle("Broken", isOn: Binding(get: { model.roomBroken }, set: { model.setRoomBroken($0) }))
-                }
-                Divider()
-                Button("Load stage configuration…") { OpenPanel.choose { model.loadStageConfig(url: $0) } }
-                    .disabled(model.session == nil)
-                Divider()
-                Button(model.commonEffectsName.map { "Common effects: \($0)…" } ?? "Load common effects (static_effect.pac)…") {
-                    OpenPanel.choose { model.loadCommonEffects(url: $0) }
-                }
-                Button("Clear common effects") { model.clearCommonEffects() }.disabled(model.commonEffectsName == nil)
-            } label: { Label(model.roomName ?? "Room", systemImage: "cube.transparent") }
-            Menu {
-                Toggle("Viewfinder (camera mode)", isOn: Binding(get: { model.cameraModeChoice },
-                                                                 set: { model.setCameraMode($0) }))
-                    .keyboardShortcut("v", modifiers: [])
-                Divider()
-                Button("Take picture (PNG)…") {
-                    let panel = NSSavePanel()
-                    panel.allowedContentTypes = [.png]
-                    panel.nameFieldStringValue = (model.session?.title ?? "photo") + " photo.png"
-                    if panel.runModal() == .OK, let url = panel.url { model.savePhoto(to: url) }
-                }
-                Button(model.recording ? "Stop recording" : "Record video…") {
-                    if model.recording { model.toggleRecording(); return }
-                    let panel = NSSavePanel()
-                    panel.allowedContentTypes = [.quickTimeMovie]
-                    panel.nameFieldStringValue = (model.session?.title ?? "view") + ".mov"
-                    if panel.runModal() == .OK, let url = panel.url { model.toggleRecording(to: url) }
-                }
-                Button("Take RAW picture (DNG)…") {
-                    let panel = NSSavePanel()
-                    panel.nameFieldStringValue = (model.session?.title ?? "photo") + ".dng"
-                    if panel.runModal() == .OK, let url = panel.url { model.saveDNG(to: url) }
-                }
-            } label: { Label("Camera", systemImage: "camera") }
-                .disabled(model.session == nil || model.isPicture)
-            Button { model.toggleFly() } label: {
-                Label(model.flying ? "Stop flying" : "Fly", systemImage: model.flying ? "airplane.circle.fill" : "airplane")
-            }
-            .keyboardShortcut("f", modifiers: [])
-            .disabled(model.session == nil || model.isPicture)
-            Button {
-                let panel = NSSavePanel()
-                panel.allowedContentTypes = [.png]
-                panel.nameFieldStringValue = (model.session?.title ?? "view") + ".png"
-                if panel.runModal() == .OK, let url = panel.url { model.exportPNG(to: url) }
-            } label: { Label("Export PNG", systemImage: "square.and.arrow.up") }
-                .disabled(model.session == nil)
-            Button { showInfo = true } label: {
-                Label("Info", systemImage: "info.circle")
-                    .overlay(alignment: .topTrailing) {
-                        if model.healthLevel > 0 {
-                            Circle()
-                                .fill(model.healthLevel >= 2 ? Color.red : Color.orange)
-                                .frame(width: 7, height: 7)
-                        }
-                    }
-            }
-        }
-    }
-}
-
-extension ContentView {
-    /// One part of the Character menu: a tick per PAC added, dimmed when it is not beside the file.
-    @ViewBuilder func kitSection(_ title: String, kind: String) -> some View {
-        let items = model.kit.filter { $0.kind == kind }
-        if !items.isEmpty {
-            Section(title) {
-                ForEach(items) { item in
-                    Button((model.isAdded(item) ? "✓ " : "    ") + item.label +
-                           (item.url == nil ? "  (\(item.file) not beside it)" : "  — \(item.file)")) {
-                        model.toggle(item)
-                    }
-                    .disabled(item.url == nil)
-                }
-            }
-        }
     }
 }
 
@@ -1014,70 +815,5 @@ extension EnvironmentValues {
     var closePanel: ClosePanelAction {
         get { self[ClosePanelKey.self] }
         set { self[ClosePanelKey.self] = newValue }
-    }
-}
-
-/// The opened archive's in-game looks. Names made of the same number of
-/// " · " parts (Vergil: look · weapons · DT) get one switch per part;
-/// otherwise one menu lists them all.
-struct VariantBar: View {
-    @ObservedObject var model: ViewerModel
-
-    private var parts: [[String]] { model.variants.map { $0.components(separatedBy: " · ") } }
-
-    private var columns: Int? {
-        let counts = Set(parts.map(\.count))
-        guard counts.count == 1, let n = counts.first, n > 1 else { return nil }
-        return n
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            if let n = columns {
-                ForEach(0..<n, id: \.self) { column in
-                    Picker("", selection: Binding(
-                        get: { current(column) },
-                        set: { choose(column: column, value: $0) })) {
-                        ForEach(options(column), id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            } else {
-                Picker("Look", selection: Binding(
-                    get: { model.variantIndex },
-                    set: { model.selectVariant($0) })) {
-                    ForEach(Array(model.variants.enumerated()), id: \.offset) { Text($0.element).tag($0.offset) }
-                }
-                .fixedSize()
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private func options(_ column: Int) -> [String] {
-        var seen: [String] = []
-        for p in parts where !seen.contains(p[column]) { seen.append(p[column]) }
-        return seen
-    }
-
-    private func current(_ column: Int) -> String {
-        guard parts.indices.contains(model.variantIndex) else { return "" }
-        return parts[model.variantIndex][column]
-    }
-
-    /// The look with this part changed and the others kept; else the first with it.
-    private func choose(column: Int, value: String) {
-        guard parts.indices.contains(model.variantIndex) else { return }
-        var wanted = parts[model.variantIndex]
-        wanted[column] = value
-        if let exact = parts.firstIndex(of: wanted) {
-            model.selectVariant(exact)
-        } else if let any = parts.firstIndex(where: { $0[column] == value }) {
-            model.selectVariant(any)
-        }
     }
 }

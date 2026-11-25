@@ -475,6 +475,12 @@ std::optional<std::uint32_t> tsc_slot_for(std::string_view archive_name,
     return std::nullopt;
 }
 
+bool em035_body_capsule_coat(std::string_view archive_name, std::uint32_t model_slot) noexcept {
+    return (model_slot == 3U || model_slot == 16U || model_slot == 18U || model_slot == 52U) &&
+           enemy_cloth_slot(archive_name, model_slot).has_value() &&
+           archive_name.find("035.") != std::string_view::npos;
+}
+
 std::optional<std::uint32_t> enemy_cloth_slot(std::string_view archive_name,
                                               std::uint32_t model_slot) noexcept {
     const auto slash = archive_name.find_last_of("/\\");
@@ -1042,53 +1048,88 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
     // ([this+0xEF10]); every model of a form is drawn in the actor world.
     // The PAC keeps each look as a PTX followed by its body and coat MODs:
     // PTX 0 -> 1 + 3, PTX 14 -> 15 + 16 + 17 + 18 (devil trigger), PTX 44 ->
-    // 45 + 46, PTX 50 -> 51 + 52, PTX 60 -> 61 + 62; weapons 25 + 28 (PTX
-    // 24 / 27), 32, 55 (Beowulf), 58. One look per position, not all at once.
+    // 45 + 46, PTX 50 -> 51 + 52; weapons 25 + 28 (PTX 24 / 27), 32, 55
+    // (Beowulf), 58. Body 61 ([this+0xEF27]) is an emptied costume: PTX 60
+    // holds only 1 x 1 transparent blocks, so nothing of it would show.
     if (archive_name.size() == 9U && std::tolower(static_cast<unsigned char>(archive_name[0])) == 'e' &&
         archive_name.substr(2, 7) == "035.pac") {
-        // Positions are "look · weapons · DT" (the shell offers one switch per
-        // part). 0x140180C60 roots the coat at body joint 3 and the sheathed
-        // Yamato (slot 28, .clt 30) at joint 13; Beowulf (55) is drawn when
-        // [this+0xEF0C] == 2 and follows the body bones it lies on. The DT
-        // form (draw 0x140186930 form 2: 15 + 16 + 17 + 18) draws no sheath.
-        struct Look { const char* name; std::uint32_t body; std::uint32_t coat; };
-        constexpr std::array<Look, 4> looks{{
-            {"Look 1", 1U, 3U}, {"Look 2", 45U, 46U}, {"Look 3", 51U, 52U}, {"Look 4", 61U, 62U}}};
-        // Weapons follow the class form [this+0xEF10] (draw 0x140186930):
-        // form 0 Yamato (sheath 28 on joint 13), form 1 the same plus Beowulf
-        // (55, init 0x140182C50 hangs its glow effects 5-8 on its nodes). The
-        // state machine switches forms in the fight; scripts do not (their
-        // opcode-3 channel 1 only moves an action to its next phase,
-        // 0x14017A060 ...). "No weapons" is a viewer position.
-        struct Arms { const char* name; bool yamato; bool beowulf; };
-        constexpr std::array<Arms, 3> arms{{
-            {"Yamato", true, false}, {"Yamato + Beowulf", true, true}, {"No weapons", false, false}}};
-        for (const bool dt : {false, true}) {
-            for (const auto& l : looks) {
-                for (const auto& w : arms) {
-                    ArchiveVariant v;
-                    v.label = std::string{l.name} + " · " + w.name + (dt ? " · DT on" : " · DT off");
-                    std::uint32_t n = 0U;
-                    const auto add = [&v, &n](std::uint32_t slot) {
-                        if (n < v.include_top_level_mod_slots.size()) v.include_top_level_mod_slots[n++] = slot;
-                    };
-                    const std::uint32_t body = dt ? 15U : l.body;
-                    const std::uint32_t coat = dt ? 18U : l.coat;
-                    add(body);
-                    add(coat);
-                    if (dt) { add(16U); add(17U); }
-                    if (w.yamato && !dt) add(28U);
-                    if (w.beowulf) add(55U);
-                    v.include_top_level_mod_count = n;
-                    std::uint32_t k = 0U;
-                    v.part_attachments[k++] = {body, coat, kPlayerCoatHostJoint, true, true, true};
-                    if (w.yamato && !dt) v.part_attachments[k++] = {body, 28U, 13U, true, true, true};
-                    // DT cloth (0x140180C60 form 2): one on body joint 2, one on 3.
-                    if (dt) v.part_attachments[k++] = {body, 16U, 2U, true, true, true};
-                    v.part_attachment_count = k;
-                    out.push_back(std::move(v));
-                }
+        // Positions are "weapons · DT" (the shell offers one switch per part).
+        // Fights 0 and 2 ([this+0xEF0C]) load body 1 and coat 3 and, for the
+        // devil trigger, 15 + 17 + 18 (0x140183DB0, 0x1401820C0); fight 1
+        // loads body 51 and coat 52, Beowulf 55, and 45 + 46 (0x140182C50,
+        // 0x140181B40). The third sword (32) is drawn in fight 2 only.
+        // Weapons at rest: 0x1401857B0 state 0, records 0x14057BB50.
+        enum class Arms { yamato, beowulf, sparda };
+        struct ArmsName { Arms arms; const char* name; };
+        constexpr std::array<ArmsName, 3> arms_list{{
+            {Arms::yamato, "Yamato"}, {Arms::beowulf, "Beowulf"}, {Arms::sparda, "Force Edge (Sparda) + Yamato"}}};
+        constexpr std::array<float, 3> yamato_t{19.0F, -0.5F, 11.0F};
+        constexpr std::array<float, 3> yamato_r{0.0F, 3.839724063873291F, 0.0F};
+        constexpr std::array<float, 3> edge_t{-14.5F, 32.0F, -14.0F};
+        constexpr std::array<float, 3> edge_r{-1.6580626964569092F, 0.0F, 3.4033920764923096F};
+        const auto look = [&](const ArmsName& w, bool dt) {
+            ArchiveVariant v;
+            v.label = std::string{w.name} + (dt ? " · DT on" : " · DT off");
+            std::uint32_t n = 0U;
+            std::uint32_t k = 0U;
+            std::uint32_t t = 0U;
+            const auto add = [&](std::uint32_t slot, std::uint32_t texture) {
+                v.include_top_level_mod_slots[n++] = slot;
+                v.texture_overrides[t++] = {slot, texture};
+            };
+            const auto hang = [&](std::uint32_t host, std::uint32_t child, std::uint32_t joint,
+                                  const std::array<float, 3>& tr, const std::array<float, 3>& rot) {
+                v.part_attachments[k++] = {host, child, joint, false, true, true, tr, rot, true};
+            };
+            const auto hide = [&v](std::uint32_t slot, std::initializer_list<std::uint32_t> objects) {
+                v.hide_slot = slot;
+                for (const auto o : objects) v.hide_objects[v.hide_count++] = o;
+            };
+            const bool beowulf = w.arms == Arms::beowulf;
+            std::uint32_t body = 0U;
+            if (dt && beowulf) {
+                body = 45U;
+                add(45U, 44U);
+                add(46U, 44U);  // coat nodes: kEm035Slot46
+            } else if (dt) {
+                body = 15U;
+                add(15U, 14U);
+                add(17U, 14U);  // the sheath grown on the forearm
+                add(18U, 14U);  // nodes: kEm035Slot18 (16 replaces it in three moves, [this+0xED38])
+                v.part_attachments[k++] = {15U, 17U, 12U, true, true, true};
+            } else if (beowulf) {
+                body = 51U;
+                add(51U, 50U);
+                add(52U, 50U);
+                v.part_attachments[k++] = {51U, 52U, kPlayerCoatHostJoint, true, true, true};
+                hide(51U, {2U});  // 0x140182C50
+            } else {
+                body = 1U;
+                add(1U, 0U);
+                add(3U, 0U);
+                v.part_attachments[k++] = {1U, 3U, kPlayerCoatHostJoint, true, true, true};
+                hide(1U, {4U, 7U, 8U, 9U, 10U, 11U, 12U});  // 0x140183DB0, 0x140186680
             }
+            add(25U, 24U);
+            if (dt && !beowulf) {
+                hang(17U, 25U, 1U, {12.0F, 0.0F, -9.7F}, {0.0F, -1.6580626964569092F, 0.0F});
+            } else {
+                add(28U, 27U);
+                hang(body, 28U, 13U, yamato_t, yamato_r);
+                hang(body, 25U, 13U, yamato_t, yamato_r);
+            }
+            if (w.arms == Arms::sparda) {
+                add(32U, 31U);
+                hang(body, 32U, 3U, edge_t, edge_r);
+            }
+            if (beowulf) add(55U, 54U);  // its nodes follow the body joints
+            v.include_top_level_mod_count = n;
+            v.texture_override_count = t;
+            v.part_attachment_count = k;
+            return v;
+        };
+        for (const bool dt : {false, true}) {
+            for (const auto& w : arms_list) out.push_back(look(w, dt));
         }
         return out;
     }
@@ -1123,20 +1164,163 @@ std::vector<ArchiveVariant> archive_variants(std::string_view archive_name) {
         }
         return true;
     };
+    // Both brothers load em026.pac (case 0x1B); brother 0 hides object 3 of
+    // the body, brother 1 object 2 (0x140122ED0). Kind 2 draws both swords.
     if (named("em026.pac") || named("em027.pac")) {
-        const bool agni = named("em026.pac");
-        ArchiveVariant brother;
-        brother.label = agni ? "Agni" : "Rudra";
-        const std::uint32_t sword = agni ? 2U : 3U;
-        brother.include_top_level_mod_slots = {1U, sword};
-        brother.include_top_level_mod_count = 2U;
-        brother.part_attachments[0] = agni
-            ? ArchivePartAttachment{1U, 2U, 7U, false, true, true, {-20.0F, -5.5F, 0.0F},
-                                    {0.0F, 0.0F, 0.0F}, true}
-            : ArchivePartAttachment{1U, 3U, 11U, false, true, true, {20.0F, -5.5F, 0.0F},
-                                    {3.1415925F, -0.17453292F, 3.1415925F}, true};
-        brother.part_attachment_count = 1U;
-        out.push_back(brother);
+        const bool two = named("em026.pac");
+        const auto brother = [](std::string label, bool agni_sword, bool rudra_sword, std::uint32_t hidden) {
+            ArchiveVariant v;
+            v.label = std::move(label);
+            v.include_top_level_mod_slots[v.include_top_level_mod_count++] = 1U;
+            if (agni_sword) {
+                v.include_top_level_mod_slots[v.include_top_level_mod_count++] = 2U;
+                v.part_attachments[v.part_attachment_count++] =
+                    {1U, 2U, 7U, false, true, true, {-20.0F, -5.5F, 0.0F}, {0.0F, 0.0F, 0.0F}, true};
+            }
+            if (rudra_sword) {
+                v.include_top_level_mod_slots[v.include_top_level_mod_count++] = 3U;
+                v.part_attachments[v.part_attachment_count++] =
+                    {1U, 3U, 11U, false, true, true, {20.0F, -5.5F, 0.0F},
+                     {3.1415925F, -0.17453292F, 3.1415925F}, true};
+            }
+            if (hidden != 0U) {
+                v.hide_slot = 1U;
+                v.hide_objects[v.hide_count++] = hidden;
+            }
+            return v;
+        };
+        if (two) {
+            out.push_back(brother("Agni", true, false, 3U));
+            out.push_back(brother("Rudra", false, true, 2U));
+            out.push_back(brother("Both swords", true, true, 0U));
+        } else {
+            out.push_back(brother("Rudra", false, true, 0U));
+            out.push_back(brother("Both swords", true, true, 0U));
+        }
+        return out;
+    }
+
+    // Enemies whose archive holds several actors or parts drawn only at times.
+    const auto look = [](std::string label, std::initializer_list<std::pair<std::uint32_t, std::uint32_t>> mod_ptx,
+                         std::initializer_list<std::uint32_t> packs = {}) {
+        ArchiveVariant v;
+        v.label = std::move(label);
+        for (const auto& [mod, ptx] : mod_ptx) {
+            v.include_top_level_mod_slots[v.include_top_level_mod_count++] = mod;
+            v.texture_overrides[v.texture_override_count++] = {mod, ptx};
+        }
+        for (const auto pack : packs) v.motion_packs[v.motion_pack_count++] = pack;
+        return v;
+    };
+    // em010 (Arachne), init 0x1400C0B40, draw 0x1400C5860: the two halves 1
+    // and 2 always, 3 only in states 1-4 of [this+0x4744].
+    if (named("em010.pac")) {
+        out.push_back(look("Arachne", {{1U, 0U}, {2U, 0U}}));
+        out.push_back(look("Arachne + part 3", {{1U, 0U}, {2U, 0U}, {3U, 0U}}));
+        return out;
+    }
+    // em012 (Dullahan), init 0x1400D6FC0: body 0 with PTX 1; the EFM 3 (PTX
+    // 4), faded, follows body joint 2.
+    if (named("em012.pac")) {
+        ArchiveVariant v = look("Dullahan", {{0U, 1U}, {3U, 4U}});
+        v.part_attachments[0] = {0U, 3U, 2U, false, true, true};
+        v.part_attachment_count = 1U;
+        out.push_back(std::move(v));
+        out.push_back(look("Dullahan without the core", {{0U, 1U}}));
+        return out;
+    }
+    // em013, init 0x1400DB400, draw 0x1400E1AA0: 2 only with [this+0x2100] 1;
+    // 8 is the arrow, an actor of its own (0x1400DDFA0). 0x1400E14E0 swaps
+    // nine objects of the body for object 37 (the resting state) and back.
+    if (named("em013.pac")) {
+        for (const bool feet : {false, true}) {
+            ArchiveVariant v = feet ? look("Enigma + feet", {{1U, 0U}, {2U, 0U}}) : look("Enigma", {{1U, 0U}});
+            v.hide_slot = 1U;
+            for (const auto o : {3U, 4U, 6U, 8U, 9U, 11U, 13U, 14U, 16U}) v.hide_objects[v.hide_count++] = o;
+            out.push_back(std::move(v));
+        }
+        out.push_back(look("Arrow", {{8U, 0U}}));
+        return out;
+    }
+    // em017 / em021 (the Damned Chessmen), init 0x1400ECED0: one actor per
+    // model with its own motion PAC (slot tables 0x14056C700, 0x14056DD60).
+    if (named("em017.pac")) {
+        out.push_back(look("Pawn", {{2U, 0U}}, {3U}));
+        out.push_back(look("Knight", {{7U, 0U}}, {8U}));
+        out.push_back(look("Bishop", {{12U, 0U}}, {13U}));
+        out.push_back(look("Rook", {{17U, 0U}}, {18U}));
+        return out;
+    }
+    if (named("em021.pac")) {
+        out.push_back(look("Queen", {{2U, 0U}}, {3U}));
+        out.push_back(look("King", {{7U, 0U}}, {8U}));
+        return out;
+    }
+    // em029 (Geryon): the horse (init 0x14013BA00) with its four flames, the
+    // carriage an actor of its own (CEm029Cart, init 0x14013DE90); 3, 5 and 7
+    // are loaded by neither.
+    if (named("em029.pac")) {
+        // The flames hang from the horse by the per-frame update 0x14013ABF0.
+        const auto flames = [](ArchiveVariant v) {
+            constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 4> joints{
+                {{17U, 6U}, {21U, 5U}, {25U, 5U}, {29U, 25U}}};
+            for (const auto& [slot, joint] : joints) {
+                v.part_attachments[v.part_attachment_count++] = {9U, slot, joint, true, true, true};
+            }
+            return v;
+        };
+        out.push_back(flames(look("Geryon + carriage",
+                                  {{9U, 0U}, {13U, 0U}, {17U, 0U}, {21U, 0U}, {25U, 0U}, {29U, 0U}}, {11U, 15U})));
+        out.push_back(flames(look("Geryon", {{9U, 0U}, {17U, 0U}, {21U, 0U}, {25U, 0U}, {29U, 0U}}, {11U})));
+        out.push_back(look("Carriage", {{13U, 0U}}, {15U}));
+        out.push_back(look("Spear", {{3U, 0U}}));
+        out.push_back(look("Wheel", {{5U, 0U}}));
+        out.push_back(look("Bomb", {{7U, 0U}}));
+        return out;
+    }
+    // em030 (Beowulf), init 0x14014D8B0, draw 0x14014FA60: 3 is drawn with
+    // body joint 22's matrix, 5 follows the body (kEm030Slot5) with its
+    // object 0 hidden until [this+0x4770].
+    if (named("em030.pac")) {
+        for (const bool shown : {false, true}) {
+            ArchiveVariant v = look(shown ? "Beowulf · Light wings on" : "Beowulf · Light wings off",
+                                    {{1U, 0U}, {3U, 0U}, {5U, 0U}});
+            v.part_attachments[0] = {1U, 3U, 22U, false, true, true};
+            v.part_attachment_count = 1U;
+            if (!shown) {
+                v.hide_slot = 5U;
+                v.hide_objects[v.hide_count++] = 0U;
+            }
+            out.push_back(std::move(v));
+        }
+        return out;
+    }
+    // em031 (Doppelganger), init 0x140157A10, draw 0x14015A170: wings 2
+    // (kEm031Slot2); the sword 3 by record [this+0x2C71] (0x14015A030, table
+    // 0x140579A00): 0 on the back, joint 3, as Rebellion; 2 in the right
+    // hand, joint 9; 3 in the left, joint 13. Objects 8-16 of the body are
+    // hidden at the start.
+    if (named("em031.pac")) {
+        struct Place { const char* name; std::uint32_t joint; std::array<float, 3> t, r; };
+        constexpr std::array<Place, 2> places{{
+            {"Sword on the back", 3U, {-14.5F, 32.0F, -14.0F}, {-1.6580626964569092F, 0.0F, 3.4033920764923096F}},
+            {"Sword in the hand", 9U, {-7.5999999F, -3.0F, -1.0F}, {0.0F, 0.0F, 0.0F}}}};
+        for (const auto& place : places) {
+            ArchiveVariant v = look(place.name, {{1U, 0U}, {2U, 0U}, {3U, 0U}});
+            v.part_attachments[0] = {1U, 3U, place.joint, false, true, true, place.t, place.r, true};
+            v.part_attachment_count = 1U;
+            v.hide_slot = 1U;
+            for (std::uint32_t o = 8U; o < 17U; ++o) v.hide_objects[v.hide_count++] = o;
+            out.push_back(std::move(v));
+        }
+        return out;
+    }
+    // em032, init 0x140160760: 1 and 2 (kEm032Slot2) always; EFM 12 and 15
+    // (PTX 11) belong to spawned actors.
+    if (named("em032.pac")) {
+        out.push_back(look("Body", {{1U, 0U}, {2U, 0U}}));
+        out.push_back(look("Effect model 12", {{12U, 11U}}));
+        out.push_back(look("Effect model 15", {{15U, 11U}}));
         return out;
     }
 
@@ -1358,6 +1542,19 @@ bool is_attached_part(const Session* session, std::size_t part) noexcept {
 
 namespace dmcresource::motion {
 
+bool motions_only_archive(std::string_view archive_name, std::string_view added) noexcept {
+    const auto is = [](std::string_view path, std::string_view name) {
+        const auto slash = path.find_last_of("/\\");
+        if (slash != std::string_view::npos) path.remove_prefix(slash + 1U);
+        if (path.size() != name.size()) return false;
+        for (std::size_t i = 0U; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(path[i])) != name[i]) return false;
+        }
+        return true;
+    };
+    return is(archive_name, "em027.pac") && is(added, "em026.pac");
+}
+
 std::vector<KitEntry> character_kit(std::string_view archive_name) {
     std::vector<KitEntry> out;
     const auto slash = archive_name.find_last_of("/\\");
@@ -1380,6 +1577,10 @@ std::vector<KitEntry> character_kit(std::string_view archive_name) {
         }
         return {};
     };
+    if (stem == "em027") {
+        out.push_back({"motions", "em026.pac", "Agni and Rudra motions", true});
+        return out;
+    }
     const auto rule = visibility_rule_for(archive_name);
     if (rule == VisibilityRule::dante || stem == "pl000") {
         // Dante and his costumes share pl000's motion banks (0-2 base).

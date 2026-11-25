@@ -37,11 +37,11 @@ std::optional<CoatStates> CoatStates::parse(std::span<const std::uint8_t> bytes)
         r.offset = u16(bytes, o + 2U);
         if (r.offset + kRecord > bytes.size() || r.group + kRecord > bytes.size()) return std::nullopt;
         r.stiffness = f32(bytes, r.offset);
-        r.wind_y = f32(bytes, r.offset + 4U);
-        r.gravity = {f32(bytes, r.offset + 8U), f32(bytes, r.offset + 12U), f32(bytes, r.offset + 16U)};
-        const bool sane = std::isfinite(r.stiffness) && std::fabs(r.stiffness) <= 4.0F && std::isfinite(r.wind_y) &&
-                          std::fabs(r.wind_y) <= 4.0F &&
-                          std::all_of(r.gravity.begin(), r.gravity.end(),
+        r.gravity_y = f32(bytes, r.offset + 4U);
+        r.wind = {f32(bytes, r.offset + 8U), f32(bytes, r.offset + 12U), f32(bytes, r.offset + 16U)};
+        const bool sane = std::isfinite(r.stiffness) && std::fabs(r.stiffness) <= 4.0F && std::isfinite(r.gravity_y) &&
+                          std::fabs(r.gravity_y) <= 4.0F &&
+                          std::all_of(r.wind.begin(), r.wind.end(),
                                       [](float g) { return std::isfinite(g) && std::fabs(g) <= 4.0F; });
         if (!sane) return std::nullopt;
         out.records_.push_back(r);
@@ -61,8 +61,8 @@ int coat_state_at(std::span<const ScriptSignalKey> keys, float frame) noexcept {
 ClothParams coat_params(const ClothParams& base, const CoatStateRecord& record) noexcept {
     ClothParams out = base;
     out.stiffness = record.stiffness;
-    out.wind = {0.0F, record.wind_y, 0.0F};
-    out.gravity = record.gravity;
+    out.gravity = {0.0F, record.gravity_y, 0.0F};
+    out.wind = record.wind;
     return out;
 }
 

@@ -334,6 +334,13 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 ++report.effect_models_skipped;
                 continue;
             }
+            if (entry.kind.format == Format::Mod && entry.archive != 0U &&
+                entry.archive < archive_names.size() &&
+                motion::motions_only_archive(archive_name, archive_names[entry.archive])) {
+                // Added for its motions: its models are another actor.
+                ++report.variant_models_skipped;
+                continue;
+            }
             if (entry.kind.format == Format::Mod && position != nullptr &&
                 position->include_top_level_mod_count != 0U &&
                 entry.archive == 0U && entry.container.empty()) {
@@ -416,6 +423,22 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                     const auto& wanted = variant->motion_slots;
                     if (std::find(wanted.begin(), wanted.end(), pack) == wanted.end()) {
+                        ++report.variant_motions_skipped;
+                        continue;
+                    }
+                }
+                // A look with its own motion PACs (one actor of several).
+                if (position != nullptr && position->motion_pack_count != 0U && entry.archive == 0U &&
+                    entry.depth == 1U && entry.container.rfind("slot_", 0) == 0U) {
+                    std::uint32_t pack = 0U;
+                    try {
+                        pack = static_cast<std::uint32_t>(std::stoul(entry.container.substr(5U, 4U)));
+                    } catch (...) {
+                        pack = 0U;
+                    }
+                    const auto* first = position->motion_packs.data();
+                    const auto* last = first + position->motion_pack_count;
+                    if (std::find(first, last, pack) == last) {
                         ++report.variant_motions_skipped;
                         continue;
                     }
@@ -789,6 +812,9 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     } else if (*entry.slot == 4U && *clt_slot == 7U &&
                                motion::enemy_constraints_for(archive_name, 4U).has_value()) {
                         capsules = motion::kEm028HairCapsules;
+                    } else if (motion::em035_body_capsule_coat(archive_name, *entry.slot)) {
+                        // The same six body capsules (0x14058B260) as the player's coat.
+                        capsules = motion::kPlayerCoatCapsules;
                     }
                     const auto nodes =
                         motion::attach_part_cloth(assembled.get(), part, text, 60U, capsules);

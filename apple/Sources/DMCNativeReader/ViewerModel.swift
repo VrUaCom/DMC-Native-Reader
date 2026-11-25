@@ -333,6 +333,8 @@ final class ViewerModel: ObservableObject {
     @Published private(set) var roomName: String?
     /// The settings panel beside the view (the toolbar's gear).
     @Published var settingsShown = false
+    /// The Info panel is open (beside the view).
+    @Published var infoShown = false
     /// The textures panel beside the view, and its rows.
     @Published var texturesShown = false
     @Published var textureSlots: [TextureSlot] = []
