@@ -1,0 +1,484 @@
+// The reader's photo and video camera (spider/camera.h): the settings and
+// their starting values, the sizes of pictures and videos, the framing that
+// keeps a capture equal to the viewfinder, the exposure and the developing.
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <vector>
+
+#include <fcntl.h>
+#include <unistd.h>
+
+#include "dmcresource/camera_control.h"
+#include "dmcresource/spider/camera.h"
+
+using namespace dmcresource;
+namespace cam = dmcresource::spider::camera;
+
+namespace {
+
+int index_of(cam::Key key) {
+    const auto& list = cam::settings();
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (list[i].key == key) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void choose(cam::Key key, int option) {
+    std::vector<int> values;
+    for (const auto& s : cam::settings()) values.push_back(cam::choice(s.key));
+    values[static_cast<std::size_t>(index_of(key))] = option;
+    cam::set_choices(values);
+}
+
+// Picks an option by its name, as the settings window shows it.
+void choose_named(cam::Key key, const std::string& option) {
+    const auto& options = cam::settings()[static_cast<std::size_t>(index_of(key))].options;
+    for (std::size_t i = 0; i < options.size(); ++i) {
+        if (options[i] == option) {
+            choose(key, static_cast<int>(i));
+            return;
+        }
+    }
+    assert(false && "no such option");
+}
+
+RgbaImage grey(int w, int h, std::uint8_t v) {
+    RgbaImage image;
+    image.width = w;
+    image.height = h;
+    image.pixels.assign(static_cast<std::size_t>(w) * h * 4U, v);
+    for (std::size_t i = 3; i < image.pixels.size(); i += 4) image.pixels[i] = 255U;
+    return image;
+}
+
+}  // namespace
+
+int main() {
+    // Every setting is listed once, with options and a starting value in range.
+    const auto& list = cam::settings();
+    assert(list.size() == static_cast<std::size_t>(cam::Key::Count));
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        assert(static_cast<std::size_t>(list[i].key) == i);
+        assert(!list[i].id.empty() && !list[i].section.empty() && list[i].options.size() >= 2U);
+        assert(list[i].start >= 0 && list[i].start < static_cast<int>(list[i].options.size()));
+        assert(cam::choice(list[i].key) == list[i].start);
+    }
+
+    // Starting values: a PNG of the view's frame, a 1080p 16:9 H.264 at 30.
+    auto photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 2400 && photo.height == 1080 && photo.format == 0 && photo.burst == 1);
+    assert(photo.subtitles && photo.timer_seconds == 0);
+    auto video = cam::plan(cam::Kind::Video, 2400, 1080);
+    assert(video.width == 2400 && video.height == 1072 && video.fps == 30 && video.format == 0);
+    assert(video.keyframe_ms == 1000 && video.limit_seconds == 0 && video.quality > 1'500'000);
+    // One camera: a 16:9 frame in a 20:9 view, bars at the sides, is the
+    // pictures' frame and the videos'.
+    choose_named(cam::Key::CameraShape, "16:9");
+    video = cam::plan(cam::Kind::Video, 2400, 1080);
+    assert(video.width == 1920 && video.height == 1072);
+    const auto frame = cam::frame_in_view(cam::Kind::Video, 2400, 1080);
+    const auto photo_frame = cam::frame_in_view(cam::Kind::Photo, 2400, 1080);
+    assert(frame.x == photo_frame.x && frame.width == photo_frame.width);
+    assert(std::abs(frame.height - 1080.0F) < 0.5F && std::abs(frame.width - 1920.0F) < 0.5F);
+    assert(std::abs(frame.x - 240.0F) < 0.5F && frame.y == 0.0F);
+
+    // 8K and 9:16: the long side is 7680, upright.
+    choose(cam::Key::PhotoSize, 7);
+    choose_named(cam::Key::CameraShape, "9:16");
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.height == 7680 && photo.width == 4320);
+    // An upright frame in a wide view: the capture zooms so it shows what
+    // the viewfinder frame shows (the view's short side over the frame's).
+    const auto upright = cam::frame_in_view(cam::Kind::Photo, 2400, 1080);
+    assert(std::abs(upright.width - 607.5F) < 0.5F);
+    assert(std::abs(cam::capture_zoom(cam::Kind::Photo, 1.0F, 2400, 1080) - 1080.0F / 607.5F) < 1e-3F);
+    cam::reset_choices();
+    assert(std::abs(cam::capture_zoom(cam::Kind::Photo, 1.3F, 2400, 1080) - 1.3F) < 1e-5F);
+
+    // A fixed lens: 50 mm frames 24 mm of short side, whatever the view zoom.
+    choose(cam::Key::LensFocal, 6);
+    assert(std::abs(cam::focal_mm(cam::capture_zoom(cam::Kind::Photo, 3.0F, 2400, 1080)) - 50.0F) < 0.01F);
+    assert(std::abs(cam::focal_mm(1.0F) - 21.97F) < 0.05F);  // the view's zoom 1 is about 22 mm
+    cam::reset_choices();
+
+    // Exposure: auto keeps the rendered picture; manual counts the light.
+    assert(cam::exposure().gain == 1.0F && cam::exposure().iso == 100);
+    choose(cam::Key::ExposureMode, 1);
+    choose_named(cam::Key::ExposureIso, "400");
+    auto e = cam::exposure();
+    assert(e.iso == 400 && std::abs(e.gain - 4.0F) < 1e-4F);  // two stops over at 1/60 f/4
+    choose(cam::Key::ExposureIso, 0);       // auto ISO
+    choose_named(cam::Key::ExposureShutter, "1/250");
+    e = cam::exposure();
+    assert(e.iso > 400 && e.iso < 420 && std::abs(e.gain - 1.0F) < 0.05F);
+    cam::reset_choices();
+
+    // Developing: the starting look leaves a picture as it is.
+    auto image = grey(64, 48, 128U);
+    cam::develop(&image, 7U);
+    for (std::size_t i = 0; i < image.pixels.size(); ++i) assert(image.pixels[i] == (i % 4U == 3U ? 255U : 128U));
+    // +1 EV brightens, a monochrome style has no colour, tungsten balance cools.
+    choose(cam::Key::ExposureCompensation, 7);
+    image = grey(8, 8, 100U);
+    cam::develop(&image, 1U);
+    assert(image.pixels[0] > 120U);
+    cam::reset_choices();
+    choose(cam::Key::ColourBalance, 4);
+    image = grey(8, 8, 128U);
+    cam::develop(&image, 1U);
+    assert(image.pixels[2] > image.pixels[0]);
+    cam::reset_choices();
+    choose(cam::Key::ColourStyle, 3);
+    image = grey(8, 8, 0U);
+    for (std::size_t i = 0; i < image.pixels.size(); i += 4) image.pixels[i] = 200U;
+    cam::develop(&image, 1U);
+    assert(image.pixels[0] == image.pixels[1] && image.pixels[1] == image.pixels[2]);
+    cam::reset_choices();
+    // ISO 6400 noise moves pixels, and differently from frame to frame.
+    choose_named(cam::Key::ExposureIso, "6400");
+    auto a = grey(32, 32, 128U);
+    auto b = grey(32, 32, 128U);
+    cam::develop(&a, 1U);
+    cam::develop(&b, 2U);
+    int moved = 0;
+    int differ = 0;
+    for (std::size_t i = 0; i < a.pixels.size(); i += 4) {
+        moved += a.pixels[i] != 128U ? 1 : 0;
+        differ += a.pixels[i] != b.pixels[i] ? 1 : 0;
+    }
+    assert(moved > 500 && differ > 500);
+    cam::reset_choices();
+    // Vignetting darkens the corners, not the centre.
+    choose(cam::Key::LensVignette, 2);
+    image = grey(65, 65, 200U);
+    cam::develop(&image, 1U);
+    assert(image.pixels[0] < 120U && image.pixels[(32U * 65U + 32U) * 4U] == 200U);
+    cam::reset_choices();
+
+    // Megapixels in the picture's shape: 12 MP at 4:3 is 4000 x 3000; 124 MP
+    // at 3:2 is past one render (drawn in tiles); 2.35:1 is a scope frame.
+    choose(cam::Key::PhotoMegapixels, 4);
+    choose_named(cam::Key::CameraShape, "4:3");
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 4000 && photo.height == 3000);
+    choose(cam::Key::PhotoMegapixels, 13);
+    choose_named(cam::Key::CameraShape, "3:2");
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 13638 && photo.height == 9092);
+    choose(cam::Key::PhotoMegapixels, 15);  // 200 MP at 2.35:1
+    choose_named(cam::Key::CameraShape, "2.35:1");
+    photo = cam::plan(cam::Kind::Photo, 2400, 1080);
+    assert(photo.width == 21678 && photo.height == 9224);
+    cam::reset_choices();
+    choose_named(cam::Key::CameraShape, "2.35:1");  // a 2.35:1 video
+    video = cam::plan(cam::Kind::Video, 2400, 1080);
+    assert(video.height == 1072 && video.width == 2528);
+    cam::reset_choices();
+    // A 400 mm lens.
+    choose(cam::Key::LensFocal, 12);
+    assert(std::abs(cam::focal_mm(cam::capture_zoom(cam::Kind::Photo, 1.0F, 2400, 1080)) - 400.0F) < 0.1F);
+    cam::reset_choices();
+
+    // Depth of field: a far wall behind a near, sharp square. Focused on the
+    // square (auto, the middle), the square stays sharp and the wall's
+    // stripes blur; at f/22 they stay sharper than at f/1.4.
+    {
+        const auto scene = [](std::vector<float>* depth) {
+            auto picture = grey(200, 120, 0U);
+            depth->assign(200U * 120U, 2000.0F);
+            for (int y = 0; y < 120; ++y) {
+                for (int x = 0; x < 200; ++x) {
+                    auto* px = &picture.pixels[(static_cast<std::size_t>(y) * 200U + x) * 4U];
+                    const bool square = x >= 80 && x < 120 && y >= 40 && y < 80;
+                    const std::uint8_t v = square ? ((x / 2) % 2 == 0 ? 255U : 0U) : ((x / 4) % 2 == 0 ? 255U : 0U);
+                    px[0] = px[1] = px[2] = v;
+                    if (square) (*depth)[static_cast<std::size_t>(y) * 200U + x] = 150.0F;
+                }
+            }
+            return picture;
+        };
+        const auto contrast_at = [](const RgbaImage& picture, int x0, int y) {
+            int lo = 255;
+            int hi = 0;
+            for (int x = x0; x < x0 + 8; ++x) {
+                const int v = picture.pixels[(static_cast<std::size_t>(y) * 200U + x) * 4U];
+                lo = std::min(lo, v);
+                hi = std::max(hi, v);
+            }
+            return hi - lo;
+        };
+        choose(cam::Key::LensDepthOfField, 1);
+        choose_named(cam::Key::LensAperture, "f/1.4");
+        std::vector<float> depth;
+        auto wide = scene(&depth);
+        cam::develop(&wide, 1U, 85.0F, &depth);
+        assert(std::abs(cam::last_focus() - 150.0F) < 1e-3F);
+        assert(contrast_at(wide, 96, 60) > 200);  // the square: sharp
+        assert(contrast_at(wide, 20, 10) < 60);   // the wall: blurred
+        choose_named(cam::Key::LensAperture, "f/22");
+        auto narrow = scene(&depth);
+        cam::develop(&narrow, 1U, 85.0F, &depth);
+        assert(contrast_at(narrow, 20, 10) > contrast_at(wide, 20, 10));
+        // Off, nothing moves.
+        cam::reset_choices();
+        auto off = scene(&depth);
+        cam::develop(&off, 1U, 85.0F, &depth);
+        assert(contrast_at(off, 20, 10) == 255);
+    }
+
+    // DNG: a TIFF whose first IFD is the developed preview and whose SubIFD
+    // is the RAW: 16-bit linear RGB (or one Bayer sample a pixel) filling the
+    // file to its end; full scale where the light is full.
+    for (const bool bayer : {false, true}) {
+        const std::string path = std::string(bayer ? "photo_camera_bayer" : "photo_camera_linear") + ".dng";
+        const int fd = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        assert(fd >= 0);
+        auto optical = grey(10, 6, 255U);
+        auto preview = grey(5, 3, 128U);
+        assert(cam::write_dng(fd, optical, preview, bayer, 1U, 50.0F));
+        ::close(fd);
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<std::uint8_t> file((std::istreambuf_iterator<char>(in)), {});
+        std::remove(path.c_str());
+        const auto u16 = [&](std::size_t at) { return static_cast<std::uint32_t>(file[at] | file[at + 1U] << 8U); };
+        const auto u32 = [&](std::size_t at) { return u16(at) | u16(at + 2U) << 16U; };
+        assert(file.size() > 8U && file[0] == 'I' && file[1] == 'I' && u16(2) == 42U);
+        const auto tag = [&](std::uint32_t ifd, std::uint32_t wanted) -> std::uint32_t {
+            for (std::uint32_t i = 0; i < u16(ifd); ++i) {
+                const std::size_t e = ifd + 2U + i * 12U;
+                if (u16(e) == wanted) return u16(e + 2U) == 3U ? u16(e + 8U) : u32(e + 8U);
+            }
+            return 0xFFFFFFFFU;
+        };
+        const std::uint32_t main = u32(4);
+        assert(tag(main, 256) == 5U && tag(main, 50706) != 0xFFFFFFFFU);
+        const std::uint32_t raw = tag(main, 330);
+        assert(tag(raw, 256) == 10U && tag(raw, 257) == 6U);
+        assert(tag(raw, 262) == (bayer ? 32803U : 34892U));
+        const std::uint32_t at = tag(raw, 273);
+        const std::uint32_t count = tag(raw, 279);
+        assert(count == 10U * 6U * (bayer ? 1U : 3U) * 2U && at + count == file.size());
+        assert(u16(at) == 65535U);
+    }
+
+    // The dials: f/0.5 to f/22, ISO 25 to 4 000 000 in real steps, the
+    // shutter 30 s to 1/2000.
+    {
+        const auto& aperture = cam::settings()[static_cast<std::size_t>(index_of(cam::Key::LensAperture))].options;
+        assert(aperture.front() == "f/0.5" && aperture[1] == "f/0.95" && aperture[2] == "f/1.2");
+        assert(aperture.back() == "f/22");
+        const auto& iso = cam::settings()[static_cast<std::size_t>(index_of(cam::Key::ExposureIso))].options;
+        assert(iso[1] == "25" && iso[2] == "32" && iso.back() == "4000000");
+        assert(std::find(iso.begin(), iso.end(), "102400") != iso.end());
+        const auto& shutter = cam::settings()[static_cast<std::size_t>(index_of(cam::Key::ExposureShutter))].options;
+        assert(shutter.front() == "30\"" && shutter.back() == "1/2000");
+        assert(shutter[static_cast<std::size_t>(cam::settings()[static_cast<std::size_t>(
+                   index_of(cam::Key::ExposureShutter))].start)] == "1/60");
+        // Manual at ISO 4 000 000, 1/2000, f/22: the light the dials give.
+        choose(cam::Key::ExposureMode, 1);
+        choose_named(cam::Key::ExposureIso, "4000000");
+        choose_named(cam::Key::ExposureShutter, "1/2000");
+        choose_named(cam::Key::LensAperture, "f/22");
+        const auto e = cam::exposure();
+        assert(e.iso == 4000000 && std::abs(e.gain - 40000.0F * 0.0005F * 60.0F * (4.0F / 22.0F) * (4.0F / 22.0F)) < 0.5F);
+        // Auto ISO at 30 s, f/0.5 falls to the bottom of the dial.
+        choose_named(cam::Key::ExposureIso, "Auto");
+        choose_named(cam::Key::ExposureShutter, "30\"");
+        choose_named(cam::Key::LensAperture, "f/0.5");
+        assert(cam::exposure().iso == 25);
+        cam::reset_choices();
+    }
+
+    // The polarizer: turned to the light's polarization it passes all of it;
+    // a quarter turn later it holds the polarized part back. White glare
+    // darkens the most, a saturated red the least.
+    {
+        choose(cam::Key::FilterPolarizer, 1);
+        choose_named(cam::Key::FilterPolarizerStrength, "Strong");
+        cam::set_polarizer_angle(0.0F);
+        auto glare = grey(3, 3, 240U);
+        cam::develop(&glare, 1U);
+        assert(glare.pixels[(1U * 3U + 1U) * 4U] >= 238U);  // the middle: the light's own angle
+        cam::set_polarizer_angle(3.14159265F / 2.0F);
+        glare = grey(3, 3, 240U);
+        cam::develop(&glare, 1U);
+        const int dark = glare.pixels[(1U * 3U + 1U) * 4U];
+        assert(dark < 200);
+        auto red = grey(3, 3, 0U);
+        for (std::size_t i = 0; i < red.pixels.size(); i += 4) red.pixels[i] = 200U;
+        cam::develop(&red, 1U);
+        assert(red.pixels[(1U * 3U + 1U) * 4U] > 170U);
+        // Half a turn is the same filter; camera mode makes it turnable.
+        assert(std::abs(cam::turn_polarizer(3.14159265F) - 3.14159265F / 2.0F) < 1e-4F);
+        assert(!cam::polarizer_turnable());
+        choose(cam::Key::FinderMode, 1);
+        assert(cam::polarizer_turnable());
+        assert(cam::viewfinder(nullptr, 300, 300, 1.0F, false, 0).status.find("CPL 90") != std::string::npos);
+        cam::reset_choices();
+        cam::set_polarizer_angle(0.0F);
+    }
+
+    // The camera bar's dials name the settings they turn, valued as a
+    // camera shows them.
+    {
+        auto dials = cam::dials();
+        assert(dials.size() >= 10U && dials[0].key == cam::Key::LensFocal && dials[0].value == "Zoom");
+        const auto value_of = [&](cam::Key key) {
+            for (const auto& d : cam::dials()) if (d.key == key) return d.value;
+            return std::string();
+        };
+        assert(value_of(cam::Key::LensAperture) == "f/4" && value_of(cam::Key::ExposureIso) == "Auto");
+        assert(value_of(cam::Key::ExposureShutter) == "1/60" && value_of(cam::Key::ColourBalance) == "AWB");
+        choose_named(cam::Key::ExposureIso, "1600");
+        choose_named(cam::Key::LensFocal, "85 mm");
+        choose_named(cam::Key::ExposureCompensation, "+1");
+        assert(value_of(cam::Key::ExposureIso) == "1600" && value_of(cam::Key::LensFocal) == "85 mm");
+        assert(value_of(cam::Key::ExposureCompensation) == "+1");
+        cam::reset_choices();
+    }
+
+    // Roll: the three-finger twist turns the camera about its axis; level
+    // takes it back.
+    assert(std::abs(cam::turn_roll(0.3F) - 0.3F) < 1e-5F && std::abs(cam::camera_roll() - 0.3F) < 1e-5F);
+    cam::level_camera();
+    assert(cam::camera_roll() == 0.0F);
+
+    // Gyroscope: only in camera mode with it on; the first reading is where
+    // the phone stands; then the camera turns by what the phone turned
+    // (as the drone's look stick: right lowers the yaw, up raises the
+    // pitch), times the sensitivity.
+    {
+        assert(!cam::gyro_active() && cam::gyro_turn(0.0F, 0.0F, 0.0F)[0] == 0.0F);
+        // Turning the ISO, shutter or aperture in Auto goes to Manual (an
+        // Auto ISO becomes 100 unless the ISO is turned); nothing else does.
+        cam::reset_choices();
+        {
+            const auto shutter = cam::follow_up(cam::Key::ExposureShutter, 3);
+            assert(shutter.changes.size() == 2U && shutter.changes[0].key == cam::Key::ExposureMode &&
+                   shutter.changes[0].option == 1 && shutter.changes[1].key == cam::Key::ExposureIso &&
+                   cam::settings()[static_cast<std::size_t>(cam::Key::ExposureIso)]
+                           .options[static_cast<std::size_t>(shutter.changes[1].option)] == "100" &&
+                   !shutter.message.empty());
+            const auto iso = cam::follow_up(cam::Key::ExposureIso, 13);
+            assert(iso.changes.size() == 1U && iso.changes[0].key == cam::Key::ExposureMode);
+            assert(cam::follow_up(cam::Key::LensAperture, 2).changes.size() == 2U);
+            assert(cam::follow_up(cam::Key::ColourStyle, 1).changes.empty());
+            choose(cam::Key::ExposureMode, 1);
+            assert(cam::follow_up(cam::Key::ExposureShutter, 3).changes.empty());
+            cam::reset_choices();
+        }
+        // The shutter a picture is exposed for: Auto's program keeps 1/60 or
+        // 1/focal length; Manual's is the dial's. SHAKE when a hand cannot
+        // hold it (about 1/focal length; a stabiliser 4 stops more).
+        assert(std::abs(cam::picture_shutter(50.0F) - 1.0F / 60.0F) < 1e-6F);
+        assert(std::abs(cam::picture_shutter(200.0F) - 1.0F / 200.0F) < 1e-6F);
+        choose(cam::Key::ExposureMode, 1);
+        choose_named(cam::Key::ExposureShutter, "1/4");
+        assert(std::abs(cam::picture_shutter(50.0F) - 0.25F) < 1e-6F);
+        assert(!cam::shake_warning(50.0F));  // tripod
+        choose_named(cam::Key::ExposureSupport, "Hand-held");
+        assert(cam::shake_warning(50.0F));
+        choose_named(cam::Key::ExposureSupport, "Stabilised");
+        assert(!cam::shake_warning(50.0F) && cam::shake_warning(200.0F));
+        choose_named(cam::Key::ExposureShutter, "1/60");
+        choose_named(cam::Key::ExposureSupport, "Hand-held");
+        assert(!cam::shake_warning(50.0F) && cam::shake_warning(85.0F));
+        cam::reset_choices();
+        // No cutscene: camera mode never waits for cuts.
+        assert(!cam::follows_cuts(nullptr));
+        assert(!cam::holds_screen_orientation());
+        choose(cam::Key::FinderMode, 1);
+        choose(cam::Key::GyroMode, 1);
+        choose_named(cam::Key::GyroSmoothing, "Off");
+        assert(cam::gyro_active());
+        assert(cam::holds_screen_orientation());  // the phone aims: the screen stays as it is
+        cam::gyro_reset();
+        auto turn = cam::gyro_turn(1.0F, 0.1F, 0.0F);
+        assert(turn[0] == 0.0F && turn[1] == 0.0F);
+        turn = cam::gyro_turn(1.1F, 0.15F, 0.0F);
+        assert(std::abs(turn[0] + 0.1F) < 1e-5F && std::abs(turn[1] - 0.05F) < 1e-5F);
+        choose_named(cam::Key::GyroSensitivity, "2\xC3\x97");
+        turn = cam::gyro_turn(1.2F, 0.15F, 0.0F);
+        assert(std::abs(turn[0] + 0.2F) < 1e-5F);
+        // Across the wrap of the heading, still a small turn.
+        cam::gyro_reset();
+        (void)cam::gyro_turn(3.1F, 0.0F, 0.0F);
+        turn = cam::gyro_turn(-3.1F, 0.0F, 0.0F);
+        assert(std::abs(turn[0] + 2.0F * (6.2831853F - 6.2F)) < 1e-3F);
+        // Smoothing takes a share of the turn per reading.
+        choose_named(cam::Key::GyroSensitivity, "1\xC3\x97");
+        choose_named(cam::Key::GyroSmoothing, "Medium");
+        cam::gyro_reset();
+        (void)cam::gyro_turn(0.0F, 0.0F, 0.0F);
+        turn = cam::gyro_turn(0.4F, 0.0F, 0.0F);
+        assert(std::abs(turn[0] + 0.1F) < 1e-5F);
+        // The phone's roll turns the camera with it (the scene keeps the
+        // world's horizon on the tilted screen) unless the horizon is the
+        // screen's (a gimbal).
+        cam::gyro_reset();
+        choose_named(cam::Key::GyroSmoothing, "Off");
+        (void)cam::gyro_turn(0.0F, 0.0F, 0.25F);
+        assert(std::abs(cam::camera_roll() - 0.25F) < 1e-5F);
+        choose_named(cam::Key::GyroHorizon, "Screen");
+        assert(cam::camera_roll() == 0.0F);
+        choose_named(cam::Key::GyroHorizon, "World");
+        assert(cam::viewfinder(nullptr, 300, 300, 1.0F, false, 0).status.find("ROLL +14") != std::string::npos);
+        cam::gyro_reset();
+        cam::reset_choices();
+    }
+
+    // Walking: only in camera mode with it on, and only a flying camera
+    // moves: a metre forward facing +z is 100 scene units along +z (times
+    // the scale); the height follows unless it is fixed.
+    {
+        namespace cc = dmcresource::camera;
+        cc::reset();
+        assert(!cam::walk(0.0F, 1.0F, 0.0F, 0.0F));
+        choose(cam::Key::FinderMode, 1);
+        choose(cam::Key::WalkMode, 1);
+        assert(cam::walk_active() && !cam::walk(0.0F, 1.0F, 0.0F, 0.0F));  // not flying
+        cc::enter_fly({0.0F, 0.0F, 0.0F});
+        assert(cam::walk(0.0F, 1.0F, 0.0F, 0.5F));
+        auto eye = cc::current().eye;
+        assert(std::abs(eye.z - 100.0F) < 1e-3F && std::abs(eye.x) < 1e-3F && std::abs(eye.y - 50.0F) < 1e-3F);
+        choose_named(cam::Key::WalkScale, "10 m");
+        choose(cam::Key::WalkHeight, 1);
+        assert(cam::walk(0.0F, 0.0F, 0.0F, 1.0F));
+        assert(std::abs(cc::current().eye.y - 50.0F) < 1e-3F);  // the height is fixed
+        (void)cam::walk(0.0F, 0.1F, 0.0F, 0.0F);
+        assert(std::abs(cc::current().eye.z - 200.0F) < 1e-2F);
+        cc::reset();
+        cam::reset_choices();
+    }
+
+    // Focus by touch: the ring moves the point in log steps from what the
+    // auto focus found; a lock keeps that, a second press lets it go.
+    {
+        cam::clear_focus_point();
+        const float found = cam::turn_focus_ring(0.0F);
+        assert(found > 0.0F);
+        assert(std::abs(cam::turn_focus_ring(0.69314718F) - 2.0F * found) < 0.01F * found);
+        assert(!cam::toggle_focus_lock() && cam::focus_point() == 0.0F);
+        assert(cam::toggle_focus_lock() && cam::focus_point() > 0.0F);
+        assert(std::abs(cam::units_to_metres(250.0F) - 2.5F) < 1e-5F);
+        cam::clear_focus_point();
+    }
+
+    // The viewfinder: off at the start; on, it frames the picture with the
+    // thirds and writes the settings; recording frames the video.
+    assert(!cam::viewfinder(nullptr, 2400, 1080, 1.0F, false, 0).shown);
+    choose(cam::Key::FinderMode, 1);
+    auto finder = cam::viewfinder(nullptr, 2400, 1080, 1.0F, false, 0);
+    assert(finder.shown && finder.lines.size() == 4U && finder.status.find("ISO 100") != std::string::npos);
+    assert(finder.status.find("PNG 2400") != std::string::npos);
+    choose_named(cam::Key::CameraShape, "16:9");
+    finder = cam::viewfinder(nullptr, 2400, 1080, 1.0F, true, 75);
+    assert(finder.status.find("REC 1:15") != std::string::npos && std::abs(finder.frame.x - 240.0F) < 0.5F);
+    cam::reset_choices();
+    return 0;
+}

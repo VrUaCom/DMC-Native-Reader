@@ -42,6 +42,9 @@ struct CompositeNodeConstraint final {
     std::uint32_t child_node{};
     std::uint32_t host_node{};
     Matrix4 offset{};  // world = offset x host joint world
+    // CCnsDirPos (0x1402CA770): at the joint, X along the joint's X axis, Y as
+    // near the world's up as that leaves.
+    bool upright{};
 };
 
 struct CompositePlacement final {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -48,6 +49,13 @@ struct ClothParams final {
 // Every block of a .clt text; empty when the text is not a cloth file.
 [[nodiscard]] std::vector<ClothParams> parse_clt(std::string_view text);
 
+// The solver state of a .clt over a model of `node_count` nodes: the bones of
+// every ClothNo block (0x1402CA1D0 reads ClothNum of them) with their axes and
+// blocks; node 0, the root, never moves. nullptr when the text lists none of
+// the model's nodes.
+struct ClothState;
+[[nodiscard]] std::shared_ptr<ClothState> make_cloth_state(std::size_t node_count, std::string_view clt_text);
+
 // Collision capsule on a host (body) joint: segment a-b in joint space and
 // radius. Set by 0x1402CA2F0 (chain +0x30 joints, +0x58 entries {flags 8,
 // joint, shape}, +0x60 shapes of 0x50 bytes, +0x50 count).
@@ -67,6 +75,11 @@ inline constexpr std::array<ClothCapsule, 6> kPlayerCoatCapsules{{
     {16U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
     {19U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
     {20U, {0.0F, 0.0F, 0.0F}, {0.0F, -50.0F, 0.0F}, 10.0F},
+}};
+
+// The amulet of the coatless costumes: entry 0x14058B054, shape 0x14058B3D0.
+inline constexpr std::array<ClothCapsule, 1> kPlayerAmuletCapsules{{
+    {3U, {0.0F, 12.0F, 2.0F}, {0.0F, -10.0F, 2.0F}, 6.0F},
 }};
 
 // CEm028 hair chain (slot 4 <- em028_01.clt): 0x140130D9A sets entry table

@@ -1,3 +1,4 @@
+#include "dmcresource/scm_layout_compat.h"
 #include "dmcresource/vector_math.h"
 #include "dmcresource/resource_limits.h"
 #include "dmcresource/adapters/scm_adapter.h"
@@ -18,11 +19,27 @@
 #include "dmc_rengine/formats/scm_render.hpp"
 #include "dmc_rengine/formats/scm_topology.hpp"
 #include "dmc_rengine/formats/scm_transform.hpp"
+#include "dmcresource/game_material.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/uv_projection.h"
 
 namespace dmcresource::adapters {
 namespace {
+
+// The alpha control the SCM initializer keeps (0x140302F10): the file byte,
+// except two objects it corrects by their index, byte and the texture slots
+// of their first four meshes (0xEA -> 0xC5, 0xC4 -> 0x80, the second turning
+// off that object's punch-through alpha).
+std::uint8_t scm_alpha_control(const dmc::rengine::formats::scm::Object& object, std::size_t object_index) {
+    if ((object.flags & 0xFU) != 0U || object.meshes.size() < 4U) return object.alpha_control;
+    const auto slots_are = [&object](std::uint16_t a, std::uint16_t b, std::uint16_t c, std::uint16_t d) {
+        return object.meshes[0].texture_index == a && object.meshes[1].texture_index == b &&
+               object.meshes[2].texture_index == c && object.meshes[3].texture_index == d;
+    };
+    if (object.alpha_control == 0xEAU && object_index == 10U && slots_are(0x74U, 0x3BU, 0x45U, 0xADU)) return 0xC5U;
+    if (object.alpha_control == 0xC4U && object_index == 0x10U && slots_are(0x74EU, 4U, 0xCU, 0x134U)) return 0x80U;
+    return object.alpha_control;
+}
 
 namespace scm = dmc::rengine::formats::scm;
 
@@ -302,7 +319,11 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
         const auto byte_span = std::span<const std::byte>{
             reinterpret_cast<const std::byte*>(bytes), size};
         const auto parsed = scm::Parser::parse(byte_span);
-        if (!parsed.ok()) {
+        // Placement alone (streams in another order, every one read through
+        // its offset) does not keep a model from the view; it is noted.
+        const bool community_layout =
+            !parsed.ok() && scm_layout_compat::readable_despite_placement(parsed, size);
+        if (!parsed.ok() && !community_layout) {
             return module_support::reject(
                 probe, module_id,
                 "SCM rejected by canonical parser: " + first_error(parsed));
@@ -311,6 +332,7 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
         PipelineResult out;
         out.accepted = true;
         out.probe = probe;
+        if (community_layout) out.modules.push_back({scm_layout_compat::kModuleName, true});
         out.modules.push_back({"identity-probe", true});
         out.modules.push_back({"bounded-read-guard", true});
         out.modules.push_back({"canonical.scm.structural-parser", true});
@@ -445,6 +467,11 @@ PipelineResult run_scm_adapter(const ProbeResult& probe,
                         "SCM canonical local-mesh projection exceeded topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
+                // The object's material byte, as for MOD (game_material.h),
+                // with the SCM initializer's two fixes of the alpha control.
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
+                                             game_material::material_byte(object.flags,
+                                                                          scm_alpha_control(object, object_index)));
 
                 const auto primitive_index =
                     static_cast<std::uint32_t>(out.scene.meshes.size());

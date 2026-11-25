@@ -1164,8 +1164,8 @@ void draw_texture_crop(Canvas& canvas, const ImagePreview& texture,
         const auto* linked_item = find_link(kind, entry.id);
         if (linked_item != nullptr && linked_item->preview != nullptr &&
             linked_item->preview->available()) {
-            draw_texture_fit(canvas, *linked_item->preview,
-                             x - half, y - half, x + half, y + half);
+            (void)draw_texture_fit(canvas, *linked_item->preview,  // the fitted box is not needed here
+                                   x - half, y - half, x + half, y + half);
             outline(canvas, x - half, y - half, x + half, y + half,
                     raster::kAccent);
         } else {

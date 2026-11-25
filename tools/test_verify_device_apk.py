@@ -81,11 +81,12 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
             ["classes.dex", "res/a.xml"],
         )
 
-    def test_apk_and_installed_app_limits_are_four_mib(self):
-        four_mib = 4 * 1024 * 1024
-        self.assertEqual(verifier.MAX_APK_BYTES, four_mib)
-        self.assertEqual(verifier.MAX_INSTALLED_APP_BYTES, four_mib)
-        self.assertEqual(measure.MAX_INSTALLED_APP_BYTES, four_mib)
+    def test_apk_and_installed_app_limits_are_eight_mib(self):
+        eight_mib = 8 * 1024 * 1024
+        self.assertEqual(verifier.MAX_APK_BYTES, eight_mib)
+        self.assertEqual(verifier.MAX_NATIVE_BYTES, eight_mib)
+        self.assertEqual(verifier.MAX_INSTALLED_APP_BYTES, eight_mib)
+        self.assertEqual(measure.MAX_INSTALLED_APP_BYTES, eight_mib)
 
     def test_historical_v26_growth_constants_are_not_acceptance_api(self):
         self.assertFalse(hasattr(verifier, "ACCEPTED_V26_APK_BYTES"))
@@ -311,7 +312,7 @@ class VerifyDeviceApkPolicyTest(unittest.TestCase):
         self.assertEqual(stats["cache"], 2048)
         self.assertEqual(stats["dexopt_artifacts"], 1194304)
         self.assertLessEqual(stats["code"], measure.MAX_INSTALLED_APP_BYTES)
-        self.assertGreater(4194305, measure.MAX_INSTALLED_APP_BYTES)
+        self.assertGreater(8 * 1024 * 1024 + 1, measure.MAX_INSTALLED_APP_BYTES)
 
     def test_storage_stats_parser_fails_closed_without_code_bytes(self):
         with self.assertRaises(SystemExit):

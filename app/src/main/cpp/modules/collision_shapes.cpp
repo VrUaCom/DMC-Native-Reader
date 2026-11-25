@@ -18,7 +18,9 @@ bool looks_like_shape_table(std::span<const std::uint8_t> bytes) noexcept {
     if (bytes.size() < kShapeRecordSize || bytes.size() % kShapeRecordSize != 0U) return false;
     std::size_t known = 0U;
     for (std::size_t o = 0U; o < bytes.size(); o += kShapeRecordSize) {
-        if (bytes[o] > 6U) return false;
+        // The game dispatches types 0..6; GData.afs tables (em011, em017,
+        // em021) also hold 7 on all-zero records. Kept as read, not drawn.
+        if (bytes[o] > 15U) return false;
         for (std::size_t k = 1U; k < 0x10U; ++k) {
             if (bytes[o + k] != 0U) return false;
         }

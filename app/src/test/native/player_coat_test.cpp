@@ -675,7 +675,7 @@ int main() {
         dmcresource::pac_assembly::AssemblyReport em_report;
         auto pride = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 0U);
         assert(pride != nullptr && em_report.models == 3U && em_report.attached_parts == 2U);
-        assert(em_report.enemy_class == "CEm000 A" && em_report.variant_models_skipped == 1U);
+        assert(em_report.enemy_class == "Hell Pride, weapon A (CEm000)" && em_report.variant_models_skipped == 1U);
         const auto weapon_offset = motion::attach_local_matrix_zyx(variants[0].weapon_translation,
                                                                    variants[0].weapon_rotation_zyx);
         const std::size_t weapon_node = pride->composite_parts[0].scene.nodes.size() +
@@ -694,14 +694,14 @@ int main() {
         // Position 1: CEm000 with its variant 2-3 weapon (slot 29, absent here)
         // and no cloth (0x140097980 draws it for variants 0-1 only).
         auto pride_b = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 1U);
-        assert(pride_b != nullptr && em_report.enemy_class == "CEm000 B");
+        assert(pride_b != nullptr && em_report.enemy_class == "Hell Pride, weapon B (CEm000)");
         assert(em_report.models == 1U && em_report.attached_parts == 0U);
         auto lust = dmcresource::pac_assembly::assemble_pac(*em_archive, &em_report, "em000.pac", 2U);
-        assert(lust != nullptr && em_report.enemy_class == "CEm001 A");
+        assert(lust != nullptr && em_report.enemy_class == "Hell Gluttony, weapon A (CEm001)");
         const auto positions = motion::archive_variants("em000.pac");
-        assert(positions.size() == 12U && positions[8].label == "CEm004" &&
-               positions[9].label == "CEm005" && positions[10].label == "CEm005Shl00");
-        assert(positions.back().label == "CEm005Shl01" && positions.back().enemy->body_slot == 23U &&
+        assert(positions.size() == 12U && positions[8].label == "Hell Wrath (CEm004)" &&
+               positions[9].label == "Hell Greed (CEm005)" && positions[10].enemy->class_name == "CEm005Shl00");
+        assert(positions.back().enemy->class_name == "CEm005Shl01" && positions.back().enemy->body_slot == 23U &&
                positions.back().enemy->texture_slot == 32U);
         assert(motion::tsc_slot_for("em000.pac", 23U) == 24U);
         const auto nevan_positions = motion::archive_variants("EM028.pac");
@@ -1075,6 +1075,12 @@ int main() {
         auto bad = shapes;
         bad[3] = 1U;                         // padding must stay zero
         assert(!collision::looks_like_shape_table(bad));
+        auto seven = shapes;
+        seven[0x50U] = 7U;                   // an unused record of type 7 (em011 slot 10)
+        assert(collision::looks_like_shape_table(seven));
+        auto wild = shapes;
+        wild[0x50U] = 0x40U;                 // not a type byte
+        assert(!collision::looks_like_shape_table(wild));
         assert(dmcresource::probe("x.bin", shapes.data(), shapes.size()).format ==
                dmcresource::Format::CollisionShapes);
         const std::vector<std::uint8_t> index{6, 0, 0, 0, 2, 3, 1, 0, 0, 0, 0, 0, 1, 9, 2, 0};
@@ -1138,6 +1144,10 @@ int main() {
             out.resize(8U + slots.size() * 4U, 0U);
             put32(4U, static_cast<std::uint32_t>(slots.size()));
             for (std::size_t i = 0U; i < slots.size(); ++i) {
+                if (slots[i].empty()) {
+                    put32(8U + i * 4U, 0U);
+                    continue;
+                }
                 while (out.size() % 16U != 0U) out.push_back(0U);
                 put32(8U + i * 4U, static_cast<std::uint32_t>(out.size()));
                 out.insert(out.end(), slots[i].begin(), slots[i].end());
@@ -1155,7 +1165,17 @@ int main() {
                                        0, 0, 0, 0, 64, 0, 64, 0, 0, 0,     // frame 0: 0,0 64x64
                                        64, 0, 0, 0, 32, 0, 16, 0, 0, 0};   // frame 1: 64,0 32x16
         std::memcpy(sprite.data(), header, sizeof(header));
-        const std::vector<std::uint8_t> effect(544U, 9U);
+        std::vector<std::uint8_t> effect(544U, 9U);
+        // EXE-confirmed E descriptor: mode1, T5, gated A9, direct rectangle
+        // retained as the fallback when the animation record is unavailable.
+        effect[0x01U] = 1U;
+        put_u16(effect, 0x04U, 5U);
+        effect[0x06U] = 1U;
+        put_u16(effect, 0x08U, 9U);
+        put_u16(effect, 0x0CU, 128U);
+        put_u16(effect, 0x0EU, 64U);
+        put_u16(effect, 0x10U, 64U);
+        put_u16(effect, 0x12U, 64U);
         const auto records = pnst({texture, model, companion, sprite, effect});
         const auto bank_bytes = pnst({std::vector<std::uint8_t>(manifest.begin(), manifest.end()), records});
         assert(fx::looks_like_bank(bank_bytes));
@@ -1170,6 +1190,84 @@ int main() {
         const auto anim = fx::sprite_animation(bank->records[2]);
         assert(anim && anim->texture == 5U && anim->frame_time == 3U && anim->loop && anim->frames.size() == 2U &&
                anim->frames[1].x == 64U && anim->frames[1].w == 32U && anim->frames[1].h == 16U);
+        const auto descriptor = fx::effect_descriptor(bank->records[3]);
+        assert(descriptor && descriptor->mode == 1U && descriptor->texture == 5U &&
+               descriptor->animation_gate == 1U && descriptor->animation == 9U &&
+               descriptor->rectangle.x == 128U && descriptor->rectangle.y == 64U &&
+               descriptor->rectangle.w == 64U && descriptor->rectangle.h == 64U);
+
+        // E lifetime: +0x80 i32 ticks (0x1402E4190 -> effect+0x8B0) and the
+        // +0x84 hold flag the state-1 update 0x1402E47F0 checks.
+        {
+            std::vector<std::uint8_t> e_bytes(544U, 0U);
+            e_bytes[1U] = 1U;
+            put_u16(e_bytes, 4U, 5U);
+            e_bytes[0x80U] = 20U;
+            const fx::Record timed{'E', 752U, 0U,
+                                   std::span<const std::uint8_t>{e_bytes}, {}};
+            const auto timed_view = fx::effect_descriptor(timed);
+            assert(timed_view && timed_view->lifetime_known &&
+                   timed_view->lifetime_ticks == 20 &&
+                   !timed_view->held_by_parent);
+            e_bytes[0x80U] = 4U;
+            e_bytes[0x84U] = 1U;
+            const fx::Record held{'E', 669U, 0U,
+                                  std::span<const std::uint8_t>{e_bytes}, {}};
+            const auto held_view = fx::effect_descriptor(held);
+            assert(held_view && held_view->lifetime_ticks == 4 &&
+                   held_view->held_by_parent);
+            // Geometry (0x1402E42EA): size mode 0 -> A (+0x3C/+0x44/+0x4C),
+            // B (+0x30..); scale +0xA8; D from +0x150 flag/min/max; +0x1F5.
+            put_f32(e_bytes, 0x30U, 10.0F);
+            put_f32(e_bytes, 0x34U, 10.0F);
+            put_f32(e_bytes, 0x3CU, 20.0F);
+            put_f32(e_bytes, 0x44U, 20.0F);
+            put_f32(e_bytes, 0xA8U, 1.0F);
+            put_f32(e_bytes, 0xACU, -1.0F);
+            put_f32(e_bytes, 0xB0U, 1.0F);
+            e_bytes[0x150U] = 1U;
+            put_f32(e_bytes, 0x154U, -90.0F);
+            put_f32(e_bytes, 0x158U, -90.0F);
+            e_bytes[0x1F5U] = 3U;
+            const fx::Record shaped{'E', 765U, 0U,
+                                    std::span<const std::uint8_t>{e_bytes}, {}};
+            e_bytes[0x1C8U] = fx::kEffectBlendAdditive;
+            const auto shape = fx::effect_descriptor(shaped);
+            assert(shape->colour_known && shape->blend == fx::kEffectBlendAdditive);
+            assert(shape && shape->geometry_known &&
+                   shape->size[0] == 20.0F && shape->size[1] == 20.0F &&
+                   shape->pivot[0] == 10.0F && shape->scale[1] == -1.0F &&
+                   shape->rotation_degrees[0] == -90.0F &&
+                   shape->rotation_degrees[1] == 0.0F && shape->orientation == 3U);
+            std::vector<std::uint8_t> short_bytes(0x20U, 0U);
+            const fx::Record truncated{
+                'E', 1U, 0U, std::span<const std::uint8_t>{short_bytes}, {}};
+            const auto short_view = fx::effect_descriptor(truncated);
+            assert(short_view && !short_view->lifetime_known);
+        }
+
+        // V entry ABI: dispatch E, id752, threshold0, translation x60 and
+        // unit scale. This guards the exact child graph fields consumed by
+        // the resource-backed Script Play presentation adapter.
+        std::vector<std::uint8_t> composite_bytes(4U + 0x2CU, 0U);
+        put_u16(composite_bytes, 0U, 1U);
+        composite_bytes[4U] = 1U;
+        put_u16(composite_bytes, 6U, 752U);
+        put_u16(composite_bytes, 8U, 0U);
+        put_f32(composite_bytes, 0x0CU, 60.0F);
+        put_f32(composite_bytes, 0x24U, 1.0F);
+        put_f32(composite_bytes, 0x28U, 1.0F);
+        put_f32(composite_bytes, 0x2CU, 1.0F);
+        const fx::Record composite_record{
+            'V', 423U, 0U,
+            std::span<const std::uint8_t>{composite_bytes}, {}};
+        const auto composite = fx::composite_record(composite_record);
+        assert(composite && composite->entries.size() == 1U &&
+               composite->entries[0].dispatch_kind == 1U &&
+               composite->entries[0].id == 752U &&
+               composite->entries[0].activation_offset == 0 &&
+               composite->entries[0].translation[0] == 60.0F &&
+               composite->entries[0].scale[0] == 1.0F);
         assert(fx::registrar('M') == 0x1402E35D0ULL && fx::registrar('Z') == 0U);
         assert(dmcresource::probe("x.bin", bank_bytes.data(), bank_bytes.size()).format ==
                dmcresource::Format::EffectBank);
@@ -1201,6 +1299,23 @@ int main() {
         assert(dmcresource::session_set_info_preview(sprite_child.get(), false));
         assert(!dmcresource::session_info_preview_active(sprite_child.get()));
 
+        // The EXE consumes M's immediately following physical slot even when
+        // it is a PTX payload or an empty slot; companion identity is not the
+        // old 0x31-byte heuristic.
+        const std::string mixed_manifest = "M 8\r\nM 9\r\n# End\r\n";
+        const std::vector<std::uint8_t> ptx_companion{'P', 'T', 'X', 0x00U, 1U, 2U};
+        const std::vector<std::uint8_t> empty_companion;
+        const auto mixed_records = pnst({model, ptx_companion, model, empty_companion});
+        const auto mixed_bank = pnst({
+            std::vector<std::uint8_t>(mixed_manifest.begin(), mixed_manifest.end()),
+            mixed_records});
+        const auto mixed = fx::parse_bank(mixed_bank);
+        assert(mixed && mixed->records.size() == 2U);
+        assert(mixed->records[0].kind == 'M' && mixed->records[0].slot == 0U &&
+               mixed->records[0].companion.size() >= ptx_companion.size() &&
+               mixed->records[0].companion[0] == 'P');
+        assert(mixed->records[1].kind == 'M' && mixed->records[1].slot == 2U &&
+               mixed->records[1].companion.empty());
         const std::vector<std::uint8_t> plain = pnst({model, model});
         assert(!fx::looks_like_bank(plain));
     }

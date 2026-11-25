@@ -31,17 +31,24 @@ struct Mesh {
     }
 
     // Optional COLOR0 (EFM mesh +0x38, RGBA8 with 0x80 = 1.0, PS2 modulate)
-    // and per-vertex blend mode of the owning object (source flags & 0xF:
-    // 0 opaque, 1/4 alpha, 2 additive, 3 subtractive -- GS ALPHA table
-    // 0x1405D0550 via 0x1402F17C0).
+    // and per-vertex material byte of the owning object (game_material.h):
+    // bits 0..3 its blend mode (source flags & 0xF: 0 opaque, 1/4 alpha,
+    // 2 additive, 3 subtractive -- GS ALPHA table 0x1405D0550 via
+    // 0x1402F17C0), bit 4 nearest filtering, bit 5 part alpha 1.
     std::vector<std::array<std::uint8_t, 4>> color0;
     std::vector<std::uint8_t> blend0;
+    // Optional sheen of the owning object (the game's *_SP shaders): its
+    // strength (file object +0x18) and power (+0x1C); {0, 0} none.
+    std::vector<std::array<float, 2>> sheen0;
 
     [[nodiscard]] bool has_color0() const noexcept {
         return !color0.empty() && color0.size() == vertices.size();
     }
     [[nodiscard]] bool has_blend0() const noexcept {
         return !blend0.empty() && blend0.size() == vertices.size();
+    }
+    [[nodiscard]] bool has_sheen0() const noexcept {
+        return !sheen0.empty() && sheen0.size() == vertices.size();
     }
 
     // Optional source vertex normals (MOD / SCM normal stream, rest pose).

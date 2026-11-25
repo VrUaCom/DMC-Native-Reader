@@ -15,7 +15,9 @@
 
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmc_rengine/formats/mod_skin.hpp"
+#include "dmc_rengine/formats/mod/object_serialized.hpp"
 #include "dmc_rengine/formats/mod/world_transform.hpp"
+#include "dmcresource/game_material.h"
 #include "dmcresource/mod_bytes.h"
 #include "dmcresource/module_support.h"
 #include "dmcresource/motion/skeleton_rig.h"
@@ -530,10 +532,30 @@ PipelineResult run_mod_adapter(const ProbeResult& probe,
                         "MOD canonical projection rejected mesh topology/UV/size limits");
                 }
                 total_triangles += primitive.mesh.indices.size() / 3U;
-                // Object blend mode (source flags & 0xF, 0x140302640) and, for
-                // EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
-                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(),
-                                             static_cast<std::uint8_t>(object.source_flags & 0xFU));
+                // The object's material byte (game_material.h: blend mode =
+                // source flags & 0xF, 0x140302640; nearest filter; part alpha)
+                // and, for EFM, the COLOR0 stream at mesh +0x38 (RGBA8 per vertex).
+                std::uint8_t material = game_material::material_byte(object.source_flags, object.alpha_control);
+                if (view.efm()) {
+                    material |= game_material::kMaterialEffectModelBit;
+                    if ((object.source_flags & game_material::kSourceFlagVertexAlpha) != 0U) {
+                        material |= game_material::kMaterialVertexAlphaBit;
+                    }
+                }
+                primitive.mesh.blend0.assign(primitive.mesh.vertices.size(), material);
+                // The sheen (source flags 0x200 / 0x400): strength and power
+                // (0x1403029E0 -> object +0x16C / +0x170, the SP shaders).
+                if (dmc::rengine::formats::mod::conditional_parameters_are_active(object.source_flags)) {
+                    if (const auto sheen = dmc::rengine::formats::mod::decode_object_conditional_parameters(
+                            byte_span, static_cast<std::size_t>(object.record_offset))) {
+                        if (std::isfinite(sheen->parameter_f32) && sheen->parameter_f32 != 0.0F) {
+                            primitive.mesh.sheen0.assign(
+                                primitive.mesh.vertices.size(),
+                                {sheen->parameter_f32,
+                                 static_cast<float>(std::min<std::uint32_t>(sheen->parameter_u32, 16U))});
+                        }
+                    }
+                }
                 if (view.efm() && source.reserved38 != 0U) {
                     const auto count = primitive.mesh.vertices.size();
                     const auto bytes_span = view.span();

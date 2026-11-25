@@ -66,6 +66,12 @@ int main() {
     unbound.node_index = -1;
     scene.meshes.push_back(unbound);
 
+    // A primitive with no vertices (a model's empty mesh) keeps the scene's UVs.
+    MeshPrimitive empty;
+    empty.name = "empty";
+    empty.node_index = -1;
+    scene.meshes.push_back(empty);
+
     Mesh materialized;
     assert(materialize_render_scene(scene, &materialized));
     assert(materialized.vertices.size() == 6U);

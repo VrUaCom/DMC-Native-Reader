@@ -1,16 +1,20 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "dmcresource/dmc_resource.h"
 #include "dmcresource/native_module.h"
+#include "dmcresource/spider/app_info.h"
 
 int main() {
     using namespace dmcresource;
 
     const auto& modules = NativeModuleRegistry::modules();
-    assert(modules.size() == 16U);
+    assert(modules.size() == 46U);
 
     const auto* scm = NativeModuleRegistry::find("SCM");
     const auto* mod = NativeModuleRegistry::find("MOD");
@@ -23,6 +27,49 @@ int main() {
     assert(ptx != nullptr && ptx->format == Format::Ptx && !ptx->renderable);
     assert(event_tbl != nullptr && event_tbl->format == Format::Evt &&
            !event_tbl->renderable);
+
+    // Text no other module claims: message tables and plain text.
+    const auto* msg = NativeModuleRegistry::find("MSG");
+    const auto* text_module = NativeModuleRegistry::find("TEXT");
+    assert(msg != nullptr && msg->format == Format::MessageTable);
+    assert(text_module != nullptr && text_module->format == Format::PlainText);
+    const std::string table = "# Msg 20600\n\t\"13th Avenue\"\n# End\n";
+    assert(probe("x.bin", reinterpret_cast<const std::uint8_t*>(table.data()), table.size()).format ==
+           Format::MessageTable);
+    const std::string light = "Force   1400.0\r\nRange   10000.0\r\nRgb     311  280  245\r\n";
+    std::vector<std::uint8_t> padded(light.begin(), light.end());
+    padded.resize(64U, 0U);
+    assert(probe("x.bin", padded.data(), padded.size()).format == Format::PlainText);
+    // PS2 IPU picture streams play as movies.
+    const std::uint8_t ipu[16] = {'i', 'p', 'u', 'm', 0, 0, 1, 0, 0, 1, 0, 1, 0x44, 0, 0, 0};
+    assert(probe("x.bin", ipu, sizeof ipu).format == Format::Ipu);
+    assert(NativeModuleRegistry::find("IPU") != nullptr && NativeModuleRegistry::find("IPU")->format == Format::Ipu);
+    // The sound bank header beside a VAG body (snd_*.pac slot 1).
+    std::vector<std::uint8_t> hd(0x50U, 0U);
+    const auto put32 = [&hd](std::size_t at, std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) hd[at + i] = static_cast<std::uint8_t>(v >> (8 * i));
+    };
+    std::memcpy(hd.data(), "Head", 4); put32(4, 0x20); put32(8, 1); put32(0x0C, 0x50); put32(0x10, 0x40);
+    put32(0x14, 0x20); put32(0x18, 0x30); put32(0x1C, 0x40);
+    std::memcpy(hd.data() + 0x20, "Prog", 4); put32(0x24, 0x10);
+    std::memcpy(hd.data() + 0x30, "Smpl", 4); put32(0x34, 0x10);
+    std::memcpy(hd.data() + 0x40, "Vagi", 4); put32(0x44, 0x10);
+    assert(probe("x.bin", hd.data(), hd.size()).format == Format::SoundHeader);
+    // An object list with Shift-JIS comments (st412 slot 4) is text too.
+    std::string objects = "# GAME\r\n\r\n# SET 0 STAY\t;";
+    for (int i = 0; i < 3; ++i) objects += "\x82\xa0\x82\xa2";
+    objects += "\r\n\tmodel\t\t0\r\n\tpos\t\t\t0 0 0\r\n\thit\tbox\t\t2566, 90, -500, 2000, 2000, 2000\r\n";
+    assert(probe("x.bin", reinterpret_cast<const std::uint8_t*>(objects.data()), objects.size()).format ==
+           Format::PlainText);
+    const std::uint8_t binary[8] = {1, 0, 0, 0, 2, 0, 0, 0};
+    assert(probe("x.bin", binary, sizeof binary).format != Format::PlainText);
+
+    const auto* hits = NativeModuleRegistry::find("HITS");
+    assert(hits != nullptr && hits->format == Format::Hits && hits->renderable &&
+           has_capability(hits->capabilities, ResourceCapability::Collision));
+    const std::array<std::uint8_t, 4> hits_magic{'H', 'I', 'T', 'S'};
+    const auto hits_probe = probe("renamed.bin", hits_magic.data(), hits_magic.size());
+    assert(hits_probe.format == Format::Hits && hits_probe.content_confirmed);
 
     // v34: PAC (read-only archive browser/assembler) and MOT (motion reader)
     // are promoted; both are byte-identified, never by extension alone.
@@ -80,6 +127,11 @@ int main() {
     const auto* fxbank = NativeModuleRegistry::find("FXBANK");
     assert(fxbank != nullptr && fxbank->format == Format::EffectBank && !fxbank->renderable);
 
+    // FON bitmap fonts: an inspection and an image (the glyph sheet), no scene.
+    const auto* fon = NativeModuleRegistry::find("FON");
+    assert(fon != nullptr && fon->format == Format::Fon && !fon->renderable);
+    assert(has_capability(fon->capabilities, ResourceCapability::ImagePreview));
+
     // EFM effect models: own family, MOD document route (0x1402F7A90).
     const auto* efm = NativeModuleRegistry::find("EFM");
     assert(efm != nullptr && efm->format == Format::Mod && efm->renderable);
@@ -87,10 +139,12 @@ int main() {
     const auto efm_probe = probe("renamed.bin", efm_magic.data(), efm_magic.size());
     assert(efm_probe.format == Format::Mod && std::string_view{efm_probe.family} == "EFM");
 
-    // Removed/archived families must not leak back into the clean registry.
-    for (const std::string_view family : {
-             "HITS", "TXT", ".index", "DCA", "LIG", "LIG2",
-             "NBZ", "MRP"}) {
+    // Stage text, name lists, DCA and LIG2 came back with readers that check
+    // their bytes (module_families.cpp); the old LIG alias, NBZ and MRP did not.
+    for (const std::string_view family : {"TXT", ".index", "DCA", "LIG2"}) {
+        assert(NativeModuleRegistry::find(family) != nullptr);
+    }
+    for (const std::string_view family : {"LIG", "NBZ", "MRP"}) {
         assert(NativeModuleRegistry::find(family) == nullptr);
     }
 
@@ -102,6 +156,7 @@ int main() {
     assert(probe("renamed.bin", mod_magic.data(), mod_magic.size()).format == Format::Mod);
     assert(probe("renamed.bin", dds_magic.data(), dds_magic.size()).format == Format::Dds);
     assert(probe("renamed.bin", evt_magic.data(), evt_magic.size()).format == Format::Evt);
+    assert(probe("renamed.bin", hits_magic.data(), hits_magic.size()).format == Format::Hits);
     assert(probe("texture.ptx", nullptr, 0U).format == Format::Ptx);
     assert(probe("legacy.tm2", nullptr, 0U).format == Format::Dds);
 
@@ -110,6 +165,13 @@ int main() {
     assert(!probe("stage.pac", nullptr, 0U).recognized);
     assert(!probe("stage.txt", nullptr, 0U).recognized);
     assert(!probe("model.shw", nullptr, 0U).recognized);
+
+    // The start Info lists every registered family, grouped, from the registry.
+    const auto welcome = spider::actions::welcome_text("9.9.9", "abc123");
+    assert(welcome.rfind("DMC Native Reader 9.9.9\nNative build: abc123", 0) == 0U);
+    for (const auto& module : modules) assert(welcome.find(module.family) != std::string::npos);
+    assert(welcome.find("Stage: POS, EVE, CAM") != std::string::npos);
+    assert(welcome.find("Unpromoted") == std::string::npos);
 
     return 0;
 }

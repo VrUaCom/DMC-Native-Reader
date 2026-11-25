@@ -137,6 +137,44 @@ int Canvas::text(int x, int y, std::string_view s, Rgb c, int scale) {
     return x;
 }
 
+int draw_text(std::span<std::uint8_t> rgba, int width, int height, int x, int y, std::string_view s, Rgb c,
+              int scale) {
+    if (width <= 0 || height <= 0 ||
+        rgba.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4U) {
+        return x;
+    }
+    const auto fill = [&](int x0, int y0, int x1, int y1) {
+        for (int py = std::max(0, y0); py < std::min(height, y1); ++py) {
+            for (int px = std::max(0, x0); px < std::min(width, x1); ++px) {
+                const auto o = (static_cast<std::size_t>(py) * static_cast<std::size_t>(width) + px) * 4U;
+                rgba[o] = c.r;
+                rgba[o + 1U] = c.g;
+                rgba[o + 2U] = c.b;
+                rgba[o + 3U] = 255U;
+            }
+        }
+    };
+    char previous = ' ';
+    for (const char raw : s) {
+        if (x > width) break;
+        const auto* g = glyph_for(raw, previous);
+        previous = raw;
+        if (g == nullptr) {
+            fill(x + scale, y + 2 * scale, x + 4 * scale, y + 6 * scale);
+        } else {
+            for (int row = 0; row < 7; ++row) {
+                for (int col = 0; col < 5; ++col) {
+                    if ((g->rows[row] >> (4 - col)) & 1U) {
+                        fill(x + col * scale, y + row * scale, x + (col + 1) * scale, y + (row + 1) * scale);
+                    }
+                }
+            }
+        }
+        x += 6 * scale;
+    }
+    return x;
+}
+
 ImagePreview Canvas::take() {
     ImagePreview out;
     out.width = static_cast<std::uint32_t>(w_);

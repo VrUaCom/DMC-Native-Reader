@@ -1,8 +1,10 @@
 #include "dmcresource/pac_assembly.h"
+#include "dmcresource/motion/object_visibility.h"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <new>
@@ -15,7 +17,10 @@
 #include "dmc_rengine/formats/mod.hpp"
 #include "dmcresource/archive_entry.h"
 #include "dmcresource/collision_debug.h"
+#include "dmcresource/effect_bank.h"
+#include "dmcresource/effect_host.h"
 #include "dmcresource/mod_bytes.h"
+#include "dmcresource/texture_set.h"
 #include "dmcresource/shadow_hull.h"
 #include "dmcresource/motion/motion_player.h"
 #include "dmcresource/motion/part_attachment.h"
@@ -251,11 +256,55 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         const std::string_view archive_name = archive_names.front();
         std::vector<std::unique_ptr<Session>> nested;
         std::vector<Entry> entries;
+        std::vector<std::uint32_t> effect_bank_slots;
+        std::vector<motion::EffectResourceRef> effect_resources;
+        std::vector<Session::EffectBank> effect_banks;
         for (std::size_t a = 0U; a < archives.size(); ++a) {
             const std::string prefix = a == 0U ? std::string{} : std::string{archive_names[a]} + "/";
             // Added archives keep their own container key so pairing never
             // crosses archives; archive 0 keeps "" for the player slot rule.
             collect(*archives[a], a, prefix, 0U, false, &nested, &entries, &report);
+        }
+
+        // Keep the direct FXBANK slot identity available to the runtime
+        // bridge. `collect()` intentionally descends into the bank's PNST
+        // children, so the nested V/P/E/G records must not be mistaken for a
+        // new top-level resource slot. The slot number is provenance only;
+        // resource resolution still uses the canonical kind/u16-id pair.
+        for (const auto& child : pac.children) {
+            const auto slot = slot_of(child);
+            if (!slot.has_value() || child.source_bytes.empty()) continue;
+            const auto kind = archive::classify_payload(
+                child.source_bytes.data(), child.source_bytes.size());
+            if (kind.format != Format::EffectBank) continue;
+            if (std::find(effect_bank_slots.begin(), effect_bank_slots.end(), *slot) ==
+                effect_bank_slots.end()) {
+                effect_bank_slots.push_back(*slot);
+            }
+            auto source = std::make_shared<std::vector<std::uint8_t>>(
+                child.source_bytes.begin(), child.source_bytes.end());
+            auto loaded = dmcresource::load_effect_bank(source, *slot);
+            if (!loaded.has_value()) continue;
+            const auto parsed = std::optional<effect_bank::Bank>{loaded->bank};
+            Session::EffectBank retained = std::move(*loaded);
+            effect_banks.push_back(std::move(retained));
+            for (const auto& record : parsed->records) {
+                const motion::EffectResourceRef resource{
+                    record.kind,
+                    record.id,
+                    *slot,
+                    motion::EvidenceStatus::EXE_AND_CORPUS_CONFIRMED};
+                const auto duplicate = std::find_if(
+                    effect_resources.begin(), effect_resources.end(),
+                    [&resource](const motion::EffectResourceRef& candidate) {
+                        return candidate.effect_kind == resource.effect_kind &&
+                               candidate.effect_id == resource.effect_id &&
+                               candidate.resource_slot == resource.resource_slot;
+                    });
+                if (duplicate == effect_resources.end()) {
+                    effect_resources.push_back(resource);
+                }
+            }
         }
 
         const auto positions = motion::archive_variants(archive_name);
@@ -272,6 +321,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         if (position != nullptr) report.enemy_class = position->label;
         std::vector<std::unique_ptr<Session>> models;
         std::vector<std::string> model_names;
+        bool beowulf_attached = false;  // plwp_fight on the body (below)
         std::vector<std::size_t> model_entry;
         std::vector<std::optional<std::size_t>> texture_for_model;
         std::vector<Session::MotionPayload> motions;
@@ -282,6 +332,13 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 // Effect models (slash trails, sparks, bat particles) are
                 // spawned by the effect system, not loaded as actor models.
                 ++report.effect_models_skipped;
+                continue;
+            }
+            if (entry.kind.format == Format::Mod && entry.archive != 0U &&
+                entry.archive < archive_names.size() &&
+                motion::motions_only_archive(archive_name, archive_names[entry.archive])) {
+                // Added for its motions: its models are another actor.
+                ++report.variant_models_skipped;
                 continue;
             }
             if (entry.kind.format == Format::Mod && position != nullptr &&
@@ -370,13 +427,36 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         continue;
                     }
                 }
+                // A look with its own motion PACs (one actor of several).
+                if (position != nullptr && position->motion_pack_count != 0U && entry.archive == 0U &&
+                    entry.depth == 1U && entry.container.rfind("slot_", 0) == 0U) {
+                    std::uint32_t pack = 0U;
+                    try {
+                        pack = static_cast<std::uint32_t>(std::stoul(entry.container.substr(5U, 4U)));
+                    } catch (...) {
+                        pack = 0U;
+                    }
+                    const auto* first = position->motion_packs.data();
+                    const auto* last = first + position->motion_pack_count;
+                    if (std::find(first, last, pack) == last) {
+                        ++report.variant_motions_skipped;
+                        continue;
+                    }
+                }
                 // Weapon banks (pl000_00_N.pac) are labelled with their weapon.
                 const auto bank = entry.archive < archive_names.size()
                     ? motion::weapon_motion_bank(archive_names[entry.archive])
                     : std::nullopt;
                 Session::MotionPayload payload{
-                    bank ? std::string{bank->weapon_name} + " · " + entry.name : entry.name,
-                    *entry.bytes};
+                    .name = bank ? std::string{bank->weapon_name} + " · " + entry.name
+                                 : entry.name,
+                    .bytes = *entry.bytes,
+                    .bank = -1,
+                    .index = -1,
+                    .pack_slot = -1,
+                    .mot_slot = -1,
+                    .actions = {},
+                    .script_links = {}};
                 // Motion script address: pl000.pac slots 2/3/4 hold banks 0/1/2
                 // (pl000_00_0..2), an added pl000_00_<N>.pac is bank N; the MOT
                 // index is its slot.
@@ -437,6 +517,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 if (report_out != nullptr) *report_out = std::move(report);
                 return nullptr;
             }
+            if (variant != nullptr) assembled->enemy_class = std::string{variant->class_name};
 
             // One PTX for every part (player PACs: slot 0) -> one shared bank.
             bool shared = texture_for_model.front().has_value();
@@ -483,7 +564,9 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 const auto body_joints =
                     assembled->composite_parts[*body].scene.nodes.size();
                 const auto host = motion::player_coat_host_joint(coat_bytes, body_joints);
-                if (motion::attach_part_skeleton(assembled.get(), *body, *coat, host, true)) {
+                // Coats take the joint; the amulet keeps its root's own place.
+                const bool at_joint = !motion::player_amulet(coat_bytes);
+                if (motion::attach_part_skeleton(assembled.get(), *body, *coat, host, at_joint)) {
                     ++report.attached_parts;
                     report.detail_attachments += " coat=slot12->bodyJoint" + std::to_string(host);
                     if (host != motion::kPlayerCoatHostJoint) {
@@ -505,9 +588,38 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     }
                 }
             }
+            // Player devil-trigger / costume archives without the slot-12 coat
+            // (pl005 ... pl025): each cloth MOD (a .clt follows it) hangs from
+            // the body like the coat bank of draw 0x140218960, which roots the
+            // DT cloth at body joint 3 (back) or 14 (hips). A cloth whose first
+            // bone rises (wings) takes joint 3, one that hangs takes joint 14.
+            if (player && body && !coat) {
+                for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                    if (part == *body) continue;
+                    const auto& entry = entries[model_entry[part]];
+                    if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
+                    bool cloth = false;
+                    for (const auto& other : entries) {
+                        if (other.archive == 0U && other.container.empty() && other.slot &&
+                            *other.slot == *entry.slot + 1U && other.kind.format == Format::Clt) {
+                            cloth = true;
+                        }
+                    }
+                    if (!cloth) continue;
+                    const auto& nodes = assembled->composite_parts[part].scene.nodes;
+                    const bool rises = nodes.size() > 1U && nodes[1].world.values[13] > 0.0F;
+                    const std::uint32_t host = rises ? 3U : 14U;
+                    if (host >= assembled->composite_parts[*body].scene.nodes.size()) continue;
+                    if (motion::attach_part_skeleton(assembled.get(), *body, part, host, true)) {
+                        ++report.attached_parts;
+                        report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
+                            "->bodyJoint" + std::to_string(host);
+                    }
+                }
+            }
             // Enemy node constraints (CEm028 init 0x140130480): top-level part
             // slots follow body joints node by node.
-            for (std::size_t part = 0U; !player && part < model_entry.size(); ++part) {
+            for (std::size_t part = 0U; part < model_entry.size(); ++part) {
                 const auto& entry = entries[model_entry[part]];
                 if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
                 const auto record = motion::enemy_constraints_for(archive_name, *entry.slot);
@@ -537,13 +649,19 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         host = part;
                     }
                 }
+                if (host) assembled->enemy_body_part = *host;
                 for (std::size_t part = 0U; host && part < model_entry.size(); ++part) {
                     const auto& entry = entries[model_entry[part]];
                     if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
                     for (std::uint32_t c = 0U; c < cloth_count; ++c) {
                         if (*entry.slot != variant->cloth[c].slot) continue;
                         if (motion::attach_part_skeleton(assembled.get(), *host, part,
-                                                         variant->cloth[c].host_joint, false)) {
+                                                         variant->cloth[c].host_joint,
+                                                         variant->cloth_root_at_joint)) {
+                            // Nodes of their own (Vanguard's sleeves).
+                            if (const auto nodes = motion::enemy_constraints_for(archive_name, *entry.slot)) {
+                                (void)motion::set_part_node_constraints(assembled.get(), part, nodes->constraints);
+                            }
                             ++report.attached_parts;
                             report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
                                 "->bodyJoint" + std::to_string(variant->cloth[c].host_joint);
@@ -555,6 +673,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                             motion::attach_local_matrix_zyx(variant->weapon_translation,
                                                             variant->weapon_rotation_zyx))) {
                         ++report.attached_parts;
+                        assembled->enemy_weapon_part = part;
                         report.detail_attachments += " weapon slot" + std::to_string(*entry.slot) +
                             "->bodyJoint" + std::to_string(variant->weapon_joint);
                     }
@@ -577,10 +696,12 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         if (*entry.slot == attach.host_model_slot) host = part;
                         if (*entry.slot == attach.child_model_slot) child = part;
                     }
-                    const auto offset = attach.explicit_offset
-                        ? motion::attach_local_matrix(
-                              attach.translation, attach.rotation_xyz_radians)
-                        : Matrix4{};
+                    const auto offset = !attach.explicit_offset ? Matrix4{}
+                        : attach.zyx_offset
+                            ? motion::attach_local_matrix_zyx(
+                                  attach.translation, attach.rotation_xyz_radians)
+                            : motion::attach_local_matrix(
+                                  attach.translation, attach.rotation_xyz_radians);
                     if (host && child &&
                         motion::attach_part_skeleton(
                             assembled.get(), *host, *child, attach.host_joint,
@@ -650,8 +771,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     assembled->inspection.root.properties.push_back({
                         "LadyComponentRuntime",
                         "slots20..24 default to BodyStowed; preset1 is ActiveDeployed. "
-                        "component3 preset1 uses RuntimeBodyRootScaled "
-                        "(CEm034+0x43C0, scale source +0x4400), not body joint13.",
+                        "component3 preset1 uses CEm034+0x43C0 = body joint13 "
+                        "world scaled by +0x4400 (update 0x140171240).",
                         EvidenceLevel::ExeConfirmed});
                 }
             }
@@ -671,8 +792,8 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     const auto& entry = entries[model_entry[part]];
                     if (entry.archive != 0U || !entry.container.empty() || !entry.slot) continue;
                     std::optional<std::uint32_t> clt_slot;
-                    if (player) {
-                        if (coat && part == *coat) clt_slot = motion::kPlayerCoatClothSlot;
+                    if (player && coat) {
+                        if (part == *coat) clt_slot = motion::kPlayerCoatClothSlot;
                     } else {
                         clt_slot = motion::enemy_cloth_slot(archive_name, *entry.slot);
                     }
@@ -683,7 +804,7 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     // body capsules, CEm028 hair on the neck/head capsules.
                     std::span<const motion::ClothCapsule> capsules;
                     std::array<motion::ClothCapsule, 6> coat_capsules{};
-                    if (player) {
+                    if (player && coat) {
                         // Slot 15 may replace the shapes (coat patch).
                         std::span<const std::uint8_t> slot15;
                         for (const auto& e : entries) {
@@ -694,12 +815,38 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                         }
                         coat_capsules = motion::player_coat_capsules(slot15);
                         capsules = coat_capsules;
+                        if (motion::player_amulet(*entry.bytes)) capsules = motion::kPlayerAmuletCapsules;
                     } else if (*entry.slot == 4U && *clt_slot == 7U &&
                                motion::enemy_constraints_for(archive_name, 4U).has_value()) {
                         capsules = motion::kEm028HairCapsules;
+                    } else if (motion::body_capsule_coat(archive_name, *entry.slot)) {
+                        // The same six body capsules (0x14058B260) as the player's coat.
+                        capsules = motion::kPlayerCoatCapsules;
                     }
                     const auto nodes =
                         motion::attach_part_cloth(assembled.get(), part, text, 60U, capsules);
+                    // The coat's motion states (slot 10 after the ff&A table).
+                    if (nodes > 0U && player && coat && part == *coat) {
+                        for (const auto& e : entries) {
+                            if (e.archive != 0U || !e.container.empty() || e.slot != motion::kPlayerCoatStatesSlot ||
+                                e.bytes == nullptr) {
+                                continue;
+                            }
+                            if (auto states = motion::CoatStates::parse(*e.bytes)) {
+                                const auto& cloth = assembled->composite_parts[part].placement.cloth;
+                                if (cloth != nullptr) {
+                                    assembled->coat_states =
+                                        std::make_shared<const motion::CoatStates>(std::move(*states));
+                                    assembled->coat_part = part;
+                                    assembled->coat_base = cloth->params;
+                                    assembled->coat_base_blocks = cloth->blocks;
+                                    assembled->coat_state = 0;
+                                    report.detail_attachments += " coat states slot10(" +
+                                        std::to_string(assembled->coat_states->count()) + ")";
+                                }
+                            }
+                        }
+                    }
                     if (nodes > 0U) {
                         ++report.cloth_parts;
                         report.detail_attachments += " cloth slot" + std::to_string(*entry.slot) +
@@ -726,6 +873,22 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
             }
             // Added weapon archives: every MOD hangs from its record's joint.
             for (std::size_t a = 1U; body && a < archive_names.size(); ++a) {
+                if (motion::beowulf_archive(archive_names[a])) {
+                    // Beowulf: its nodes follow ten body joints (0x140229100).
+                    std::vector<CompositeNodeConstraint> nodes;
+                    for (const auto& [node, joint] : motion::kBeowulfNodeJoints) {
+                        nodes.push_back({node, joint, Matrix4{}});
+                    }
+                    for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                        if (entries[model_entry[part]].archive != a) continue;
+                        if (motion::attach_part_nodes(assembled.get(), *body, part, nodes)) {
+                            ++report.attached_parts;
+                            beowulf_attached = true;
+                            report.detail_attachments += " CPlWpFight->bodyJoints(10 nodes)";
+                        }
+                    }
+                    continue;
+                }
                 const auto record = motion::weapon_record_for_archive(archive_names[a]);
                 if (!record) continue;
                 const auto offset = motion::weapon_offset_matrix(*record);
@@ -760,6 +923,80 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                 }
             }
         }
+
+        // The player class's draw bits on the body (hands, Beowulf parts):
+        // motion/object_visibility.h.
+        if (const auto rule = motion::visibility_rule_for(archive_name); rule != motion::VisibilityRule::none) {
+            for (std::size_t part = 0U; part < model_entry.size(); ++part) {
+                const auto& entry = entries[model_entry[part]];
+                if (entry.archive != 0U || !entry.container.empty() || entry.slot != motion::kPlayerBodySlot) continue;
+                if (motion::install_object_visibility(assembled.get(), part, rule)) {
+                    // Beowulf equipped (0x140212BE0 checks melee weapon 4): only with
+                    // its model on the body, else the bare shins would show nothing.
+                    if (beowulf_attached) motion::set_beowulf(assembled.get(), true);
+                    std::string hidden;
+                    for (const auto object : motion::hidden_objects(assembled.get())) {
+                        hidden += (hidden.empty() ? "" : ",") + std::to_string(object);
+                    }
+                    report.detail_attachments += " drawBits=" +
+                        std::string{rule == motion::VisibilityRule::dante ? "CPlDante" : "CPlNewVergil"} +
+                        "(hidden objects " + hidden + ")";
+                }
+                break;
+            }
+        }
+
+        // A part whose bones sit exactly on bones of the body (Vergil's
+        // Beowulf, em035 slot 55: its nodes 1-10 on body joints 8, 9, 16, 17,
+        // 18, 12, 13, 20, 21, 22, as the plwp_fight table 0x1404E0BD0 copies
+        // them) follows those body joints, node by node.
+        if (assembled->composite_parts.size() > 1U) {
+            // The body: the free part (not hung from another) with the most bones.
+            std::size_t host = 0U;
+            std::size_t most = 0U;
+            for (std::size_t part = 0U; part < assembled->composite_parts.size(); ++part) {
+                const auto& candidate = assembled->composite_parts[part];
+                if (candidate.placement.mode != CompositePlacementMode::SourceCoordinates) continue;
+                if (candidate.scene.nodes.size() > most) {
+                    most = candidate.scene.nodes.size();
+                    host = part;
+                }
+            }
+            const auto& body_nodes = assembled->composite_parts[host].scene.nodes;
+            for (std::size_t part = 0U; part < assembled->composite_parts.size(); ++part) {
+                const auto& child = assembled->composite_parts[part];
+                if (part == host || child.placement.mode != CompositePlacementMode::SourceCoordinates ||
+                    child.scene.nodes.size() < 3U || child.scene.nodes.size() >= body_nodes.size()) {
+                    continue;
+                }
+                std::vector<CompositeNodeConstraint> nodes;
+                bool all = true;
+                for (std::uint32_t k = 1U; k < child.scene.nodes.size() && all; ++k) {
+                    const auto& p = child.scene.nodes[k].world.values;
+                    if (std::abs(p[12]) + std::abs(p[13]) + std::abs(p[14]) < 0.01F) { all = false; break; }
+                    std::optional<std::uint32_t> joint;
+                    for (std::uint32_t j = 1U; j < body_nodes.size(); ++j) {
+                        const auto& q = body_nodes[j].world.values;
+                        if (std::abs(p[12] - q[12]) + std::abs(p[13] - q[13]) + std::abs(p[14] - q[14]) < 0.01F) {
+                            joint = j;
+                            break;
+                        }
+                    }
+                    if (!joint) { all = false; break; }
+                    nodes.push_back({k, *joint, Matrix4{}});
+                }
+                if (!all || nodes.size() < 2U) continue;
+                if (motion::attach_part_nodes(assembled.get(), host, part, nodes)) {
+                    ++report.attached_parts;
+                    report.detail_attachments += " part" + std::to_string(part) + "->bodyJoints(" +
+                        std::to_string(nodes.size()) + " nodes on matching joints)";
+                }
+            }
+        }
+
+        assembled->effect_bank_slots = std::move(effect_bank_slots);
+        assembled->effect_resources = std::move(effect_resources);
+        assembled->effect_banks = std::move(effect_banks);
 
         // Texture scrolls (.tsc, CDrawUV): objects whose source flags carry a
         // scroll number move their UVs with the playback clock. A single model
@@ -838,9 +1075,11 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     " meshes)";
             }
         }
-        // SHW: pair each shadow file with the MOD of the same archive and
-        // container whose node count matches header +0x11 (nearest MOD before
-        // it wins); its hulls then follow that model's joints.
+        // SHW: a shadow belongs to one MOD of its archive and container, looked
+        // up among all of them -- a look draws the shadows of its own models
+        // only. The owner is the class's own pair (shadow_pairs) or, in order,
+        // the MOD since the last run of SHWs with the same node count (header
+        // +0x11) or one more. The hulls follow that model's joints.
         {
             std::vector<std::size_t> node_begin(models.size(), 0U);
             std::vector<std::size_t> node_count(models.size(), 0U);
@@ -858,21 +1097,75 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
                     cursor += scene.nodes.size();
                 }
             }
+            const auto mod_nodes = [&entries](std::size_t index) -> std::uint32_t {
+                const auto& bytes = entries[index].bytes;
+                return bytes != nullptr && bytes->size() > 0x11U ? (*bytes)[0x11] : 0U;
+            };
+            std::vector<bool> claimed(entries.size(), false);
+            // The MOD entry an SHW entry casts for, by the order of the archive.
+            const auto owner_entry = [&](std::size_t index, std::uint32_t nodes) -> std::optional<std::size_t> {
+                const auto& shw = entries[index];
+                const auto beside = [&](std::size_t k) {
+                    return entries[k].archive == shw.archive && entries[k].container == shw.container;
+                };
+                // The MODs of the block: those after the run of SHWs before this one's.
+                std::size_t block = 0U;
+                bool in_run = true;
+                for (std::size_t k = index; k-- > 0U;) {
+                    if (!beside(k) || entries[k].effect_bank) continue;
+                    if (entries[k].kind.format == Format::Mod) in_run = false;
+                    if (entries[k].kind.format == Format::Shw && !in_run) {
+                        block = k;
+                        break;
+                    }
+                }
+                for (std::uint32_t spare = 0U; spare < 2U; ++spare) {
+                    for (std::size_t k = block; k < index; ++k) {
+                        if (beside(k) && entries[k].kind.format == Format::Mod && !entries[k].effect_bank &&
+                            !claimed[k] && mod_nodes(k) == nodes + spare) {
+                            return k;
+                        }
+                    }
+                }
+                std::optional<std::size_t> nearest;
+                for (std::size_t k = 0U; k < entries.size(); ++k) {
+                    if (!beside(k) || entries[k].kind.format != Format::Mod || entries[k].effect_bank ||
+                        mod_nodes(k) != nodes) {
+                        continue;
+                    }
+                    if (!nearest || k < index) nearest = k;
+                }
+                return nearest;
+            };
             for (std::size_t index = 0U; index < entries.size(); ++index) {
                 const auto& entry = entries[index];
                 if (entry.kind.format != Format::Shw || entry.effect_bank) continue;
                 auto hulls = shadow::parse_hulls(entry.bytes->data(), entry.bytes->size());
                 if (!hulls || hulls->hulls.empty()) continue;
+                std::optional<std::size_t> source;
+                if (position != nullptr && position->shadow_pair_count != 0U && entry.archive == 0U &&
+                    entry.container.empty()) {
+                    for (std::uint32_t s = 0U; s < position->shadow_pair_count; ++s) {
+                        if (entry.slot != position->shadow_pairs[s].texture_slot) continue;
+                        for (std::size_t k = 0U; k < entries.size(); ++k) {
+                            if (entries[k].archive == 0U && entries[k].container.empty() &&
+                                entries[k].slot == position->shadow_pairs[s].model_slot) {
+                                source = k;
+                            }
+                        }
+                    }
+                } else {
+                    source = owner_entry(index, hulls->node_count);
+                    if (source) claimed[*source] = true;
+                }
+                if (!source) continue;
                 std::optional<std::size_t> owner;
                 for (std::size_t part = 0U; part < model_entry.size(); ++part) {
-                    const auto& model = entries[model_entry[part]];
-                    if (model.archive != entry.archive || model.container != entry.container ||
-                        rigs[part] == nullptr || node_count[part] != hulls->node_count ||
-                        rigs[part]->node_count() != node_count[part] ||
-                        hulls->max_selector() >= node_count[part]) {
-                        continue;
+                    if (model_entry[part] == *source && rigs[part] != nullptr &&
+                        rigs[part]->node_count() == node_count[part] &&
+                        hulls->max_selector() < node_count[part]) {
+                        owner = part;
                     }
-                    if (!owner || model_entry[part] < index) owner = part;
                 }
                 if (!owner) continue;
                 shadow::ShadowBinding binding;
@@ -1176,6 +1469,10 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
         }
         assembled->motion_library = std::move(motions);
         assembled->archive_name = std::string{archive_name};
+        // One profile registry callback serves every archive. It installs
+        // only EXE/corpus-confirmed data for the current profile; unknown
+        // profiles remain effect-free until their provider is reversed.
+        assembled->script_effect_bridge.prepare = motion::install_effect_bindings;
         assembled->children = pac.children;
         if (!assembled->children.empty()) {
             assembled->capabilities |= capability(ResourceCapability::ChildResources);
@@ -1272,4 +1569,42 @@ std::unique_ptr<Session> assemble_archives(std::span<const Session* const> archi
     }
 }
 
+
 }  // namespace dmcresource::pac_assembly
+
+namespace dmcresource {
+
+std::optional<Session::EffectBank> load_effect_bank(
+    std::shared_ptr<const std::vector<std::uint8_t>> source, std::uint32_t slot) {
+    if (!source) return std::nullopt;
+    const auto parsed = effect_bank::parse_bank(
+        std::span<const std::uint8_t>{source->data(), source->size()});
+    if (!parsed.has_value()) return std::nullopt;
+    Session::EffectBank retained;
+    retained.resource_slot = slot;
+    retained.source = std::move(source);
+    retained.bank = *parsed;
+    // E resolves T through the bank's own texture manager. Decode only those
+    // exact T records once and retain their canonical ids; the live renderer
+    // never substitutes an attached model texture.
+    for (const auto& record : retained.bank.records) {
+        if (record.kind != 'T') continue;
+        const auto dds = effect_bank::texture_dds(record);
+        if (dds.empty()) continue;
+        const auto dds_bytes = std::span<const std::byte>{
+            reinterpret_cast<const std::byte*>(dds.data()), dds.size()};
+        const auto parsed_textures = texture_set::parse_dds(dds_bytes);
+        if (!parsed_textures.ok()) continue;
+        const auto* texture_slot = texture_set::find_slot(parsed_textures, 0U);
+        if (texture_slot == nullptr) continue;
+        Session::EffectTexture texture;
+        texture.id = record.id;
+        if (texture_set::decode_base_mip(dds_bytes, *texture_slot, &texture.image) &&
+            texture.image.available()) {
+            retained.textures.push_back(std::move(texture));
+        }
+    }
+    return retained;
+}
+
+}  // namespace dmcresource

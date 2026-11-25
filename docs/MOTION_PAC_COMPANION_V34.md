@@ -437,10 +437,36 @@ it showed every model and stage mirrored. It now negates X before the camera
 rotation, for positions and normals (rengine
 `dmc3-coordinate-handedness-2026-09-24.md`).
 
-The ⋮ menu opens with a row of square shortcuts: ⚙ Settings, then the room
-toggle and *next floor spot* when a room is loaded. The actions follow below
-the row. Settings is a full-screen window, and every choice is stored and
-applied at once:
+Every window of the app is one window (v96, `PanelBuilder` in
+MainActivity): a title bar with an optional square action, then the
+message, a view and the items scrolling under it, the buttons at the
+bottom (Close when none is given). Info, the ⋮ menu, Diagnostics, Settings,
+Gestures, a marker's card, the core's menus, the export / texture format /
+composite part / placement choices, confirmations and the benchmark all
+open in it; a list's row picks and closes it, a single-choice list marks
+◉ / ○ and stays open.
+
+The ⋮ menu (v95) opens in that window. The core puts each item in
+one of three places (`companion_menu`):
+
+- **Squares** (a long press names one; they wrap into rows): the quick
+  switches and a cutscene's media: ⚙ Settings, ✋ Gestures, ⌂ room toggle,
+  ⇄ next floor spot (while the room shows), 🔊 sound, 🎞 movie, 💬 subtitles,
+  🎬 cutscene camera, 💾 Save, then 📷 picture and 🎥 video (⏹ while it
+  records; the stop square stays even with nothing drawable open) and 🎛
+  camera settings ([CAMERA_PHOTO_VIDEO.md](CAMERA_PHOTO_VIDEO.md)).
+- **Rows**: first the ones every file has, always (*Open / replace
+  resource*, *Diagnostics / build info*), then the ones that fit what is on
+  the screen: a model's tools for a model, the stage tools (stage effects,
+  stage config) for a stage scene or a room drawn around a model, one
+  *Browse .PAC files*.
+- **Other actions ▸** (folded): what can be done but does not fit the
+  screen: a model's tools in a cutscene, the stage tools while the room is
+  hidden. Nothing that can be done leaves the menu; only what cannot (no
+  stage around at all) is not listed.
+
+Settings is a full-screen window, and every choice is stored and applied at
+once:
 
 - Render resolution: 360, 540, 720 or 1024 px on the longest side.
 - Animation frame rate: 20, 30 or 60 fps.

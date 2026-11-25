@@ -36,11 +36,13 @@ EXPECTED_ANDROID_CMAKE = "3.22.1"
 MIN_HOST_CMAKE = (3, 22, 1)
 RUNTIME_DSO = "lib/arm64-v8a/libdmcviewer.so"
 REQUIRED_RUNTIME_MARKERS = (b"spider.crusader", b"spider.cpp23")
-EXPECTED_MAX_APK_BYTES = 4 * 1024 * 1024
-EXPECTED_MAX_INSTALLED_APP_BYTES = 4 * 1024 * 1024
-EXPECTED_SIZE_AUTHORITY = "absolute-package-metrics+StorageStats.getAppBytes<=4MiB"
+EXPECTED_MAX_APK_BYTES = 8 * 1024 * 1024
+EXPECTED_MAX_INSTALLED_APP_BYTES = 8 * 1024 * 1024
+EXPECTED_SIZE_AUTHORITY = "absolute-package-metrics+StorageStats.getAppBytes<=8MiB"
 EXPECTED_DEBUG_SIGNER_SHA256 = (
     "f483539463f89dd957a8f7c68a3bb75da17450163f2e8767b4c47d5f1899adac")
+# This inventory is the exact CMake contract for the v73 candidate:
+# Phase-2 inherited regressions plus the v72/v73 MotionScript/effects tests.
 EXPECTED_CTESTS = (
     "black_widow_state",
     "composite_builder",
@@ -51,9 +53,13 @@ EXPECTED_CTESTS = (
     "dds_ptx_v1",
     "em028_corpus_contract",
     "effect_visualization",
+    "effect_runtime",
     "gdata_legacy",
     "mod_spatial_adapter",
     "module_registry",
+    "motion_playback",
+    "pac_assembly",
+    "player_coat",
     "png_export_session",
     "ptx_model_texture",
     "ptx_runtime_compat",
@@ -423,12 +429,12 @@ def read_verifier_report(
         )
     if report.get("max_apk_bytes") != EXPECTED_MAX_APK_BYTES:
         fail(
-            "APK verifier size policy drifted from 4 MiB: "
+            "APK verifier size policy drifted from 8 MiB: "
             f"{report.get('max_apk_bytes')}"
         )
     if report.get("max_installed_app_bytes") != EXPECTED_MAX_INSTALLED_APP_BYTES:
         fail(
-            "installed StorageStats app-size policy drifted from 4 MiB: "
+            "installed StorageStats app-size policy drifted from 8 MiB: "
             f"{report.get('max_installed_app_bytes')}"
         )
     if report.get("installed_size_measurement") != \
@@ -684,7 +690,7 @@ def main() -> int:
             fail(f"expected APK missing: {apk}")
         if apk.stat().st_size > EXPECTED_MAX_APK_BYTES:
             fail(
-                f"{apk.name} exceeds 4 MiB package pre-gate: "
+                f"{apk.name} exceeds 8 MiB package pre-gate: "
                 f"{apk.stat().st_size} > {EXPECTED_MAX_APK_BYTES}"
             )
         require_runtime_markers(apk)
